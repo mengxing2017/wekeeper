@@ -9,6 +9,7 @@ pub mod http;
 pub mod distribution;
 pub mod integrations;
 pub mod legacy;
+pub mod media;
 pub mod observability;
 pub mod runtime;
 pub mod schools;
