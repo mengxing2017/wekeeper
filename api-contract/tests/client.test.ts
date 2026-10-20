@@ -55,3 +55,10 @@ it('keeps OAuth selection in a fixed local entry URL', async () => {
   expect(wecomOAuthUrl()).toBe('/api/v1/wecom/oauth/start')
   expect(wecomOAuthUrl({school: '00000000-0000-0000-0000-000000000000', draft: '00000000-0000-0000-0000-000000000001'})).toBe('/api/v1/wecom/oauth/start?school=00000000-0000-0000-0000-000000000000&draft=00000000-0000-0000-0000-000000000001')
 })
+
+it('reads the public WeCom status using the backend fixture', async () => {
+  const { workspace } = await import('../src/modules/business')
+  const fixture = (await import('../fixtures/wecom-status.json')).default
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(fixture)))
+  expect(await workspace.wecomStatus()).toEqual({configured:false,oauth_available:false})
+})
