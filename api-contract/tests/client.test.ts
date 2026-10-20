@@ -49,3 +49,9 @@ it('shares a real Rust create-post response and sends CSRF for writes', async ()
   expect(fetchMock).toHaveBeenCalledWith('/api/v1/schools/school/posts',expect.objectContaining({method:'POST',headers:expect.objectContaining({'X-CSRF-Token':'test-csrf'})}))
   setCsrf('')
 })
+
+it('keeps OAuth selection in a fixed local entry URL', async () => {
+  const { wecomOAuthUrl } = await import('../src/modules/business')
+  expect(wecomOAuthUrl()).toBe('/api/v1/wecom/oauth/start')
+  expect(wecomOAuthUrl({school: '00000000-0000-0000-0000-000000000000', draft: '00000000-0000-0000-0000-000000000001'})).toBe('/api/v1/wecom/oauth/start?school=00000000-0000-0000-0000-000000000000&draft=00000000-0000-0000-0000-000000000001')
+})
