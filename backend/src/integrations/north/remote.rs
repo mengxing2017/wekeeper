@@ -11,7 +11,7 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 #[derive(Deserialize)]
 struct Callback {
@@ -113,6 +113,29 @@ async fn sign(
     )
         .into_response())
 }
+#[derive(Serialize)]
+struct WecomStatus {
+    configured: bool,
+    oauth_available: bool,
+}
+fn oauth_available(a: &Application) -> bool {
+    a.integrations.configured()
+        && !a.options.insecure_local_auth
+        && reqwest::Url::parse(&a.options.public_origin)
+            .is_ok_and(|url| url.scheme() == "https" && url.host_str().is_some())
+}
+async fn status(State(a): State<Application>) -> Response {
+    let configured = a.integrations.configured();
+
+    (
+        [(header::CACHE_CONTROL, "no-store")],
+        data(WecomStatus {
+            configured,
+            oauth_available: oauth_available(&a),
+        }),
+    )
+        .into_response()
+}
 async fn info(State(a): State<Application>, _actor: Actor) -> Json<Value> {
     data(json!({"corpId":a.integrations.corp,"agentId":a.integrations.agent}))
 }
@@ -135,6 +158,7 @@ async fn mini(
 }
 pub fn router() -> Router<Application> {
     Router::new()
+        .route("/api/v1/wecom/status", get(status))
         .route("/api/v1/wecom/oauth/start", get(start))
         .route("/api/v1/wecom/oauth/callback", get(callback))
         .route("/api/v1/wecom/js-sdk-config", get(sign))
