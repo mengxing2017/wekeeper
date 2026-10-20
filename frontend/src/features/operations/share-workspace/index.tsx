@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { identity, workspace, type Draft, type Attempt, type ClientState } from './api';
-import { currentChat, sendText } from './sdk';
+import { identity, workspace, wecomOAuthUrl, type Draft, type Attempt, type ClientState } from './api';
+import { currentChat, sendText, sendOutcome } from './sdk';
 export function ShareWorkspace() {
     const session = useQuery({ queryKey: ['session'], queryFn: identity.session, retry: false });
     const params = new URLSearchParams(location.search);
@@ -50,17 +50,7 @@ export function ShareWorkspace() {
                 throw new Error('此尝试已在客户端执行过，请人工核对，不能重复调用发送');
             localStorage.setItem(invokedKey, 'true');
             await workspace.claim(s, attempt.id);
-            let state: ClientState = 'unknown';
-            try {
-                await Promise.race([sendText(draft.content), new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 90000))]);
-                state = 'client_reported_success';
-            }
-            catch (e) {
-                const msg = String((e as {
-                    errMsg?: string;
-                }).errMsg ?? '');
-                state = /cancel/i.test(msg) ? 'cancelled' : /fail/i.test(msg) ? 'client_reported_failure' : 'unknown';
-            }
+            const state: ClientState = await sendOutcome(() => sendText(draft.content));
             await workspace.result(s, attempt.id, state);
             setMessage(state === 'client_reported_success' ? '客户端报告调用成功，请在目标群核对实际消息。' : '此次操作未确认成功，请查看分享记录并人工核对。');
         }
@@ -76,7 +66,7 @@ export function ShareWorkspace() {
     if (session.isPending)
         return <p role="status">正在确认企业微信身份…</p>;
     if (!session.data?.user.wecom_authenticated)
-        return <section><h1>企业微信人工分享</h1><p>请使用已获得学校运营授权的企业成员登录。</p><a href="/api/v1/wecom/oauth/start">企业微信授权登录</a></section>;
+        return <section><h1>企业微信人工分享</h1><p>请使用已获得学校运营授权的企业成员登录。</p><a href={wecomOAuthUrl({school: params.get('school') ?? undefined, draft: params.get('draft') ?? undefined})}>企业微信授权登录</a></section>;
     return <section><h1>预览并人工分享</h1><p>仅发送到当前客户群。结果不确定时先人工核对，不会自动重试。</p><label>学校<select value={s} onChange={e => { setSchool(e.target.value); setSelected(''); setChat(''); }}>{schools.data?.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}</select></label><button onClick={check} disabled={busy}>读取并核对当前客户群</button>{chat && <p>当前群：{chat}</p>}<label>待分享草稿<select value={selected} onChange={e => setSelected(e.target.value)}><option value="">请选择</option>{drafts.data?.map(d => <option key={d.id} value={d.id}>{d.group_name} · {d.content.slice(0, 35)}</option>)}</select></label>
  {draft && <article><h2>{draft.group_name}</h2><pre className="text-content">{draft.content}</pre><small>模板版本：{draft.template_version_id}</small><details><summary>明确再次分享</summary><p>先在后台核对历史结果，再选择上次尝试并填写原因。</p><select aria-label="引用历史尝试" value={resend} onChange={e => setResend(e.target.value)}><option value="">首次分享</option>{history.data?.map(h => <option key={h.id} value={h.id}>{h.id} · {h.state}</option>)}</select><input aria-label="再次分享原因" value={reason} onChange={e => setReason(e.target.value)}/><button disabled={busy} onClick={() => { if (resend && reason.trim()) {
         sessionStorage.removeItem(`wekeeper.attempt:${s}:${draft.id}`);
