@@ -18,11 +18,36 @@ struct Callback {
     code: String,
     state: String,
 }
-async fn start(State(a): State<Application>) -> Result<Response> {
+#[derive(Deserialize, Default)]
+struct Start {
+    school: Option<uuid::Uuid>,
+    draft: Option<uuid::Uuid>,
+}
+impl Start {
+    fn return_path(&self) -> String {
+        let mut query = vec![];
+        if let Some(id) = self.school {
+            query.push(format!("school={id}"));
+        }
+        if let Some(id) = self.draft {
+            query.push(format!("draft={id}"));
+        }
+        if query.is_empty() {
+            "/wecom".into()
+        } else {
+            format!("/wecom?{}", query.join("&"))
+        }
+    }
+}
+async fn start(State(a): State<Application>, Query(input): Query<Start>) -> Result<Response> {
     if !a.integrations.configured() {
         return Err(Error::Unavailable);
     }
-    let state = a.integrations.repository.oauth_state().await?;
+    let state = a
+        .integrations
+        .repository
+        .oauth_state(&input.return_path())
+        .await?;
     let mut url = reqwest::Url::parse("https://open.weixin.qq.com/connect/oauth2/authorize")
         .expect("constant URL");
     url.query_pairs_mut()
@@ -51,7 +76,7 @@ async fn callback(
         })
         .ok_or(Error::Forbidden)?;
     require(state == v.state, "OAuth state 不匹配")?;
-    a.integrations.repository.consume(&v.state).await?;
+    let return_path = a.integrations.repository.consume(&v.state).await?;
     let id = a.integrations.oauth_member(&v.code).await?;
     let (token, _) = a.identity.0.session(id, "browser", true).await?;
     Ok((
@@ -60,9 +85,10 @@ async fn callback(
                 header::SET_COOKIE,
                 cookie(&token, !a.options.insecure_local_auth, 28800),
             ),
+            (header::SET_COOKIE, format!("wekeeper_oauth=; Path=/api/v1/wecom/oauth; HttpOnly; SameSite=Lax; Max-Age=0{}", if a.options.insecure_local_auth { "" } else { "; Secure" })),
             (header::CACHE_CONTROL, "no-store".into()),
         ],
-        Redirect::to("/wecom"),
+        Redirect::to(&return_path),
     )
         .into_response())
 }
@@ -114,4 +140,22 @@ pub fn router() -> Router<Application> {
         .route("/api/v1/wecom/js-sdk-config", get(sign))
         .route("/api/v1/wecom/config", get(info))
         .route("/api/v1/auth/miniapp", post(mini))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn oauth_return_path_is_local_and_preserves_selection() {
+        assert_eq!(Start::default().return_path(), "/wecom");
+        let id = uuid::Uuid::nil();
+        assert_eq!(
+            Start {
+                school: Some(id),
+                draft: Some(id)
+            }
+            .return_path(),
+            format!("/wecom?school={id}&draft={id}")
+        );
+    }
 }

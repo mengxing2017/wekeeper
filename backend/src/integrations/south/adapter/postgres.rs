@@ -4,18 +4,17 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct Repository(pub PgPool);
 impl Repository {
-    pub async fn oauth_state(&self) -> Result<String> {
+    pub async fn oauth_state(&self, return_path: &str) -> Result<String> {
         let state = secret();
         sqlx::query("DELETE FROM oauth_states WHERE expires_at<now()")
             .execute(&self.0)
             .await?;
-        sqlx::query("INSERT INTO oauth_states(state_hash,session_hash,return_path,expires_at) VALUES($1,$2,'/wecom',now()+interval '5 minutes')").bind(hash(&state)).bind(hash(&state)).execute(&self.0).await?;
+        sqlx::query("INSERT INTO oauth_states(state_hash,session_hash,return_path,expires_at) VALUES($1,$2,$3,now()+interval '5 minutes')").bind(hash(&state)).bind(hash(&state)).bind(return_path).execute(&self.0).await?;
         Ok(state)
     }
-    pub async fn consume(&self, state: &str) -> Result<()> {
-        let row=sqlx::query("DELETE FROM oauth_states WHERE state_hash=$1 AND expires_at>now() RETURNING state_hash").bind(hash(state)).fetch_optional(&self.0).await?;
-        row.ok_or(Error::Forbidden)?;
-        Ok(())
+    pub async fn consume(&self, state: &str) -> Result<String> {
+        let row=sqlx::query_scalar("DELETE FROM oauth_states WHERE state_hash=$1 AND expires_at>now() RETURNING return_path").bind(hash(state)).fetch_optional(&self.0).await?;
+        row.ok_or(Error::Forbidden)
     }
     pub async fn member(&self, userid: &str) -> Result<Uuid> {
         sqlx::query_scalar("SELECT id FROM accounts WHERE wecom_userid=$1 AND active")
