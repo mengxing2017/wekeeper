@@ -6,4 +6,5 @@ pub mod database;
 pub mod http;
 pub mod observability;
 pub mod runtime;
+pub mod schools;
 pub mod system;
