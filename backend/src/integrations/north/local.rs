@@ -38,6 +38,11 @@ impl Service {
         }
         let v: Value = response.json().await.map_err(|_| Error::Unavailable)?;
         if v["errcode"].as_i64().unwrap_or(0) != 0 {
+            // Never log the URL, token, secret, OAuth code or upstream response body.
+            tracing::warn!(
+                errcode = v["errcode"].as_i64(),
+                "official platform API rejected request"
+            );
             return Err(Error::Unavailable);
         }
         Ok(v)
