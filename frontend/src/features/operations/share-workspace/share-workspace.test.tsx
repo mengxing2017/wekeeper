@@ -1,12 +1,16 @@
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ShareWorkspace } from './index'
 import { identity, workspace } from './api'
 import { currentChat, sendText } from './sdk'
-vi.mock('./api',async importOriginal=>({...await importOriginal<typeof import('./api')>(),identity:{session:vi.fn()},workspace:{schools:vi.fn(),list:vi.fn(),prepare:vi.fn(),claim:vi.fn(),result:vi.fn()}}))
+vi.mock('./api',async importOriginal=>({...await importOriginal<typeof import('./api')>(),identity:{session:vi.fn()},workspace:{wecomStatus:vi.fn(),schools:vi.fn(),list:vi.fn(),prepare:vi.fn(),claim:vi.fn(),result:vi.fn()}}))
 vi.mock('./sdk',async importOriginal=>({...await importOriginal<typeof import('./sdk')>(),currentChat:vi.fn(),sendText:vi.fn()}))
-afterEach(()=>{cleanup();vi.resetAllMocks();localStorage.clear();sessionStorage.clear()})
+beforeEach(()=>{
+ vi.spyOn(navigator,'userAgent','get').mockReturnValue('wxwork');
+ vi.mocked(workspace.wecomStatus).mockResolvedValue({configured:true,oauth_available:true});
+})
+afterEach(()=>{vi.restoreAllMocks();cleanup();vi.resetAllMocks();localStorage.clear();sessionStorage.clear()})
 function renderPage(){const c=new QueryClient({defaultOptions:{queries:{retry:false},mutations:{retry:false}}});return render(<QueryClientProvider client={c}><ShareWorkspace/></QueryClientProvider>)}
 it('requires enterprise identity before offering a send action',async()=>{
  vi.mocked(identity.session).mockRejectedValue(new Error('unauthorized'));renderPage();expect(await screen.findByText('企业微信授权登录')).toBeTruthy();expect(screen.queryByText('确认正文并在当前群分享')).toBeNull()
@@ -44,4 +48,23 @@ it('never invokes the SDK if the invocation claim response is lost', async()=>{
  setupShare();vi.mocked(workspace.claim).mockRejectedValue(new Error('claim response lost'));await selectAndCheck();
  fireEvent.click(screen.getByText('确认正文并在当前群分享'));await screen.findByRole('alert');
  expect(sendText).not.toHaveBeenCalled();expect(localStorage.getItem('wekeeper.invoked:attempt')).toBe('true');
+})
+
+it('renders configuration guidance when enterprise credentials are absent', async()=>{
+ vi.mocked(workspace.wecomStatus).mockResolvedValue({configured:false,oauth_available:false});
+ vi.mocked(identity.session).mockRejectedValue(Object.assign(new Error('请先登录'),{status:401}));
+ renderPage();expect(await screen.findByText('企业微信尚未配置')).toBeTruthy();
+ expect(screen.getByText('登录运营后台')).toBeTruthy();expect(screen.queryByText('企业微信授权登录')).toBeNull();
+})
+it('allows ordinary browser preview but disables SDK sending', async()=>{
+ setupShare();vi.spyOn(navigator,'userAgent','get').mockReturnValue('Mozilla');renderPage();
+ await screen.findByText('Target · Frozen text');fireEvent.change(screen.getAllByRole('combobox')[1],{target:{value:'d'}});
+ expect(screen.getByText('当前为普通浏览器')).toBeTruthy();
+ expect((screen.getByText('确认正文并在当前群分享') as HTMLButtonElement).disabled).toBe(true);
+ expect(sendText).not.toHaveBeenCalled();
+})
+it('shows recoverable errors when configuration and session requests fail',async()=>{
+ vi.mocked(workspace.wecomStatus).mockRejectedValue(new Error('offline'));
+ vi.mocked(identity.session).mockRejectedValue(new Error('offline'));renderPage();
+ expect(await screen.findByText('重新检查配置')).toBeTruthy();expect(await screen.findByText('重新查询身份')).toBeTruthy();
 })
