@@ -12,8 +12,8 @@
 - 前端按 `features/admin/`、`features/operations/` 组织；`shared/` 不保存接口 DTO/client。
 - 只在 feature 的 `api/index.ts` 引用 `@wekeeper/api-contract/*`，不得另写相同 DTO 或绕过 client 请求。
 - 公开接口修改同步更新后端、contract 与契约测试。TS 编译不能替代 Rust 序列化契约验证。
-- 未完成身份与学校授权前不得暴露业务读写接口；当前仅开放健康与无敏感信息的应用说明。
-- 不接入千寻、Hook、Binlog 发送；发送流程后续按 report/11 的人工确认与 unknown 语义实现。
+- 业务接口必须经过身份、学校范围与用例授权；公开阅读仅在指定学校显式启用时开放。
+- 不接入千寻、Hook、Binlog 发送；发送流程遵守人工确认、单次调用领取与 unknown 核对语义。
 
 ## 验证
 

@@ -1,9 +1,9 @@
 # WeKeeper
 
-校园社区与企业微信内容运营重构工程。新应用采用 Rust + React，工程边界参考 `huavd-ops`。
+校园社区与企业微信内容运营重构工程。新应用采用 Rust + React。
 
-当前提供可运行的基础骨架：Rust API、PostgreSQL 启动迁移、健康检查、React 后台与企业微信 H5 入口、共享接口包，以及 Docker 三服务部署。
-身份、学校权限、帖子审核、模板和真实发送尚未实现；页面中的业务模块标记为“待接入”，不存在可发送按钮或演示账号。
+现已接入身份与学校权限、社区内容和互动、审核治理、运营配置、模板版本、分享草稿、企业微信人工分享及记录、小程序兼容和数据迁移工具。
+运行与数据切换见 [业务运行手册](docs/runbooks/business.md)。真实平台权限、真机及生产数据切换仍需验收。
 旧 PHP、uni-app、Java 和附带资源保留用于迁移核对，新容器不会运行它们。
 
 ## 目录
@@ -19,7 +19,7 @@ report/          原系统分析及重构实施方案
 ```
 
 后端以 `system` 模块展示完整的 domain、north/local、north/remote、south/port、south/adapter/postgres 分层。
-其余业务模块目录记录职责和接入条件，尚无业务接口。
+业务模块按用例、领域与 PostgreSQL 端口实现；审核事务归入 community。
 前端接口调用通过 `@wekeeper/api-contract/*`；后台与 H5 懒加载隔离，H5 不加载 Ant Design 后台入口。
 
 ## Docker 本地启动
@@ -28,7 +28,8 @@ report/          原系统分析及重构实施方案
 
 ```bash
 cp env.example .env
-# 编辑 .env，替换 POSTGRES_PASSWORD；不要提交 .env。
+# 编辑 .env，替换 POSTGRES_PASSWORD；本地 HTTP 设置 WEKEEPER_INSECURE_LOCAL_AUTH=true。
+# WEKEEPER_PUBLIC_ORIGIN 必须与浏览器访问地址一致；不要提交 .env。
 docker compose --env-file .env -f compose.yaml -f compose.dev.yaml config --quiet
 docker compose --env-file .env -f compose.yaml -f compose.dev.yaml up --build --wait
 ```
@@ -36,6 +37,7 @@ docker compose --env-file .env -f compose.yaml -f compose.dev.yaml up --build --
 默认访问地址：
 
 - 后台：http://127.0.0.1:8088/admin
+- 社区：http://127.0.0.1:8088/community
 - 企业微信 H5 页面：http://127.0.0.1:8088/wecom
 - API：http://127.0.0.1:8088/api/v1/system
 - 存活检查：http://127.0.0.1:8088/healthz
@@ -43,7 +45,7 @@ docker compose --env-file .env -f compose.yaml -f compose.dev.yaml up --build --
 
 `/readyz` 实际检查 PostgreSQL 与初始化 schema；数据库不可用时返回 503。
 迁移失败时 api 启动失败，不会以“健康”状态接收请求。
-H5 当前仅为网页入口，不初始化企业微信 SDK，也不调用任何发送接口。
+H5 配置平台凭据并通过 OAuth 后，读取当前客户群，人工确认调用官方 SDK；客户端报告成功不等于平台送达证明。
 
 ```bash
 make smoke
@@ -86,7 +88,7 @@ devbox run -- cargo run --locked --manifest-path backend/Cargo.toml --example em
 Ctrl+C 或 SIGTERM 正常退出时，关闭连接、停止数据库并删除临时数据；**每次重启数据都会重置**。
 强制终止进程、系统崩溃等情况下不保证完成清理。需要持久数据时使用下面的外部数据库方式。
 嵌入式依赖只属于 Cargo dev-dependencies，生产 Docker 仍连接独立 PostgreSQL。
-当前身份业务未实现，不创建演示管理员。
+启动时自动创建本地管理员 `admin`，生成随机密码并在终端显示。可设置 `WEKEEPER_DEV_ADMIN_PASSWORD`（12–128 字节）自定义密码，自定义密码不会输出到终端。嵌入式入口自动启用本地 HTTP 登录，默认前端地址为 `http://localhost:5173`，可通过 `WEKEEPER_PUBLIC_ORIGIN` 修改。本地 HTTP 登录模式允许同协议、同端口的 `localhost`、`127.0.0.1` 与 `[::1]` 地址；使用其他端口时须设置匹配的 `WEKEEPER_PUBLIC_ORIGIN`。每次重启数据库与随机密码都会重置；这些自动初始化行为仅用于嵌入式开发入口。
 
 另一个终端运行 `pnpm --dir frontend dev` 即可联调。
 
@@ -115,7 +117,8 @@ API 默认监听 8080；另一个终端运行：
 pnpm --dir frontend dev
 ```
 
-Vite 默认监听 http://127.0.0.1:5173，将 `/api`、`/healthz`、`/readyz` 代理至 8080。
+Vite 默认监听所有网络接口，固定使用 5173 端口（占用时直接报错），支持通过 `http://localhost:5173`、`http://127.0.0.1:5173` 和 `http://<本机局域网IP>:5173` 访问，启动时显示 Local / Network 地址。将 `/api`、`/healthz`、`/readyz` 代理至 8080。
+通过局域网 IP 登录时，后端启动需设置对应的浏览器来源，例如 `WEKEEPER_PUBLIC_ORIGIN=http://192.168.1.100:5173 make dev-embedded`（替换为实际 IP），以通过 Origin 校验。后端仍可监听回环地址，由 Vite 代理请求。
 通过 `WEKEEPER_API_ORIGIN` 修改 Vite 的 API 代理目标。
 也可使用 `WEKEEPER_DATABASE_URL` 代替分字段配置；URL 中的密码需要 URL 编码。
 后端不自动读取 `.env` 文件；Compose 会注入环境变量，本地进程由调用者注入。
@@ -180,3 +183,5 @@ docker compose --env-file .env -f compose.yaml up -d --wait
 完整的 HTTPS、网络、备份和更新步骤见 [Docker 部署手册](docs/runbooks/docker.md)。
 工程决策见 [基础骨架 ADR](docs/adr/0001-foundation.md)。
 业务目标见 [Rust 与 React 重构实施方案](report/11-Rust与React重构实施方案.md)。
+
+首次管理员初始化、业务操作、平台配置、旧数据迁移和增量追平命令详见 [业务运行手册](docs/runbooks/business.md)。
