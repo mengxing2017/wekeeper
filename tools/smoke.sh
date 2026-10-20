@@ -21,9 +21,9 @@ root = Path(sys.argv[1])
 assert json.loads((root / 'health.json').read_text()) == {'status': 'ok'}
 assert json.loads((root / 'ready.json').read_text()) == {'status': 'ready'}
 info = json.loads((root / 'system.json').read_text())['data']
-assert info['application'] == 'wekeeper' and info['stage'] == 'scaffold'
+assert info['application'] == 'wekeeper' and info['stage'] == 'business'
 assert json.loads((root / 'unknown.json').read_text())['error']['code'] == 'not_found'
 for name in ('admin', 'wecom'):
     assert '<div id="root"></div>' in (root / f'{name}.html').read_text()
-print('Smoke checks passed: readiness, API contract, SPA routes and closed business routes.')
+print('Smoke checks passed: readiness, API contract, SPA routes and rejected unscoped routes.')
 PY

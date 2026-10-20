@@ -19,6 +19,7 @@ fmt:
 
 check-backend:
 	cargo fmt --manifest-path backend/Cargo.toml --all --check
+	cargo build --locked --manifest-path backend/Cargo.toml
 	cargo clippy --locked --manifest-path backend/Cargo.toml --all-targets -- -D warnings
 	cargo test --locked --manifest-path backend/Cargo.toml
 
@@ -53,3 +54,15 @@ compose-down:
 
 smoke:
 	sh tools/smoke.sh
+
+.PHONY: test-business test-migration
+test-business:
+	python3 tools/check_business.py
+
+test-migration:
+	python3 -B tools/migration/test_convert.py
+
+.PHONY: test-live
+test-live:
+	cargo build --locked --manifest-path backend/Cargo.toml --example embedded_postgres
+	python3 tools/check_live.py
