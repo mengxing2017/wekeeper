@@ -40,7 +40,7 @@ impl Start {
     }
 }
 async fn start(State(a): State<Application>, Query(input): Query<Start>) -> Result<Response> {
-    if !a.integrations.configured() {
+    if !oauth_available(&a) {
         return Err(Error::Unavailable);
     }
     let state = a
@@ -63,6 +63,20 @@ async fn start(State(a): State<Application>, Query(input): Query<Start>) -> Resu
     Ok(([(header::SET_COOKIE,format!("wekeeper_oauth={state}; Path=/api/v1/wecom/oauth; HttpOnly; SameSite=Lax; Max-Age=300{}",if a.options.insecure_local_auth{""}else{"; Secure"})),(header::CACHE_CONTROL,"no-store".into())],Redirect::to(url.as_str())).into_response())
 }
 async fn callback(
+    state: State<Application>,
+    headers: HeaderMap,
+    query: Query<Callback>,
+) -> Response {
+    match callback_inner(state, headers, query).await {
+        Ok(response) => response,
+        Err(_) => (
+            [(header::CACHE_CONTROL, "no-store")],
+            Redirect::to("/wecom?oauth_error=failed"),
+        )
+            .into_response(),
+    }
+}
+async fn callback_inner(
     State(a): State<Application>,
     h: HeaderMap,
     Query(v): Query<Callback>,
