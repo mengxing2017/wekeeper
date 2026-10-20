@@ -4,7 +4,7 @@ import { ApiError, getJson } from '../src/http'
 import { getSystemInfo, type SystemDocument } from '../src/modules/system'
 
 const typedFixture: SystemDocument = {
-  data: { application: 'wekeeper', version: '0.1.0', stage: 'scaffold' },
+  data: { application: 'wekeeper', version: '0.1.0', stage: 'business' },
 }
 
 afterEach(() => vi.unstubAllGlobals())
@@ -35,4 +35,17 @@ describe('shared HTTP contract', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('Bad gateway', { status: 502 })))
     await expect(getSystemInfo()).rejects.toBeInstanceOf(ApiError)
   })
+})
+
+import postFixture from '../fixtures/post-created.json'
+import { workspace, type Post } from '../src/modules/business'
+import { setCsrf } from '../src/http'
+it('shares a real Rust create-post response and sends CSRF for writes', async () => {
+  const typed: Post = {...postFixture, audit_status:'pending', visibility:'visible'}
+  expect(typed).toEqual(postFixture)
+  const fetchMock=vi.fn().mockResolvedValue(Response.json({data:postFixture}))
+  vi.stubGlobal('fetch',fetchMock);setCsrf('test-csrf')
+  expect(await workspace.mutate('school','posts',{title:'Campus',content:'Hello',images:[],tags:[]})).toEqual(postFixture)
+  expect(fetchMock).toHaveBeenCalledWith('/api/v1/schools/school/posts',expect.objectContaining({method:'POST',headers:expect.objectContaining({'X-CSRF-Token':'test-csrf'})}))
+  setCsrf('')
 })

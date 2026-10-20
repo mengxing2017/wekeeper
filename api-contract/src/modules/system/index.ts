@@ -4,7 +4,7 @@ export interface SystemDocument {
   data: {
     application: 'wekeeper'
     version: string
-    stage: 'scaffold'
+    stage: 'business'
   }
 }
 
