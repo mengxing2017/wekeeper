@@ -54,6 +54,8 @@ unset WK_ADMIN_PASSWORD
 
 ## 平台配置
 
+企业微信配置步骤与真机验收矩阵见 [企业微信接入手册](wecom.md)。
+
 - WEKEEPER_WECOM_CORP_ID / AGENT_ID / SECRET：自建应用及有权限的客户联系能力。
 - WEKEEPER_WX_APP_ID / WX_SECRET：保留小程序对应 AppID，迁移 openid 必须与之匹配。
 - OAuth 回调：`https://域名/api/v1/wecom/oauth/callback`。
