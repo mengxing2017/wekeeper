@@ -1,0 +1,32 @@
+:root { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; color: #21382f; background: #f5f7f4; font-synthesis: none; text-rendering: optimizeLegibility; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+a { color: #25624b; text-decoration: none; }
+a:hover { text-decoration: underline; }
+a:focus-visible, button:focus-visible { outline: 3px solid #80b59a; outline-offset: 4px; }
+.admin-layout { min-height: 100vh; background: #f5f7f4; }
+.site-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding-inline: max(24px, calc((100vw - 1120px) / 2)); background: #fff; border-bottom: 1px solid #e2e8e0; }
+.brand { display: inline-flex; align-items: center; gap: 16px; font-size: 22px; font-weight: 750; color: #25624b; white-space: nowrap; }
+.brand span { color: #66766c; font-size: 13px; font-weight: 400; }
+.header-link { font-size: 13px; white-space: nowrap; }
+.admin-content { width: 100%; max-width: 1168px; margin: 0 auto; padding: 48px 24px; }
+.eyebrow { font-size: 11px; letter-spacing: .14em; color: #637c6c; font-weight: 600; }
+.full-width { width: 100%; }
+.module-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.site-footer { text-align: center; background: transparent; color: #748277; font-size: 12px; }
+.readiness-alert { margin-top: 16px; }
+.loading, .not-found { padding: 64px 24px; text-align: center; }
+.wecom-shell { max-width: 600px; min-height: 100dvh; margin: auto; padding: 0 24px 32px; background: #fff; }
+.wecom-header { display: flex; justify-content: space-between; align-items: center; padding: 24px 0; border-bottom: 1px solid #e2e8e0; }
+.wecom-header > span { font-size: 12px; color: #748277; }
+.share-workspace { padding-top: 32px; }
+.share-workspace h1 { font-size: clamp(28px, 6vw, 38px); line-height: 1.4; letter-spacing: -.03em; margin: 16px 0; }
+.share-intro { line-height: 1.8; color: #6a786f; font-size: 14px; }
+.share-notice { margin: 28px 0; padding: 20px; background: #f1f5ef; border-radius: 12px; }
+.share-notice p { font-size: 13px; color: #637367; line-height: 1.8; margin-bottom: 0; }
+.share-steps { padding: 0; list-style: none; }
+.share-steps li { display: flex; gap: 16px; padding: 20px 0; border-bottom: 1px solid #edf0eb; }
+.share-steps li > span { color: #8ba395; font-size: 12px; padding-top: 3px; }
+.share-steps strong { font-size: 14px; }
+.share-steps p { color: #758078; font-size: 13px; line-height: 1.7; margin-bottom: 0; }
+@media (max-width: 600px) { .brand span { display: none; } .admin-content { padding-top: 28px; } .module-grid { grid-template-columns: 1fr; } }

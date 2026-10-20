@@ -1,0 +1,84 @@
+name: wekeeper
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:17.4-bookworm}
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-wekeeper}
+      POSTGRES_USER: ${POSTGRES_USER:-wekeeper}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    networks: [database]
+
+  api:
+    image: ${API_IMAGE:-wekeeper-api:local}
+    environment:
+      WEKEEPER_BIND_ADDR: 0.0.0.0:8080
+      WEKEEPER_DATABASE_HOST: postgres
+      WEKEEPER_DATABASE_PORT: "5432"
+      WEKEEPER_DATABASE_NAME: ${POSTGRES_DB:-wekeeper}
+      WEKEEPER_DATABASE_USER: ${POSTGRES_USER:-wekeeper}
+      WEKEEPER_DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      WEKEEPER_DATABASE_SSL_MODE: disable
+      WEKEEPER_DATABASE_MAX_CONNECTIONS: ${WEKEEPER_DATABASE_MAX_CONNECTIONS:-10}
+      RUST_LOG: ${RUST_LOG:-wekeeper_api=info,tower_http=info}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--max-time", "4", "http://127.0.0.1:8080/readyz"]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 6
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    stop_grace_period: 30s
+    # outbound has an external gateway for official Tencent API access;
+    # database remains on an internal-only network.
+    networks: [database, outbound]
+
+  web:
+    image: ${WEB_IMAGE:-wekeeper-web:local}
+    environment:
+      WEKEEPER_WEB_LISTEN: ${WEKEEPER_WEB_LISTEN:-:80}
+      WEKEEPER_API_UPSTREAM: api:8080
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${WEB_BIND_HOST:-127.0.0.1}:${WEB_HTTP_PORT:-8088}:80"
+      - "${WEB_BIND_HOST:-127.0.0.1}:${WEB_HTTPS_PORT:-8443}:443"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8081/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    read_only: true
+    tmpfs: [/tmp]
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+    networks: [outbound]
+
+volumes:
+  postgres-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  database:
+    internal: true
+  outbound:

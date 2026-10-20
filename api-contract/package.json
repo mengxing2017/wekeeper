@@ -1,0 +1,14 @@
+{
+  "name": "@wekeeper/api-contract",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.22.0",
+  "exports": {
+    "./http": "./src/http/index.ts",
+    "./system": "./src/modules/system/index.ts",
+    "./health": "./src/modules/health/index.ts"
+  },
+  "scripts": { "build": "tsc --noEmit", "test": "vitest run" },
+  "devDependencies": { "typescript": "~5.8.3", "vitest": "^3.2.4" }
+}

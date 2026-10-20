@@ -1,0 +1,34 @@
+{
+  "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.14.2/.schema/devbox.schema.json",
+  "packages": {
+    "rustup": "1.29.0",
+    "nodejs": "22",
+    "pnpm": "11.22.0",
+    "pkg-config": "0.29.2",
+    "openssl": {
+      "version": "3.6.0",
+      "outputs": [
+        "bin",
+        "dev",
+        "out"
+      ]
+    }
+  },
+  "shell": {
+    "init_hook": [
+      "rustup toolchain install 1.97.1",
+      "rustup default 1.97.1"
+    ],
+    "scripts": {
+      "check": "make check",
+      "test-unit": "make test-unit",
+      "test-integration": "make test-integration",
+      "api": "make api-dev",
+      "dev-embedded": "make dev-embedded",
+      "test-embedded": "make test-embedded",
+      "web": "make web-dev",
+      "fmt": "cargo fmt --manifest-path backend/Cargo.toml --all",
+      "fmt:check": "cargo fmt --manifest-path backend/Cargo.toml --all --check"
+    }
+  }
+}

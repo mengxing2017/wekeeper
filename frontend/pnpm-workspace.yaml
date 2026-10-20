@@ -1,0 +1,3 @@
+# The contract is a sibling file dependency, not another deployed application.
+allowBuilds:
+  esbuild: true

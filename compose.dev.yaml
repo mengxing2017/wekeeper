@@ -1,0 +1,12 @@
+services:
+  postgres:
+    ports: ["127.0.0.1:${POSTGRES_DEV_PORT:-5432}:5432"]
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports: ["127.0.0.1:${API_DEV_PORT:-8080}:8080"]
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
