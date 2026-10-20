@@ -10,7 +10,7 @@ impl Default for SystemInfo {
         Self {
             application: "wekeeper",
             version: env!("CARGO_PKG_VERSION"),
-            stage: "scaffold",
+            stage: "business",
         }
     }
 }

@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1
 FROM rust:1.97.1-bookworm AS builder
+RUN apt-get update && apt-get install -y --no-install-recommends cmake pkg-config && rm -rf /var/lib/apt/lists/*
 WORKDIR /workspace/backend
 COPY backend/Cargo.toml backend/Cargo.lock ./
 COPY backend/src ./src

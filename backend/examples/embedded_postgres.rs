@@ -56,7 +56,7 @@ async fn run(
         .acquire_timeout(Duration::from_secs(5))
         .connect(&postgres.settings().url(DATABASE_NAME))
         .await?;
-    let result = runtime::serve(pool.clone(), bind_addr).await;
+    let result = runtime::serve_embedded(pool.clone(), bind_addr).await;
     pool.close().await;
     result
 }

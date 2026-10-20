@@ -1,12 +1,12 @@
 pub mod audit;
 pub mod bootstrap;
 pub mod business;
-pub mod identity;
 pub mod community;
 pub mod config;
 pub mod database;
-pub mod http;
 pub mod distribution;
+pub mod http;
+pub mod identity;
 pub mod integrations;
 pub mod legacy;
 pub mod media;
