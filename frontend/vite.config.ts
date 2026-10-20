@@ -8,6 +8,7 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
+      '@wekeeper/api-contract/business': fileURLToPath(new URL('../api-contract/src/modules/business/index.ts', import.meta.url)),
       '@wekeeper/api-contract/http': fileURLToPath(new URL('../api-contract/src/http/index.ts', import.meta.url)),
       '@wekeeper/api-contract/system': fileURLToPath(new URL('../api-contract/src/modules/system/index.ts', import.meta.url)),
       '@wekeeper/api-contract/health': fileURLToPath(new URL('../api-contract/src/modules/health/index.ts', import.meta.url)),
