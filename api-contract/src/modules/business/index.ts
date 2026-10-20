@@ -115,3 +115,11 @@ export const workspace = {
     }>('/api/v1/wecom/config'),
     signature: (url: string, agent: boolean) => data<Signature>(`/api/v1/wecom/js-sdk-config?${new URLSearchParams({ url, agent: String(agent) })}`),
 };
+
+/** OAuth only accepts UUID selections; arbitrary return URLs are not supported. */
+export function wecomOAuthUrl(selection: { school?: string; draft?: string } = {}): string {
+    const params = new URLSearchParams();
+    if (selection.school) params.set('school', selection.school);
+    if (selection.draft) params.set('draft', selection.draft);
+    return `/api/v1/wecom/oauth/start${params.size ? `?${params}` : ''}`;
+}
