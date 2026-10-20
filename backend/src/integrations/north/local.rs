@@ -29,7 +29,9 @@ impl Service {
         }
     }
     pub fn configured(&self) -> bool {
-        !self.corp.is_empty() && !self.agent.is_empty() && !self.secret.is_empty()
+        !self.corp.trim().is_empty()
+            && self.agent.parse::<u32>().is_ok_and(|id| id > 0)
+            && !self.secret.trim().is_empty()
     }
     async fn json(&self, request: reqwest::RequestBuilder) -> Result<Value> {
         let response = request.send().await.map_err(|_| Error::Unavailable)?;
