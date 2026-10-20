@@ -79,3 +79,45 @@ async fn readiness_fails_when_database_is_unavailable() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
+
+#[tokio::test]
+async fn wecom_status_is_public_and_contains_no_credentials() {
+    let pool = PgPoolOptions::new()
+        .connect_lazy("postgres://unused:unused@127.0.0.1:1/unused")
+        .unwrap();
+    let mut application = bootstrap::build_application(pool);
+    application.integrations.corp.clear();
+    let response = http::app_router(application)
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/wecom/status")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let actual: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/wecom-status.json"
+    ))
+    .unwrap();
+    assert_eq!(actual, fixture);
+}
+
+#[tokio::test]
+async fn oauth_missing_cookie_returns_to_the_frontend_error_state() {
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/wecom/oauth/callback?code=invalid&state=invalid")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(response.headers()["location"], "/wecom?oauth_error=failed");
+}
