@@ -87,7 +87,9 @@ export const identity = {
     update: (id: string, body: unknown) => data(`/api/v1/accounts/${part(id)}`, 'PUT', body),
     reset: (id: string, password: string) => data(`/api/v1/accounts/${part(id)}/password`, 'POST', { username: '', password }),
 };
+export interface WecomStatus { configured: boolean; oauth_available: boolean }
 export const workspace = {
+    wecomStatus: () => data<WecomStatus>('/api/v1/wecom/status'),
     globalResources: () => data<Row[]>('/api/v1/platform/resources'),
     globalResource: (body: unknown) => data('/api/v1/platform/resources', 'POST', body),
     schools: () => data<School[]>('/api/v1/schools'),
