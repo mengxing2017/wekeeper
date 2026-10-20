@@ -62,6 +62,40 @@ async fn complete_business_flow_and_security_boundaries() {
     .unwrap();
     database::migrate(&pool).await.unwrap();
     let a = bootstrap::build_application(pool.clone());
+    let return_path = format!("/wecom?school={}", Uuid::new_v4());
+    let oauth_state = a
+        .integrations
+        .repository
+        .oauth_state(&return_path)
+        .await
+        .unwrap();
+    assert_eq!(
+        a.integrations
+            .repository
+            .consume(&oauth_state)
+            .await
+            .unwrap(),
+        return_path
+    );
+    assert!(
+        a.integrations
+            .repository
+            .consume(&oauth_state)
+            .await
+            .is_err()
+    );
+    let expired = a
+        .integrations
+        .repository
+        .oauth_state("/wecom")
+        .await
+        .unwrap();
+    sqlx::query("UPDATE oauth_states SET expires_at=now()-interval '1 second' WHERE state_hash=$1")
+        .bind(wekeeper_api::business::hash(&expired))
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(a.integrations.repository.consume(&expired).await.is_err());
     let suffix = Uuid::new_v4();
     let adminid = a
         .identity
