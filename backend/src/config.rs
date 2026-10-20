@@ -9,6 +9,10 @@ use sqlx::{
 #[derive(Parser)]
 #[command(name = "wekeeper-api", version, about = "WeKeeper HTTP API")]
 pub struct Config {
+    /// Read a new administrator password from stdin; exits without starting HTTP.
+    #[arg(long)]
+    pub create_admin: Option<String>,
+
     #[arg(long, env = "WEKEEPER_BIND_ADDR", default_value = "0.0.0.0:8080")]
     pub bind_addr: SocketAddr,
     #[arg(long, env = "WEKEEPER_DATABASE_URL", hide_env_values = true)]
