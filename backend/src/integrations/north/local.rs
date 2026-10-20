@@ -1,7 +1,7 @@
 use super::super::south::adapter::postgres::Repository;
 use crate::business::{Actor, Error, Result, require, secret};
+use crate::integrations::domain::{group_contains_member, sdk_signature};
 use serde_json::{Value, json};
-use sha1::{Digest, Sha1};
 #[derive(Clone)]
 pub struct Service {
     pub repository: Repository,
@@ -120,14 +120,11 @@ impl Service {
         let g = &v["group_chat"];
         require(g["chat_id"].as_str() == Some(chat), "群信息不匹配")?;
         require(
-            g["owner"].as_str() == Some(userid.as_str())
-                || g["member_list"].as_array().is_some_and(|m| {
-                    m.iter()
-                        .any(|u| u["type"] == 1 && u["userid"].as_str() == Some(userid.as_str()))
-                }),
+            group_contains_member(g, chat, &userid),
             "当前成员不在目标群内",
         )
     }
+
     async fn ticket(&self, agent: bool) -> Result<String> {
         let key = format!("wecom:{}:{}:ticket:{}", self.corp, self.agent, agent);
         let token = self.token().await?;
@@ -171,12 +168,7 @@ impl Service {
         let ticket = self.ticket(agent).await?;
         let nonce = secret();
         let timestamp = chrono::Utc::now().timestamp();
-        let signature = format!(
-            "{:x}",
-            Sha1::digest(format!(
-                "jsapi_ticket={ticket}&noncestr={nonce}&timestamp={timestamp}&url={url}"
-            ))
-        );
+        let signature = sdk_signature(&ticket, &nonce, timestamp, url);
         Ok(json!({"timestamp":timestamp,"nonceStr":nonce,"signature":signature}))
     }
 }
