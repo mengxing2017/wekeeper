@@ -38,3 +38,7 @@ coverage/
 platform/secrets/
 *.log
 report/
+
+# Python migration tools
+**/__pycache__/
+*.pyc
