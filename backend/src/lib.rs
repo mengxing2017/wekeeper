@@ -1,6 +1,7 @@
 pub mod bootstrap;
 pub mod business;
 pub mod identity;
+pub mod community;
 pub mod config;
 pub mod database;
 pub mod http;
