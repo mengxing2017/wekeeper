@@ -15,7 +15,7 @@ export default defineConfig({
   },
   optimizeDeps: { exclude: ['@wekeeper/api-contract'] },
   server: {
-    host: '127.0.0.1', port: 5173,
+    host: true, port: 5173, strictPort: true,
     proxy: Object.fromEntries(['/api', '/healthz', '/readyz'].map(path => [path, {
       target: apiOrigin, changeOrigin: true,
     }])),
