@@ -1,0 +1,52 @@
+:root {
+  --color-canvas: #f4f6f8;
+  --color-surface: #fff;
+  --color-surface-subtle: #f6f8f9;
+  --color-surface-muted: #eef2f3;
+  --color-text: #17202a;
+  --color-text-secondary: #53616e;
+  --color-text-muted: #65727e;
+  --color-border: #d8dee4;
+  --color-border-strong: #aeb8c2;
+  --color-accent: #08786c;
+  --color-accent-strong: #086052;
+  --color-accent-subtle: #eef9f6;
+  --color-danger: #b52e2e;
+  --color-danger-subtle: #fff3f3;
+  --color-warning: #9a6500;
+  --color-warning-subtle: #fff9e8;
+  --color-focus: #137cbd;
+
+  --font-family-sans: Inter, "Noto Sans SC", sans-serif;
+  --font-family-mono: "SFMono-Regular", Consolas, monospace;
+  --font-size-xs: 12px;
+  --font-size-sm: 13px;
+  --font-size-base: 14px;
+  --font-size-lg: 17px;
+  --font-size-xl: 24px;
+  --font-size-2xl: 28px;
+  --line-height-base: 1.5;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --radius-sm: 4px;
+  --radius-md: 5px;
+  --radius-lg: 7px;
+  --control-height: 38px;
+  --shadow-dialog: 0 18px 60px rgb(10 24 32 / 25%);
+
+  /* Compatibility aliases for existing shared component styles. */
+  --surface: var(--color-surface);
+  --surface-subtle: var(--color-surface-subtle);
+  --border: var(--color-border);
+  --text: var(--color-text);
+  --muted: var(--color-text-muted);
+  --accent: var(--color-accent);
+  --danger: var(--color-danger);
+  --warning: var(--color-warning);
+  --focus: var(--color-focus);
+}
