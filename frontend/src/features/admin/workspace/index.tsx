@@ -1,12 +1,15 @@
+import { useSearchParams } from 'react-router-dom';
+import { AppShell, navigation } from '../../../app/shell';
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Button, Card, Input, Select, Space, Tabs, Tag } from 'antd';
+import { Alert, Button, Card, Input, Select, Space, Tag } from 'antd';
 import { identity, workspace, type Row, type Json, type Resource, type School, type User } from './api';
 export const label = (v: Json | undefined) => v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v);
 const states: Record<string, string> = { pending: '待审核', approved: '已通过', rejected: '已拒绝', visible: '展示中', hidden: '已隐藏', deleted: '已删除', prepared: '等待客户端结果', client_reported_success: '客户端报告成功', client_reported_failure: '客户端报告失败', unknown: '结果不确定', cancelled: '已取消', operator_confirmed: '人工确认已发送', operator_rejected: '人工确认未发送', open: '待处理', resolved: '已处理', dismissed: '已驳回' };
 export const stateLabel = (v: Json | undefined) => states[label(v)] ?? label(v);
-export function SessionGate({ children, wecom = false }: {
-    children: (user: User) => ReactNode;
+export function SessionGate({ children, wecom = false, showSessionBar = true }: {
+    children: (user: User, logout: () => Promise<void>) => ReactNode;
+    showSessionBar?: boolean;
     wecom?: boolean;
 }) {
     const cache = useQueryClient();
@@ -25,19 +28,20 @@ export function SessionGate({ children, wecom = false }: {
     finally {
         setBusy(false);
     } }
-    if (q.isPending)
-        return <p role="status">正在确认登录状态…</p>;
-    if (!q.data)
-        return <Card title="登录 WeKeeper" className="login-card">{error && <Alert type="error" title={error}/>}<form onSubmit={login} className="business-form"><label>账号<input name="username" autoComplete="username" required maxLength={100}/></label><label>密码<input name="password" type="password" autoComplete="current-password" required maxLength={128}/></label><button disabled={busy}>登录</button></form>{wecom && <a href="/api/v1/wecom/oauth/start">使用企业微信身份登录</a>}{q.isError && <p>请登录后继续；若会话查询失败，请检查服务连接。</p>}</Card>;
-    return <><div className="session-bar"><span>{q.data.user.display_name}</span><Button onClick={async () => { try {
-        await identity.logout();
-        await cache.cancelQueries();
-        cache.clear();
+    async function logout() {
+        setError('');
+        try { await identity.logout(); await cache.cancelQueries(); cache.clear(); }
+        catch (e) { setError((e as Error).message); }
     }
-    catch (e) {
-        setError((e as Error).message);
-    } }}>退出登录</Button>{error && <span role="alert">{error}</span>}</div>{children(q.data.user)}</>;
+    if (q.isPending) return <div className="loading" role="status">正在确认登录状态…</div>;
+    if (!q.data) return <div className="auth-page"><section className="auth-panel">
+        <div className="auth-brand"><span className="brand-mark">W</span> WeKeeper</div><div><h1>登录工作空间</h1><p>校园社区 · 内容运营 · 人工分享</p></div>
+        {error && <Alert type="error" title={error} showIcon/>}<form onSubmit={login} className="business-form"><label>账号<input name="username" placeholder="请输入账号" autoComplete="username" required maxLength={100}/></label><label>密码<input name="password" placeholder="请输入密码" type="password" autoComplete="current-password" required maxLength={128}/></label><button className="primary-button" disabled={busy}>{busy ? '正在登录…' : '登录'}</button></form>{wecom && <a href="/api/v1/wecom/oauth/start">使用企业微信身份登录</a>}
+        <p className="auth-caption">使用管理员分配的账号进入工作空间</p>
+    </section></div>;
+    return <>{showSessionBar && <div className="session-bar"><span>{q.data.user.display_name}</span><Button onClick={logout}>退出登录</Button></div>}{error && <div className="session-error" role="alert">{error}</div>}{children(q.data.user, logout)}</>;
 }
+
 interface Field {
     name: string;
     title: string;
@@ -67,20 +71,26 @@ function Editor({ fields, onSave, submit = '保存' }: {
     } }
     return <form onSubmit={save} className="business-form">{fields.map(f => <label key={f.name}>{f.title}{f.type === 'textarea' ? <textarea name={f.name} required={!f.optional} defaultValue={f.value} rows={4}/> : f.options ? <select name={f.name} required={!f.optional} defaultValue={f.value}><option value="">请选择</option>{f.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select> : <input name={f.name} type={f.type ?? 'text'} required={!f.optional} defaultValue={f.value}/>}</label>)}{error && <Alert type="error" title={error}/>}{done && <p role="status">已保存</p>}<button disabled={busy}>{busy ? '正在保存…' : submit}</button></form>;
 }
-export function Workspace() { return <SessionGate>{user => <Admin user={user}/>}</SessionGate>; }
-function Admin({ user }: {
-    user: User;
-}) {
+export function Workspace() { return <SessionGate showSessionBar={false}>{(user, logout) => <Admin user={user} logout={logout}/>}</SessionGate>; }
+function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
     const cache = useQueryClient();
     const q = useQuery({ queryKey: ['schools'], queryFn: workspace.schools });
-    const [selected, setSelected] = useState('');
+    const [params, setParams] = useSearchParams();
+    const selected = params.get('school') ?? '';
     const school = q.data?.find(s => s.id === (selected || q.data[0]?.id));
-    const [tab, setTab] = useState('posts');
+    const requestedTab = params.get('view') ?? 'posts';
+    const tab = navigation.some(n => n.key === requestedTab && (n.group !== '平台管理' || user.platform_admin)) ? requestedTab : 'posts';
+    const navigate = (key: string) => setParams(previous => { const next = new URLSearchParams(previous); next.set('view', key); return next; });
     const refresh = async () => { await cache.invalidateQueries({ queryKey: ['schools'] }); await cache.invalidateQueries({ queryKey: ['business'] }); };
-    return <Space orientation="vertical" style={{ width: '100%' }} size="large">{q.error && <Alert type="error" title={q.error.message}/>}<Select aria-label="当前学校" style={{ minWidth: 260 }} value={school?.id} options={q.data?.map(s => ({ value: s.id, label: s.name }))} placeholder="选择学校" onChange={async (s) => { await cache.cancelQueries({ queryKey: ['business'] }); cache.removeQueries({ queryKey: ['business'] }); setSelected(s); }}/>
- {user.platform_admin && <details><summary>新建学校与账号管理</summary><Editor fields={[{ name: 'name', title: '学校名称' }]} onSave={async (v) => { await workspace.createSchool(v.name); await refresh(); }}/><Accounts /><GlobalResources /></details>}
- {!school ? <p>尚未授权学校，请联系管理员。</p> : <><Tabs activeKey={tab} onChange={setTab} items={[['posts', '内容审核'], ['comments', '评论审核'], ['cases', '举报与反馈'], ['resources', '展示与屏蔽词'], ['groups', '客户群'], ['templates', '模板'], ['delivery-drafts', '分享草稿'], ['delivery-attempts', '分享记录'], ['members', '学校成员'], ['audit', '操作审计'], ['settings', '学校设置']].map(([key, label]) => ({ key, label }))}/>{tab === 'settings' ? <Settings key={school.id} school={school} refresh={refresh}/> : <Panel key={`${school.id}:${tab}`} school={school} resource={tab as Resource} refresh={refresh}/>}</>}
- </Space>;
+    return <AppShell active={tab} onNavigate={navigate} username={user.display_name} platformAdmin={user.platform_admin} onLogout={logout}>
+      {q.error && <Alert type="error" title={q.error.message} showIcon/>}
+      <div className="scope-toolbar"><div><span className="field-caption">当前学校</span><Select aria-label="当前学校" className="school-select" loading={q.isPending} value={school?.id} options={q.data?.map(s => ({ value: s.id, label: s.name }))} placeholder="选择学校" onChange={async (s) => { await cache.cancelQueries({ queryKey: ['business'] }); cache.removeQueries({ queryKey: ['business'] }); setParams(previous => { const next = new URLSearchParams(previous); next.set('school', s); return next; }); }}/></div><span className="scope-note">{school ? '所有业务操作均限定在当前学校' : '选择学校后开始管理业务'}</span></div>
+      {tab === 'accounts' && user.platform_admin ? <div className="management-stack"><Card title="新建学校"><Editor fields={[{ name: 'name', title: '学校名称' }]} onSave={async v => { await workspace.createSchool(v.name); await refresh(); }}/></Card><Card title="账号管理"><Accounts /></Card></div>
+        : tab === 'platform-resources' && user.platform_admin ? <Card title="平台默认展示配置"><GlobalResources /></Card>
+        : q.isPending ? <div className="empty-state" role="status">正在加载学校…</div>
+        : !school ? <div className="empty-state"><span className="empty-mark">◇</span><h2>尚未选择学校</h2><p>{user.platform_admin ? '请在「学校与账号」中创建学校，或选择已有学校。' : '请联系管理员为账号分配学校权限。'}</p>{user.platform_admin && <Button type="primary" onClick={() => navigate('accounts')}>创建学校</Button>}</div>
+        : <div className="business-panel">{tab === 'settings' ? <Card title="基础设置"><Settings key={school.id} school={school} refresh={refresh}/></Card> : <Panel key={`${school.id}:${tab}`} school={school} resource={tab as Resource} refresh={refresh}/>}</div>}
+    </AppShell>;
 }
 function Accounts() { const cache = useQueryClient(); const q = useQuery({ queryKey: ['accounts'], queryFn: identity.accounts }); const [editing, setEditing] = useState<Row>(); const refresh = () => cache.invalidateQueries({ queryKey: ['accounts'] }); return <section><h3>账号</h3><Editor fields={[{ name: 'username', title: '账号' }, { name: 'display_name', title: '昵称' }, { name: 'password', title: '初始密码（至少12个字符）', type: 'password' }]} onSave={async (v) => { await identity.create({ username: v.username, display_name: v.display_name, password: v.password }); await refresh(); }}/>{q.error && <p role="alert">{q.error.message}</p>}{q.data?.map(r => <p key={r.id}>{label(r.display_name)} · {label(r.username)} <code>{r.id}</code><Button onClick={() => setEditing(r)}>管理</Button></p>)}{editing && <><Editor key={editing.id} fields={[{ name: 'display_name', title: '昵称', value: label(editing.display_name) }, { name: 'wecom_userid', title: '企业微信成员 UserID', optional: true, value: label(editing.wecom_userid) }, { name: 'active', title: '账号状态', value: String(editing.active), options: [{ value: 'true', label: '启用' }, { value: 'false', label: '禁用' }] }]} onSave={async (v) => { await identity.update(editing.id, { ...v, active: v.active === 'true', wecom_userid: v.wecom_userid || null }); await refresh(); }}/><Editor fields={[{ name: 'password', title: '重置密码（撤销该账号所有会话）', type: 'password' }]} onSave={v => identity.reset(editing.id, v.password)}/></>}</section>; }
 function Settings({ school, refresh }: {
@@ -108,13 +118,13 @@ function Panel({ school, resource, refresh }: {
         setBusy(false);
     } }
     const mutation = async (path: string, body: unknown, method = 'POST') => { await workspace.mutate(s, path, body, method); await refresh(); };
-    return <><Space wrap><Input.Search aria-label="搜索内容" placeholder="搜索标题或正文" onSearch={v => { setSearch(v); setPage(1); }}/>{['posts', 'comments'].includes(resource) && <Select aria-label="审核状态" value={status} style={{ width: 140 }} onChange={setStatus} options={[{ value: '', label: '全部状态' }, ...['pending', 'approved', 'rejected'].map(value => ({ value, label: states[value] }))]}/>}<Button onClick={() => q.refetch()}>刷新</Button></Space>{(error || q.error) && <Alert type="error" title={error || q.error?.message}/>}
+    return <><div className="list-toolbar"><Space wrap><Input.Search aria-label="搜索内容" placeholder="搜索标题或正文" onSearch={v => { setSearch(v); setPage(1); }}/>{['posts', 'comments'].includes(resource) && <Select aria-label="审核状态" value={status} style={{ width: 140 }} onChange={setStatus} options={[{ value: '', label: '全部状态' }, ...['pending', 'approved', 'rejected'].map(value => ({ value, label: states[value] }))]}/>}<Button onClick={() => q.refetch()} loading={q.isFetching}>刷新</Button></Space><span className="list-count">{q.data ? `本页 ${q.data.length} 条记录` : '正在获取记录'}</span></div>{(error || q.error) && <Alert type="error" title={error || q.error?.message}/>}
  {resource === 'resources' && <ResourceEditor key={editing?.id ?? 'new'} item={editing} save={v => mutation('resources', v)}/>}
  {resource === 'groups' && <Editor key={editing?.id ?? 'new'} fields={[{ name: 'name', title: '群名称', value: label(editing?.name) }, { name: 'corp_id', title: '企业 ID', value: label(editing?.corp_id) }, { name: 'chat_id', title: '客户群 ID', value: label(editing?.chat_id) }, { name: 'active', title: '启用状态', value: editing ? String(editing.active) : 'true', options: [{ value: 'true', label: '启用' }, { value: 'false', label: '撤销' }] }]} onSave={v => mutation('groups', { ...v, id: editing?.id, revision: editing?.revision ?? 0, active: v.active === 'true' })}/>}
  {resource === 'members' && <Editor fields={[{ name: 'id', title: '账号 ID（从账号管理复制）' }, { name: 'role', title: '学校角色', options: [{ value: 'member', label: '普通成员' }, { value: 'operator', label: '运营' }, { value: 'admin', label: '学校管理员' }, { value: 'revoked', label: '撤销学校授权' }] }]} onSave={v => mutation(`members/${v.id}`, { role: v.role }, 'PUT')}/>}
  {resource === 'templates' && <Editor fields={[{ name: 'name', title: '模板名称' }]} onSave={v => mutation('templates', v)}/>}
  {resource === 'delivery-drafts' && <DraftEditor school={s} save={v => mutation('delivery-drafts', v)}/>}
- {q.isPending && <p role="status">正在加载…</p>}{q.data?.length === 0 && <p>暂无记录</p>}
+ {q.isPending && <p role="status">正在加载…</p>}{q.data?.length === 0 && <div className="empty-state"><span className="empty-mark">◇</span><h3>暂无记录</h3><p>当前学校下没有符合条件的记录。</p></div>}
  <div className="record-list">{q.data?.map(r => <Card key={r.id} size="small" title={label(r.title ?? r.name ?? r.group_name ?? r.display_name ?? r.action) || r.id} extra={<Tag>{stateLabel(r.audit_status ?? r.state ?? r.role ?? r.kind)}</Tag>}>
  {r.content && <p className="text-content">{label(r.content)}</p>}{r.body && <p className="text-content">{label(r.body)}</p>}{r.contact && <p>联系方式：{label(r.contact)}</p>}{r.visibility && <Tag>{stateLabel(r.visibility)}</Tag>}{r.reconciliation && <p>核对结果：{stateLabel(r.reconciliation)} · {label(r.reconciliation_note)}</p>}<small>{label(r.created_at)} {r.id}</small>
  {r.detail && <pre>{label(r.detail)}</pre>}{r.url && <p><a href={label(r.url)} target="_blank" rel="noreferrer">查看资源链接</a></p>}
