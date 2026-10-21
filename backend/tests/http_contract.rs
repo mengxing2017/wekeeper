@@ -405,3 +405,39 @@ async fn pagination_rejects_old_names_and_invalid_bounds() {
         );
     }
 }
+
+#[tokio::test]
+async fn directory_member_contract_matches_shared_fixture() {
+    use axum::response::IntoResponse;
+    use wekeeper_api::integrations::domain::directory::{Department, DirectoryMember};
+    let member = DirectoryMember {
+        id: uuid::Uuid::from_u128(1),
+        userid: "Zhang.San".into(),
+        name: "张三".into(),
+        status: Some(1),
+        visibility: "visible".into(),
+        verification: "verified".into(),
+        departments: vec![Department {
+            id: 2,
+            parentid: 1,
+            name: "运营部".into(),
+            order: 0,
+        }],
+        checked_at: Some("2026-10-21T00:00:00+00:00".into()),
+        bound_account_id: None,
+        bound_account_name: None,
+    };
+    let response = wekeeper_api::http::jsonapi::collection(
+        "wecom-directory-members",
+        vec![serde_json::to_value(member).unwrap()],
+        &Default::default(),
+    )
+    .into_response();
+    let actual: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 8192).await.unwrap()).unwrap();
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/wecom-directory-member.json"
+    ))
+    .unwrap();
+    assert_eq!(actual, fixture);
+}

@@ -167,6 +167,16 @@ async fn complete_business_flow_and_security_boundaries() {
         .session(adminid, "browser", false)
         .await
         .unwrap();
+    // Repository-level delivery tests need an independently verified enterprise identity.
+    let enterprise_member = Uuid::new_v4();
+    sqlx::query("INSERT INTO wecom_members(id,userid,name,status,verification,checked_at) VALUES($1,$2,'Admin',1,'verified',now())")
+        .bind(enterprise_member).bind(format!("admin-{suffix}")).execute(&pool).await.unwrap();
+    sqlx::query("UPDATE accounts SET wecom_member_id=$2 WHERE id=$1")
+        .bind(adminid)
+        .bind(enterprise_member)
+        .execute(&pool)
+        .await
+        .unwrap();
     let app = http::app_router(a.clone());
     assert_eq!(
         call(&app, "GET", "/api/v1/schools", "", "", Value::Null)
@@ -539,6 +549,16 @@ async fn complete_business_flow_and_security_boundaries() {
         .await
         .0,
         422
+    );
+    let mut stale_identity = admin.clone();
+    stale_identity.wecom_binding_revision += 1;
+    assert!(
+        a.distribution
+            .0
+            .claim(&stale_identity, s, at)
+            .await
+            .is_err(),
+        "a stale enterprise binding cannot claim a prepared attempt"
     );
     a.distribution.0.claim(&admin, s, at).await.unwrap();
     assert!(
