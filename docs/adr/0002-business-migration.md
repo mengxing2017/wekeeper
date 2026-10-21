@@ -10,6 +10,14 @@ identity、schools、community、distribution、media 的用例通过 south/port
 HTTP 层负责提取参数、身份和响应；SQL 位于数据库 adapter。
 TypeScript contract 提供同源 client、CSRF、业务响应和错误类型；feature/api 是页面入口。
 
+## 企业微信单企业边界
+
+本项目仅支持一套企业微信配置，接入一个企业主体及其自建应用，不需要支持多企业同时接入。
+部署使用唯一一组 `WEKEEPER_WECOM_CORP_ID`、`WEKEEPER_WECOM_AGENT_ID`、`WEKEEPER_WECOM_SECRET`。
+企业成员 UserID 映射与客户群均属于该企业；新增群的 CorpID 必须与部署配置一致。
+同一企业下可以管理多个学校、多个运营成员和多个客户群，学校范围与角色仍独立授权。
+多企业凭证管理、跨企业成员身份与企业切换不在项目需求范围内，不作为业务缺陷或待建设能力。
+
 ## 身份与授权
 
 浏览器使用 HttpOnly、SameSite=Lax Cookie，生产启用 Secure，修改请求同时检查 Origin 与 CSRF。
@@ -18,7 +26,8 @@ TypeScript contract 提供同源 client、CSRF、业务响应和错误类型；f
 微信小程序 code 在服务端交换 openid，使用独立 miniapp bearer 会话。
 旧小程序 token header 只接受新生成的 miniapp 会话，不接受旧 PHP token，也不接受浏览器 Cookie。
 企业微信 OAuth 使用一次性 state、HttpOnly state Cookie、5 分钟期限和固定回调路径。
-企业微信成员必须先映射到账号，再获得学校 operator/admin 权限；OAuth 不自动授予角色。
+企业微信成员从自建应用可见通讯录同步后，由平台管理员选择并实时核验绑定账号，再独立获得学校 operator/admin 权限；OAuth 不自动授予角色。
+企业姓名、部门及状态与本地昵称、账号启停和学校授权分别维护。企业身份登录和发送准备实时核验成员，绑定版本参与会话及发送领取校验。
 授权撤销保留 revoked 记录，普通学校绑定不能恢复被撤销的权限。
 平台管理员可建学校、建账号、设置学校角色；学校 admin 可修改学校配置、群映射并核对分享结果。
 普通成员只能操作授权学校内自己的内容和互动；审核与内容展示状态分开存储。
