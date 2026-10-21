@@ -65,10 +65,21 @@ async fn serve_inner(
     if interval != 0 && interval < 60 {
         return Err("directory interval must be 0 or at least 60 seconds".into());
     }
+    tracing::info!(
+        server_configured = directory.server_configured,
+        interval_seconds = interval,
+        poll_seconds = 5,
+        "wecom directory worker initialized; interval 0 disables scheduled sync only"
+    );
     let worker = tokio::spawn(async move {
         loop {
-            if directory.server_configured && directory.run_once(interval).await.is_err() {
-                tracing::warn!("directory worker failed; inspect configuration and sync status");
+            if directory.server_configured
+                && let Err(error) = directory.run_once(interval).await
+            {
+                tracing::warn!(
+                    error_code = crate::integrations::north::directory::error_code(&error),
+                    "wecom directory worker failed; inspect task logs and directory configuration"
+                );
             }
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         }
