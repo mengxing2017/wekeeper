@@ -9,6 +9,7 @@ use crate::{
     },
 };
 use serde_json::Value;
+use tracing::Instrument;
 use uuid::Uuid;
 #[derive(Clone)]
 pub struct Service<R = Repository, C = Client> {
@@ -52,7 +53,14 @@ impl<R: DirectoryStore, C: DirectoryClient> Service<R, C> {
     pub async fn enqueue(&self, a: &Actor) -> Result<Value> {
         a.platform()?;
         let generation = self.ensure_config().await?;
-        self.store.enqueue(Some(a.id), 0, generation).await
+        let job = self.store.enqueue(Some(a.id), 0, generation).await?;
+        tracing::info!(
+            job_id = job["id"].as_str().unwrap_or("unknown"),
+            generation,
+            state = job["state"].as_str().unwrap_or("unknown"),
+            "wecom directory sync requested; queued or existing active job returned"
+        );
+        Ok(job)
     }
     pub async fn job(&self, a: &Actor, id: Uuid) -> Result<Value> {
         a.platform()?;
@@ -181,24 +189,82 @@ impl<R: DirectoryStore, C: DirectoryClient> Service<R, C> {
         let Some(job) = self.store.claim(generation).await? else {
             return Ok(());
         };
+        self.run_job(&job)
+            .instrument(tracing::info_span!("wecom_directory_sync", job_id = %job.id, generation = job.generation))
+            .await
+    }
+    async fn run_job(&self, job: &Job) -> Result<()> {
+        let started = std::time::Instant::now();
+        tracing::info!(state = "running", "wecom directory sync started");
         let collect = self.collect();
         tokio::pin!(collect);
         let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(20));
+        // interval's first tick is immediate; do not report progress before any work.
+        heartbeat.tick().await;
         let result = loop {
             tokio::select! {
                 result=&mut collect=>break result,
-                _=heartbeat.tick()=>self.store.renew(&job).await?,
+                _=heartbeat.tick()=> {
+                    if let Err(e) = self.store.renew(job).await {
+                        tracing::warn!(stage = "lease_renewal", error_code = error_code(&e), elapsed_ms = started.elapsed().as_millis() as u64,
+                            "wecom directory sync stopped; lease renewal failed, this worker will not publish");
+                        return Err(e);
+                    }
+                    tracing::info!(state = "running", stage = "collect", elapsed_ms = started.elapsed().as_millis() as u64,
+                        "wecom directory sync in progress; collecting visible directory");
+                },
             }
         };
         match result {
             Ok((departments, members)) => {
-                if let Err(e) = self.store.finish(&job, &departments, &members).await {
-                    self.store.fail(&job, "publication_failed").await?;
+                if let Err(e) = self.store.finish(job, &departments, &members).await {
+                    tracing::warn!(
+                        stage = "publish",
+                        error_code = error_code(&e),
+                        elapsed_ms = started.elapsed().as_millis() as u64,
+                        "wecom directory sync publication failed; success not confirmed"
+                    );
+                    self.record_failure(job, "publication_failed").await?;
                     return Err(e);
                 }
+                // Only announce success after the publication transaction has committed.
+                tracing::info!(
+                    state = "succeeded",
+                    department_count = departments.len(),
+                    member_count = members.len(),
+                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    "wecom directory sync succeeded; snapshot committed"
+                );
             }
-            Err(e) => self.store.fail(&job, &e.code()).await?,
+            Err(e) => {
+                let code = e.code();
+                tracing::warn!(stage = "collect", error_code = %code, elapsed_ms = started.elapsed().as_millis() as u64,
+                    "wecom directory sync failed; previous snapshot retained");
+                self.record_failure(job, &code).await?;
+            }
         }
         Ok(())
+    }
+    async fn record_failure(&self, job: &Job, code: &str) -> Result<()> {
+        self.store.fail(job, code).await.inspect_err(|e| {
+            tracing::warn!(
+                stage = "record_failure",
+                error_code = error_code(e),
+                "wecom directory sync failure status could not be saved; inspect task status"
+            );
+        })
+    }
+}
+
+// Do not log Error's Debug/Display: database or validation details may contain sensitive data.
+pub(crate) fn error_code(error: &Error) -> &'static str {
+    match error {
+        Error::Unauthorized => "unauthorized",
+        Error::Forbidden => "forbidden",
+        Error::NotFound => "not_found",
+        Error::Conflict => "conflict_or_stale_generation",
+        Error::Invalid(_) => "invalid_configuration_or_input",
+        Error::Unavailable => "upstream_unavailable",
+        Error::Database(_) => "database_error",
     }
 }
