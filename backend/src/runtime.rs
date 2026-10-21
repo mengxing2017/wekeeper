@@ -84,9 +84,38 @@ async fn serve_inner(
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         }
     });
+    let assets = application.integrations.assets();
+    let assets_interval = std::env::var("WEKEEPER_WECOM_ASSET_SYNC_INTERVAL_SECONDS")
+        .ok()
+        .map(|v| v.parse::<i64>())
+        .transpose()?
+        .unwrap_or(1800);
+    if assets_interval != 0 && assets_interval < 60 {
+        worker.abort();
+        return Err("asset interval must be 0 or at least 60 seconds".into());
+    }
+    tracing::info!(
+        interval_seconds = assets_interval,
+        "wecom asset worker initialized"
+    );
+    let assets_worker = tokio::spawn(async move {
+        loop {
+            if assets.integration.server_configured()
+                && let Err(e) = assets.run_once(assets_interval).await
+            {
+                tracing::warn!(
+                    error_code = crate::integrations::north::directory::error_code(&e),
+                    "wecom asset worker failed"
+                );
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
+    });
     let result = axum::serve(listener, http::app_router(application))
         .with_graceful_shutdown(shutdown_signal())
         .await;
+    assets_worker.abort();
+    let _ = assets_worker.await;
     worker.abort();
     let _ = worker.await;
     result?;
