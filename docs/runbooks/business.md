@@ -19,6 +19,8 @@ pnpm --dir frontend dev
 嵌入式库每次停止后删除数据；显式设置开发密码时创建 admin，没有硬编码默认密码。
 后台 `/admin`、成员社区 `/community`、企业微信 `/wecom`。
 
+需要本地调试企业通讯录时，在启动后端的同一终端先 export `WEKEEPER_WECOM_CORP_ID` 和 `WEKEEPER_WECOM_SECRET`；`WEKEEPER_WECOM_AGENT_ID` 可留空。嵌入式启动不会自动读取 `.env`，完整命令及本地文件注入方式见 [README：注入企业微信凭据](../../README.md#注入企业微信凭据)。嵌入式入口强制本地登录模式，完整凭据也不会开启 OAuth/客户端分享；验收这些能力需使用普通 API/Compose 的 HTTPS 部署。
+
 ## Docker 与首次管理员
 
 配置 `.env` 中数据库密码、WEKEEPER_PUBLIC_ORIGIN、HTTPS 域名及平台凭据。
@@ -56,7 +58,7 @@ unset WK_ADMIN_PASSWORD
 
 企业微信配置步骤与真机验收矩阵见 [企业微信接入手册](wecom.md)。
 
-- WEKEEPER_WECOM_CORP_ID / AGENT_ID / SECRET：自建应用及有权限的客户联系能力。
+- WEKEEPER_WECOM_CORP_ID / WEKEEPER_WECOM_SECRET：服务端目录、成员核验与 OAuth 凭据；WEKEEPER_WECOM_AGENT_ID：当前客户端分享所需的同应用 ID。
 - WEKEEPER_WX_APP_ID / WX_SECRET：保留小程序对应 AppID，迁移 openid 必须与之匹配。
 - OAuth 回调：`https://域名/api/v1/wecom/oauth/callback`。
 - JS-SDK 签名仅允许同源 `/wecom` 完整 URL；页面查询参数参与签名，fragment 不参与。
