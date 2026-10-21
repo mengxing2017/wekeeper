@@ -180,46 +180,209 @@ docker compose --env-file .env -f compose.yaml up --no-build --pull never -d --w
 离线模式 `.env` 使用归档中实际加载的标签；不要假设 `docker save/load` 后仍具备仓库 digest 元数据。
 不执行 pull。镜像离线交付不代表企业微信可离线运行，API 与客户端仍需访问腾讯官方服务。
 
-## 5. 运行配置
+## 5. 分别配置前端、后端与数据库
 
-环境变量由 Compose 注入，后端二进制不自动读取 `.env`。不要将业务秘密放入 Dockerfile 或构建参数。
-Shell 中已 export 的同名变量优先于 `.env`；从打包终端部署不同环境前，清理/核对 `API_IMAGE`、`WEB_IMAGE` 等覆盖值。
+先选择启动方式：使用仓库 `compose.yaml` 时，编辑一份 `.env`，由 Compose 分别给三个容器注入变量；使用 `docker run` / 1Panel 独立容器时，分别填写下文的 `.env.api`、`.env.web` 和 `.env.postgres`。两种方式任选一种，不要同时启动占用相同端口的两套容器。
 
-### 当前 Compose 支持的配置
+### 生产账号和密码从哪里获取
 
-| 变量 | 默认值/示例 | 用途 |
+生产部署没有可直接登录的默认管理员密码。数据库连接账号与 `/admin` 后台登录账号是两套独立账号：
+
+| 账号 | 用户名来源 | 密码来源 | 用途 |
+| --- | --- | --- | --- |
+| 仓库 Compose 新建的 PostgreSQL | `POSTGRES_USER`，模板为 `wekeeper` | 部署者首次启动前设置的 `POSTGRES_PASSWORD`，没有默认密码 | API 连接数据库，不用于后台登录 |
+| 已有生产 PostgreSQL | 数据库管理员或云数据库控制台提供的应用角色 | 该角色实际配置的密码 | 填入后端 `WEKEEPER_DATABASE_USER` / `WEKEEPER_DATABASE_PASSWORD` |
+| WeKeeper 后台管理员 | 第 7 节创建命令指定，示例为 `admin` | 执行创建命令时自行输入，12–128 字节 | 登录 `/admin` |
+
+**新建数据库：** 在首次启动前用 `openssl rand -hex 32` 生成密码，保存到 Compose `.env` 的 `POSTGRES_PASSWORD`。独立容器则将同一密码分别填入 `.env.postgres` 的 `POSTGRES_PASSWORD` 和 `.env.api` 的 `WEKEEPER_DATABASE_PASSWORD`。模板中的 `replace-with-a-long-random-password` 只是待替换文本，不是项目提供的生产密码。
+
+**使用已有生产数据库：** 向维护者获取数据库主机、端口、库名、应用用户名、密码及 TLS 要求，填入第 5.3 节对应变量。程序默认用户名 `wekeeper` 仅是默认连接值，不会在外部数据库自动创建这个角色。API 启动会执行 migration，所用角色必须具备该业务库/模式内创建和修改表、索引等权限；由数据库管理员为 WeKeeper 准备专用库及授权。
+
+**已经部署但忘记数据库密码：** 先查部署时保存的 `.env`、`.env.api`、平台环境配置或密码管理系统。PostgreSQL 不提供原密码明文查询；找不到时由数据库管理员重设角色密码，再更新 API 配置并重建容器。仅修改 `POSTGRES_PASSWORD` 不会更改已有数据卷中的密码，也不要删除生产数据卷来重置账号。
+
+**数据库连通后仍无法登录后台：** 新生产库没有自动生成的后台账号，必须执行 [第 7 节](#7-首次管理员初始化)。数据库用户名/密码不能登录 `/admin`，嵌入式开发环境的临时管理员密码也不能用于生产。
+
+### 5.1 构建变量与运行变量的区别
+
+| 配置阶段 | 配置位置 | 内容 |
 | --- | --- | --- |
-| `API_IMAGE` / `WEB_IMAGE` | `wekeeper-api:local` / `wekeeper-web:local` | 应用镜像；生产改成发布版本或 digest |
-| `POSTGRES_IMAGE` | `postgres:17.4-bookworm` | 数据库镜像 |
-| `POSTGRES_DB` / `POSTGRES_USER` | `wekeeper` | 初始化库与角色，API 同时使用 |
-| `POSTGRES_PASSWORD` | 必填 | 数据库及 API 连接密码 |
-| `WEB_BIND_HOST` | `127.0.0.1` | 宿主机 Web 端口绑定地址 |
-| `WEB_HTTP_PORT` / `WEB_HTTPS_PORT` | `8088` / `8443` | 映射至容器 80/443 |
-| `WEKEEPER_WEB_LISTEN` | `:80` | Caddy 站点地址；直接 TLS 时填写域名 |
-| `WEKEEPER_PUBLIC_ORIGIN` | `http://127.0.0.1:8088` | 浏览器精确 origin，不带路径或末尾斜杠 |
-| `WEKEEPER_INSECURE_LOCAL_AUTH` | `false` | 本地 HTTP 登录设 true；生产 HTTPS 保持 false |
+| 制作镜像 | 构建终端 `export` | `WK_REGISTRY`、`WK_VERSION` 用来组成 `API_IMAGE`、`WEB_IMAGE` 标签；不是应用配置 |
+| 前端镜像构建 | `frontend/Dockerfile` | 当前没有业务环境变量或 API 地址构建参数；同一镜像可部署到不同环境 |
+| 后端镜像构建 | `backend/Dockerfile` | 不传数据库、CorpID、Secret 或域名；这些值均在启动时注入 |
+| 前端容器运行 | Web 容器 environment | Caddy 的 `WEKEEPER_WEB_LISTEN`、`WEKEEPER_API_UPSTREAM` |
+| 后端容器运行 | API 容器 environment | 数据库、浏览器 Origin、登录模式、企微凭据、同步间隔及日志 |
+| Compose 编排 | `.env` | 镜像名、宿主机端口、数据库初始化值，以及 Compose 明确引用的应用变量 |
+
+React 使用同源 `/api/...` 请求，由 Web 容器的 Caddy 转发到 API。不要给 React 填内部地址 `http://api:8080`，浏览器无法解析这个容器名。`WEKEEPER_API_ORIGIN` 仅用于源码开发的 Vite 代理，不是生产 Web 容器的配置；生产应使用 `WEKEEPER_API_UPSTREAM`。
+
+`docker build` 不会自动读取 `.env`。`docker run` 必须显式使用 `--env-file` 或 `-e`。后端程序和前端静态文件本身也不会读取宿主机 `.env`。
+
+### 5.2 前端 Web 容器变量
+
+| 变量 | 示例 | 作用 |
+| --- | --- | --- |
+| `WEKEEPER_WEB_LISTEN` | `:80` | Caddy 监听 HTTP；直接提供 HTTPS 时改为 `keeper.example.com`，详见第 6 节 |
+| `WEKEEPER_API_UPSTREAM` | `api:8080` | Caddy 可访问的后端地址；同一 Docker 网络内使用 API 容器名和容器端口 |
+
+前端不需要数据库密码、CorpSecret 或 AgentID。`WEKEEPER_PUBLIC_ORIGIN` 是后端验证浏览器来源的配置，不是前端监听变量。
+
+`WEB_BIND_HOST`、`WEB_HTTP_PORT`、`WEB_HTTPS_PORT` 是 Compose 的宿主机端口映射参数，不是 Caddy 环境变量。独立 `docker run` 使用 `-p` 设置映射。
+
+### 5.3 后端 API 容器变量
+
+| 变量 | 示例 / 默认值 | 作用 |
+| --- | --- | --- |
+| `WEKEEPER_BIND_ADDR` | `0.0.0.0:8080` | 容器内监听地址；不要使用 `127.0.0.1:8080`，否则 Web 容器无法访问 |
+| `WEKEEPER_DATABASE_HOST` | `postgres` | 数据库容器名；外部数据库填写其主机名/IP |
+| `WEKEEPER_DATABASE_PORT` | `5432` | 数据库服务端口，不是宿主机映射端口 |
+| `WEKEEPER_DATABASE_NAME` | `wekeeper` | 数据库名 |
+| `WEKEEPER_DATABASE_USER` | `wekeeper` | 数据库角色 |
+| `WEKEEPER_DATABASE_PASSWORD` | 必填实际密码 | 分项密码，无需 URL 编码 |
+| `WEKEEPER_DATABASE_SSL_MODE` | 同机容器示例 `disable`；程序默认 `prefer` | 远程生产数据库按证书条件使用 `verify-full` 并配置受信任 CA |
 | `WEKEEPER_DATABASE_MAX_CONNECTIONS` | `10` | 连接池上限，允许 1–100 |
-| `WEKEEPER_WECOM_CORP_ID` / `WEKEEPER_WECOM_SECRET` | 空 | 服务端企业微信凭据，目录、成员核验与 OAuth 必需 |
-| `WEKEEPER_WECOM_AGENT_ID` | 空 | 当前客户端分享必需的正整数应用 ID；纯服务端场景可留空，须与 Secret 属于同一应用 |
-| `WEKEEPER_WX_APP_ID` / `WEKEEPER_WX_SECRET` | 空 | 小程序凭据 |
-| `RUST_LOG` | `wekeeper_api=info,tower_http=info` | API 日志级别 |
-| `POSTGRES_DEV_PORT` / `API_DEV_PORT` | `5432` / `8080` | 仅开发 override 使用的回环端口 |
+| `WEKEEPER_DATABASE_URL` | 可选，默认不设置 | 完整连接 URL；设置后优先于分项连接字段。不使用时删除该变量，不要填空值 |
+| `WEKEEPER_PUBLIC_ORIGIN` | `https://keeper.example.com` | 浏览器实际访问的协议、域名、端口，不带路径和末尾斜杠；不能写 `api:8080` |
+| `WEKEEPER_INSECURE_LOCAL_AUTH` | `false` | 本机 HTTP 调试设 `true`，生产 HTTPS 保持 `false` |
+| `WEKEEPER_WECOM_CORP_ID` | 空或实际 CorpID | 企业微信服务端配置，与 Secret 成对填写 |
+| `WEKEEPER_WECOM_SECRET` | 空或实际 Secret | 目录、客户群、成员核验及 OAuth 所需的应用凭据 |
+| `WEKEEPER_WECOM_AGENT_ID` | 空或同一应用的正整数 AgentID | 当前客户端分享必需；目录同步与 OAuth 可留空 |
+| `WEKEEPER_WECOM_DIRECTORY_INTERVAL_SECONDS` | `1800` | 内部通讯录周期同步；`0` 仅手动，非零至少 60 秒 |
+| `WEKEEPER_WECOM_ASSET_SYNC_INTERVAL_SECONDS` | `1800` | 客户群周期同步；`0` 仅手动，非零至少 60 秒 |
+| `WEKEEPER_WX_APP_ID` / `WEKEEPER_WX_SECRET` | 空 | 使用小程序能力时填写 |
+| `RUST_LOG` | `wekeeper_api=info,tower_http=info` | 后端日志级别 |
 
-数据库密码使用分项环境变量传入，无需 URL 编码；包含 `$` 等字符时注意 Compose `.env` 引号/插值规则。
-可用 `openssl rand -hex 32` 生成便于配置的随机密码。
+### 5.4 使用仓库 Compose：一份 .env，分别注入
 
-### 独立容器与外部数据库
+从 `env.example` 复制 `.env` 后，按用途分组填写。以下为本机 HTTP 完整示例；生产用第 6 节的 HTTPS 值替换前端入口和后端 Origin：
 
-API 二进制还支持 `WEKEEPER_BIND_ADDR`、`WEKEEPER_DATABASE_URL`、`WEKEEPER_DATABASE_HOST`、
-`WEKEEPER_DATABASE_PORT`、`WEKEEPER_DATABASE_NAME`、`WEKEEPER_DATABASE_USER`、
-`WEKEEPER_DATABASE_PASSWORD`、`WEKEEPER_DATABASE_SSL_MODE`。
-完整 URL 一旦设置会优先使用；不使用 URL 时应移除该变量，不要填写空字符串。
-分项默认 SSL 模式为 `prefer`；生产远程数据库按证书条件使用 `verify-full`，并配置受信任 CA。
+```dotenv
+# 镜像与数据库容器
+API_IMAGE=wekeeper-api:local
+WEB_IMAGE=wekeeper-web:local
+POSTGRES_IMAGE=postgres:17.4-bookworm
+POSTGRES_DB=wekeeper
+POSTGRES_USER=wekeeper
+POSTGRES_PASSWORD=replace-with-a-long-random-password
 
-**当前 compose.yaml 固定连接 `postgres:5432`、SSL disable，并设置 Web 上游为 `api:8080`。**
-仅在 `.env` 写 `WEKEEPER_DATABASE_HOST` 或 `WEKEEPER_API_UPSTREAM` 不会改变该文件中的固定值。
-采用外部数据库或自定义上游时，需要自建部署编排，显式修改 API environment、数据库依赖与 Web 上游。
-API 镜像不支持参考项目中的 OTA、地图、会话密钥等配置，不要照搬 `OPS_*` 字段。
+# 前端 Web：宿主机端口 + Caddy 监听
+WEB_BIND_HOST=127.0.0.1
+WEB_HTTP_PORT=8088
+WEB_HTTPS_PORT=8443
+WEKEEPER_WEB_LISTEN=:80
+
+# 后端 API：浏览器入口、登录、连接池、日志
+WEKEEPER_PUBLIC_ORIGIN=http://127.0.0.1:8088
+WEKEEPER_INSECURE_LOCAL_AUTH=true
+WEKEEPER_DATABASE_MAX_CONNECTIONS=10
+RUST_LOG=wekeeper_api=info,tower_http=info
+
+# 后端 API：企业微信（需要时填写）
+WEKEEPER_WECOM_CORP_ID=
+WEKEEPER_WECOM_SECRET=
+WEKEEPER_WECOM_AGENT_ID=
+WEKEEPER_WECOM_DIRECTORY_INTERVAL_SECONDS=1800
+WEKEEPER_WECOM_ASSET_SYNC_INTERVAL_SECONDS=1800
+WEKEEPER_WX_APP_ID=
+WEKEEPER_WX_SECRET=
+```
+
+替换密码及镜像名后，使用已制作好的镜像启动：
+
+```bash
+chmod 600 .env
+docker compose --env-file .env -f compose.yaml config --quiet
+docker compose --env-file .env -f compose.yaml up --no-build -d --wait --wait-timeout 180
+```
+
+Compose 已固定注入 API 监听 `0.0.0.0:8080`、数据库地址 `postgres:5432`、SSL `disable` 和 Web 上游 `api:8080`，并将 `POSTGRES_*` 转换为 API 的数据库分项配置。因此，单独在 `.env` 新增 `WEKEEPER_DATABASE_HOST`、`WEKEEPER_DATABASE_URL` 或 `WEKEEPER_API_UPSTREAM` **不会覆盖这些值或自动传入容器**。使用外部数据库/自定义上游时采用下一节独立配置，或显式修改编排中的 environment 和 depends_on。
+
+Shell 已 export 的同名变量优先于 Compose `.env`；部署前核对 `API_IMAGE`、`WEB_IMAGE` 等，避免沿用构建终端的旧标签。密码可用 `openssl rand -hex 32` 生成；Compose `.env` 中含 `$` 等字符时注意引号和插值规则。`POSTGRES_DEV_PORT`、`API_DEV_PORT` 仅在叠加 `compose.dev.yaml` 时生效。
+
+### 5.5 独立 Docker / 1Panel：分别配置三个容器
+
+以下是本机 HTTP 的可执行示例，镜像需已构建或拉取。1Panel 可按相同文件内容分别填写各容器的环境变量，使用同一自定义网络 `wekeeper-standalone`。文件中的值填写实际内容，`docker run --env-file` 不会展开 `$变量`，也不要照搬 Compose 的引号写法。
+
+**数据库：保存为 `.env.postgres`。**
+
+```dotenv
+POSTGRES_DB=wekeeper
+POSTGRES_USER=wekeeper
+POSTGRES_PASSWORD=replace-with-a-long-random-password
+```
+
+**后端：保存为 `.env.api`。** 密码与 `.env.postgres` 一致；若使用已有外部数据库，改为实际连接信息并跳过下面的数据库容器创建步骤。
+
+```dotenv
+WEKEEPER_BIND_ADDR=0.0.0.0:8080
+WEKEEPER_DATABASE_HOST=postgres
+WEKEEPER_DATABASE_PORT=5432
+WEKEEPER_DATABASE_NAME=wekeeper
+WEKEEPER_DATABASE_USER=wekeeper
+WEKEEPER_DATABASE_PASSWORD=replace-with-a-long-random-password
+WEKEEPER_DATABASE_SSL_MODE=disable
+WEKEEPER_DATABASE_MAX_CONNECTIONS=10
+WEKEEPER_PUBLIC_ORIGIN=http://127.0.0.1:8088
+WEKEEPER_INSECURE_LOCAL_AUTH=true
+WEKEEPER_WECOM_CORP_ID=
+WEKEEPER_WECOM_SECRET=
+WEKEEPER_WECOM_AGENT_ID=
+WEKEEPER_WECOM_DIRECTORY_INTERVAL_SECONDS=1800
+WEKEEPER_WECOM_ASSET_SYNC_INTERVAL_SECONDS=1800
+WEKEEPER_WX_APP_ID=
+WEKEEPER_WX_SECRET=
+RUST_LOG=wekeeper_api=info,tower_http=info
+```
+
+**前端：保存为 `.env.web`。** `api` 对应下面后端容器的名称；如果修改容器名，这里也同步修改。
+
+```dotenv
+WEKEEPER_WEB_LISTEN=:80
+WEKEEPER_API_UPSTREAM=api:8080
+```
+
+先创建网络和数据库，以下名称用于独立部署，已存在同名容器时不要重复执行创建：
+
+```bash
+chmod 600 .env.postgres .env.api .env.web
+docker network create wekeeper-standalone
+docker run -d --name postgres --network wekeeper-standalone \
+  --restart unless-stopped --env-file .env.postgres \
+  -v wekeeper-standalone-postgres:/var/lib/postgresql/data \
+  postgres:17.4-bookworm
+```
+
+等待数据库日志显示可以接受连接，并检查就绪，再启动后端：
+
+```bash
+docker logs --tail 30 postgres
+docker exec postgres sh -c 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+# 上一条成功后继续；替换为实际发布的镜像标签。
+docker run -d --name api --network wekeeper-standalone \
+  --restart unless-stopped --init --env-file .env.api \
+  --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true \
+  wekeeper-api:local
+docker logs --tail 50 api
+docker exec api curl --fail --silent --show-error http://127.0.0.1:8080/readyz
+```
+
+后端完成迁移且 `/readyz` 成功后，启动前端：
+
+```bash
+docker run -d --name web --network wekeeper-standalone \
+  --restart unless-stopped --env-file .env.web \
+  --read-only --tmpfs /tmp \
+  -p 127.0.0.1:8088:80 \
+  -v wekeeper-standalone-caddy-data:/data \
+  -v wekeeper-standalone-caddy-config:/config \
+  wekeeper-web:local
+curl --fail --show-error http://127.0.0.1:8088/readyz
+```
+
+访问 `http://127.0.0.1:8088/admin`，按第 7 节通过 `docker exec -i api` 初始化管理员。这里未向宿主机开放 API 和数据库端口，前端通过容器网络访问后端。
+
+生产独立部署时，将 `.env.api` 的 Origin 改为真实 HTTPS Origin，insecure 改为 `false`。Caddy 直接 HTTPS 则同时将 `.env.web` 的监听值改为域名，并将 Web 端口映射改为 `-p 80:80 -p 443:443`；外部 HTTPS 入口则保留 `:80`，按第 6 节方式 B 配置。
+
+修改环境文件后，`docker restart` 不会重新读取文件：Compose 用 `up -d --force-recreate api web`，独立容器需保留命名卷并重建相应容器；只改后端变量无需重做前端镜像。
 
 ## 6. 生产服务器部署与 HTTPS
 
