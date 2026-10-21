@@ -7,6 +7,14 @@ use serde_json::Value;
 pub struct Client(pub Service);
 impl Client {
     async fn get(&self, path: &str, query: &[(&str, String)]) -> Result<Value, ReadError> {
+        self.request(path, query, None).await
+    }
+    pub(crate) async fn request(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+        body: Option<Value>,
+    ) -> Result<Value, ReadError> {
         let mut refreshed = false;
         for attempt in 0..3 {
             self.0
@@ -14,11 +22,29 @@ impl Client {
                 .directory_throttle()
                 .await
                 .map_err(|_| ReadError::Transient)?;
-            let token = self.0.token().await.map_err(|_| ReadError::Transient)?;
-            let response = self
-                .0
-                .client
-                .get(self.0.endpoint(path))
+            let token = match self.0.token().await {
+                Ok(token) => token,
+                Err(crate::business::Error::Upstream(c)) if c != 45009 => {
+                    tracing::warn!(
+                        endpoint = "gettoken",
+                        errcode = c,
+                        "wecom read token request rejected"
+                    );
+                    return Err(ReadError::Rejected(c));
+                }
+                Err(_) if attempt < 2 => {
+                    tokio::time::sleep(std::time::Duration::from_millis(500 * (1 << attempt)))
+                        .await;
+                    continue;
+                }
+                Err(_) => return Err(ReadError::Transient),
+            };
+            let request = if let Some(ref body) = body {
+                self.0.client.post(self.0.endpoint(path)).json(body)
+            } else {
+                self.0.client.get(self.0.endpoint(path))
+            };
+            let response = request
                 .query(&[("access_token", token.as_str())])
                 .query(query)
                 .send()
@@ -43,6 +69,12 @@ impl Client {
                         continue;
                     }
                     if code != 45009 {
+                        // Only the static API path: never log query parameters or upstream errmsg.
+                        tracing::warn!(
+                            endpoint = path,
+                            errcode = code,
+                            "wecom read API rejected request"
+                        );
                         return Err(ReadError::Rejected(code));
                     }
                 } else if !response.status().is_server_error() && response.status().as_u16() != 429
