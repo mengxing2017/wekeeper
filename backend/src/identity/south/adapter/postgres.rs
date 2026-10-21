@@ -66,7 +66,7 @@ impl Repository {
         Ok(id)
     }
     pub async fn list(&self) -> Result<Vec<Value>> {
-        Ok(sqlx::query_scalar("SELECT jsonb_build_object('id',id,'username',username,'display_name',display_name,'active',active,'platform_admin',platform_admin,'bound_school_id',bound_school_id,'wecom_userid',wecom_userid) FROM accounts ORDER BY created_at DESC LIMIT 1000").fetch_all(&self.0).await?)
+        Ok(sqlx::query_scalar("SELECT jsonb_build_object('id',id,'username',username,'display_name',display_name,'active',active,'platform_admin',platform_admin,'bound_school_id',bound_school_id,'wecom_userid',wecom_userid) FROM accounts ORDER BY created_at DESC,id").fetch_all(&self.0).await?)
     }
     pub async fn update(
         &self,
