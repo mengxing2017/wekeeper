@@ -7,8 +7,10 @@ RUN if [ -f /etc/apt/sources.list ]; then \
       sed -i 's/deb.debian.org/mirrors.ustc.edu.cn/g' /etc/apt/sources.list.d/debian.sources; \
     fi \
     && apt-get update \
-    && apt-get install -y --no-install-recommends cmake pkg-config \
+    && apt-get install -y --no-install-recommends cmake pkg-config git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+# Use system Git instead of Cargo libgit2 for pinned Git dependencies.
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 WORKDIR /workspace/backend
 COPY backend/Cargo.toml backend/Cargo.lock ./
 COPY backend/src ./src
@@ -16,7 +18,8 @@ COPY backend/migrations ./migrations
 RUN --mount=type=cache,id=wekeeper-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=wekeeper-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=wekeeper-cargo-target,target=/workspace/backend/target,sharing=locked \
-    cargo build --locked --release \
+    cargo fetch --locked --verbose \
+    && cargo build --frozen --release \
     && cp target/release/wekeeper-api /tmp/wekeeper-api
 
 FROM debian:bookworm-slim AS runtime
