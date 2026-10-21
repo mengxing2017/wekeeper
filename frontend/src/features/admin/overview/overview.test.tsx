@@ -16,7 +16,7 @@ function renderOverview() {
 }
 
 it('shows unavailable database instead of claiming the workspace is ready', async () => {
-  vi.mocked(getSystemInfo).mockResolvedValue({ data: { application: 'wekeeper', version: '0.1.0', stage: 'business' } })
+  vi.mocked(getSystemInfo).mockResolvedValue({ id:'wekeeper', application: 'wekeeper', version: '0.1.0', stage: 'business' })
   vi.mocked(getReadiness).mockRejectedValue(new Error('unavailable'))
   renderOverview()
   expect(await screen.findByText('数据库尚未就绪')).toBeTruthy()

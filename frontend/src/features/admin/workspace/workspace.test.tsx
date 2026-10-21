@@ -10,7 +10,7 @@ Object.defineProperty(window, 'matchMedia', { writable: true, value: vi.fn().moc
 it('restores the selected school and business page from its URL', async () => {
   vi.mocked(identity.session).mockResolvedValue({csrf:'csrf',user:{id:'u',username:'admin',display_name:'管理员',platform_admin:true,bound_school_id:null,grants:[],wecom_authenticated:false}})
   vi.mocked(workspace.schools).mockResolvedValue([{id:'school',name:'测试学校',active:true,revision:1,config:{}}])
-  vi.mocked(workspace.list).mockResolvedValue([])
+  vi.mocked(workspace.list).mockResolvedValue({items:[], page:{number:1,size:30,has_more:false}})
   vi.mocked(identity.accounts).mockResolvedValue([])
   const client = new QueryClient({defaultOptions:{queries:{retry:false}}})
   render(<QueryClientProvider client={client}><MemoryRouter initialEntries={['/admin?school=school&view=groups']}><Workspace/></MemoryRouter></QueryClientProvider>)
@@ -24,7 +24,7 @@ it('restores the selected school and business page from its URL', async () => {
 it('keeps an existing group identity read-only while saving its revocation', async () => {
   vi.mocked(identity.session).mockResolvedValue({csrf:'csrf',user:{id:'u',username:'admin',display_name:'管理员',platform_admin:true,bound_school_id:null,grants:[],wecom_authenticated:false}})
   vi.mocked(workspace.schools).mockResolvedValue([{id:'school',name:'测试学校',active:true,revision:1,config:{}}])
-  vi.mocked(workspace.list).mockResolvedValue([{id:'g',name:'测试群',corp_id:'corp',chat_id:'chat',active:true,revision:1}])
+  vi.mocked(workspace.list).mockResolvedValue({items:[{id:'g',name:'测试群',corp_id:'corp',chat_id:'chat',active:true,revision:1}], page:{number:1,size:30,has_more:false}})
   vi.mocked(workspace.mutate).mockResolvedValue({id:'g'})
   const client = new QueryClient({defaultOptions:{queries:{retry:false}}})
   render(<QueryClientProvider client={client}><MemoryRouter initialEntries={['/admin?school=school&view=groups']}><Workspace/></MemoryRouter></QueryClientProvider>)
