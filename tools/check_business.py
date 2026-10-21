@@ -26,7 +26,7 @@ with tempfile.TemporaryDirectory(prefix='wekeeper-business-') as directory:
         started = True
         subprocess.run([str(pg/'createdb'), '-h', '127.0.0.1', '-p', str(port), '-U', 'wekeeper_test', 'wekeeper_test'], check=True)
         env = {**os.environ, 'WEKEEPER_TEST_DATABASE_URL': f'postgres://wekeeper_test@127.0.0.1:{port}/wekeeper_test'}
-        subprocess.run(['cargo', 'test', '--manifest-path', 'backend/Cargo.toml', '--test', 'business', '--test', 'database', '--', '--ignored', '--nocapture'], cwd=repo, env=env, check=True)
+        subprocess.run(['cargo', 'test', '--manifest-path', 'backend/Cargo.toml', '--test', 'business', '--test', 'database', '--test', 'directory', '--', '--ignored', '--nocapture'], cwd=repo, env=env, check=True)
         sys.path.insert(0,str(repo/'tools/migration'))
         from convert import convert,identity
         source=root/'snapshot.json'
