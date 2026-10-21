@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Button, Card, Input, Select, Space, Table } from 'antd';
+import { Alert, Button, Card, Input, Popconfirm, Select, Space, Table } from 'antd';
 import { directory, type DirectoryMember, type DirectoryDepartment, type Row } from './api';
 
 export const memberStatus = (status: number | null) => ({1:'已激活',2:'已禁用',4:'未激活',5:'退出企业'})[status ?? 0] ?? '状态待核验';
@@ -41,6 +41,7 @@ export function Directory() {
     const [busy,setBusy]=useState(false),[error,setError]=useState('');
     const run=status.data?.latest_run;
     async function sync(){setBusy(true);setError('');try{await directory.sync();await status.refetch();}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
+    async function rotate(){if(!status.data?.credential_generation)return;setBusy(true);setError('');try{await directory.rotate(status.data.credential_generation);await cache.invalidateQueries({queryKey:['wecom-directory']});}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
     return <Card title="应用可见通讯录">
         <p>仅显示当前企业自建应用可见的部门和成员。同步不会创建本地账号或分配学校角色。</p>
         {status.isPending && <p role="status">正在读取同步状态…</p>}
@@ -49,7 +50,8 @@ export function Directory() {
         <p>最近完整同步：{status.data?.last_success_at ?? '尚未同步'}。目录可能已变化，绑定和企业登录时会重新核验。</p>
         {run && <p role="status">最近任务：{({queued:'排队中',running:'同步中',succeeded:'同步成功',failed:'同步失败'})[run.state]} · {run.department_count} 个部门 / {run.member_count} 位成员 {run.error_code && `· ${run.error_code}`}</p>}
         {error && <Alert type="error" title={error}/>}
-        <Space><Button onClick={()=>void sync()} disabled={busy || !status.data?.configured || !!status.data?.configuration_error || run?.state==='queued' || run?.state==='running'}>立即同步</Button><Button onClick={()=>void cache.invalidateQueries({queryKey:['wecom-directory']})}>刷新目录与状态</Button></Space>
+        <Space><Button onClick={()=>void sync()} disabled={busy || !status.data?.server_configured || !!status.data?.configuration_error || run?.state==='queued' || run?.state==='running'}>立即同步</Button><Button onClick={()=>void cache.invalidateQueries({queryKey:['wecom-directory']})}>刷新目录与状态</Button></Space>
+        {status.data?.server_configured && status.data.credential_rotation_required && <p><Popconfirm title="验证并切换服务器当前凭据？" description="旧企业会话将退出，旧任务停止，成员待重新核验；账号绑定和学校授权保留。" onConfirm={()=>void rotate()} okText="验证并切换" cancelText="取消"><Button loading={busy} disabled={busy}>验证并切换服务端凭据</Button></Popconfirm></p>}
         <DirectoryBrowser key={status.data?.snapshot_id ?? 'empty'}/>
     </Card>;
 }
