@@ -17,20 +17,19 @@ impl Repository {
         row.ok_or(Error::Forbidden)
     }
     pub async fn member(&self, userid: &str) -> Result<Uuid> {
-        sqlx::query_scalar("SELECT id FROM accounts WHERE wecom_userid=$1 AND active")
+        sqlx::query_scalar("SELECT a.id FROM accounts a JOIN wecom_members m ON m.id=a.wecom_member_id WHERE m.userid_key=lower($1 COLLATE \"C\") AND a.active AND m.verification='verified' AND m.status=1")
             .bind(userid)
             .fetch_optional(&self.0)
             .await?
             .ok_or(Error::Forbidden)
     }
     pub async fn userid(&self, id: Uuid) -> Result<String> {
-        sqlx::query_scalar::<_, Option<String>>(
-            "SELECT wecom_userid FROM accounts WHERE id=$1 AND active",
+        sqlx::query_scalar::<_, String>(
+            "SELECT m.userid FROM accounts a JOIN wecom_members m ON m.id=a.wecom_member_id WHERE a.id=$1 AND a.active AND m.verification='verified' AND m.status=1",
         )
         .bind(id)
         .fetch_optional(&self.0)
         .await?
-        .flatten()
         .ok_or(Error::Forbidden)
     }
     pub async fn wx_account(&self, openid: &str) -> Result<Uuid> {
@@ -59,5 +58,32 @@ impl Repository {
         sqlx::query("INSERT INTO platform_cache(key,value,expires_at) VALUES($1,$2,now()+$3*interval '1 second') ON CONFLICT(key) DO UPDATE SET value=excluded.value,expires_at=excluded.expires_at").bind(key).bind(&value).bind(ttl.clamp(30,7000)).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(value)
+    }
+}
+
+impl Repository {
+    pub async fn directory_throttle(&self) -> Result<()> {
+        let delay:f64=sqlx::query_scalar("UPDATE wecom_directory_state SET next_call_at=greatest(next_call_at,clock_timestamp())+interval '200 milliseconds' RETURNING greatest(0,extract(epoch FROM next_call_at-clock_timestamp()))::float8").fetch_one(&self.0).await?;
+        tokio::time::sleep(std::time::Duration::from_secs_f64(delay)).await;
+        Ok(())
+    }
+    pub async fn expire_token(&self, corp: &str, agent: &str, token: &str) -> Result<()> {
+        sqlx::query("DELETE FROM platform_cache WHERE key=$1 AND value=$2")
+            .bind(format!("wecom:{corp}:{agent}:token"))
+            .bind(token)
+            .execute(&self.0)
+            .await?;
+        Ok(())
+    }
+}
+
+impl Repository {
+    pub async fn session_member_matches(
+        &self,
+        id: Uuid,
+        revision: i64,
+        userid: &str,
+    ) -> Result<bool> {
+        Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts a JOIN wecom_members m ON m.id=a.wecom_member_id WHERE a.id=$1 AND a.wecom_binding_revision=$2 AND m.userid_key=$3)").bind(id).bind(revision).bind(crate::integrations::domain::directory::userid_key(userid)?).fetch_one(&self.0).await?)
     }
 }
