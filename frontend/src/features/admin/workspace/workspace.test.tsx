@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Workspace } from './index'
 import { identity, workspace } from './api'
-vi.mock('./api', () => ({ identity: { session: vi.fn(), accounts: vi.fn(), logout: vi.fn() }, workspace: { schools: vi.fn(), list: vi.fn(), createSchool: vi.fn() } }))
+vi.mock('./api', () => ({ identity: { session: vi.fn(), accounts: vi.fn(), logout: vi.fn() }, workspace: { schools: vi.fn(), list: vi.fn(), createSchool: vi.fn(), mutate: vi.fn() } }))
 afterEach(() => { cleanup(); vi.resetAllMocks() })
 Object.defineProperty(window, 'matchMedia', { writable: true, value: vi.fn().mockImplementation(query => ({ matches: false, media: query, onchange: null, addListener: vi.fn(), removeListener: vi.fn(), addEventListener: vi.fn(), removeEventListener: vi.fn(), dispatchEvent: vi.fn() })) })
 it('restores the selected school and business page from its URL', async () => {
@@ -19,4 +19,19 @@ it('restores the selected school and business page from its URL', async () => {
   fireEvent.click(screen.getByRole('button', { name: '学校与账号' }))
   expect(await screen.findByRole('heading', { name: '学校与账号', level: 1 })).toBeTruthy()
   expect(await screen.findByLabelText('学校名称')).toBeTruthy()
+})
+
+it('keeps an existing group identity read-only while saving its revocation', async () => {
+  vi.mocked(identity.session).mockResolvedValue({csrf:'csrf',user:{id:'u',username:'admin',display_name:'管理员',platform_admin:true,bound_school_id:null,grants:[],wecom_authenticated:false}})
+  vi.mocked(workspace.schools).mockResolvedValue([{id:'school',name:'测试学校',active:true,revision:1,config:{}}])
+  vi.mocked(workspace.list).mockResolvedValue([{id:'g',name:'测试群',corp_id:'corp',chat_id:'chat',active:true,revision:1}])
+  vi.mocked(workspace.mutate).mockResolvedValue({id:'g'})
+  const client = new QueryClient({defaultOptions:{queries:{retry:false}}})
+  render(<QueryClientProvider client={client}><MemoryRouter initialEntries={['/admin?school=school&view=groups']}><Workspace/></MemoryRouter></QueryClientProvider>)
+  fireEvent.click(await screen.findByRole('button',{name:/编\s*辑/}))
+  expect((screen.getByLabelText('企业 ID（与应用配置一致）') as HTMLInputElement).readOnly).toBe(true)
+  expect((screen.getByLabelText('客户群 ID（保存后不可更换）') as HTMLInputElement).readOnly).toBe(true)
+  fireEvent.change(screen.getByLabelText('启用状态'),{target:{value:'false'}})
+  fireEvent.click(screen.getByRole('button',{name:'保存'}))
+  await waitFor(()=>expect(workspace.mutate).toHaveBeenCalledWith('school','groups',expect.objectContaining({id:'g',corp_id:'corp',chat_id:'chat',active:false,revision:1}),'POST'))
 })
