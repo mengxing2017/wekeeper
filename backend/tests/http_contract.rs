@@ -121,3 +121,20 @@ async fn oauth_missing_cookie_returns_to_the_frontend_error_state() {
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
     assert_eq!(response.headers()["location"], "/wecom?oauth_error=failed");
 }
+
+#[test]
+fn delivery_history_serializes_the_shared_contract() {
+    use wekeeper_api::distribution::domain::RelatedHistory;
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/delivery-history.json"
+    ))
+    .unwrap();
+    let history = RelatedHistory {
+        items: vec![
+            serde_json::json!({"id":"00000000-0000-0000-0000-000000000001","school_id":"00000000-0000-0000-0000-000000000002","draft_id":"00000000-0000-0000-0000-000000000003","actor_id":"00000000-0000-0000-0000-000000000004","state":"unknown","reconciliation":null,"client_result":null,"actor_name":"运营甲","group_name":"学校客户群","content":"待核对内容","created_at":"2026-10-21T00:00:00Z"}),
+        ],
+        latest_attempt_id: Some(uuid::Uuid::from_u128(1)),
+        blocked: true,
+    };
+    assert_eq!(wekeeper_api::http::error::data(history).0, fixture);
+}
