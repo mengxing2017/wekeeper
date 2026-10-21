@@ -185,8 +185,8 @@ Shell 中已 export 的同名变量优先于 `.env`；从打包终端部署不�
 | `WEKEEPER_PUBLIC_ORIGIN` | `http://127.0.0.1:8088` | 浏览器精确 origin，不带路径或末尾斜杠 |
 | `WEKEEPER_INSECURE_LOCAL_AUTH` | `false` | 本地 HTTP 登录设 true；生产 HTTPS 保持 false |
 | `WEKEEPER_DATABASE_MAX_CONNECTIONS` | `10` | 连接池上限，允许 1–100 |
-| `WEKEEPER_WECOM_CORP_ID` / `WEKEEPER_WECOM_AGENT_ID` | 空 | 企业与应用 ID，AgentID 必须为正整数 |
-| `WEKEEPER_WECOM_SECRET` | 空 | 企业微信应用秘密 |
+| `WEKEEPER_WECOM_CORP_ID` / `WEKEEPER_WECOM_SECRET` | 空 | 服务端企业微信凭据，目录、成员核验与 OAuth 必需 |
+| `WEKEEPER_WECOM_AGENT_ID` | 空 | 当前客户端分享必需的正整数应用 ID；纯服务端场景可留空，须与 Secret 属于同一应用 |
 | `WEKEEPER_WX_APP_ID` / `WEKEEPER_WX_SECRET` | 空 | 小程序凭据 |
 | `RUST_LOG` | `wekeeper_api=info,tower_http=info` | API 日志级别 |
 | `POSTGRES_DEV_PORT` / `API_DEV_PORT` | `5432` / `8080` | 仅开发 override 使用的回环端口 |
