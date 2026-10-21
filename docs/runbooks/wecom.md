@@ -31,6 +31,26 @@ Vite 与 TypeScript 均直接引用 `api-contract` 业务源码，避免本地 `
 | `WEKEEPER_WECOM_SECRET` | 服务端必需的应用 Secret，仅配置到 API |
 | `WEKEEPER_INSECURE_LOCAL_AUTH` | 生产 HTTPS 环境保持 false |
 
+### 使用 make dev-embedded 本地启动
+
+此入口继承当前终端已 export 的 `WEKEEPER_WECOM_CORP_ID`、`WEKEEPER_WECOM_SECRET`、`WEKEEPER_WECOM_AGENT_ID`，不会自动读取 `.env`。应在启动后端前注入；只运行前端的终端无需这些变量。
+
+```bash
+export WEKEEPER_WECOM_CORP_ID='替换为企业 CorpID'
+# 输入应用 Secret 后回车，不回显。
+read -rs WEKEEPER_WECOM_SECRET
+export WEKEEPER_WECOM_SECRET
+export WEKEEPER_WECOM_AGENT_ID='' # 目录/绑定可留空，当前客户端分享才要求有效 AgentID
+# 已具备工具链时也可直接执行 make dev-embedded。
+devbox run -- make dev-embedded
+```
+
+需要从文件注入时，使用 README 中的 [本地凭据文件加载示例](../../README.md#注入企业微信凭据)。修改配置后重启后端才生效，嵌入式临时库同时重置，须重新同步目录并绑定账号。
+
+嵌入式入口强制启用 insecure_local_auth；即使提供完整凭据、设置 HTTPS origin 或将环境变量 `WEKEEPER_INSECURE_LOCAL_AUTH` 设为 false，OAuth/分享仍关闭。此入口用于目录、绑定和预览调试。实际 OAuth 与 SDK 分享验收必须改用普通 API/Compose HTTPS 入口并关闭 insecure_local_auth。
+
+### 官方应用与业务配置
+
 在企业管理后台配置应用可信域名、域名归属验证、应用可见范围及相应客户联系权限。
 OAuth 回调地址为 `https://域名/api/v1/wecom/oauth/callback`。
 通过客户群聊天工具栏配置应用入口 `https://域名/wecom`；普通浏览器入口无法验证当前群 SDK 能力。
