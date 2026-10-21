@@ -20,8 +20,8 @@ export function Overview() {
       {system.isPending ? <p role="status">正在连接 API…</p> : system.isError ?
         <Alert title="API 暂不可用" description={system.error.message} type="error" showIcon /> :
         <Descriptions column={{ xs: 1, sm: 3 }} items={[
-          { key: 'app', label: '应用', children: system.data.data.application },
-          { key: 'version', label: '版本', children: system.data.data.version },
+          { key: 'app', label: '应用', children: system.data.application },
+          { key: 'version', label: '版本', children: system.data.version },
           { key: 'db', label: '数据库', children: <Tag color={readiness.isSuccess ? 'success' : readiness.isError ? 'error' : 'default'}>{readiness.isSuccess ? '已就绪' : readiness.isError ? '不可用' : '检查中'}</Tag> },
         ]} />}
       {readiness.isError && !system.isError && <Alert className="readiness-alert" title="数据库尚未就绪" description="请检查数据库连接与迁移状态。" type="warning" showIcon />}
