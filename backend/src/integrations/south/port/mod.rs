@@ -71,3 +71,4 @@ pub trait DirectoryStore: Clone + Send + Sync + 'static {
         generation: Option<i64>,
     ) -> impl Future<Output = Result<()>> + Send;
 }
+pub mod assets;
