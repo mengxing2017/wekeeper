@@ -2,10 +2,10 @@ use super::local::{AccountUpdate, Login, NewAccount};
 use crate::{
     bootstrap::Application,
     business::{Actor, Error, Result},
-    http::error::data,
+    http::jsonapi::{ApiResponse, Input, completed, resource, singleton},
 };
 use axum::{
-    Json, Router,
+    Router,
     extract::{FromRequestParts, Path, State},
     http::{HeaderMap, header, request::Parts},
     response::{IntoResponse, Response},
@@ -103,8 +103,9 @@ pub fn cookie(token: &str, secure: bool, max_age: u32) -> String {
 async fn login(
     State(a): State<Application>,
     headers: HeaderMap,
-    Json(input): Json<Login>,
+    input_document: Input,
 ) -> Result<Response> {
+    let input = input_document.decode::<Login>("sessions")?;
     check_origin(&headers, &a)?;
     let (t, user) = a.identity.login(input).await?;
     let c = cookie(&t, !a.options.insecure_local_auth, 28800);
@@ -113,14 +114,18 @@ async fn login(
             (header::SET_COOKIE, c),
             (header::CACHE_CONTROL, "no-store".into()),
         ],
-        data(json!({"user":user,"csrf":user.csrf})),
+        singleton("sessions", "current", json!({"user":user,"csrf":user.csrf})),
     )
         .into_response())
 }
 async fn session(State(_a): State<Application>, actor: Actor) -> impl IntoResponse {
     (
         [(header::CACHE_CONTROL, "no-store")],
-        data(json!({"user":actor,"csrf":actor.csrf})),
+        singleton(
+            "sessions",
+            "current",
+            json!({"user":actor,"csrf":actor.csrf}),
+        ),
     )
 }
 async fn logout(State(a): State<Application>, actor: Actor) -> Result<Response> {
@@ -130,44 +135,50 @@ async fn logout(State(a): State<Application>, actor: Actor) -> Result<Response> 
             header::SET_COOKIE,
             cookie("", !a.options.insecure_local_auth, 0),
         )],
-        data(json!({"ok":true})),
+        completed(),
     )
         .into_response())
 }
-async fn list(State(a): State<Application>, actor: Actor) -> Result<Json<Value>> {
-    Ok(data(a.identity.list(&actor).await?))
+async fn list(State(a): State<Application>, actor: Actor) -> Result<ApiResponse> {
+    Ok(resource("accounts", a.identity.list(&actor).await?))
 }
 async fn create(
     State(a): State<Application>,
     actor: Actor,
-    Json(v): Json<NewAccount>,
-) -> Result<Json<Value>> {
-    Ok(data(a.identity.create(&actor, v).await?))
+    input_document: Input,
+) -> Result<ApiResponse> {
+    let v = input_document.decode::<NewAccount>("accounts")?;
+    Ok(resource("accounts", a.identity.create(&actor, v).await?))
 }
 async fn update(
     State(a): State<Application>,
     actor: Actor,
     Path(id): Path<Uuid>,
-    Json(v): Json<AccountUpdate>,
-) -> Result<Json<Value>> {
+    input_document: Input,
+) -> Result<ApiResponse> {
+    let v = input_document.decode::<AccountUpdate>("accounts")?;
     a.identity.update(&actor, id, v).await?;
-    Ok(data(json!({"ok":true})))
+    Ok(completed())
 }
 async fn reset(
     State(a): State<Application>,
     actor: Actor,
     Path(id): Path<Uuid>,
-    Json(v): Json<Login>,
-) -> Result<Json<Value>> {
+    input_document: Input,
+) -> Result<ApiResponse> {
+    let v = input_document.decode::<Login>("accounts")?;
     a.identity.reset(&actor, id, &v.password).await?;
-    Ok(data(json!({"ok":true})))
+    Ok(completed())
 }
 async fn profile(
     State(a): State<Application>,
     actor: Actor,
-    Json(v): Json<Value>,
-) -> Result<Json<Value>> {
-    Ok(data(
+    input_document: Input,
+) -> Result<ApiResponse> {
+    let v = input_document.decode::<Value>("accounts")?;
+    Ok(singleton(
+        "accounts",
+        actor.id,
         a.identity
             .profile(&actor, v["display_name"].as_str().unwrap_or(""))
             .await?,
