@@ -435,7 +435,7 @@ API 通过 outbound 网络访问官方服务，数据库只连接 internal 网�
 
 ## 7. 首次管理员初始化
 
-Docker 没有预设账号或密码。API 正常启动后，在宿主机 Bash 中执行：
+无论使用 Compose 自建数据库还是已有生产数据库，首次部署都需要显式创建后台管理员；不会在生产日志中输出默认密码。下面命令创建用户名 `admin`，密码由你输入，与数据库连接密码无关。API 正常启动后，在宿主机 Bash 中执行：
 
 ```bash
 read -r -s -p '管理员密码（12–128 字节）: ' WK_ADMIN_PASSWORD
@@ -449,7 +449,43 @@ unset WK_ADMIN_PASSWORD
 使用 `admin` 和刚输入的密码登录。CLI 从标准输入读取至 EOF，创建后退出，不启动第二个 HTTP 服务。
 同名账号已存在时会失败，不会重置旧密码；后续账号管理和密码重置在后台完成。
 使用自定义 `-p` 项目名时，此处也加相同的 `-p`。
-独立 Docker/1Panel 可将 Compose exec 替换成 `docker exec -i <API容器名>`。
+### 在宿主机终端执行（Bash，安装了 Docker）
+
+独立 Docker/1Panel 的**宿主机 SSH 终端**执行下面命令，API 容器名为 `api`。不是在 1Panel 的容器终端执行：
+
+```bash
+read -r -s -p '管理员密码（12–128 字节）: ' WK_ADMIN_PASSWORD
+printf '\n'
+printf '%s' "$WK_ADMIN_PASSWORD" |
+  docker exec -i api /usr/local/bin/wekeeper-api --create-admin admin
+unset WK_ADMIN_PASSWORD
+```
+
+### 在 1Panel 的 API 容器终端执行（/bin/sh）
+
+打开 **API 容器**的终端，选择 `/bin/sh`。此时已经在容器内，不使用 `docker exec`；容器无需安装 Docker。`read -s -p` 是 Bash 用法，不适用于这里的 `/bin/sh`。
+
+容器网页终端可能把多行粘贴与密码输入混在一起。请按以下顺序操作，命令和密码分开输入：
+
+1. 按 Ctrl+C 取消之前未完成的命令。若此前关闭过回显，输入 `stty echo` 并按回车；仍异常时重新打开容器终端。
+2. **只输入下面这一条命令并按回车**：
+
+```sh
+/usr/local/bin/wekeeper-api --create-admin admin
+```
+
+3. 程序不会打印密码提示，正在从标准输入等待密码。此时输入新密码（12–128 字节），然后按回车。该方式下终端会显示输入内容。
+4. 在新空行按 **Ctrl+D**，发送 EOF。程序读取至 EOF 后才创建账号，单独按回车不会结束输入。不要把密码与启动命令粘贴在同一行，也不要输入字面文本 `Ctrl+D`。
+
+若网页终端不能发送 Ctrl+D，可使用一行管道（将占位内容替换为新密码，密码中不能含单引号）：
+
+```sh
+printf '%s' '替换为新的至少12字节密码' | /usr/local/bin/wekeeper-api --create-admin admin
+```
+
+一行管道中的密码可能被终端历史保存；优先使用前述标准输入方式。不要使用聊天记录中已经暴露的密码。
+
+出现 `Administrator created: ...` 才表示创建成功。容器使用其已有数据库环境配置，将管理员写入当前连接的生产数据库。命令成功后访问生产域名的 `/admin`，使用 `admin` 和刚输入的密码登录。若提示账号已存在，使用既有管理员账号，不要重复初始化。
 生产不注入 `WEKEEPER_DEV_ADMIN_PASSWORD`；嵌入式调试入口的自动管理员机制不属于 Docker 初始化流程。
 
 ## 8. 持久化与备份恢复
