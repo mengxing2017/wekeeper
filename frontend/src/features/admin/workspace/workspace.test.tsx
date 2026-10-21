@@ -94,14 +94,19 @@ it('searches and paginates schools, and opens settings for the selected row', as
 it('shows account grants across schools and saves global account state without a school id', async () => {
   showManagement('accounts')
   vi.mocked(workspace.list).mockImplementation(async school => ({items:[{id:'ordinary',role: school === 'school' ? 'admin' : 'operator'}]}))
-  await screen.findByText('ordinary')
-  fireEvent.click(screen.getByRole('button', {name:/详\s*情/}))
+  // Scope role queries to the account row/dialog: scanning the entire Ant Design
+  // workspace repeatedly computes accessible names and styles for every button.
+  const row = within((await screen.findByText('ordinary')).closest('tr')!)
+  fireEvent.click(row.getByRole('button', {name:/详\s*情/}))
   expect(await screen.findByText('甲学校 · 学校管理员')).toBeTruthy()
   expect(await screen.findByText('乙学校 · 运营')).toBeTruthy()
-  fireEvent.click(screen.getByRole('button', {name:'Close'}))
-  fireEvent.click(screen.getByRole('button', {name:'编辑账号'}))
-  fireEvent.change(screen.getByLabelText('账号状态（全平台）'), {target:{value:'false'}})
-  fireEvent.click(screen.getByRole('button', {name:'保存'}))
+  const details = screen.getByRole('dialog')
+  fireEvent.click(within(details).getByRole('button', {name:'Close'}))
+  await waitFor(() => expect(details.isConnected).toBe(false))
+  fireEvent.click(row.getByRole('button', {name:'编辑账号'}))
+  const editor = within(screen.getByRole('dialog'))
+  fireEvent.change(editor.getByLabelText('账号状态（全平台）'), {target:{value:'false'}})
+  fireEvent.click(editor.getByRole('button', {name:'保存'}))
   await waitFor(() => expect(identity.update).toHaveBeenCalledWith('ordinary', {display_name:'本地管理员',active:false}))
 })
 
