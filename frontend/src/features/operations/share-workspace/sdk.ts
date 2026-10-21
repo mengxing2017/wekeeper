@@ -61,7 +61,7 @@ export async function initializeSdk() {
         if (!sdk) throw new Error('企业微信 SDK 不可用');
         const info = await workspace.wecomInfo();
         const agentId = Number(info.agentId);
-        if (!info.corpId || !Number.isSafeInteger(agentId) || agentId <= 0)
+        if (!info.corpId || !/^\d+$/.test(info.agentId) || !Number.isSafeInteger(agentId) || agentId <= 0 || agentId > 4294967295)
             throw new Error('企业微信应用配置不完整，请联系管理员');
         sdk.register({ ...info, agentId, jsApiList: ['getCurExternalChat', 'sendChatMessage'],
             getConfigSignature: url => workspace.signature(url.split('#')[0], false),
