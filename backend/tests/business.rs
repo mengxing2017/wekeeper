@@ -7,6 +7,34 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 use uuid::Uuid;
 use wekeeper_api::{bootstrap, business::Actor, database, http};
+fn write_document(path: &str, mut body: Value) -> Value {
+    let segments: Vec<_> = path
+        .split('?')
+        .next()
+        .unwrap()
+        .split('/')
+        .filter(|p| !p.is_empty())
+        .collect();
+    let kind = match segments[2] {
+        "auth" => "sessions",
+        "accounts" | "profile" => "accounts",
+        "platform" => "resources",
+        "schools" => match segments.get(4).copied().unwrap_or("schools") {
+            "members" => "accounts",
+            "posts" if segments.get(6) == Some(&"comments") => "comments",
+            "templates" if segments.get(6) == Some(&"versions") => "template-versions",
+            "delivery-drafts" if segments.get(6) == Some(&"attempts") => "delivery-attempts",
+            kind => kind,
+        },
+        _ => panic!("unmapped write route: {path}"),
+    };
+    let id = body.as_object_mut().unwrap().remove("id");
+    let mut resource = json!({"type":kind,"attributes":body});
+    if let Some(id) = id {
+        resource["id"] = id;
+    }
+    json!({"data":resource})
+}
 async fn call(
     app: &Router,
     method: &str,
@@ -19,7 +47,7 @@ async fn call(
         .method(method)
         .uri(path)
         .header("origin", "http://localhost:5173")
-        .header("content-type", "application/json");
+        .header("content-type", "application/vnd.api+json");
     if !token.is_empty() {
         req = req.header("cookie", format!("wekeeper_session={token}"));
     }
@@ -32,7 +60,7 @@ async fn call(
             req.body(if body.is_null() {
                 Body::empty()
             } else {
-                Body::from(body.to_string())
+                Body::from(write_document(path, body).to_string())
             })
             .unwrap(),
         )
@@ -50,7 +78,32 @@ fn id(v: &Value) -> Uuid {
 async fn ok(app: &Router, method: &str, path: &str, token: &str, a: &Actor, v: Value) -> Value {
     let (status, v) = call(app, method, path, token, &a.csrf, v).await;
     assert_eq!(status, 200, "{method} {path}: {v}");
-    v["data"].clone()
+    let decode = |resource: &Value| {
+        assert!(
+            resource["type"].is_string(),
+            "missing resource type: {resource}"
+        );
+        assert!(
+            resource["id"].is_string(),
+            "missing resource id: {resource}"
+        );
+        let mut attributes = resource["attributes"].as_object().unwrap().clone();
+        assert!(!attributes.contains_key("id"));
+        attributes.insert("id".into(), resource["id"].clone());
+        Value::Object(attributes)
+    };
+    if let Some(items) = v["data"].as_array() {
+        let items: Vec<_> = items.iter().map(decode).collect();
+        if path.contains("/history") {
+            json!({"items":items,"blocked":v["meta"]["blocked"],"latest_attempt_id":v["meta"]["latest_attempt_id"]})
+        } else {
+            json!(items)
+        }
+    } else if v["data"].is_null() {
+        Value::Null
+    } else {
+        decode(&v["data"])
+    }
 }
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
@@ -212,7 +265,11 @@ async fn complete_business_flow_and_security_boundaries() {
         "../../api-contract/fixtures/post-created.json"
     ))
     .unwrap();
-    assert_eq!(normalized, fixture);
+    use axum::response::IntoResponse;
+    let response = http::jsonapi::resource("posts", normalized).into_response();
+    let wire: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 8192).await.unwrap()).unwrap();
+    assert_eq!(wire, fixture);
 
     assert_eq!(
         call(
@@ -591,7 +648,7 @@ async fn complete_business_flow_and_security_boundaries() {
     let related = ok(
         &app,
         "GET",
-        &format!("{root}/delivery-drafts/{}/history?page_size=1", id(&other)),
+        &format!("{root}/delivery-drafts/{}/history?page[size]=1", id(&other)),
         &admin_token,
         &admin,
         Value::Null,
@@ -627,19 +684,25 @@ async fn complete_business_flow_and_security_boundaries() {
         .0,
         403
     );
-    let page1 = ok(
+    let (status, first_page) = call(
         &app,
         "GET",
-        &format!("{root}/delivery-drafts?page_size=1&page=1"),
+        &format!("{root}/delivery-drafts?page[size]=1&page[number]=1"),
         &admin_token,
-        &admin,
+        &admin.csrf,
         Value::Null,
     )
     .await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        first_page["meta"]["page"],
+        json!({"number":1,"size":1,"has_more":true})
+    );
+    let page1 = &first_page["data"];
     let page2 = ok(
         &app,
         "GET",
-        &format!("{root}/delivery-drafts?page_size=1&page=2"),
+        &format!("{root}/delivery-drafts?page[size]=1&page[number]=2"),
         &admin_token,
         &admin,
         Value::Null,
@@ -650,7 +713,7 @@ async fn complete_business_flow_and_security_boundaries() {
         call(
             &app,
             "GET",
-            &format!("{root}/delivery-attempts?page=0"),
+            &format!("{root}/delivery-attempts?page[number]=0"),
             &admin_token,
             &admin.csrf,
             Value::Null
@@ -964,6 +1027,22 @@ async fn complete_business_flow_and_security_boundaries() {
             .unwrap(),
         p
     );
+    // Former hard-limited feeds must execute real paged SQL and serialize resources.
+    for feed in ["cases", "notifications"] {
+        let (status, document) = call(
+            &app,
+            "GET",
+            &format!("{root}/{feed}?page[size]=1"),
+            &admin_token,
+            &admin.csrf,
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, 200, "{feed}: {document}");
+        assert!(document["data"].is_array());
+        assert_eq!(document["meta"]["page"]["size"], 1);
+        assert!(document["meta"]["page"]["has_more"].is_boolean());
+    }
     let (mini_token, _) = a
         .identity
         .0
@@ -983,11 +1062,11 @@ async fn complete_business_flow_and_security_boundaries() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), 200);
+    assert_eq!(response.status(), 404);
     let legacy: Value =
         serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
             .unwrap();
-    assert_eq!(legacy["code"], 1);
-    assert!(legacy["data"]["list"][0]["id"].is_i64());
+    assert_eq!(legacy["errors"][0]["code"], "not_found");
+    assert!(legacy.get("code").is_none());
     pool.close().await;
 }
