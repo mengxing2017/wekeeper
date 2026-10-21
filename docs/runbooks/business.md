@@ -134,3 +134,29 @@ devbox run -- make test-embedded
 `test-business` 创建隔离 PostgreSQL 17 并销毁，执行 HTTP/数据库闭环、实际 SQL 导入、幂等重放、增量与写冲突回滚。
 其他环境可设置 WEKEEPER_TEST_PG_BIN；已有隔离数据库可设置 WEKEEPER_TEST_DATABASE_URL 后运行 make test-integration。
 企业微信真机、旧小程序真机、真实 MySQL 快照和 Docker 三容器验收需在相应环境执行。
+
+## 客户群目录
+
+1. 在企微管理后台配置自建应用的客户联系调用权限、成员/群主可见范围和 API 出口可信 IP。单套 CorpID/Secret 同时用于通讯录与客户群目录，AgentID 留空不阻止读取。
+2. 先在「企业通讯录」完成当前凭据代次的完整同步，再进入「客户群管理」点击「同步客户群」。仅创建 groups 数据集任务，群主范围来自当前完整内部通讯录和历史群主，不再调用客户联系成员列表或客户列表/详情接口。
+3. 「客户群」详情保留内部成员和群内外部联系人标识；「运营成员统计」仅统计群主群数和参与群数。客户、跟进关系、客户联系成员目录及客户数统计已移除，内部企业通讯录与账号绑定保留。
+4. 学校群配置默认使用候选目录。学校 admin 需要有效账号绑定且是群主；operator/member 无候选权限。已被其他学校关联的群不显示；版本冲突需刷新重选。平台手填入口仅用于已知历史群，仍必须读取官方详情。停用已有群无需上游成功。
+
+`WEKEEPER_WECOM_ASSET_SYNC_INTERVAL_SECONDS` 默认 1800 秒，0 为仅手动，非零最小 60。Compose 已透传；`make dev-embedded` 继承同终端的 export，不自动读取 `.env`。内部通讯录与客户群目录共用限速器（初始每 200ms 一次），群目录 worker 串行处理群任务、20 秒续租。超时重启任务从头重扫，不复用旧游标。
+
+终端日志依次为 `wecom asset sync requested`、`started`、`progress`、`succeeded; snapshot committed` 或 `failed; previous snapshot retained`。按 job_id/dataset/generation 关联；只有提交后才记录成功。processed 是已保存的规范化项计数，total 为枚举成员/群主范围量，不能将两者当百分比。任务详情保留安全错误码及失败历史群主引用，不显示 token、Secret、请求 URL 或游标。
+
+- `wecom_40001`：核对 CorpID/Secret 与应用；token 获取错误也会保留官方码。
+- `wecom_60020`：核对真实 API 公网出口可信 IP。
+- `directory_snapshot_required`：先完整同步当前代次内部通讯录。
+- `cursor_loop` / `invalid_response` / `inconsistent_snapshot`：停止发布并保留旧快照；待上游数据稳定后重试。
+- `network_or_rate_limit`：网络、45009 或可重试 HTTP 异常经过有限退避仍失败。
+- 历史群主不可见：先修复权限；确认确实缩小范围时，在失败任务详情填写依据并确认范围变化，再重新同步群。只接受对应任务明确记录的不可见错误，当前可见成员仍会被重新枚举；确认操作写审计，原历史群及学校映射保留。
+
+页面展示每数据集最近成功时间、采集任务状态与范围缩小提示。快照并非上游瞬时时间点；超过 24 小时未核验的对象不进入候选和当前统计，平台仍可查看诊断历史。群外部联系人仅保留群成员标识，不关联客户资料，不按昵称合并。范围缺失不是解散或删除证明。
+
+Secret 显式切换会在同一事务废止旧资产任务、标记旧资料待核验并创建新代次群同步任务；学校映射不变。若群任务早于内部通讯录完成而失败，可待内部通讯录成功后手动重试。内部成员核验成功不证明客户联系权限，需单独检查客户群任务错误。
+
+未完成 staging 在任务终结时清理；成功规范化 staging 保留每类当前及上次成功版本，其余终态任务记录按 30 天清理。稳定群身份与历史群成员关系不硬删除，业务学校群和发送引用不清理。不采集头像、手机号、群公告、聊天内容、unionid 或上游完整响应。
+
+运行 `make check-web` 与 `devbox run -- make check-backend test-business`。数据库测试只接受隔离的 `WEKEEPER_TEST_DATABASE_URL`；临时 PostgreSQL 自动创建并销毁。测试替身不替代真实企业权限与可见数据验收：需核对不同群主、仅在群内出现的外部成员、权限缩小和 Secret 轮换，记录采集时间和覆盖范围。
