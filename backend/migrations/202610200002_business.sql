@@ -17,7 +17,7 @@ CREATE TABLE school_memberships (
 CREATE TABLE sessions (
  token_hash TEXT PRIMARY KEY, account_id UUID NOT NULL REFERENCES accounts(id), csrf TEXT NOT NULL,
  expires_at TIMESTAMPTZ NOT NULL, last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
- kind TEXT NOT NULL CHECK (kind IN ('browser','miniapp')), wecom_authenticated BOOLEAN NOT NULL DEFAULT FALSE, wecom_binding_revision BIGINT NOT NULL DEFAULT 0
+ credential_generation BIGINT, kind TEXT NOT NULL CHECK (kind IN ('browser','miniapp')), wecom_authenticated BOOLEAN NOT NULL DEFAULT FALSE, wecom_binding_revision BIGINT NOT NULL DEFAULT 0
 );
 CREATE INDEX sessions_expiry ON sessions(expires_at);
 CREATE TABLE login_attempts (username TEXT PRIMARY KEY, failures INTEGER NOT NULL, reset_at TIMESTAMPTZ NOT NULL);
@@ -124,11 +124,12 @@ CREATE TABLE migration_runs (id UUID PRIMARY KEY, source_hash TEXT NOT NULL UNIQ
 
 -- Single-enterprise directory. Runs stage remotely; publication is one transaction.
 CREATE TABLE wecom_directory_state (
- singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK(singleton), corp_id TEXT NOT NULL, agent_id TEXT NOT NULL,
+ singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK(singleton), corp_id TEXT NOT NULL, credential_scope TEXT NOT NULL,
+ credential_generation BIGINT NOT NULL DEFAULT 1 CHECK(credential_generation>0),
  snapshot_id UUID, last_success_at TIMESTAMPTZ, next_call_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE wecom_directory_sync_runs (
- id UUID PRIMARY KEY, actor_id UUID REFERENCES accounts(id), state TEXT NOT NULL DEFAULT 'queued' CHECK(state IN ('queued','running','succeeded','failed')),
+ id UUID PRIMARY KEY, actor_id UUID REFERENCES accounts(id), generation BIGINT NOT NULL CHECK(generation>0), state TEXT NOT NULL DEFAULT 'queued' CHECK(state IN ('queued','running','succeeded','failed')),
  created_at TIMESTAMPTZ NOT NULL DEFAULT now(), started_at TIMESTAMPTZ, finished_at TIMESTAMPTZ,
  lease_id UUID, lease_until TIMESTAMPTZ, error_code TEXT,
  department_count INTEGER NOT NULL DEFAULT 0, member_count INTEGER NOT NULL DEFAULT 0, snapshot JSONB
