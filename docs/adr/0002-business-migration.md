@@ -13,7 +13,8 @@ TypeScript contract 提供同源 client、CSRF、业务响应和错误类型；f
 ## 企业微信单企业边界
 
 本项目仅支持一套企业微信配置，接入一个企业主体及其自建应用，不需要支持多企业同时接入。
-部署使用唯一一组 `WEKEEPER_WECOM_CORP_ID`、`WEKEEPER_WECOM_AGENT_ID`、`WEKEEPER_WECOM_SECRET`。
+部署使用唯一一组 `WEKEEPER_WECOM_CORP_ID` 与 `WEKEEPER_WECOM_SECRET` 作为服务端凭据；`WEKEEPER_WECOM_AGENT_ID` 仅为当前客户端分享流程必需，须属于同一自建应用。目录与 HTTPS OAuth 不依赖 AgentID。
+目录属于唯一 CorpID，凭据指纹及递增代次隔离不同 Secret 的可见范围。补填 AgentID 不改变目录来源；更换 Secret 须经平台管理员显式验证并切换，旧任务与企业会话失效，账号绑定和学校授权保留。
 企业成员 UserID 映射与客户群均属于该企业；新增群的 CorpID 必须与部署配置一致。
 同一企业下可以管理多个学校、多个运营成员和多个客户群，学校范围与角色仍独立授权。
 多企业凭证管理、跨企业成员身份与企业切换不在项目需求范围内，不作为业务缺陷或待建设能力。
