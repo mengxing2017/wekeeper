@@ -15,7 +15,6 @@ api-contract/    共享 DTO 与请求 client，不部署
 docs/adr/        工程决策
 docs/runbooks/   部署、验证与恢复操作
 tools/           冒烟检查与后续迁移工具
-report/          原系统分析及重构实施方案
 ```
 
 后端以 `system` 模块展示完整的 domain、north/local、north/remote、south/port、south/adapter/postgres 分层。
@@ -264,7 +263,7 @@ docker compose --env-file .env -f compose.yaml logs --tail 100 api web
 完整备份、隔离恢复、更新回滚和排障命令见 [Docker 部署手册](docs/runbooks/docker.md)。
 
 工程决策见 [基础骨架 ADR](docs/adr/0001-foundation.md)。
-业务目标见 [Rust 与 React 重构实施方案](report/11-Rust与React重构实施方案.md)。
+业务边界与授权设计见 [社区业务、学校边界与人工分享 ADR](docs/adr/0002-business-migration.md)。
 首次管理员、平台配置与旧数据迁移详见 [业务运行手册](docs/runbooks/business.md)。
 
 ### JSON:API 协议切换
