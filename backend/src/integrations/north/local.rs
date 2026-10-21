@@ -112,6 +112,25 @@ impl Service {
             .wx_account(v["openid"].as_str().ok_or(Error::Forbidden)?)
             .await
     }
+    pub async fn validate_group(&self, corp: &str, chat: &str) -> Result<()> {
+        require(
+            !self.corp.is_empty() && corp == self.corp,
+            "企业 ID 必须与当前应用配置一致",
+        )?;
+        let token = self.token().await?;
+        let v = self
+            .json(
+                self.client
+                    .post("https://qyapi.weixin.qq.com/cgi-bin/externalcontact/groupchat/get")
+                    .query(&[("access_token", token)])
+                    .json(&json!({"chat_id":chat,"need_name":0})),
+            )
+            .await?;
+        require(
+            v["group_chat"]["chat_id"].as_str() == Some(chat),
+            "无法核验目标客户群",
+        )
+    }
     pub async fn verify_group(&self, a: &Actor, corp: &str, chat: &str) -> Result<()> {
         require(a.wecom_authenticated && corp == self.corp, "企业身份不匹配")?;
         let userid = self.repository.userid(a.id).await?;
