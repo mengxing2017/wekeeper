@@ -25,7 +25,7 @@ docker buildx version
 
 关键文件：
 
-- `backend/Dockerfile`：Rust 1.97.1 多阶段构建，最终 Debian slim 镜像以 UID/GID 10001:10001 运行。
+- `backend/Dockerfile`：Rust 1.97.1 多阶段构建，最终 Debian slim 镜像以 UID/GID 10001:10001 运行。构建和运行阶段的 APT 使用中科大镜像；Cargo 使用默认的 crates.io 公共仓库。基础镜像仍使用官方 Rust/Debian 镜像，与参考项目一致。
 - `frontend/Dockerfile`：Node.js 22 构建 contract/React，Caddy 2.10 提供运行环境。
 - `.dockerignore`：仅纳入新工程目录，排除 target、node_modules、dist、环境文件及历史目录。
 - `compose.yaml`：生产运行基线，只引用镜像，没有 build 配置。
