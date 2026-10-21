@@ -80,9 +80,12 @@ impl Actor {
         }
     }
 }
-#[derive(Deserialize, Default)]
+#[derive(Clone, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct Page {
+    #[serde(rename = "page[number]")]
     pub page: Option<i64>,
+    #[serde(rename = "page[size]")]
     pub page_size: Option<i64>,
     pub search: Option<String>,
     pub status: Option<String>,
@@ -90,6 +93,10 @@ pub struct Page {
     pub kind: Option<String>,
 }
 impl Page {
+    /// Fetch one extra row to determine the next-page state without guessing totals.
+    pub fn fetch_bounds(&self) -> Result<(i64, i64)> {
+        self.bounds().map(|(size, offset)| (size + 1, offset))
+    }
     pub fn bounds(&self) -> Result<(i64, i64)> {
         let size = self.page_size.unwrap_or(30);
         let page = self.page.unwrap_or(1);
