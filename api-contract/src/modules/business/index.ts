@@ -1,4 +1,4 @@
-import { requestJson, setCsrf } from '../../http';
+import { requestResource, requestCollection, requestDocument, decodeData, setCsrf, type PageMeta } from '../../http';
 export { ApiError } from '../../http';
 export type Json = string | number | boolean | null | Json[] | {
     [key: string]: Json;
@@ -64,6 +64,7 @@ export interface Attempt extends Row {
 }
 export interface RelatedHistory {
     items: Attempt[];
+    page: PageMeta;
     latest_attempt_id: string | null;
     blocked: boolean;
 }
@@ -75,54 +76,56 @@ export interface Signature {
 export type Resource = 'posts' | 'comments' | 'cases' | 'resources' | 'groups' | 'templates' | 'delivery-drafts' | 'delivery-attempts' | 'audit' | 'members' | 'follows' | 'notifications' | 'reactions';
 const part = (s: string) => encodeURIComponent(s);
 export const scope = (school: string, path: string) => `/api/v1/schools/${part(school)}/${path}`;
-async function data<T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal, headers?: Record<string, string>): Promise<T> { return (await requestJson<{
-    data: T;
-}>(path, method, body, signal, headers)).data; }
 export const identity = {
-    async session() { const v = await data<Session>('/api/v1/auth/session'); setCsrf(v.csrf); return v; },
-    async login(username: string, password: string) { const v = await data<Session>('/api/v1/auth/sessions', 'POST', { username, password }); setCsrf(v.csrf); return v; },
-    async logout() { await data('/api/v1/auth/session', 'DELETE'); setCsrf(''); },
-    profile: (display_name: string) => data('/api/v1/profile', 'PUT', { display_name }),
-    accounts: () => data<Row[]>('/api/v1/accounts'),
+    async session() { const v = await requestResource<Session>('/api/v1/auth/session'); setCsrf(v.csrf); return v; },
+    async login(username: string, password: string) { const v = await requestResource<Session>('/api/v1/auth/sessions', 'POST', { username, password }); setCsrf(v.csrf); return v; },
+    async logout() { await requestResource('/api/v1/auth/session', 'DELETE'); setCsrf(''); },
+    profile: (display_name: string) => requestResource('/api/v1/profile', 'PUT', { display_name }),
+    accounts: () => requestResource<Row[]>('/api/v1/accounts'),
     create: (body: {
         username: string;
         display_name: string;
         password: string;
-    }) => data<Row>('/api/v1/accounts', 'POST', body),
-    update: (id: string, body: unknown) => data(`/api/v1/accounts/${part(id)}`, 'PUT', body),
-    reset: (id: string, password: string) => data(`/api/v1/accounts/${part(id)}/password`, 'POST', { username: '', password }),
+    }) => requestResource<Row>('/api/v1/accounts', 'POST', body),
+    update: (id: string, body: unknown) => requestResource(`/api/v1/accounts/${part(id)}`, 'PUT', body),
+    reset: (id: string, password: string) => requestResource(`/api/v1/accounts/${part(id)}/password`, 'POST', { username: '', password }),
 };
 export interface WecomStatus { configured: boolean; oauth_available: boolean }
 export const workspace = {
-    wecomStatus: () => data<WecomStatus>('/api/v1/wecom/status'),
-    globalResources: () => data<Row[]>('/api/v1/platform/resources'),
-    globalResource: (body: unknown) => data('/api/v1/platform/resources', 'POST', body),
-    schools: () => data<School[]>('/api/v1/schools'),
-    directory: () => data<Pick<School, 'id' | 'name'>[]>('/api/v1/school-directory'),
-    createSchool: (name: string) => data<School>('/api/v1/schools', 'POST', { name }),
-    updateSchool: (s: string, body: unknown) => data<School>(`/api/v1/schools/${part(s)}`, 'PUT', body),
-    bind: (s: string) => data(scope(s, 'bind'), 'POST'),
-    list: <T extends Row = Row>(s: string, resource: Resource, query = '', signal?: AbortSignal) => data<T[]>(scope(s, resource) + query, 'GET', undefined, signal),
-    getDraft: (s: string, id: string) => data<Draft>(scope(s, `delivery-drafts/${part(id)}`)),
-    relatedHistory: (s: string, id: string, page = 1) => data<RelatedHistory>(scope(s, `delivery-drafts/${part(id)}/history`) + `?page=${page}&page_size=30`),
-    getPost: (s: string, id: string) => data<Post>(scope(s, `posts/${part(id)}`)),
-    comments: (s: string, id: string) => data<Row[]>(scope(s, `posts/${part(id)}/comments`)),
-    mutate: <T = Row>(s: string, path: string, body?: unknown, method = 'POST') => data<T>(scope(s, path), method, body),
-    upload: (s: string, file: Blob) => data<{
+    wecomStatus: () => requestResource<WecomStatus>('/api/v1/wecom/status'),
+    globalResources: () => requestResource<Row[]>('/api/v1/platform/resources'),
+    globalResource: (body: unknown) => requestResource('/api/v1/platform/resources', 'POST', body),
+    schools: () => requestResource<School[]>('/api/v1/schools'),
+    directory: () => requestResource<Pick<School, 'id' | 'name'>[]>('/api/v1/school-directory'),
+    createSchool: (name: string) => requestResource<School>('/api/v1/schools', 'POST', { name }),
+    updateSchool: (s: string, body: unknown) => requestResource<School>(`/api/v1/schools/${part(s)}`, 'PUT', body),
+    bind: (s: string) => requestResource(scope(s, 'bind'), 'POST'),
+    list: <T extends Row = Row>(s: string, resource: Resource, query = '', signal?: AbortSignal) => requestCollection<T>(scope(s, resource) + query, signal),
+    getDraft: (s: string, id: string) => requestResource<Draft>(scope(s, `delivery-drafts/${part(id)}`)),
+    async relatedHistory(s: string, id: string, page = 1): Promise<RelatedHistory> {
+        const document = await requestDocument(scope(s, `delivery-drafts/${part(id)}/history`) + `?page[number]=${page}&page[size]=30`);
+        const meta = document.meta;
+        if (!Array.isArray(document.data) || !meta?.page || typeof meta.blocked !== 'boolean' || !(meta.latest_attempt_id === null || typeof meta.latest_attempt_id === 'string')) throw new Error('不合法的发送历史文档');
+        return {items: decodeData<Attempt[]>(document), page: meta.page, blocked: meta.blocked, latest_attempt_id: meta.latest_attempt_id};
+    },
+    getPost: (s: string, id: string) => requestResource<Post>(scope(s, `posts/${part(id)}`)),
+    comments: (s: string, id: string, page = 1) => requestCollection<Row>(scope(s, `posts/${part(id)}/comments`) + `?page[number]=${page}&page[size]=30`),
+    mutate: <T = Row>(s: string, path: string, body?: unknown, method = 'POST') => requestResource<T>(scope(s, path), method, body),
+    upload: (s: string, file: Blob) => requestResource<{
         url: string;
     }>(scope(s, 'media'), 'POST', file),
     prepare: (s: string, id: string, key: string, body: {
         current_chat_id: string;
         resend_of?: string;
         reason: string;
-    }) => data<Attempt>(scope(s, `delivery-drafts/${part(id)}/attempts`), 'POST', body, undefined, { 'Idempotency-Key': key }),
-    claim: (s: string, id: string) => data(scope(s, `delivery-attempts/${part(id)}/invocation`), 'POST'),
-    result: (s: string, id: string, state: ClientState) => data<Attempt>(scope(s, `delivery-attempts/${part(id)}/client-result`), 'PUT', { state }),
-    wecomInfo: () => data<{
+    }) => requestResource<Attempt>(scope(s, `delivery-drafts/${part(id)}/attempts`), 'POST', body, undefined, { 'Idempotency-Key': key }),
+    claim: (s: string, id: string) => requestResource(scope(s, `delivery-attempts/${part(id)}/invocation`), 'POST'),
+    result: (s: string, id: string, state: ClientState) => requestResource<Attempt>(scope(s, `delivery-attempts/${part(id)}/client-result`), 'PUT', { state }),
+    wecomInfo: () => requestResource<{
         corpId: string;
         agentId: string;
     }>('/api/v1/wecom/config'),
-    signature: (url: string, agent: boolean) => data<Signature>(`/api/v1/wecom/js-sdk-config?${new URLSearchParams({ url, agent: String(agent) })}`),
+    signature: (url: string, agent: boolean) => requestResource<Signature>(`/api/v1/wecom/js-sdk-config?${new URLSearchParams({ url, agent: String(agent) })}`),
 };
 
 /** OAuth only accepts UUID selections; arbitrary return URLs are not supported. */

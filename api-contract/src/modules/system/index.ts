@@ -1,13 +1,10 @@
-import { getJson } from '../../http'
-
-export interface SystemDocument {
-  data: {
-    application: 'wekeeper'
-    version: string
-    stage: 'business'
-  }
+import { requestResource } from '../../http'
+export interface SystemInfo {
+  id: string
+  application: 'wekeeper'
+  version: string
+  stage: 'business'
 }
-
-export function getSystemInfo(signal?: AbortSignal): Promise<SystemDocument> {
-  return getJson('/api/v1/system', signal)
+export function getSystemInfo(signal?: AbortSignal): Promise<SystemInfo> {
+  return requestResource('/api/v1/system', 'GET', undefined, signal)
 }
