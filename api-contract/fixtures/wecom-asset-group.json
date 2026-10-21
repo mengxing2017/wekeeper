@@ -1,0 +1,35 @@
+{
+  "data": [
+    {
+      "type": "wecom-asset-groups",
+      "id": "00000000-0000-0000-0000-000000000001",
+      "attributes": {
+        "chat_id": "CHAT",
+        "name": "客户群",
+        "owner": "Alice",
+        "create_time": 1,
+        "member_version": "opaque-V1",
+        "member_count": 3,
+        "status": 0,
+        "point_verification": false,
+        "corp_id": "corp",
+        "checked_at": "2026-10-21T00:00:00+00:00",
+        "credential_generation": 1,
+        "visibility": "visible",
+        "verification": "verified",
+        "source": "snapshot",
+        "member_id": "00000000-0000-0000-0000-000000000002",
+        "member_name": "成员0",
+        "bound_account_id": null,
+        "school_id": null
+      }
+    }
+  ],
+  "meta": {
+    "page": {
+      "number": 1,
+      "size": 30,
+      "has_more": false
+    }
+  }
+}

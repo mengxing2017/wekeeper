@@ -95,6 +95,9 @@ export async function requestCollection<T>(path: string, signal?: AbortSignal): 
 export function resourceType(path: string): string {
   const parts = path.split('?')[0].split('/').filter(Boolean)
   if (parts[0] !== 'api' || parts[1] !== 'v1') throw new Error('Unknown resource path')
+  if (parts[2] === 'platform' && parts[3] === 'wecom-assets' && parts[4] === 'owner-scope-decisions') return 'wecom-owner-scope-decisions'
+  if (parts[2] === 'platform' && parts[3] === 'wecom-assets' && parts[4] === 'sync-runs') return 'wecom-asset-sync-runs'
+  if (parts[2] === 'schools' && parts[4] === 'groups' && parts[5] === 'from-directory') return 'wecom-group-bindings'
   if (parts[2] === 'auth') return 'sessions'
   if (parts[2] === 'platform' && parts[3] === 'wecom-directory' && parts[4] === 'credential-rotations') return 'wecom-credential-rotations'
   if (parts[2] === 'accounts' && parts[4] === 'wecom-binding') return 'wecom-bindings'

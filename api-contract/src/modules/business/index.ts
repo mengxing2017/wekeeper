@@ -176,3 +176,28 @@ export const directory = {
     bind: (account: string, member_id: string, revision: number) => requestResource(`/api/v1/accounts/${part(account)}/wecom-binding`, 'PUT', {member_id, revision}),
     unbind: (account: string, revision: number) => requestResource(`/api/v1/accounts/${part(account)}/wecom-binding`, 'DELETE', undefined, undefined, {'If-Match': `"${revision}"`}),
 };
+
+export type AssetDataset = 'groups';
+export interface AssetRun extends Row {
+    dataset: AssetDataset; generation: number; state: 'queued'|'running'|'succeeded'|'failed'; stage: string;
+    processed: number; total: number; pages: number; error_code: string|null; complete: boolean; scope_changed: boolean;
+    created_at: string; started_at: string|null; finished_at: string|null;
+}
+export interface AssetState {dataset:AssetDataset; current_run_id:string|null; last_success_at:string|null; published_generation:number|null; freshness:string; scope_changed:boolean; scope_count:number; latest_run:AssetRun|null}
+export interface AssetStatus {server_configured:boolean; configuration_error:string|null; credential_generation:number|null; datasets:AssetState[]}
+export interface AssetRecord extends Row {checked_at:string; credential_generation:number; visibility:'visible'|'not_seen'; verification:'verified'|'unverified'|'unavailable'}
+export interface GroupCandidate {already_associated:boolean;id:string; name:string|null; chat_id:string; corp_id:string; owner:string; owner_name:string|null; member_count:number; credential_generation:number; checked_at:string}
+export interface AssetFilter {page?:number; search?:string; member_id?:string; owner_member_id?:string; participant_member_id?:string; verification?:string; associated?:boolean; dataset?:AssetDataset}
+export type AssetList = 'groups'|'member-statistics'|'sync-runs';
+function assetQuery(filter:AssetFilter) {const q=new URLSearchParams({'page[number]':String(filter.page??1),'page[size]':'30'});for(const [key,value] of Object.entries(filter))if(key!=='page'&&value!==undefined&&value!=='')q.set(key,String(value));return q;}
+const assetsPath='/api/v1/platform/wecom-assets';
+export const assets = {
+    confirmOwnerScope:(input:{run_id:string;owner_userid:string;expected_generation:number;reason:string})=>requestResource(`${assetsPath}/owner-scope-decisions`,'POST',input),
+    status:()=>requestResource<AssetStatus>(`${assetsPath}/status`),
+    sync:(dataset:AssetDataset)=>requestResource<AssetRun[]>(`${assetsPath}/sync-runs`,'POST',{dataset}),
+    list:(kind:AssetList,filter:AssetFilter={})=>requestCollection<Row>(`${assetsPath}/${kind}?${assetQuery(filter)}`),
+    detail:(kind:'groups'|'sync-runs',id:string)=>requestResource<Row>(`${assetsPath}/${kind}/${part(id)}`),
+    relations:(kind:'groups',id:string,page=1)=>requestCollection<AssetRecord>(`${assetsPath}/${kind}/${part(id)}/members?${assetQuery({page})}`),
+    candidates:(school:string,filter:Pick<AssetFilter,'page'|'search'>={})=>requestCollection<GroupCandidate>(scope(school,'wecom-group-candidates')+`?${assetQuery(filter)}`),
+    bind:(school:string,input:{directory_group_id:string;expected_generation:number;expected_checked_at:string;name?:string})=>requestResource<Row>(scope(school,'groups/from-directory'),'POST',input),
+};
