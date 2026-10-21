@@ -4,13 +4,15 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ShareWorkspace } from './index'
 import { identity, workspace } from './api'
 import { currentChat, sendText } from './sdk'
-vi.mock('./api',async importOriginal=>({...await importOriginal<typeof import('./api')>(),identity:{session:vi.fn()},workspace:{wecomStatus:vi.fn(),schools:vi.fn(),list:vi.fn(),prepare:vi.fn(),claim:vi.fn(),result:vi.fn()}}))
+vi.mock('./api',async importOriginal=>({...await importOriginal<typeof import('./api')>(),identity:{session:vi.fn()},workspace:{wecomStatus:vi.fn(),schools:vi.fn(),list:vi.fn(),getDraft:vi.fn(),relatedHistory:vi.fn(),prepare:vi.fn(),claim:vi.fn(),result:vi.fn()}}))
 vi.mock('./sdk',async importOriginal=>({...await importOriginal<typeof import('./sdk')>(),currentChat:vi.fn(),sendText:vi.fn()}))
 beforeEach(()=>{
  vi.spyOn(navigator,'userAgent','get').mockReturnValue('wxwork');
  vi.mocked(workspace.wecomStatus).mockResolvedValue({configured:true,oauth_available:true});
+ vi.mocked(workspace.getDraft).mockResolvedValue({id:'d',school_id:'s',group_id:'g',template_version_id:'v',content:'Frozen text',content_hash:'h',state:'ready',chat_id:'chat',group_name:'Target'});
+ vi.mocked(workspace.relatedHistory).mockResolvedValue({items:[],latest_attempt_id:null,blocked:false});
 })
-afterEach(()=>{vi.restoreAllMocks();cleanup();vi.resetAllMocks();localStorage.clear();sessionStorage.clear()})
+afterEach(()=>{vi.restoreAllMocks();cleanup();vi.resetAllMocks();localStorage.clear();sessionStorage.clear();window.history.replaceState({},'', '/')})
 function renderPage(){const c=new QueryClient({defaultOptions:{queries:{retry:false},mutations:{retry:false}}});return render(<QueryClientProvider client={c}><ShareWorkspace/></QueryClientProvider>)}
 it('requires enterprise identity before offering a send action',async()=>{
  vi.mocked(identity.session).mockRejectedValue(new Error('unauthorized'));renderPage();expect(await screen.findByText('企业微信授权登录')).toBeTruthy();expect(screen.queryByText('确认正文并在当前群分享')).toBeNull()
@@ -20,7 +22,7 @@ it('does not invoke the SDK twice when reporting the first result fails',async()
  vi.mocked(workspace.schools).mockResolvedValue([{id:'s',name:'School',active:true,revision:1,config:{}}])
  vi.mocked(workspace.list).mockImplementation(async(_s,kind)=>kind==='delivery-drafts'?[{id:'d',school_id:'s',group_id:'g',template_version_id:'v',content:'Frozen text',content_hash:'h',state:'ready',chat_id:'chat',group_name:'Target'}]:[])
  vi.mocked(currentChat).mockResolvedValue('chat');vi.mocked(workspace.prepare).mockResolvedValue({id:'attempt',school_id:'s',draft_id:'d',actor_id:'u',state:'prepared',reconciliation:null,client_result:null});vi.mocked(workspace.claim).mockResolvedValue({});vi.mocked(sendText).mockResolvedValue(undefined);vi.mocked(workspace.result).mockRejectedValue(new Error('result lost'))
- renderPage();await screen.findByText('Target · Frozen text');fireEvent.change(screen.getAllByRole('combobox')[1],{target:{value:'d'}});fireEvent.click(screen.getByText('读取并核对当前客户群'));await screen.findByText('当前群：chat');fireEvent.click(screen.getByText('确认正文并在当前群分享'));await waitFor(()=>expect(sendText).toHaveBeenCalledTimes(1));await screen.findByRole('alert');fireEvent.click(screen.getByText('确认正文并在当前群分享'));expect(sendText).toHaveBeenCalledTimes(1);expect(workspace.prepare).toHaveBeenCalledTimes(1)
+ renderPage();await screen.findByText('Target · Frozen text');fireEvent.change(screen.getAllByRole('combobox')[1],{target:{value:'d'}});fireEvent.click(await screen.findByText('读取并核对当前客户群'));await screen.findByText('当前群：chat');fireEvent.click(screen.getByText('确认正文并在当前群分享'));await waitFor(()=>expect(sendText).toHaveBeenCalledTimes(1));await screen.findByRole('alert');fireEvent.click(screen.getByText('确认正文并在当前群分享'));expect(sendText).toHaveBeenCalledTimes(1);expect(workspace.prepare).toHaveBeenCalledTimes(1)
 })
 
 function setupShare() {
@@ -31,7 +33,7 @@ function setupShare() {
 
 }
 async function selectAndCheck() {
- renderPage();await screen.findByText('Target · Frozen text');fireEvent.change(screen.getAllByRole('combobox')[1],{target:{value:'d'}});fireEvent.click(screen.getByText('读取并核对当前客户群'));await screen.findByText('当前群：chat');
+ renderPage();await screen.findByText('Target · Frozen text');fireEvent.change(screen.getAllByRole('combobox')[1],{target:{value:'d'}});fireEvent.click(await screen.findByText('读取并核对当前客户群'));await screen.findByText('当前群：chat');
 }
 it('refuses sharing when the current chat changes after preview', async()=>{
  setupShare();await selectAndCheck();vi.mocked(currentChat).mockResolvedValue('another-chat');
@@ -60,11 +62,36 @@ it('allows ordinary browser preview but disables SDK sending', async()=>{
  setupShare();vi.spyOn(navigator,'userAgent','get').mockReturnValue('Mozilla');renderPage();
  await screen.findByText('Target · Frozen text');fireEvent.change(screen.getAllByRole('combobox')[1],{target:{value:'d'}});
  expect(screen.getByText('当前为普通浏览器')).toBeTruthy();
- expect((screen.getByText('确认正文并在当前群分享') as HTMLButtonElement).disabled).toBe(true);
+ expect((await screen.findByText('确认正文并在当前群分享') as HTMLButtonElement).disabled).toBe(true);
  expect(sendText).not.toHaveBeenCalled();
 })
 it('shows recoverable errors when configuration and session requests fail',async()=>{
  vi.mocked(workspace.wecomStatus).mockRejectedValue(new Error('offline'));
  vi.mocked(identity.session).mockRejectedValue(new Error('offline'));renderPage();
  expect(await screen.findByText('重新检查配置')).toBeTruthy();expect(await screen.findByText('重新查询身份')).toBeTruthy();
+})
+
+it('loads an older draft directly even when it is absent from the first page', async()=>{
+ setupShare();window.history.replaceState({},'', '/wecom?school=s&draft=d');
+ vi.mocked(workspace.list).mockResolvedValue([]);renderPage();
+ expect(await screen.findByText('目标客户群：Target（chat）')).toBeTruthy();
+ expect(workspace.getDraft).toHaveBeenCalledWith('s','d');
+ window.history.replaceState({},'', '/');
+})
+it('offers history from an overlapping older draft for explicit resend', async()=>{
+ setupShare();vi.mocked(identity.session).mockResolvedValue({csrf:'csrf',user:{id:'u',username:'u',display_name:'Admin',platform_admin:true,bound_school_id:'s',grants:[],wecom_authenticated:true}});
+ vi.mocked(workspace.relatedHistory).mockResolvedValue({blocked:false,latest_attempt_id:'old-attempt',items:[{id:'old-attempt',school_id:'s',draft_id:'different-draft',actor_id:'u',state:'client_reported_success',reconciliation:null,client_result:null,group_name:'Target',created_at:'2026-10-21'}]});
+ await selectAndCheck();
+ expect((screen.getByText('确认正文并在当前群分享') as HTMLButtonElement).disabled).toBe(true);
+ fireEvent.change(screen.getByLabelText('引用历史尝试'),{target:{value:'old-attempt'}});
+ fireEvent.change(screen.getByLabelText('再次分享原因'),{target:{value:'核对后再次分享'}});
+ fireEvent.click(screen.getByText('准备明确再次分享'));
+ fireEvent.click(screen.getByText('确认正文并在当前群分享'));
+ await waitFor(()=>expect(workspace.prepare).toHaveBeenCalledWith('s','d',expect.any(String),expect.objectContaining({resend_of:'old-attempt',reason:'核对后再次分享'})));
+})
+it('blocks sending when an older overlapping item still has an unresolved result', async()=>{
+ setupShare();vi.mocked(workspace.relatedHistory).mockResolvedValue({blocked:true,latest_attempt_id:'newer',items:[]});
+ await selectAndCheck();
+ expect((screen.getByText('确认正文并在当前群分享') as HTMLButtonElement).disabled).toBe(true);
+ expect(sendText).not.toHaveBeenCalled();
 })
