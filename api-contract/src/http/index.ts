@@ -96,6 +96,7 @@ export function resourceType(path: string): string {
   const parts = path.split('?')[0].split('/').filter(Boolean)
   if (parts[0] !== 'api' || parts[1] !== 'v1') throw new Error('Unknown resource path')
   if (parts[2] === 'auth') return 'sessions'
+  if (parts[2] === 'accounts' && parts[4] === 'wecom-binding') return 'wecom-bindings'
   if (parts[2] === 'profile' || parts[2] === 'accounts') return 'accounts'
   if (parts[2] === 'platform' && parts[3] === 'resources') return 'resources'
   if (parts[2] === 'schools') {

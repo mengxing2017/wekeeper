@@ -87,7 +87,7 @@ export const identity = {
         display_name: string;
         password: string;
     }) => requestResource<Row>('/api/v1/accounts', 'POST', body),
-    update: (id: string, body: unknown) => requestResource(`/api/v1/accounts/${part(id)}`, 'PUT', body),
+    update: (id: string, body: {display_name: string; active: boolean}) => requestResource(`/api/v1/accounts/${part(id)}`, 'PUT', body),
     reset: (id: string, password: string) => requestResource(`/api/v1/accounts/${part(id)}/password`, 'POST', { username: '', password }),
 };
 export interface WecomStatus { configured: boolean; oauth_available: boolean }
@@ -135,3 +135,42 @@ export function wecomOAuthUrl(selection: { school?: string; draft?: string } = {
     if (selection.draft) params.set('draft', selection.draft);
     return `/api/v1/wecom/oauth/start${params.size ? `?${params}` : ''}`;
 }
+
+export interface DirectoryDepartment { id: number; parentid: number; name: string; order: number }
+export interface DirectoryMember {
+    id: string; userid: string; name: string; status: number | null;
+    visibility: 'visible' | 'not_seen'; verification: 'verified' | 'unavailable' | 'unverified';
+    departments: DirectoryDepartment[]; checked_at: string | null;
+    bound_account_id: string | null; bound_account_name: string | null;
+}
+export interface DirectoryRun {
+    id: string; state: 'queued' | 'running' | 'succeeded' | 'failed';
+    created_at: string; started_at: string | null; finished_at: string | null;
+    error_code: string | null; department_count: number; member_count: number;
+}
+export interface DirectoryStatus {
+    id: string; configured: boolean; configuration_error: string | null;
+    snapshot_id: string | null; last_success_at: string | null; latest_run: DirectoryRun | null;
+}
+export interface DirectoryFilter { page?: number; search?: string; department_id?: number; status?: number; binding?: 'bound' | 'unbound' }
+const directoryPath = '/api/v1/platform/wecom-directory';
+export const directory = {
+    status: () => requestResource<DirectoryStatus>(`${directoryPath}/status`),
+    members: (filter: DirectoryFilter = {}) => {
+        const q = new URLSearchParams({'page[number]': String(filter.page ?? 1), 'page[size]': '30'});
+        for (const key of ['search','department_id','status','binding'] as const) if (filter[key] !== undefined && filter[key] !== '') q.set(key, String(filter[key]));
+        return requestCollection<DirectoryMember>(`${directoryPath}/members?${q}`);
+    },
+    async departments() {
+        const items: DirectoryDepartment[] = [];
+        for (let page = 1; ; page++) {
+            const result = await requestCollection<Omit<DirectoryDepartment,'id'> & {id:string}>(`${directoryPath}/departments?page[number]=${page}&page[size]=100`);
+            items.push(...result.items.map(d => ({...d,id:Number(d.id)})));
+            if (!result.page?.has_more) return items;
+        }
+    },
+    sync: () => requestResource<DirectoryRun>(`${directoryPath}/sync-runs`, 'POST'),
+    run: (id: string) => requestResource<DirectoryRun>(`${directoryPath}/sync-runs/${part(id)}`),
+    bind: (account: string, member_id: string, revision: number) => requestResource(`/api/v1/accounts/${part(account)}/wecom-binding`, 'PUT', {member_id, revision}),
+    unbind: (account: string, revision: number) => requestResource(`/api/v1/accounts/${part(account)}/wecom-binding`, 'DELETE', undefined, undefined, {'If-Match': `"${revision}"`}),
+};

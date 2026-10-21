@@ -1,0 +1,18 @@
+{
+  "data": [{
+    "type": "wecom-directory-members",
+    "id": "00000000-0000-0000-0000-000000000001",
+    "attributes": {
+      "userid": "Zhang.San",
+      "name": "张三",
+      "status": 1,
+      "visibility": "visible",
+      "verification": "verified",
+      "departments": [{"id": 2, "parentid": 1, "name": "运营部", "order": 0}],
+      "checked_at": "2026-10-21T00:00:00+00:00",
+      "bound_account_id": null,
+      "bound_account_name": null
+    }
+  }],
+  "meta": {"page": {"number": 1, "size": 30, "has_more": false}}
+}
