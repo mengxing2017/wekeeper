@@ -12,14 +12,14 @@ function show(platformAdmin = false) {
 }
 it('shows role-appropriate navigation and routes business selections', () => {
   const { onNavigate } = show()
-  expect(screen.queryByRole('button', { name: '学校与账号' })).toBeNull()
+  expect(screen.queryByRole('button', { name: '学校管理' })).toBeNull()
   expect(screen.getByRole('button', { name: '内容审核' }).getAttribute('aria-current')).toBe('page')
   fireEvent.click(screen.getByRole('button', { name: '分享记录' }))
   expect(onNavigate).toHaveBeenCalledWith('delivery-attempts')
 })
 it('provides platform management and logout for an administrator', () => {
   const { onLogout } = show(true)
-  expect(screen.getByRole('button', { name: '学校与账号' })).toBeTruthy()
+  expect(screen.getByRole('button', { name: '学校管理' })).toBeTruthy()
   fireEvent.click(screen.getByRole('button', { name: '退出登录' }))
   expect(onLogout).toHaveBeenCalledTimes(1)
 })
