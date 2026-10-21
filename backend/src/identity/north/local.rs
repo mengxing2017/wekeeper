@@ -18,10 +18,10 @@ pub struct NewAccount {
     pub password: String,
 }
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AccountUpdate {
     pub display_name: String,
     pub active: bool,
-    pub wecom_userid: Option<String>,
 }
 impl<R: Store> Service<R> {
     pub async fn login(&self, input: Login) -> Result<(String, Actor)> {
@@ -73,13 +73,7 @@ impl<R: Store> Service<R> {
         a.platform()?;
         require(a.id != id, "不能通过管理接口禁用自身")?;
         self.0
-            .update(
-                a.id,
-                id,
-                &text(&input.display_name, 1, 100)?,
-                input.active,
-                input.wecom_userid.as_deref(),
-            )
+            .update(a.id, id, &text(&input.display_name, 1, 100)?, input.active)
             .await
     }
     pub async fn reset(&self, a: &Actor, id: Uuid, p: &str) -> Result<()> {

@@ -54,6 +54,8 @@ pub struct Actor {
     #[serde(skip)]
     pub browser: bool,
     pub wecom_authenticated: bool,
+    #[serde(skip)]
+    pub wecom_binding_revision: i64,
 }
 impl Actor {
     pub fn can(&self, school: Uuid, role: &str) -> bool {

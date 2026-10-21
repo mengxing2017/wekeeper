@@ -22,15 +22,18 @@ impl Repository {
         Ok(())
     }
     pub async fn session(&self, id: Uuid, kind: &str, wecom: bool) -> Result<(String, Actor)> {
+        if wecom {
+            sqlx::query("SELECT a.id FROM accounts a JOIN wecom_members m ON m.id=a.wecom_member_id WHERE a.id=$1 AND a.active AND m.verification='verified' AND m.status=1").bind(id).fetch_optional(&self.0).await?.ok_or(Error::Forbidden)?;
+        }
         let token = secret();
         let csrf = secret();
-        sqlx::query("INSERT INTO sessions(token_hash,account_id,csrf,expires_at,kind,wecom_authenticated) VALUES($1,$2,$3,now()+interval '8 hours',$4,$5)").bind(hash(&token)).bind(id).bind(csrf).bind(kind).bind(wecom).execute(&self.0).await?;
+        sqlx::query("INSERT INTO sessions(token_hash,account_id,csrf,expires_at,kind,wecom_authenticated,wecom_binding_revision) SELECT $1,$2,$3,now()+interval '8 hours',$4,$5,wecom_binding_revision FROM accounts WHERE id=$2").bind(hash(&token)).bind(id).bind(csrf).bind(kind).bind(wecom).execute(&self.0).await?;
         let actor = self.authenticate(&token, kind).await?;
         Ok((token, actor))
     }
     pub async fn authenticate(&self, token: &str, kind: &str) -> Result<Actor> {
         let h = hash(token);
-        let row=sqlx::query("UPDATE sessions s SET last_seen_at=now() FROM accounts a WHERE s.account_id=a.id AND s.token_hash=$1 AND s.kind=$2 AND s.expires_at>now() AND s.last_seen_at>now()-interval '30 minutes' AND a.active RETURNING a.id,a.username,a.display_name,a.platform_admin,a.bound_school_id,s.csrf,s.wecom_authenticated").bind(&h).bind(kind).fetch_optional(&self.0).await?.ok_or(Error::Unauthorized)?;
+        let row=sqlx::query("UPDATE sessions s SET last_seen_at=now() FROM accounts a WHERE s.account_id=a.id AND s.token_hash=$1 AND s.kind=$2 AND s.expires_at>now() AND s.last_seen_at>now()-interval '30 minutes' AND a.active AND (NOT s.wecom_authenticated OR (s.wecom_binding_revision=a.wecom_binding_revision AND EXISTS(SELECT 1 FROM wecom_members m WHERE m.id=a.wecom_member_id AND m.verification='verified' AND m.status=1))) RETURNING a.id,a.username,a.display_name,a.platform_admin,a.bound_school_id,s.csrf,s.wecom_authenticated,a.wecom_binding_revision").bind(&h).bind(kind).fetch_optional(&self.0).await?.ok_or(Error::Unauthorized)?;
         let id: Uuid = row.get("id");
         let grants=sqlx::query("SELECT m.school_id,m.role FROM school_memberships m JOIN schools s ON s.id=m.school_id WHERE m.account_id=$1 AND s.active AND m.role<>'revoked'").bind(id).fetch_all(&self.0).await?.into_iter().map(|r|Grant{school_id:r.get("school_id"),role:r.get("role")}).collect();
         Ok(Actor {
@@ -45,6 +48,7 @@ impl Repository {
             request_id: String::new(),
             browser: kind == "browser",
             wecom_authenticated: row.get("wecom_authenticated"),
+            wecom_binding_revision: row.get("wecom_binding_revision"),
         })
     }
     pub async fn logout(&self, h: &str) -> Result<()> {
@@ -66,18 +70,19 @@ impl Repository {
         Ok(id)
     }
     pub async fn list(&self) -> Result<Vec<Value>> {
-        Ok(sqlx::query_scalar("SELECT jsonb_build_object('id',id,'username',username,'display_name',display_name,'active',active,'platform_admin',platform_admin,'bound_school_id',bound_school_id,'wecom_userid',wecom_userid) FROM accounts ORDER BY created_at DESC,id").fetch_all(&self.0).await?)
+        Ok(sqlx::query_scalar("SELECT jsonb_build_object('id',id,'username',username,'display_name',display_name,'active',active,'platform_admin',platform_admin,'bound_school_id',bound_school_id,'wecom_userid',(SELECT userid FROM wecom_members WHERE id=accounts.wecom_member_id),'wecom_member_id',wecom_member_id,'wecom_binding_revision',wecom_binding_revision,'wecom_name',(SELECT name FROM wecom_members WHERE id=accounts.wecom_member_id),'wecom_status',(SELECT status FROM wecom_members WHERE id=accounts.wecom_member_id),'wecom_verification',(SELECT verification FROM wecom_members WHERE id=accounts.wecom_member_id),'wecom_departments',coalesce((SELECT jsonb_agg(d.name ORDER BY d.id) FROM wecom_members m JOIN wecom_departments d ON d.id=ANY(m.department) WHERE m.id=accounts.wecom_member_id),'[]'::jsonb)) FROM accounts ORDER BY created_at DESC,id").fetch_all(&self.0).await?)
     }
-    pub async fn update(
-        &self,
-        actor: Uuid,
-        id: Uuid,
-        name: &str,
-        active: bool,
-        wecom: Option<&str>,
-    ) -> Result<()> {
+    pub async fn update(&self, actor: Uuid, id: Uuid, name: &str, active: bool) -> Result<()> {
         let mut tx = self.0.begin().await?;
-        let n=sqlx::query("UPDATE accounts SET display_name=$2,active=$3,wecom_userid=$4 WHERE id=$1 AND NOT platform_admin").bind(id).bind(name).bind(active).bind(wecom).execute(&mut *tx).await?.rows_affected();
+        let n = sqlx::query(
+            "UPDATE accounts SET display_name=$2,active=$3 WHERE id=$1 AND NOT platform_admin",
+        )
+        .bind(id)
+        .bind(name)
+        .bind(active)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
         if n == 0 {
             return Err(Error::Forbidden);
         }
@@ -144,15 +149,8 @@ impl crate::identity::south::port::Store for Repository {
     async fn list(&self) -> Result<Vec<Value>> {
         Repository::list(self).await
     }
-    async fn update(
-        &self,
-        actor: Uuid,
-        id: Uuid,
-        name: &str,
-        active: bool,
-        wecom: Option<&str>,
-    ) -> Result<()> {
-        Repository::update(self, actor, id, name, active, wecom).await
+    async fn update(&self, actor: Uuid, id: Uuid, name: &str, active: bool) -> Result<()> {
+        Repository::update(self, actor, id, name, active).await
     }
     async fn reset_password(&self, id: Uuid, password: &str) -> Result<()> {
         Repository::reset_password(self, id, password).await

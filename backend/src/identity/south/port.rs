@@ -34,7 +34,6 @@ pub trait Store: Clone + Send + Sync + 'static {
         id: Uuid,
         name: &str,
         active: bool,
-        wecom: Option<&str>,
     ) -> impl std::future::Future<Output = Result<()>> + Send;
     fn reset_password(
         &self,

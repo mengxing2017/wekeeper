@@ -91,8 +91,17 @@ async fn callback_inner(
         .ok_or(Error::Forbidden)?;
     require(state == v.state, "OAuth state 不匹配")?;
     let return_path = a.integrations.repository.consume(&v.state).await?;
-    let id = a.integrations.oauth_member(&v.code).await?;
-    let (token, _) = a.identity.0.session(id, "browser", true).await?;
+    let (id, userid) = a.integrations.oauth_member(&v.code).await?;
+    let (token, actor) = a.identity.0.session(id, "browser", true).await?;
+    if !a
+        .integrations
+        .repository
+        .session_member_matches(id, actor.wecom_binding_revision, &userid)
+        .await?
+    {
+        a.identity.0.logout(&actor.session_hash).await?;
+        return Err(Error::Conflict);
+    }
     Ok((
         [
             (

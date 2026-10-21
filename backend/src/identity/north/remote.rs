@@ -35,6 +35,9 @@ impl FromRequestParts<Application> for Actor {
             (cookie.ok_or(Error::Unauthorized)?, "browser")
         };
         let mut actor = state.identity.authenticate(token, kind).await?;
+        if actor.wecom_authenticated {
+            state.integrations.directory().ensure_config().await?;
+        }
         actor.request_id = parts
             .headers
             .get("x-request-id")
