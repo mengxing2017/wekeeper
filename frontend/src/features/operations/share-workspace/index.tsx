@@ -34,7 +34,7 @@ export function ShareWorkspace() {
     const [chat, setChat] = useState(''), [error, setError] = useState(''), [message, setMessage] = useState(''), [busy, setBusy] = useState(false), [checking, setChecking] = useState(false), [resend, setResend] = useState(''), [reason, setReason] = useState('');
     const lock = useRef(false);
     const attempted = useRef(new Set<string>());
-    const canSend = !!user?.wecom_authenticated && isWecom && !!status.data?.oauth_available;
+    const canSend = !!user?.wecom_authenticated && isWecom && !!status.data?.share_available;
     const canResend = !!user?.platform_admin || !!user?.grants.some(g => g.school_id === s && g.role === 'admin');
     const oauthUrl = wecomOAuthUrl({ school: s || params.get('school') || undefined, draft: selected || undefined });
     async function check() {
@@ -73,8 +73,9 @@ export function ShareWorkspace() {
         {params.has('oauth_error') && <p role="alert">企业微信授权未完成。请检查应用配置、账号成员映射或重新授权。</p>}
         {status.isPending && <p role="status">正在检查企业微信配置…</p>}
         {status.error && <div role="alert"><p>无法读取企业微信配置：{messageOf(status.error)}</p><button onClick={() => void status.refetch()}>重新检查配置</button></div>}
-        {status.data && !status.data.oauth_available && <div className="wecom-notice"><h2>{status.data.configured ? '当前环境仅支持预览' : '企业微信尚未配置'}</h2><p>{status.data.configured ? '实际授权与分享需要在已配置的 HTTPS 正式入口进行。' : '管理员配置企业微信应用并完成可信域名设置后，即可启用授权与分享。'}</p><a href="/admin?view=groups">前往后台管理客户群</a></div>}
+        {status.data && !status.data.oauth_available && <div className="wecom-notice"><h2>{status.data.server_configured ? '当前环境仅支持预览' : '企业微信尚未配置'}</h2><p>{status.data.server_configured ? '实际授权与分享需要在已配置的 HTTPS 正式入口进行。' : '管理员配置企业微信应用并完成可信域名设置后，即可启用授权与分享。'}</p><a href="/admin?view=groups">前往后台管理客户群</a></div>}
         {!isWecom && <div className="wecom-notice"><strong>当前为普通浏览器</strong><p>可登录后台账号查看已授权学校的草稿。发送时请从企业微信客户群的应用入口打开此页。</p></div>}
+        {status.data?.oauth_available && !status.data.client_configured && <div className="wecom-notice"><h2>企业微信登录可用，客户端分享尚未配置</h2><p>请联系管理员补齐或修正应用 AgentID；仍可登录并预览草稿。</p></div>}
         {session.isPending ? <p role="status">正在确认企业微信身份…</p> : !user ? <div className="wecom-notice"><h2>登录后查看分享草稿</h2><p>请使用已获得学校运营授权的账号登录。</p><a href="/admin">登录运营后台</a>{status.data?.oauth_available && <p><a href={oauthUrl}>企业微信授权登录</a></p>}</div> : <p className="wecom-identity">当前账号：{user.display_name} · {user.wecom_authenticated ? '已通过企业微信身份认证' : '后台账号预览模式'} {!user.wecom_authenticated && status.data?.oauth_available && <a href={oauthUrl}>企业微信授权登录</a>}</p>}
         {sessionError && <div role="alert"><p>会话查询失败：{messageOf(session.error)}</p><button onClick={() => void session.refetch()}>重新查询身份</button></div>}
         {schools.error && <div role="alert"><p>学校加载失败：{messageOf(schools.error)}</p><button onClick={() => void schools.refetch()}>重新加载学校</button></div>}
