@@ -250,6 +250,15 @@ impl Service {
 }
 
 impl Service {
+    pub fn assets(&self) -> super::assets::Service {
+        super::assets::Service {
+            store: crate::integrations::south::adapter::assets_postgres::Repository(
+                self.repository.0.clone(),
+            ),
+            client: crate::integrations::south::adapter::directory_http::Client(self.clone()),
+            integration: self.clone(),
+        }
+    }
     pub fn directory(&self) -> super::directory::Service {
         super::directory::Service {
             store: crate::integrations::south::adapter::directory_postgres::Repository(
