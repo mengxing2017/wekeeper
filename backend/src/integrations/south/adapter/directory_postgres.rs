@@ -45,6 +45,17 @@ impl DirectoryStore for Repository {
         let next: i64 = sqlx::query_scalar("UPDATE wecom_directory_state SET credential_scope=$2,credential_generation=credential_generation+1 WHERE singleton AND corp_id=$1 AND credential_scope<>$2 AND credential_generation=$3 RETURNING credential_generation")
             .bind(corp).bind(scope).bind(expected_generation).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
         sqlx::query("UPDATE wecom_directory_sync_runs SET state='failed',error_code='credentials_rotated',finished_at=now(),lease_until=NULL WHERE state IN ('queued','running')").execute(&mut *tx).await?;
+        sqlx::query("UPDATE wecom_asset_sync_runs SET state='failed',error_code='credentials_rotated',finished_at=now(),lease_until=NULL WHERE state IN ('queued','running')").execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM wecom_asset_sync_items i USING wecom_asset_sync_runs r WHERE i.run_id=r.id AND r.state='failed'").execute(&mut *tx).await?;
+        sqlx::query("UPDATE wecom_asset_sync_state SET freshness='unverified'")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE wecom_asset_objects SET verification='unverified'")
+            .execute(&mut *tx)
+            .await?;
+        for dataset in ["groups"] {
+            sqlx::query("INSERT INTO wecom_asset_sync_runs(id,dataset,actor_id,generation) VALUES($1,$2,$3,$4)").bind(Uuid::now_v7()).bind(dataset).bind(actor).bind(next).execute(&mut *tx).await?;
+        }
         sqlx::query("UPDATE wecom_members SET verification='unverified',checked_at=NULL")
             .execute(&mut *tx)
             .await?;
