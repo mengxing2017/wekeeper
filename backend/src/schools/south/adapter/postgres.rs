@@ -67,7 +67,7 @@ impl Repository {
         Ok(())
     }
     pub async fn members(&self, school: Uuid) -> Result<Vec<Value>> {
-        Ok(sqlx::query_scalar("SELECT jsonb_build_object('id',a.id,'username',a.username,'display_name',a.display_name,'role',m.role) FROM school_memberships m JOIN accounts a ON a.id=m.account_id WHERE school_id=$1 ORDER BY a.username").bind(school).fetch_all(&self.0).await?)
+        Ok(sqlx::query_scalar("SELECT jsonb_build_object('id',a.id,'username',a.username,'display_name',a.display_name,'role',m.role,'wecom_name',w.name,'wecom_status',w.status,'wecom_verification',w.verification,'wecom_departments',coalesce((SELECT jsonb_agg(d.name ORDER BY d.id) FROM wecom_departments d WHERE d.id=ANY(w.department)),'[]'::jsonb)) FROM school_memberships m JOIN accounts a ON a.id=m.account_id LEFT JOIN wecom_members w ON w.id=a.wecom_member_id WHERE school_id=$1 ORDER BY a.username").bind(school).fetch_all(&self.0).await?)
     }
     pub async fn grant(&self, a: &Actor, school: Uuid, id: Uuid, role: &str) -> Result<()> {
         let mut tx = self.0.begin().await?;
