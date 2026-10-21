@@ -67,7 +67,7 @@ async fn serve_inner(
     }
     let worker = tokio::spawn(async move {
         loop {
-            if directory.configured && directory.run_once(interval).await.is_err() {
+            if directory.server_configured && directory.run_once(interval).await.is_err() {
                 tracing::warn!("directory worker failed; inspect configuration and sync status");
             }
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;

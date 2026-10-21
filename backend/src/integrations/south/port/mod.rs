@@ -16,15 +16,29 @@ pub trait DirectoryClient: Clone + Send + Sync + 'static {
     ) -> impl Future<Output = std::result::Result<Member, ReadError>> + Send;
 }
 pub trait DirectoryStore: Clone + Send + Sync + 'static {
-    fn configure(&self, corp: &str, agent: &str) -> impl Future<Output = Result<()>> + Send;
-    fn status(&self) -> impl Future<Output = Result<Value>> + Send;
+    fn configure(&self, corp: &str, scope: &str) -> impl Future<Output = Result<i64>> + Send;
+    fn check_rotation(
+        &self,
+        corp: &str,
+        scope: &str,
+        expected_generation: i64,
+    ) -> impl Future<Output = Result<()>> + Send;
+    fn rotate(
+        &self,
+        actor: Uuid,
+        corp: &str,
+        scope: &str,
+        expected_generation: i64,
+    ) -> impl Future<Output = Result<()>> + Send;
+    fn status(&self, corp: &str, scope: &str) -> impl Future<Output = Result<Value>> + Send;
     fn enqueue(
         &self,
         actor: Option<Uuid>,
         interval: i64,
+        generation: i64,
     ) -> impl Future<Output = Result<Value>> + Send;
     fn job(&self, id: Uuid) -> impl Future<Output = Result<Value>> + Send;
-    fn claim(&self) -> impl Future<Output = Result<Option<Job>>> + Send;
+    fn claim(&self, generation: i64) -> impl Future<Output = Result<Option<Job>>> + Send;
     fn renew(&self, job: &Job) -> impl Future<Output = Result<()>> + Send;
     fn finish(
         &self,
@@ -46,6 +60,7 @@ pub trait DirectoryStore: Clone + Send + Sync + 'static {
         userid: &str,
         member: Option<&Member>,
         at: chrono::DateTime<chrono::Utc>,
+        generation: i64,
     ) -> impl Future<Output = Result<()>> + Send;
     fn bind(
         &self,
@@ -53,5 +68,6 @@ pub trait DirectoryStore: Clone + Send + Sync + 'static {
         account: Uuid,
         member: Option<Uuid>,
         revision: i64,
+        generation: Option<i64>,
     ) -> impl Future<Output = Result<()>> + Send;
 }

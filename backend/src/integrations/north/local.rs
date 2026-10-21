@@ -9,6 +9,8 @@ pub struct Service {
     pub corp: String,
     pub agent: String,
     secret: String,
+    #[cfg(test)]
+    api_origin: Option<String>,
     wx_app: String,
     wx_secret: String,
 }
@@ -24,14 +26,50 @@ impl Service {
             corp: env("WEKEEPER_WECOM_CORP_ID"),
             agent: env("WEKEEPER_WECOM_AGENT_ID"),
             secret: env("WEKEEPER_WECOM_SECRET"),
+            #[cfg(test)]
+            api_origin: None,
             wx_app: env("WEKEEPER_WX_APP_ID"),
             wx_secret: env("WEKEEPER_WX_SECRET"),
         }
     }
-    pub fn configured(&self) -> bool {
-        !self.corp.trim().is_empty()
+    pub fn server_configured(&self) -> bool {
+        !self.corp.trim().is_empty() && !self.secret.trim().is_empty()
+    }
+    pub fn client_configured(&self) -> bool {
+        self.server_configured()
+            && self.agent.bytes().all(|b| b.is_ascii_digit())
             && self.agent.parse::<u32>().is_ok_and(|id| id > 0)
-            && !self.secret.trim().is_empty()
+    }
+    pub fn capabilities(&self, origin: &str, insecure: bool) -> WecomStatus {
+        let deployment = !insecure
+            && reqwest::Url::parse(origin)
+                .is_ok_and(|url| url.scheme() == "https" && url.host_str().is_some());
+        WecomStatus {
+            server_configured: self.server_configured(),
+            client_configured: self.client_configured(),
+            oauth_available: self.server_configured() && deployment,
+            share_available: self.client_configured() && deployment,
+        }
+    }
+    pub(crate) fn credential_scope(&self) -> String {
+        use sha2::{Digest, Sha256};
+        let mut digest = Sha256::new();
+        digest.update(b"wekeeper:wecom:credentials:v2");
+        for value in [&self.corp, &self.secret] {
+            digest.update((value.len() as u64).to_be_bytes());
+            digest.update(value.as_bytes());
+        }
+        format!("{:x}", digest.finalize())
+    }
+    pub(crate) fn cache_key(&self, kind: &str) -> String {
+        format!("wecom:v2:{}:{kind}", self.credential_scope())
+    }
+    pub(crate) fn endpoint(&self, path: &str) -> String {
+        #[cfg(test)]
+        if let Some(origin) = &self.api_origin {
+            return format!("{origin}/cgi-bin/{path}");
+        }
+        format!("https://qyapi.weixin.qq.com/cgi-bin/{path}")
     }
     async fn json(&self, request: reqwest::RequestBuilder) -> Result<Value> {
         let response = request.send().await.map_err(|_| Error::Unavailable)?;
@@ -50,16 +88,16 @@ impl Service {
         Ok(v)
     }
     pub(crate) async fn token(&self) -> Result<String> {
-        if !self.configured() {
+        if !self.server_configured() {
             return Err(Error::Unavailable);
         }
-        let key = format!("wecom:{}:{}:token", self.corp, self.agent);
+        let key = self.cache_key("token");
         self.repository
             .cached_or_fetch(&key, || async {
                 let v = self
                     .json(
                         self.client
-                            .get("https://qyapi.weixin.qq.com/cgi-bin/gettoken")
+                            .get(self.endpoint("gettoken"))
                             .query(&[("corpid", &self.corp), ("corpsecret", &self.secret)]),
                     )
                     .await?;
@@ -73,12 +111,12 @@ impl Service {
             })
             .await
     }
-    pub async fn oauth_member(&self, code: &str) -> Result<(uuid::Uuid, String)> {
+    pub async fn oauth_member(&self, code: &str) -> Result<(uuid::Uuid, String, i64)> {
         let token = self.token().await?;
         let v = self
             .json(
                 self.client
-                    .get("https://qyapi.weixin.qq.com/cgi-bin/auth/getuserinfo")
+                    .get(self.endpoint("auth/getuserinfo"))
                     .query(&[("access_token", token.as_str()), ("code", code)]),
             )
             .await?;
@@ -86,7 +124,7 @@ impl Service {
             .as_str()
             .or(v["UserId"].as_str())
             .ok_or(Error::Forbidden)?;
-        self.directory().verify(userid).await?;
+        let generation = self.directory().verify(userid).await?;
         let id = self
             .repository
             .member(
@@ -96,7 +134,7 @@ impl Service {
                     .ok_or(Error::Forbidden)?,
             )
             .await?;
-        Ok((id, userid.to_owned()))
+        Ok((id, userid.to_owned(), generation))
     }
     pub async fn miniapp(&self, code: &str) -> Result<uuid::Uuid> {
         require(
@@ -160,7 +198,11 @@ impl Service {
     }
 
     async fn ticket(&self, agent: bool) -> Result<String> {
-        let key = format!("wecom:{}:{}:ticket:{}", self.corp, self.agent, agent);
+        let key = self.cache_key(if agent {
+            "ticket:application"
+        } else {
+            "ticket:enterprise"
+        });
         let token = self.token().await?;
         self.repository
             .cached_or_fetch(&key, || async {
@@ -171,7 +213,7 @@ impl Service {
                 };
                 let mut req = self
                     .client
-                    .get(format!("https://qyapi.weixin.qq.com/cgi-bin/{path}"))
+                    .get(self.endpoint(path))
                     .query(&[("access_token", token.as_str())]);
                 if agent {
                     req = req.query(&[("type", "agent_config")]);
@@ -215,8 +257,20 @@ impl Service {
             ),
             client: crate::integrations::south::adapter::directory_http::Client(self.clone()),
             corp: self.corp.clone(),
-            agent: self.agent.clone(),
-            configured: self.configured(),
+            credential_scope: self.credential_scope(),
+            server_configured: self.server_configured(),
         }
     }
 }
+
+#[derive(serde::Serialize)]
+pub struct WecomStatus {
+    pub server_configured: bool,
+    pub client_configured: bool,
+    pub oauth_available: bool,
+    pub share_available: bool,
+}
+
+#[cfg(test)]
+#[path = "local_tests.rs"]
+mod tests;

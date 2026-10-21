@@ -18,7 +18,7 @@ impl Client {
             let response = self
                 .0
                 .client
-                .get(format!("https://qyapi.weixin.qq.com/cgi-bin/{path}"))
+                .get(self.0.endpoint(path))
                 .query(&[("access_token", token.as_str())])
                 .query(query)
                 .send()
@@ -36,7 +36,7 @@ impl Client {
                     if matches!(code, 40014 | 42001) && !refreshed {
                         self.0
                             .repository
-                            .expire_token(&self.0.corp, &self.0.agent, &token)
+                            .expire_token(&self.0.cache_key("token"), &token)
                             .await
                             .map_err(|_| ReadError::Transient)?;
                         refreshed = true;

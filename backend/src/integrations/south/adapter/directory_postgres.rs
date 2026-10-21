@@ -8,30 +8,73 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct Repository(pub PgPool);
 impl DirectoryStore for Repository {
-    async fn configure(&self, corp: &str, agent: &str) -> Result<()> {
-        sqlx::query("INSERT INTO wecom_directory_state(singleton,corp_id,agent_id) VALUES(TRUE,$1,$2) ON CONFLICT DO NOTHING").bind(corp).bind(agent).execute(&self.0).await?;
-        let matches: bool = sqlx::query_scalar(
-            "SELECT corp_id=$1 AND agent_id=$2 FROM wecom_directory_state WHERE singleton",
-        )
-        .bind(corp)
-        .bind(agent)
-        .fetch_one(&self.0)
-        .await?;
-        if !matches {
+    async fn configure(&self, corp: &str, scope: &str) -> Result<i64> {
+        sqlx::query("INSERT INTO wecom_directory_state(singleton,corp_id,credential_scope) VALUES(TRUE,$1,$2) ON CONFLICT DO NOTHING").bind(corp).bind(scope).execute(&self.0).await?;
+        let row = sqlx::query("SELECT corp_id,credential_scope,credential_generation FROM wecom_directory_state WHERE singleton").fetch_one(&self.0).await?;
+        if row.get::<String, _>("corp_id") != corp {
             return Err(Error::Invalid(
                 "企业配置与已有通讯录不一致，禁止混用身份".into(),
             ));
         }
+        if row.get::<String, _>("credential_scope") != scope {
+            return Err(Error::Invalid(
+                "服务端凭据已变化，请由平台管理员验证并切换凭据代次".into(),
+            ));
+        }
+        Ok(row.get("credential_generation"))
+    }
+    async fn check_rotation(
+        &self,
+        corp: &str,
+        scope: &str,
+        expected_generation: i64,
+    ) -> Result<()> {
+        sqlx::query("SELECT singleton FROM wecom_directory_state WHERE corp_id=$1 AND credential_scope<>$2 AND credential_generation=$3")
+            .bind(corp).bind(scope).bind(expected_generation).fetch_optional(&self.0).await?.ok_or(Error::Conflict)?;
         Ok(())
     }
-    async fn status(&self) -> Result<Value> {
-        Ok(sqlx::query_scalar("SELECT jsonb_build_object('snapshot_id',(SELECT snapshot_id FROM wecom_directory_state),'last_success_at',(SELECT last_success_at FROM wecom_directory_state),'latest_run',(SELECT to_jsonb(r)-'snapshot'-'lease_id'-'lease_until' FROM wecom_directory_sync_runs r ORDER BY created_at DESC,id DESC LIMIT 1))").fetch_one(&self.0).await?)
-    }
-    async fn enqueue(&self, actor: Option<Uuid>, interval: i64) -> Result<Value> {
+    async fn rotate(
+        &self,
+        actor: Uuid,
+        corp: &str,
+        scope: &str,
+        expected_generation: i64,
+    ) -> Result<()> {
         let mut tx = self.0.begin().await?;
-        sqlx::query("SELECT singleton FROM wecom_directory_state FOR UPDATE")
-            .fetch_one(&mut *tx)
+        // All writes take the state lock first, including publication and session creation.
+        let next: i64 = sqlx::query_scalar("UPDATE wecom_directory_state SET credential_scope=$2,credential_generation=credential_generation+1 WHERE singleton AND corp_id=$1 AND credential_scope<>$2 AND credential_generation=$3 RETURNING credential_generation")
+            .bind(corp).bind(scope).bind(expected_generation).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
+        sqlx::query("UPDATE wecom_directory_sync_runs SET state='failed',error_code='credentials_rotated',finished_at=now(),lease_until=NULL WHERE state IN ('queued','running')").execute(&mut *tx).await?;
+        sqlx::query("UPDATE wecom_members SET verification='unverified',checked_at=NULL")
+            .execute(&mut *tx)
             .await?;
+        sqlx::query("DELETE FROM sessions WHERE wecom_authenticated")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "INSERT INTO wecom_directory_sync_runs(id,actor_id,generation) VALUES($1,$2,$3)",
+        )
+        .bind(Uuid::now_v7())
+        .bind(actor)
+        .bind(next)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("INSERT INTO audit_events(id,actor_id,action,detail) VALUES($1,$2,'wecom.credentials.rotate',$3)").bind(Uuid::now_v7()).bind(actor).bind(json!({"previous_generation":expected_generation,"generation":next})).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+    async fn status(&self, corp: &str, scope: &str) -> Result<Value> {
+        Ok(sqlx::query_scalar("SELECT jsonb_build_object('credential_rotation_required',coalesce((SELECT corp_id=$1 AND credential_scope<>$2 FROM wecom_directory_state),false),'credential_generation',(SELECT credential_generation FROM wecom_directory_state),'snapshot_id',(SELECT snapshot_id FROM wecom_directory_state),'last_success_at',(SELECT last_success_at FROM wecom_directory_state),'latest_run',(SELECT to_jsonb(r)-'snapshot'-'lease_id'-'lease_until' FROM wecom_directory_sync_runs r ORDER BY created_at DESC,id DESC LIMIT 1))").bind(corp).bind(scope).fetch_one(&self.0).await?)
+    }
+    async fn enqueue(&self, actor: Option<Uuid>, interval: i64, generation: i64) -> Result<Value> {
+        let mut tx = self.0.begin().await?;
+        sqlx::query(
+            "SELECT singleton FROM wecom_directory_state WHERE credential_generation=$1 FOR UPDATE",
+        )
+        .bind(generation)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(Error::Conflict)?;
         if let Some(v)=sqlx::query_scalar::<_,Value>("SELECT to_jsonb(r)-'snapshot'-'lease_id'-'lease_until' FROM wecom_directory_sync_runs r WHERE state IN ('queued','running')").fetch_optional(&mut *tx).await? { return Ok(v); }
         if actor.is_none() {
             let due:bool=sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM wecom_directory_sync_runs WHERE created_at>now()-$1*interval '1 second')").bind(interval).fetch_one(&mut *tx).await?;
@@ -40,7 +83,7 @@ impl DirectoryStore for Repository {
             }
         }
         let id = Uuid::now_v7();
-        let v=sqlx::query_scalar("INSERT INTO wecom_directory_sync_runs(id,actor_id) VALUES($1,$2) RETURNING to_jsonb(wecom_directory_sync_runs)-'snapshot'-'lease_id'-'lease_until'").bind(id).bind(actor).fetch_one(&mut *tx).await?;
+        let v=sqlx::query_scalar("INSERT INTO wecom_directory_sync_runs(id,actor_id,generation) VALUES($1,$2,$3) RETURNING to_jsonb(wecom_directory_sync_runs)-'snapshot'-'lease_id'-'lease_until'").bind(id).bind(actor).bind(generation).fetch_one(&mut *tx).await?;
         sqlx::query("INSERT INTO audit_events(id,actor_id,action,object_id) VALUES($1,$2,'wecom.directory.sync',$3)").bind(Uuid::now_v7()).bind(actor).bind(id).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(v)
@@ -48,17 +91,28 @@ impl DirectoryStore for Repository {
     async fn job(&self, id: Uuid) -> Result<Value> {
         sqlx::query_scalar("SELECT to_jsonb(r)-'snapshot'-'lease_id'-'lease_until' FROM wecom_directory_sync_runs r WHERE id=$1").bind(id).fetch_optional(&self.0).await?.ok_or(Error::NotFound)
     }
-    async fn claim(&self) -> Result<Option<Job>> {
+    async fn claim(&self, generation: i64) -> Result<Option<Job>> {
+        let mut tx = self.0.begin().await?;
+        sqlx::query(
+            "SELECT singleton FROM wecom_directory_state WHERE credential_generation=$1 FOR UPDATE",
+        )
+        .bind(generation)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(Error::Conflict)?;
         let lease = Uuid::new_v4();
-        let row=sqlx::query("UPDATE wecom_directory_sync_runs SET state='running',lease_id=$1,lease_until=now()+interval '2 minutes',started_at=now(),error_code=NULL WHERE id=(SELECT id FROM wecom_directory_sync_runs WHERE state='queued' OR (state='running' AND lease_until<now()) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id,started_at").bind(lease).fetch_optional(&self.0).await?;
+        let row=sqlx::query("UPDATE wecom_directory_sync_runs SET state='running',lease_id=$1,lease_until=now()+interval '2 minutes',started_at=now(),error_code=NULL WHERE id=(SELECT id FROM wecom_directory_sync_runs WHERE generation=$2 AND (state='queued' OR (state='running' AND lease_until<now())) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id,started_at")
+            .bind(lease).bind(generation).fetch_optional(&mut *tx).await?;
+        tx.commit().await?;
         Ok(row.map(|r| Job {
             id: r.get("id"),
             lease,
+            generation,
             started_at: r.get("started_at"),
         }))
     }
     async fn renew(&self, job: &Job) -> Result<()> {
-        let n=sqlx::query("UPDATE wecom_directory_sync_runs SET lease_until=now()+interval '2 minutes' WHERE id=$1 AND lease_id=$2 AND state='running' AND lease_until>now()").bind(job.id).bind(job.lease).execute(&self.0).await?.rows_affected();
+        let n=sqlx::query("UPDATE wecom_directory_sync_runs SET lease_until=now()+interval '2 minutes' WHERE id=$1 AND lease_id=$2 AND state='running' AND lease_until>now() AND generation=$3 AND generation=(SELECT credential_generation FROM wecom_directory_state)").bind(job.id).bind(job.lease).bind(job.generation).execute(&self.0).await?.rows_affected();
         if n != 1 {
             return Err(Error::Conflict);
         }
@@ -71,11 +125,14 @@ impl DirectoryStore for Repository {
         members: &[Member],
     ) -> Result<()> {
         let mut tx = self.0.begin().await?;
-        sqlx::query("SELECT id FROM wecom_directory_sync_runs WHERE id=$1 AND lease_id=$2 AND state='running' AND lease_until>now() FOR UPDATE").bind(job.id).bind(job.lease).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
-        // Serializes publication with direct member observations and binding writes.
-        sqlx::query("SELECT singleton FROM wecom_directory_state FOR UPDATE")
-            .fetch_one(&mut *tx)
-            .await?;
+        sqlx::query(
+            "SELECT singleton FROM wecom_directory_state WHERE credential_generation=$1 FOR UPDATE",
+        )
+        .bind(job.generation)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(Error::Conflict)?;
+        sqlx::query("SELECT id FROM wecom_directory_sync_runs WHERE id=$1 AND lease_id=$2 AND generation=$3 AND state='running' AND lease_until>now() FOR UPDATE").bind(job.id).bind(job.lease).bind(job.generation).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
         sqlx::query("DELETE FROM wecom_departments")
             .execute(&mut *tx)
             .await?;
@@ -134,12 +191,17 @@ impl DirectoryStore for Repository {
         userid: &str,
         member: Option<&Member>,
         at: chrono::DateTime<chrono::Utc>,
+        generation: i64,
     ) -> Result<()> {
         let key = userid_key(userid)?;
         let mut tx = self.0.begin().await?;
-        sqlx::query("SELECT singleton FROM wecom_directory_state FOR UPDATE")
-            .fetch_one(&mut *tx)
-            .await?;
+        sqlx::query(
+            "SELECT singleton FROM wecom_directory_state WHERE credential_generation=$1 FOR UPDATE",
+        )
+        .bind(generation)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(Error::Conflict)?;
         if let Some(m) = member {
             sqlx::query("UPDATE wecom_members SET name=$2,status=$3,department=$4,main_department=$5,verification='verified',visibility='visible',checked_at=$6 WHERE userid_key=$1 AND (checked_at IS NULL OR checked_at<=$6)").bind(&key).bind(&m.name).bind(m.status).bind(&m.department).bind(m.main_department).bind(at).execute(&mut *tx).await?;
         } else {
@@ -155,11 +217,17 @@ impl DirectoryStore for Repository {
         account: Uuid,
         member: Option<Uuid>,
         revision: i64,
+        generation: Option<i64>,
     ) -> Result<()> {
         let mut tx = self.0.begin().await?;
-        sqlx::query("SELECT singleton FROM wecom_directory_state FOR UPDATE")
-            .fetch_one(&mut *tx)
-            .await?;
+        let current: i64 = sqlx::query_scalar(
+            "SELECT credential_generation FROM wecom_directory_state FOR UPDATE",
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+        if member.is_some() && generation != Some(current) {
+            return Err(Error::Conflict);
+        }
         if let Some(id) = member {
             sqlx::query("SELECT id FROM wecom_members WHERE id=$1 AND verification='verified' AND status=1 AND checked_at>now()-interval '1 minute' FOR UPDATE").bind(id).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
         }

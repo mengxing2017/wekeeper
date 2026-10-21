@@ -2,7 +2,7 @@ use crate::{
     bootstrap::Application,
     business::{Actor, Error, Result},
     http::jsonapi::{ApiResponse, Input, collection, completed, resource, singleton},
-    integrations::domain::directory::{BindingInput, DirectoryQuery},
+    integrations::domain::directory::{BindingInput, CredentialRotation, DirectoryQuery},
 };
 use axum::{
     Router,
@@ -18,6 +18,16 @@ async fn status(State(a): State<Application>, actor: Actor) -> Result<ApiRespons
         "current",
         a.integrations.directory().status(&actor).await?,
     ))
+}
+async fn rotate(State(a): State<Application>, actor: Actor, input: Input) -> Result<ApiResponse> {
+    a.integrations
+        .directory()
+        .rotate(
+            &actor,
+            input.decode::<CredentialRotation>("wecom-credential-rotations")?,
+        )
+        .await?;
+    Ok(completed())
 }
 async fn members(
     State(a): State<Application>,
@@ -95,6 +105,10 @@ async fn unbind(
 pub fn router() -> Router<Application> {
     Router::new()
         .route("/api/v1/platform/wecom-directory/status", get(status))
+        .route(
+            "/api/v1/platform/wecom-directory/credential-rotations",
+            axum::routing::post(rotate),
+        )
         .route("/api/v1/platform/wecom-directory/members", get(members))
         .route(
             "/api/v1/platform/wecom-directory/departments",

@@ -11,7 +11,7 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
 #[derive(Deserialize)]
 struct Callback {
@@ -81,6 +81,7 @@ async fn callback_inner(
     h: HeaderMap,
     Query(v): Query<Callback>,
 ) -> Result<Response> {
+    require(oauth_available(&a), "当前环境不开放企业微信登录")?;
     let state = h
         .get(header::COOKIE)
         .and_then(|x| x.to_str().ok())
@@ -91,26 +92,26 @@ async fn callback_inner(
         .ok_or(Error::Forbidden)?;
     require(state == v.state, "OAuth state 不匹配")?;
     let return_path = a.integrations.repository.consume(&v.state).await?;
-    let (id, userid) = a.integrations.oauth_member(&v.code).await?;
+    let (id, userid, generation) = a.integrations.oauth_member(&v.code).await?;
     let (token, actor) = a.identity.0.session(id, "browser", true).await?;
     if !a
         .integrations
         .repository
-        .session_member_matches(id, actor.wecom_binding_revision, &userid)
+        .session_member_matches(id, actor.wecom_binding_revision, &userid, generation)
         .await?
     {
         a.identity.0.logout(&actor.session_hash).await?;
         return Err(Error::Conflict);
     }
     Ok((
-        [
+        axum::response::AppendHeaders([
             (
                 header::SET_COOKIE,
                 cookie(&token, !a.options.insecure_local_auth, 28800),
             ),
             (header::SET_COOKIE, format!("wekeeper_oauth=; Path=/api/v1/wecom/oauth; HttpOnly; SameSite=Lax; Max-Age=0{}", if a.options.insecure_local_auth { "" } else { "; Secure" })),
             (header::CACHE_CONTROL, "no-store".into()),
-        ],
+        ]),
         Redirect::to(&return_path),
     )
         .into_response())
@@ -126,6 +127,7 @@ async fn sign(
     actor: Actor,
     Query(v): Query<Sign>,
 ) -> Result<Response> {
+    require_share(&a, &actor)?;
     Ok((
         [(header::CACHE_CONTROL, "no-store")],
         singleton(
@@ -138,39 +140,41 @@ async fn sign(
     )
         .into_response())
 }
-#[derive(Serialize)]
-struct WecomStatus {
-    configured: bool,
-    oauth_available: bool,
-}
 fn oauth_available(a: &Application) -> bool {
-    a.integrations.configured()
-        && !a.options.insecure_local_auth
-        && reqwest::Url::parse(&a.options.public_origin)
-            .is_ok_and(|url| url.scheme() == "https" && url.host_str().is_some())
+    a.integrations
+        .capabilities(&a.options.public_origin, a.options.insecure_local_auth)
+        .oauth_available
+}
+pub(crate) fn require_share(a: &Application, actor: &Actor) -> Result<()> {
+    if !actor.wecom_authenticated {
+        return Err(Error::Forbidden);
+    }
+    require(
+        a.integrations
+            .capabilities(&a.options.public_origin, a.options.insecure_local_auth)
+            .share_available,
+        "当前客户端分享不可用：请检查应用 AgentID、服务端凭据与 HTTPS 部署配置",
+    )
 }
 async fn status(State(a): State<Application>) -> Response {
-    let configured = a.integrations.configured();
-
     (
         [(header::CACHE_CONTROL, "no-store")],
         singleton(
             "wecom-status",
             "current",
-            WecomStatus {
-                configured,
-                oauth_available: oauth_available(&a),
-            },
+            a.integrations
+                .capabilities(&a.options.public_origin, a.options.insecure_local_auth),
         ),
     )
         .into_response()
 }
-async fn info(State(a): State<Application>, _actor: Actor) -> ApiResponse {
-    singleton(
+async fn info(State(a): State<Application>, actor: Actor) -> Result<ApiResponse> {
+    require_share(&a, &actor)?;
+    Ok(singleton(
         "wecom-config",
         "current",
         json!({"corpId":a.integrations.corp,"agentId":a.integrations.agent}),
-    )
+    ))
 }
 async fn mini(
     State(a): State<Application>,

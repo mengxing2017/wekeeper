@@ -15,13 +15,15 @@ pub struct Service<R = Repository, C = Client> {
     pub store: R,
     pub client: C,
     pub corp: String,
-    pub agent: String,
-    pub configured: bool,
+    pub credential_scope: String,
+    pub server_configured: bool,
 }
 impl<R: DirectoryStore, C: DirectoryClient> Service<R, C> {
-    pub async fn ensure_config(&self) -> Result<()> {
-        require(self.configured, "企业微信凭据尚未配置")?;
-        self.store.configure(&self.corp, &self.agent).await
+    pub async fn ensure_config(&self) -> Result<i64> {
+        require(self.server_configured, "企业微信凭据尚未配置")?;
+        self.store
+            .configure(&self.corp, &self.credential_scope)
+            .await
     }
     pub async fn status(&self, a: &Actor) -> Result<Value> {
         a.platform()?;
@@ -29,8 +31,11 @@ impl<R: DirectoryStore, C: DirectoryClient> Service<R, C> {
             Error::Invalid(m) => m,
             _ => "目录配置检查失败".into(),
         });
-        let mut v = self.store.status().await?;
-        v["configured"] = self.configured.into();
+        let mut v = self
+            .store
+            .status(&self.corp, &self.credential_scope)
+            .await?;
+        v["server_configured"] = self.server_configured.into();
         v["configuration_error"] = error.into();
         Ok(v)
     }
@@ -46,27 +51,28 @@ impl<R: DirectoryStore, C: DirectoryClient> Service<R, C> {
     }
     pub async fn enqueue(&self, a: &Actor) -> Result<Value> {
         a.platform()?;
-        self.ensure_config().await?;
-        self.store.enqueue(Some(a.id), 0).await
+        let generation = self.ensure_config().await?;
+        self.store.enqueue(Some(a.id), 0, generation).await
     }
     pub async fn job(&self, a: &Actor, id: Uuid) -> Result<Value> {
         a.platform()?;
         self.store.job(id).await
     }
-    pub async fn verify(&self, userid: &str) -> Result<()> {
-        self.ensure_config().await?;
+    pub async fn verify(&self, userid: &str) -> Result<i64> {
+        let generation = self.ensure_config().await?;
         let key = userid_key(userid)?;
         let at = chrono::Utc::now();
         match self.client.member(userid).await {
             Ok(m) => {
                 m.validate()?;
                 require(userid_key(&m.userid)? == key, "企业成员身份不匹配")?;
-                self.store.observe(userid, Some(&m), at).await?;
-                require(m.status == Some(1), "企业成员未激活、停用或状态待核验")
+                self.store.observe(userid, Some(&m), at, generation).await?;
+                require(m.status == Some(1), "企业成员未激活、停用或状态待核验")?;
+                Ok(generation)
             }
             Err(e) => {
                 if e.unavailable_member() {
-                    self.store.observe(userid, None, at).await?;
+                    self.store.observe(userid, None, at, generation).await?;
                 }
                 Err(Error::Invalid(format!("企业成员核验失败：{}", e.code())))
             }
@@ -74,21 +80,51 @@ impl<R: DirectoryStore, C: DirectoryClient> Service<R, C> {
     }
     pub async fn verify_account(&self, id: Uuid) -> Result<()> {
         let userid = self.store.account_userid(id).await?;
-        self.verify(&userid).await
+        self.verify(&userid).await.map(|_| ())
     }
     pub async fn bind(&self, a: &Actor, id: Uuid, input: BindingInput) -> Result<()> {
         a.platform()?;
         require(input.revision >= 0, "绑定版本无效")?;
         let userid = self.store.member_id(input.member_id).await?;
-        self.verify(&userid).await?;
+        let generation = self.verify(&userid).await?;
         self.store
-            .bind(a.id, id, Some(input.member_id), input.revision)
+            .bind(
+                a.id,
+                id,
+                Some(input.member_id),
+                input.revision,
+                Some(generation),
+            )
             .await
     }
     pub async fn unbind(&self, a: &Actor, id: Uuid, revision: i64) -> Result<()> {
         a.platform()?;
         require(revision >= 0, "绑定版本无效")?;
-        self.store.bind(a.id, id, None, revision).await
+        self.store.bind(a.id, id, None, revision, None).await
+    }
+    pub async fn rotate(&self, a: &Actor, input: CredentialRotation) -> Result<()> {
+        a.platform()?;
+        require(self.server_configured, "企业微信服务端凭据尚未配置")?;
+        require(input.expected_generation > 0, "凭据代次无效")?;
+        self.store
+            .check_rotation(
+                &self.corp,
+                &self.credential_scope,
+                input.expected_generation,
+            )
+            .await?;
+        // Validate the new credentials and visible directory before the atomic transition.
+        self.collect()
+            .await
+            .map_err(|e| Error::Invalid(format!("新凭据目录验证失败：{}", e.code())))?;
+        self.store
+            .rotate(
+                a.id,
+                &self.corp,
+                &self.credential_scope,
+                input.expected_generation,
+            )
+            .await
     }
     async fn collect(&self) -> std::result::Result<(Vec<Department>, Vec<Member>), ReadError> {
         let departments = self.client.departments().await?;
@@ -138,11 +174,11 @@ impl<R: DirectoryStore, C: DirectoryClient> Service<R, C> {
         Ok((departments, members.into_values().collect()))
     }
     pub async fn run_once(&self, interval: i64) -> Result<()> {
-        self.ensure_config().await?;
+        let generation = self.ensure_config().await?;
         if interval > 0 {
-            self.store.enqueue(None, interval).await?;
+            self.store.enqueue(None, interval, generation).await?;
         }
-        let Some(job) = self.store.claim().await? else {
+        let Some(job) = self.store.claim(generation).await? else {
             return Ok(());
         };
         let collect = self.collect();

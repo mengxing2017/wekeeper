@@ -72,6 +72,7 @@ impl ReadError {
 }
 #[derive(Clone)]
 pub struct Job {
+    pub generation: i64,
     pub id: Uuid,
     pub lease: Uuid,
     pub started_at: chrono::DateTime<chrono::Utc>,
@@ -127,4 +128,10 @@ mod tests {
         }
         assert!(userid_key(&"a".repeat(65)).is_err());
     }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CredentialRotation {
+    pub expected_generation: i64,
 }

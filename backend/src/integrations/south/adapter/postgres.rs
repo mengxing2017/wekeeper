@@ -42,6 +42,9 @@ impl Repository {
         Fut: std::future::Future<Output = Result<(String, i64)>>,
     {
         let mut tx = self.0.begin().await?;
+        sqlx::query("DELETE FROM platform_cache WHERE expires_at<=now()")
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
             .bind(key)
             .execute(&mut *tx)
@@ -67,9 +70,9 @@ impl Repository {
         tokio::time::sleep(std::time::Duration::from_secs_f64(delay)).await;
         Ok(())
     }
-    pub async fn expire_token(&self, corp: &str, agent: &str, token: &str) -> Result<()> {
+    pub async fn expire_token(&self, key: &str, token: &str) -> Result<()> {
         sqlx::query("DELETE FROM platform_cache WHERE key=$1 AND value=$2")
-            .bind(format!("wecom:{corp}:{agent}:token"))
+            .bind(key)
             .bind(token)
             .execute(&self.0)
             .await?;
@@ -83,7 +86,8 @@ impl Repository {
         id: Uuid,
         revision: i64,
         userid: &str,
+        generation: i64,
     ) -> Result<bool> {
-        Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts a JOIN wecom_members m ON m.id=a.wecom_member_id WHERE a.id=$1 AND a.wecom_binding_revision=$2 AND m.userid_key=$3)").bind(id).bind(revision).bind(crate::integrations::domain::directory::userid_key(userid)?).fetch_one(&self.0).await?)
+        Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts a JOIN wecom_members m ON m.id=a.wecom_member_id WHERE a.id=$1 AND a.wecom_binding_revision=$2 AND m.userid_key=$3 AND (SELECT credential_generation FROM wecom_directory_state)=$4)").bind(id).bind(revision).bind(crate::integrations::domain::directory::userid_key(userid)?).bind(generation).fetch_one(&self.0).await?)
     }
 }
