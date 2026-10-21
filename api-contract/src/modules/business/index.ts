@@ -90,7 +90,7 @@ export const identity = {
     update: (id: string, body: {display_name: string; active: boolean}) => requestResource(`/api/v1/accounts/${part(id)}`, 'PUT', body),
     reset: (id: string, password: string) => requestResource(`/api/v1/accounts/${part(id)}/password`, 'POST', { username: '', password }),
 };
-export interface WecomStatus { configured: boolean; oauth_available: boolean }
+export interface WecomStatus { server_configured: boolean; client_configured: boolean; oauth_available: boolean; share_available: boolean }
 export const workspace = {
     wecomStatus: () => requestResource<WecomStatus>('/api/v1/wecom/status'),
     globalResources: () => requestResource<Row[]>('/api/v1/platform/resources'),
@@ -149,7 +149,8 @@ export interface DirectoryRun {
     error_code: string | null; department_count: number; member_count: number;
 }
 export interface DirectoryStatus {
-    id: string; configured: boolean; configuration_error: string | null;
+    id: string; server_configured: boolean; configuration_error: string | null;
+    credential_generation: number | null; credential_rotation_required: boolean;
     snapshot_id: string | null; last_success_at: string | null; latest_run: DirectoryRun | null;
 }
 export interface DirectoryFilter { page?: number; search?: string; department_id?: number; status?: number; binding?: 'bound' | 'unbound' }
@@ -169,6 +170,7 @@ export const directory = {
             if (!result.page?.has_more) return items;
         }
     },
+    rotate: (expected_generation: number) => requestResource(`${directoryPath}/credential-rotations`, 'POST', {expected_generation}),
     sync: () => requestResource<DirectoryRun>(`${directoryPath}/sync-runs`, 'POST'),
     run: (id: string) => requestResource<DirectoryRun>(`${directoryPath}/sync-runs/${part(id)}`),
     bind: (account: string, member_id: string, revision: number) => requestResource(`/api/v1/accounts/${part(account)}/wecom-binding`, 'PUT', {member_id, revision}),

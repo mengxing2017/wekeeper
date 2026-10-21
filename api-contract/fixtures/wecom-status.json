@@ -3,8 +3,10 @@
     "type": "wecom-status",
     "id": "current",
     "attributes": {
-      "configured": false,
-      "oauth_available": false
+      "server_configured": false,
+      "client_configured": false,
+      "oauth_available": false,
+      "share_available": false
     }
   }
 }
