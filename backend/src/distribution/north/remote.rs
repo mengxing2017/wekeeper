@@ -113,6 +113,7 @@ async fn attempt(
     headers: HeaderMap,
     input_document: Input,
 ) -> Result<ApiResponse> {
+    crate::integrations::north::remote::require_share(&a, &actor)?;
     let v = input_document.decode::<AttemptInput>("delivery-attempts")?;
     let key = headers
         .get("idempotency-key")
@@ -142,6 +143,7 @@ async fn claim(
     actor: Actor,
     Path((s, id)): Path<(Uuid, Uuid)>,
 ) -> Result<ApiResponse> {
+    crate::integrations::north::remote::require_share(&a, &actor)?;
     a.distribution.claim(&actor, s, id).await?;
     Ok(completed())
 }
@@ -173,7 +175,8 @@ async fn capability(State(a): State<Application>, _actor: Actor) -> ApiResponse 
     singleton(
         "capabilities",
         "current",
-        json!({"wecom_configured":a.integrations.configured()}),
+        a.integrations
+            .capabilities(&a.options.public_origin, a.options.insecure_local_auth),
     )
 }
 pub fn router() -> Router<Application> {
