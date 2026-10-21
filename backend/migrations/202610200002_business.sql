@@ -1,7 +1,7 @@
 CREATE TABLE accounts (
  id UUID PRIMARY KEY, username TEXT UNIQUE NOT NULL, password_hash TEXT,
  display_name TEXT NOT NULL, platform_admin BOOLEAN NOT NULL DEFAULT FALSE,
- active BOOLEAN NOT NULL DEFAULT TRUE, wecom_userid TEXT UNIQUE, wx_openid TEXT UNIQUE,
+ active BOOLEAN NOT NULL DEFAULT TRUE, wecom_member_id UUID UNIQUE, wecom_binding_revision BIGINT NOT NULL DEFAULT 0, wx_openid TEXT UNIQUE,
  bound_school_id UUID, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE schools (
@@ -17,7 +17,7 @@ CREATE TABLE school_memberships (
 CREATE TABLE sessions (
  token_hash TEXT PRIMARY KEY, account_id UUID NOT NULL REFERENCES accounts(id), csrf TEXT NOT NULL,
  expires_at TIMESTAMPTZ NOT NULL, last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
- kind TEXT NOT NULL CHECK (kind IN ('browser','miniapp')), wecom_authenticated BOOLEAN NOT NULL DEFAULT FALSE
+ kind TEXT NOT NULL CHECK (kind IN ('browser','miniapp')), wecom_authenticated BOOLEAN NOT NULL DEFAULT FALSE, wecom_binding_revision BIGINT NOT NULL DEFAULT 0
 );
 CREATE INDEX sessions_expiry ON sessions(expires_at);
 CREATE TABLE login_attempts (username TEXT PRIMARY KEY, failures INTEGER NOT NULL, reset_at TIMESTAMPTZ NOT NULL);
@@ -102,7 +102,7 @@ CREATE TABLE delivery_draft_posts (
 );
 CREATE TABLE delivery_attempts (
  id UUID PRIMARY KEY, school_id UUID NOT NULL, draft_id UUID NOT NULL, actor_id UUID NOT NULL REFERENCES accounts(id),
- idempotency_key TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'prepared' CHECK(state IN ('prepared','client_reported_success','client_reported_failure','cancelled','unknown')),
+ wecom_binding_revision BIGINT NOT NULL DEFAULT 0, idempotency_key TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'prepared' CHECK(state IN ('prepared','client_reported_success','client_reported_failure','cancelled','unknown')),
  client_result JSONB, reconciliation TEXT CHECK(reconciliation IN ('operator_confirmed','operator_rejected')),
  reconciliation_note TEXT, reconciled_by UUID REFERENCES accounts(id), reconciled_at TIMESTAMPTZ,
  resend_of UUID REFERENCES delivery_attempts(id), resend_reason TEXT,
@@ -121,3 +121,27 @@ CREATE TABLE legacy_id_map (
  PRIMARY KEY(source_table,legacy_id)
 );
 CREATE TABLE migration_runs (id UUID PRIMARY KEY, source_hash TEXT NOT NULL UNIQUE, summary JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+
+-- Single-enterprise directory. Runs stage remotely; publication is one transaction.
+CREATE TABLE wecom_directory_state (
+ singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK(singleton), corp_id TEXT NOT NULL, agent_id TEXT NOT NULL,
+ snapshot_id UUID, last_success_at TIMESTAMPTZ, next_call_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE wecom_directory_sync_runs (
+ id UUID PRIMARY KEY, actor_id UUID REFERENCES accounts(id), state TEXT NOT NULL DEFAULT 'queued' CHECK(state IN ('queued','running','succeeded','failed')),
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now(), started_at TIMESTAMPTZ, finished_at TIMESTAMPTZ,
+ lease_id UUID, lease_until TIMESTAMPTZ, error_code TEXT,
+ department_count INTEGER NOT NULL DEFAULT 0, member_count INTEGER NOT NULL DEFAULT 0, snapshot JSONB
+);
+CREATE UNIQUE INDEX wecom_directory_one_job ON wecom_directory_sync_runs((TRUE)) WHERE state IN ('queued','running');
+CREATE TABLE wecom_departments (
+ id BIGINT PRIMARY KEY, parentid BIGINT NOT NULL, name TEXT NOT NULL, "order" BIGINT NOT NULL DEFAULT 0
+);
+CREATE TABLE wecom_members (
+ id UUID PRIMARY KEY, userid TEXT NOT NULL, userid_key TEXT GENERATED ALWAYS AS (lower(userid COLLATE "C")) STORED UNIQUE,
+ name TEXT NOT NULL, status INTEGER, department BIGINT[] NOT NULL DEFAULT '{}', main_department BIGINT,
+ visibility TEXT NOT NULL DEFAULT 'visible' CHECK(visibility IN ('visible','not_seen')),
+ verification TEXT NOT NULL DEFAULT 'unverified' CHECK(verification IN ('verified','unavailable','unverified')),
+ checked_at TIMESTAMPTZ, snapshot_id UUID
+);
+ALTER TABLE accounts ADD FOREIGN KEY(wecom_member_id) REFERENCES wecom_members(id);
