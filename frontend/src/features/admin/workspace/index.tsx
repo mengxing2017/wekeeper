@@ -4,6 +4,7 @@ import { useState, type FormEvent, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Card, Input, Select, Space, Tag } from 'antd';
 import { Directory } from './directory';
+import { Assets, GroupPicker } from './assets';
 import { Members } from './members';
 import { Editor } from './editor';
 import { Accounts, Schools } from './platform';
@@ -65,21 +66,22 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
     return <AppShell active={tab} onNavigate={navigate} username={user.display_name} platformAdmin={user.platform_admin} allowedKeys={allowedKeys} schoolRole={role} onLogout={logout}>
       {q.error && <Alert type="error" title={q.error.message} showIcon/>}
       {!platformView && <div className="scope-toolbar"><div><span className="field-caption">当前学校</span><Select aria-label="当前学校" className="school-select" loading={q.isPending} value={school?.id} options={visibleSchools?.map(s => ({ value: s.id, label: s.name }))} placeholder="选择学校" onChange={async (s) => { await cache.cancelQueries({ queryKey: ['business'] }); cache.removeQueries({ queryKey: ['business'] }); setParams(previous => { const next = new URLSearchParams(previous); next.set('school', s); return next; }); }}/></div><span className="scope-note">{school ? '所有业务操作均限定在当前学校' : '选择学校后开始管理业务'}</span>{school && <span>当前权限：{user.platform_admin ? '平台管理员' : schoolRoleLabel(role)}</span>}</div>}
-      {tab === 'wecom-directory' && user.platform_admin ? <Directory/>
+      {tab === 'wecom-assets' && user.platform_admin ? <Assets/> : tab === 'wecom-directory' && user.platform_admin ? <Directory/>
         : tab === 'schools' && user.platform_admin ? <Schools schools={q.data ?? []} loading={q.isPending} refresh={refresh} enter={enterSchool}/>
         : (tab === 'accounts' || tab === 'administrators') && user.platform_admin ? <Accounts key={tab} administrators={tab === 'administrators'} user={user} schools={q.data ?? []}/>
         : tab === 'platform-resources' && user.platform_admin ? <Card title="平台默认展示配置"><GlobalResources /></Card>
         : q.isPending ? <div className="empty-state" role="status">正在加载学校…</div>
         : !school ? <div className="empty-state"><span className="empty-mark">◇</span><h2>尚未选择学校</h2><p>{user.platform_admin ? '请在「学校管理」中创建学校，或选择已有学校。' : '请联系管理员为账号分配学校权限。'}</p>{user.platform_admin && <Button type="primary" onClick={() => navigate('schools')}>创建学校</Button>}</div>
         : !tab ? <Alert type="info" title="当前账号没有该学校的后台管理权限，请联系平台管理员。"/>
-        : <div className="business-panel">{tab === 'members' ? <Members key={school.id} school={school} platformAdmin={user.platform_admin} refresh={refresh}/> : tab === 'settings' ? <Card title={`${school.name} · 学校设置`}><Settings key={school.id} school={school} refresh={refresh}/></Card> : <Panel key={`${school.id}:${tab}`} schoolAdmin={user.platform_admin || role === 'admin'} school={school} resource={tab as Resource} refresh={refresh}/>}</div>}
+        : <div className="business-panel">{tab === 'members' ? <Members key={school.id} school={school} platformAdmin={user.platform_admin} refresh={refresh}/> : tab === 'settings' ? <Card title={`${school.name} · 学校设置`}><Settings key={school.id} school={school} refresh={refresh}/></Card> : <Panel platformAdmin={user.platform_admin} key={`${school.id}:${tab}`} schoolAdmin={user.platform_admin || role === 'admin'} school={school} resource={tab as Resource} refresh={refresh}/>}</div>}
     </AppShell>;
 }
 function Settings({ school, refresh }: {
     school: School;
     refresh: () => Promise<void>;
 }) { return <Editor fields={[{ name: 'name', title: '学校名称', value: school.name }, { name: 'post_audit_mode', title: '帖子审核模式', value: label(school.config.post_audit_mode) || 'manual', options: [{ value: 'manual', label: '人工审核' }, { value: 'auto', label: '自动通过' }] }, { name: 'comment_audit_mode', title: '评论审核模式', value: label(school.config.comment_audit_mode) || 'manual', options: [{ value: 'manual', label: '人工审核' }, { value: 'auto', label: '自动通过' }] }, { name: 'theme_color', title: '主题颜色', type: 'color', value: label(school.config.theme_color) || '#25624b' }]} onSave={async (v) => { await workspace.updateSchool(school.id, { name: v.name, revision: school.revision, config: { ...school.config, post_audit_mode: v.post_audit_mode, comment_audit_mode: v.comment_audit_mode, theme_color: v.theme_color } }); await refresh(); }}/>; }
-function Panel({ school, resource, refresh, schoolAdmin }: {
+function Panel({ school, resource, refresh, schoolAdmin, platformAdmin }: {
+    platformAdmin: boolean;
     schoolAdmin: boolean;
     school: School;
     resource: Resource;
@@ -103,7 +105,8 @@ function Panel({ school, resource, refresh, schoolAdmin }: {
     const mutation = async (path: string, body: unknown, method = 'POST') => { await workspace.mutate(s, path, body, method); await refresh(); };
     return <><div className="list-toolbar"><Space wrap><Input.Search aria-label="搜索内容" placeholder="搜索标题或正文" onSearch={v => { setSearch(v); setPage(1); }}/>{['posts', 'comments'].includes(resource) && <Select aria-label="审核状态" value={status} style={{ width: 140 }} onChange={setStatus} options={[{ value: '', label: '全部状态' }, ...['pending', 'approved', 'rejected'].map(value => ({ value, label: states[value] }))]}/>}<Button onClick={() => q.refetch()} loading={q.isFetching}>刷新</Button></Space><span className="list-count">{q.data ? `本页 ${q.data.items.length} 条记录` : '正在获取记录'}</span></div>{(error || q.error) && <Alert type="error" title={error || q.error?.message}/>}
  {resource === 'resources' && schoolAdmin && <ResourceEditor key={editing?.id ?? 'new'} item={editing} save={v => mutation('resources', v)}/>}
- {resource === 'groups' && schoolAdmin && <Editor key={editing?.id ?? 'new'} fields={[{ name: 'name', title: '群名称', value: label(editing?.name) }, { name: 'corp_id', title: '企业 ID（与应用配置一致）', readOnly: !!editing, value: label(editing?.corp_id) }, { name: 'chat_id', title: '客户群 ID（保存后不可更换）', readOnly: !!editing, value: label(editing?.chat_id) }, { name: 'active', title: '启用状态', value: editing ? String(editing.active) : 'true', options: [{ value: 'true', label: '启用' }, { value: 'false', label: '撤销' }] }]} onSave={v => mutation('groups', { ...v, id: editing?.id, revision: editing?.revision ?? 0, active: v.active === 'true' })}/>}
+ {resource === 'groups' && schoolAdmin && !editing && <GroupPicker key={school.id} school={school.id} onSaved={refresh}/>}
+ {resource === 'groups' && schoolAdmin && (editing || platformAdmin) && <details open={!!editing}><summary>{editing ? '编辑学校群' : '平台例外：手填已知群标识'}</summary><Editor key={editing?.id ?? 'new'} fields={[{ name: 'name', title: '群名称', value: label(editing?.name) }, { name: 'corp_id', title: '企业 ID（与应用配置一致）', readOnly: !!editing, value: label(editing?.corp_id) }, { name: 'chat_id', title: '客户群 ID（保存后不可更换）', readOnly: !!editing, value: label(editing?.chat_id) }, { name: 'active', title: '启用状态', value: editing ? String(editing.active) : 'true', options: [{ value: 'true', label: '启用' }, { value: 'false', label: '撤销' }] }]} onSave={v => mutation('groups', { ...v, id: editing?.id, revision: editing?.revision ?? 0, active: v.active === 'true' })}/></details>}
  {resource === 'templates' && <Editor fields={[{ name: 'name', title: '模板名称' }]} onSave={v => mutation('templates', v)}/>}
  {resource === 'delivery-drafts' && <DraftEditor school={s} save={v => mutation('delivery-drafts', v)}/>}
  {q.isPending && <p role="status">正在加载…</p>}{q.data?.items.length === 0 && <div className="empty-state"><span className="empty-mark">◇</span><h3>暂无记录</h3><p>当前学校下没有符合条件的记录。</p></div>}
