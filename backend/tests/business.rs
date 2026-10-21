@@ -446,9 +446,8 @@ async fn complete_business_flow_and_security_boundaries() {
         .0,
         422
     );
-    let inactive = ok(&app, "POST", &format!("{root}/groups"), &admin_token, &admin,
-        json!({"name":"Inactive","corp_id":"corp-test","chat_id":format!("inactive-{suffix}"),"active":false})).await;
-    assert_eq!(inactive["active"], false);
+    // Offline fixture: new manual groups require a real official detail response, even if inactive.
+    let inactive = a.schools.0.group(&admin,s,json!({"name":"Inactive","corp_id":"corp-test","chat_id":format!("inactive-{suffix}"),"active":false})).await.unwrap();
     assert_eq!(call(&app, "POST", &format!("{root}/groups"), &admin_token, &admin.csrf,
         json!({"id":inactive["id"],"revision":1,"name":"Changed","corp_id":"corp-test","chat_id":"changed","active":false})).await.0,409);
     // Offline fixture only: active groups in production must pass upstream validation.
