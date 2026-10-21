@@ -2,10 +2,11 @@
 name = "wekeeper-api"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.97"
+rust-version = "1.97.1"
 publish = false
 
 [dependencies]
+cairnkit-jsonapi = { git = "https://github.com/mengxing2017/cairnkit.git", rev = "1068bcbc04750a1d5d6d63a429260237e8a19861" }
 axum = { version = "0.8", features = ["multipart"] }
 argon2 = "0.5"
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
