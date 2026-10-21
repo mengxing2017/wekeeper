@@ -36,19 +36,19 @@ with tempfile.TemporaryDirectory(prefix='wekeeper-live-') as directory:
             ready(origin+'/readyz',web)
             jar=http.cookiejar.CookieJar();client=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
             def request(path,method='GET',body=None,csrf=None,expected=200):
-                headers={'Origin':origin,'Content-Type':'application/json'}
+                headers={'Origin':origin,'Content-Type':'application/vnd.api+json'}
                 if csrf:headers['X-CSRF-Token']=csrf
-                req=urllib.request.Request(origin+path,data=json.dumps(body).encode() if body is not None else None,headers=headers,method=method)
+                req=urllib.request.Request(origin+path,data=json.dumps({'data':{'type':('sessions' if '/auth/' in path else 'posts' if path.endswith('/posts') else 'schools'),'attributes':body}}).encode() if body is not None else None,headers=headers,method=method)
                 try:r=client.open(req,timeout=10)
                 except urllib.error.HTTPError as e:r=e
                 with r:
                     assert r.status==expected,(path,r.status,r.read().decode())
                     return json.loads(r.read())
-            session=request('/api/v1/auth/sessions','POST',{'username':'admin','password':password})['data'];csrf=session['csrf']
+            session=request('/api/v1/auth/sessions','POST',{'username':'admin','password':password})['data']['attributes'];csrf=session['csrf']
             assert any(c.name=='wekeeper_session' and c.has_nonstandard_attr('HttpOnly') for c in jar)
             request('/api/v1/schools','POST',{'name':'Denied'},expected=403)
             school=request('/api/v1/schools','POST',{'name':'Live smoke'},csrf)['data']['id']
-            post=request(f'/api/v1/schools/{school}/posts','POST',{'title':'Live post','content':'Body'},csrf)['data']
+            post=request(f'/api/v1/schools/{school}/posts','POST',{'title':'Live post','content':'Body'},csrf)['data']['attributes']
             assert post['audit_status']=='pending'
             for path in ('/admin','/community','/wecom'):
                 with client.open(origin+path) as response:assert '<div id="root"></div>' in response.read().decode()

@@ -81,7 +81,7 @@ def check_case(shutdown_signal=None):
                     else:
                         raise AssertionError("embedded API did not become ready")
                     with HTTP.open(f"http://127.0.0.1:{port}/api/v1/system", timeout=2) as response:
-                        assert json.load(response)["data"]["application"] == "wekeeper"
+                        assert json.load(response)["data"]["attributes"]["application"] == "wekeeper"
                     output.seek(0)
                     startup_log = output.read()
                     if custom_password:
@@ -93,11 +93,11 @@ def check_case(shutdown_signal=None):
                         assert len(password) == 32
                     request = urllib.request.Request(
                         f"http://127.0.0.1:{port}/api/v1/auth/sessions",
-                        data=json.dumps({"username": "admin", "password": password}).encode(),
-                        headers={"Content-Type": "application/json", "Origin": "http://127.0.0.1:5173"},
+                        data=json.dumps({"data":{"type":"sessions","attributes":{"username": "admin", "password": password}}}).encode(),
+                        headers={"Content-Type": "application/vnd.api+json", "Origin": "http://127.0.0.1:5173"},
                     )
                     with HTTP.open(request, timeout=5) as response:
-                        assert json.load(response)["data"]["user"]["platform_admin"] is True
+                        assert json.load(response)["data"]["attributes"]["user"]["platform_admin"] is True
                         cookie = response.headers["Set-Cookie"]
                         assert "HttpOnly" in cookie and "; Secure" not in cookie
                     proc.send_signal(shutdown_signal)
