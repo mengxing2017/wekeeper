@@ -1,1 +1,10 @@
-{"data":{"configured":false,"oauth_available":false}}
+{
+  "data": {
+    "type": "wecom-status",
+    "id": "current",
+    "attributes": {
+      "configured": false,
+      "oauth_available": false
+    }
+  }
+}

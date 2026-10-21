@@ -1,3 +1,11 @@
 {
-  "data": { "application": "wekeeper", "version": "0.1.0", "stage": "business" }
+  "data": {
+    "type": "systems",
+    "id": "wekeeper",
+    "attributes": {
+      "application": "wekeeper",
+      "version": "0.1.0",
+      "stage": "business"
+    }
+  }
 }

@@ -1,1 +1,29 @@
-{"data":{"items":[{"id":"00000000-0000-0000-0000-000000000001","school_id":"00000000-0000-0000-0000-000000000002","draft_id":"00000000-0000-0000-0000-000000000003","actor_id":"00000000-0000-0000-0000-000000000004","state":"unknown","reconciliation":null,"client_result":null,"actor_name":"运营甲","group_name":"学校客户群","content":"待核对内容","created_at":"2026-10-21T00:00:00Z"}],"latest_attempt_id":"00000000-0000-0000-0000-000000000001","blocked":true}}
+{
+  "data": [
+    {
+      "type": "delivery-attempts",
+      "id": "00000000-0000-0000-0000-000000000001",
+      "attributes": {
+        "school_id": "00000000-0000-0000-0000-000000000002",
+        "draft_id": "00000000-0000-0000-0000-000000000003",
+        "actor_id": "00000000-0000-0000-0000-000000000004",
+        "state": "unknown",
+        "reconciliation": null,
+        "client_result": null,
+        "actor_name": "运营甲",
+        "group_name": "学校客户群",
+        "content": "待核对内容",
+        "created_at": "2026-10-21T00:00:00Z"
+      }
+    }
+  ],
+  "meta": {
+    "latest_attempt_id": "00000000-0000-0000-0000-000000000001",
+    "blocked": true,
+    "page": {
+      "number": 1,
+      "size": 30,
+      "has_more": false
+    }
+  }
+}
