@@ -53,3 +53,11 @@ it('SDK load timeout removes the script and allows an explicit retry', async () 
     document.head.querySelector('script')!.dispatchEvent(new Event('error'))
     await retried
 })
+it.each(['','0','-1','+1','abc','4294967296'])('does not register an invalid AgentID: %s',async agentId=>{
+    vi.spyOn(navigator,'userAgent','get').mockReturnValue('wxwork');
+    const {workspace}=await import('./api');vi.mocked(workspace.wecomInfo).mockResolvedValue({corpId:'corp',agentId});
+    window.ww={register:vi.fn(),getCurExternalChat:vi.fn(),sendChatMessage:vi.fn()};
+    const {initializeSdk}=await import('./sdk');
+    await expect(initializeSdk()).rejects.toThrow('应用配置不完整');
+    expect(window.ww.register).not.toHaveBeenCalled();
+});
