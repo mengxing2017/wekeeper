@@ -83,7 +83,13 @@ impl<R: Store> Service<R> {
         }
         self.0.resource(a, school, v).await
     }
-    pub async fn group(&self, a: &Actor, school: Uuid, v: Value) -> Result<Value> {
+    pub async fn group(
+        &self,
+        a: &Actor,
+        school: Uuid,
+        v: Value,
+        integration: &crate::integrations::north::local::Service,
+    ) -> Result<Value> {
         if school.is_nil() {
             a.platform()?;
         } else {
@@ -91,6 +97,21 @@ impl<R: Store> Service<R> {
         }
         for k in ["corp_id", "chat_id", "name"] {
             text(v[k].as_str().unwrap_or(""), 1, 200)?;
+        }
+        // Revocation remains possible during platform outages or credential changes.
+        let active = v["active"].as_bool().unwrap_or(true);
+        if active {
+            integration
+                .validate_group(
+                    v["corp_id"].as_str().unwrap_or(""),
+                    v["chat_id"].as_str().unwrap_or(""),
+                )
+                .await?;
+        } else if v["revision"].as_i64().unwrap_or(0) == 0 {
+            require(
+                !integration.corp.is_empty() && v["corp_id"].as_str() == Some(&integration.corp),
+                "企业 ID 必须与当前应用配置一致",
+            )?;
         }
         self.0.group(a, school, v).await
     }

@@ -93,7 +93,7 @@ async fn group(
     Path(s): Path<Uuid>,
     Json(v): Json<Value>,
 ) -> Result<Json<Value>> {
-    Ok(data(a.schools.group(&actor, s, v).await?))
+    Ok(data(a.schools.group(&actor, s, v, &a.integrations).await?))
 }
 async fn global_resources(State(a): State<Application>, actor: Actor) -> Result<Json<Value>> {
     Ok(data(a.schools.global_resources(&actor).await?))

@@ -135,9 +135,9 @@ impl Repository {
         let rev = v["revision"].as_i64().unwrap_or(0);
         let mut tx = self.0.begin().await?;
         let item = if rev == 0 {
-            sqlx::query_scalar("INSERT INTO wecom_groups(id,school_id,corp_id,chat_id,name) VALUES($1,$2,$3,$4,$5) RETURNING to_jsonb(wecom_groups)").bind(id).bind(school).bind(v["corp_id"].as_str()).bind(v["chat_id"].as_str()).bind(v["name"].as_str()).fetch_one(&mut *tx).await?
+            sqlx::query_scalar("INSERT INTO wecom_groups(id,school_id,corp_id,chat_id,name,active) VALUES($1,$2,$3,$4,$5,$6) RETURNING to_jsonb(wecom_groups)").bind(id).bind(school).bind(v["corp_id"].as_str()).bind(v["chat_id"].as_str()).bind(v["name"].as_str()).bind(v["active"].as_bool().unwrap_or(true)).fetch_one(&mut *tx).await?
         } else {
-            sqlx::query_scalar("UPDATE wecom_groups SET name=$3,active=$4,revision=revision+1 WHERE id=$1 AND school_id=$2 AND revision=$5 RETURNING to_jsonb(wecom_groups)").bind(id).bind(school).bind(v["name"].as_str()).bind(v["active"].as_bool().unwrap_or(true)).bind(rev).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?
+            sqlx::query_scalar("UPDATE wecom_groups SET name=$3,active=$4,revision=revision+1 WHERE id=$1 AND school_id=$2 AND revision=$5 AND corp_id=$6 AND chat_id=$7 RETURNING to_jsonb(wecom_groups)").bind(id).bind(school).bind(v["name"].as_str()).bind(v["active"].as_bool().unwrap_or(true)).bind(rev).bind(v["corp_id"].as_str()).bind(v["chat_id"].as_str()).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?
         };
         crate::audit::record(&mut tx, a, school, "group.save", id, json!({})).await?;
         tx.commit().await?;
