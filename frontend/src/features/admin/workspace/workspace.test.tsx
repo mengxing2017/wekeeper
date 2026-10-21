@@ -36,11 +36,14 @@ it('keeps an existing group identity read-only while saving its revocation', asy
   vi.mocked(workspace.mutate).mockResolvedValue({id:'g'})
   const client = new QueryClient({defaultOptions:{queries:{retry:false}}})
   render(<QueryClientProvider client={client}><MemoryRouter initialEntries={['/admin?school=school&view=groups']}><Workspace/></MemoryRouter></QueryClientProvider>)
-  fireEvent.click(await screen.findByRole('button',{name:/编\s*辑/}))
+  // Wait for data with a cheap text query before computing button accessibility.
+  const groupCard = (await screen.findByText('测试群')).closest<HTMLElement>('.ant-card')!
+  fireEvent.click(within(groupCard).getByRole('button',{name:/编\s*辑/}))
   expect((screen.getByLabelText('企业 ID（与应用配置一致）') as HTMLInputElement).readOnly).toBe(true)
   expect((screen.getByLabelText('客户群 ID（保存后不可更换）') as HTMLInputElement).readOnly).toBe(true)
   fireEvent.change(screen.getByLabelText('启用状态'),{target:{value:'false'}})
-  fireEvent.click(screen.getByRole('button',{name:'保存'}))
+  const groupEditor = screen.getByLabelText('启用状态').closest('form')!
+  fireEvent.click(within(groupEditor).getByRole('button',{name:'保存'}))
   await waitFor(()=>expect(workspace.mutate).toHaveBeenCalledWith('school','groups',expect.objectContaining({id:'g',corp_id:'corp',chat_id:'chat',active:false,revision:1}),'POST'))
 })
 
