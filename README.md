@@ -2,7 +2,7 @@
 
 校园社区与企业微信内容运营重构工程。新应用采用 Rust + React。
 
-现已接入身份与学校权限、社区内容和互动、审核治理、运营配置、模板版本、分享草稿、企业微信人工分享及记录、小程序兼容和数据迁移工具。
+现已接入身份与学校权限、社区内容和互动、审核治理、运营配置、模板版本、分享草稿、企业微信人工分享及记录、小程序身份入口和数据迁移工具。
 运行与数据切换见 [业务运行手册](docs/runbooks/business.md)。真实平台权限、真机及生产数据切换仍需验收。
 旧 PHP、uni-app、Java 和附带资源保留用于迁移核对，新容器不会运行它们。
 
@@ -266,3 +266,7 @@ docker compose --env-file .env -f compose.yaml logs --tail 100 api web
 工程决策见 [基础骨架 ADR](docs/adr/0001-foundation.md)。
 业务目标见 [Rust 与 React 重构实施方案](report/11-Rust与React重构实施方案.md)。
 首次管理员、平台配置与旧数据迁移详见 [业务运行手册](docs/runbooks/business.md)。
+
+### JSON:API 协议切换
+
+所有 `/api/v1` 结构化业务请求/响应统一使用 `application/vnd.api+json`；成功资源使用 `type/id/attributes`，错误使用 `errors[]`。分页统一为 `page[number]`、`page[size]` 和 `meta.page.has_more`，前端与后端需同时更新。旧 `/api/discover/*` 表单业务兼容接口已删除；旧客户端需迁移到 api-contract，历史图片读取及数据迁移映射保留。健康探针、二进制图片和 OAuth 重定向维持各自传输用途。详见 [API contract](api-contract/README.md)。
