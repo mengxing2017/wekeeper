@@ -10,6 +10,7 @@ pub enum Error {
     Conflict,
     Invalid(String),
     Unavailable,
+    Upstream(i64),
     Database(String),
 }
 pub type Result<T> = std::result::Result<T, Error>;

@@ -264,7 +264,7 @@ pub(crate) fn error_code(error: &Error) -> &'static str {
         Error::NotFound => "not_found",
         Error::Conflict => "conflict_or_stale_generation",
         Error::Invalid(_) => "invalid_configuration_or_input",
-        Error::Unavailable => "upstream_unavailable",
+        Error::Unavailable | Error::Upstream(_) => "upstream_unavailable",
         Error::Database(_) => "database_error",
     }
 }

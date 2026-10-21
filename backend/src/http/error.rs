@@ -76,7 +76,7 @@ impl IntoResponse for Error {
                 "数据已变化或操作重复，请刷新后重试".into(),
             ),
             Self::Invalid(s) => (StatusCode::UNPROCESSABLE_ENTITY, "validation", s),
-            Self::Unavailable => (
+            Self::Unavailable | Self::Upstream(_) => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "unavailable",
                 "平台能力暂不可用或尚未配置".into(),

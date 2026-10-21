@@ -83,7 +83,7 @@ impl Service {
                 errcode = v["errcode"].as_i64(),
                 "official platform API rejected request"
             );
-            return Err(Error::Unavailable);
+            return Err(Error::Upstream(v["errcode"].as_i64().unwrap_or(-1)));
         }
         Ok(v)
     }
