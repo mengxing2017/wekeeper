@@ -9,11 +9,6 @@ pub struct HealthResponse {
 }
 
 #[derive(Serialize)]
-pub struct SystemDocument {
-    data: SystemResponse,
-}
-
-#[derive(Serialize)]
 struct SystemResponse {
     application: &'static str,
     version: &'static str,
@@ -37,13 +32,15 @@ pub async fn readiness(State(app): State<Application>) -> (StatusCode, Json<Heal
     }
 }
 
-pub async fn system_info(State(app): State<Application>) -> Json<SystemDocument> {
+pub async fn system_info(State(app): State<Application>) -> crate::http::jsonapi::ApiResponse {
     let info = app.system.info();
-    Json(SystemDocument {
-        data: SystemResponse {
+    crate::http::jsonapi::singleton(
+        "systems",
+        "wekeeper",
+        SystemResponse {
             application: info.application,
             version: info.version,
             stage: info.stage,
         },
-    })
+    )
 }
