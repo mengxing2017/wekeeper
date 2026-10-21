@@ -126,6 +126,20 @@ docker image inspect "$WEB_IMAGE" --format '{{json .RepoDigests}}'
 ```
 
 生产 `.env` 优先填 `registry.example.com/team/wekeeper-api@sha256:实际摘要` 等 digest 引用。
+### 构建时 GitHub 依赖下载失败
+
+后端的 `cairnkit-jsonapi` 是固定提交的 GitHub 依赖。Cargo 默认使用 libgit2 拉取，和命令行 `git` 的实现、配置读取并不完全相同，因此系统 Git 能签出时，Cargo 仍可能出现 `class=Os (2)`、连接超时或 SSL 错误；仅凭这些日志不能认定网络不可达。
+
+Dockerfile 安装系统 Git 和 CA 证书，并设置 `CARGO_NET_GIT_FETCH_WITH_CLI=true`，让 Cargo 使用系统 Git。先执行 `cargo fetch --locked --verbose`，再执行 `cargo build --frozen --release`：下载阶段保留详细日志，编译阶段使用已下载且锁定的依赖，不再联网。Git 与 registry 缓存均由 BuildKit 持久化。不配置代理、私有仓库或关闭证书验证。
+
+使用更新后的文件重新构建，检查详细下载日志：
+
+```bash
+docker build --pull --progress=plain -f backend/Dockerfile -t "$API_IMAGE" .
+```
+
+若系统 Git 拉取仍失败，检查日志中的 Git 错误及构建容器的 DNS、CA 证书和网络环境。宿主机的 Git 配置不会自动进入构建容器，宿主机签出成功不等于构建容器签出成功。
+
 `--pull` 更新基础镜像缓存，不保证可重现的基础镜像 digest；有严格重现要求时需另行固定 Dockerfile 基础镜像摘要。
 
 API 构建通过 BuildKit cache mount 缓存 Cargo registry 和 target；同一 builder 可复用。
