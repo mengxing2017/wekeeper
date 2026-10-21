@@ -9,6 +9,8 @@ pub struct Repository(pub PgPool);
 impl Repository {
     pub async fn claim(&self, a: &Actor, s: Uuid, id: Uuid) -> Result<()> {
         let mut tx = self.0.begin().await?;
+        sqlx::query("SELECT a.id FROM accounts a JOIN wecom_members m ON m.id=a.wecom_member_id WHERE a.id=$1 AND a.active AND a.wecom_binding_revision=$2 AND m.verification='verified' AND m.status=1 FOR SHARE OF a,m").bind(a.id).bind(a.wecom_binding_revision).fetch_optional(&mut *tx).await?.ok_or(Error::Forbidden)?;
+
         sqlx::query("SELECT g.id FROM delivery_attempts a JOIN delivery_drafts d ON d.id=a.draft_id JOIN wecom_groups g ON g.id=d.group_id WHERE a.school_id=$1 AND a.id=$2 AND a.actor_id=$3 FOR SHARE OF g").bind(s).bind(id).bind(a.id).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
         let draft:Uuid=sqlx::query_scalar("SELECT d.id FROM delivery_attempts a JOIN delivery_drafts d ON d.id=a.draft_id JOIN wecom_groups g ON g.id=d.group_id JOIN schools s ON s.id=d.school_id WHERE a.school_id=$1 AND a.id=$2 AND a.actor_id=$3 AND d.state='ready' AND g.active AND s.active FOR UPDATE OF a FOR SHARE OF d,g,s").bind(s).bind(id).bind(a.id).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
         let posts=sqlx::query("SELECT p.revision,dp.post_revision,p.audit_status,p.visibility FROM delivery_draft_posts dp JOIN posts p ON p.id=dp.post_id WHERE dp.draft_id=$1 FOR SHARE OF p").bind(draft).fetch_all(&mut *tx).await?;
@@ -21,7 +23,7 @@ impl Repository {
                 }),
             "草稿内容已变化，禁止调用发送",
         )?;
-        let n=sqlx::query("UPDATE delivery_attempts SET client_invoked_at=now() WHERE school_id=$1 AND id=$2 AND actor_id=$3 AND state='prepared' AND client_invoked_at IS NULL AND created_at>now()-interval '2 minutes'").bind(s).bind(id).bind(a.id).execute(&mut *tx).await?.rows_affected();
+        let n=sqlx::query("UPDATE delivery_attempts SET client_invoked_at=now() WHERE school_id=$1 AND id=$2 AND actor_id=$3 AND state='prepared' AND client_invoked_at IS NULL AND created_at>now()-interval '2 minutes' AND wecom_binding_revision=$4").bind(s).bind(id).bind(a.id).bind(a.wecom_binding_revision).execute(&mut *tx).await?.rows_affected();
         if n != 1 {
             return Err(Error::Conflict);
         }
@@ -153,6 +155,7 @@ impl Repository {
         reason: &str,
     ) -> Result<Value> {
         let mut tx = self.0.begin().await?;
+        sqlx::query("SELECT a.id FROM accounts a JOIN wecom_members m ON m.id=a.wecom_member_id WHERE a.id=$1 AND a.active AND a.wecom_binding_revision=$2 AND m.verification='verified' AND m.status=1 FOR SHARE OF a,m").bind(a.id).bind(a.wecom_binding_revision).fetch_optional(&mut *tx).await?.ok_or(Error::Forbidden)?;
         // A group lock serializes overlapping content across different drafts as well.
         sqlx::query("SELECT g.id FROM wecom_groups g JOIN delivery_drafts d ON d.group_id=g.id WHERE d.school_id=$1 AND d.id=$2 FOR UPDATE OF g").bind(s).bind(draft).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
         // Serialize every attempt for the same draft, including concurrent idempotency keys.
@@ -203,7 +206,7 @@ impl Repository {
             require(resend.is_none(), "没有可重发的历史尝试")?;
         }
         let id = Uuid::now_v7();
-        let item=sqlx::query_scalar("INSERT INTO delivery_attempts(id,school_id,draft_id,actor_id,idempotency_key,resend_of,resend_reason) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING to_jsonb(delivery_attempts)").bind(id).bind(s).bind(draft).bind(a.id).bind(key).bind(resend).bind(reason).fetch_one(&mut *tx).await?;
+        let item=sqlx::query_scalar("INSERT INTO delivery_attempts(id,school_id,draft_id,actor_id,idempotency_key,resend_of,resend_reason,wecom_binding_revision) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING to_jsonb(delivery_attempts)").bind(id).bind(s).bind(draft).bind(a.id).bind(key).bind(resend).bind(reason).bind(a.wecom_binding_revision).fetch_one(&mut *tx).await?;
         crate::audit::record(
             &mut tx,
             a,
