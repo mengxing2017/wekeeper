@@ -28,6 +28,7 @@ pub fn app_router(application: Application) -> Router {
 .merge(crate::distribution::north::remote::router())
 .merge(crate::integrations::north::remote::router())
 .merge(crate::integrations::north::directory_remote::router())
+        .merge(crate::integrations::north::assets_remote::router())
 .merge(crate::legacy::north::remote::router())
 .merge(crate::media::north::remote::router())
 .route("/api/v1/schools/{school}/audit",get(crate::audit::list))
