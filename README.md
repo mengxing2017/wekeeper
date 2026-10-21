@@ -312,3 +312,17 @@ docker compose --env-file .env -f compose.yaml logs --tail 100 api web
 ### JSON:API 协议切换
 
 所有 `/api/v1` 结构化业务请求/响应统一使用 `application/vnd.api+json`；成功资源使用 `type/id/attributes`，错误使用 `errors[]`。分页统一为 `page[number]`、`page[size]` 和 `meta.page.has_more`，前端与后端需同时更新。旧 `/api/discover/*` 表单业务兼容接口已删除；旧客户端需迁移到 api-contract，历史图片读取及数据迁移映射保留。健康探针、二进制图片和 OAuth 重定向维持各自传输用途。详见 [API contract](api-contract/README.md)。
+
+### 客户群目录同步
+
+平台后台的「客户群管理」保留客户群/群成员、运营成员统计与同步任务，不再提供客户、客户跟进关系和客户联系成员目录。先完整同步「企业通讯录」，再同步客户群。接口只读取当前应用可见资产，不要求 `WEKEEPER_WECOM_AGENT_ID`；CorpID/Secret 的终端注入方式见上文。
+
+```bash
+export WEKEEPER_WECOM_ASSET_SYNC_INTERVAL_SECONDS=1800
+# 0 关闭周期调度，仍可在平台后台手动同步；非零不得小于 60
+devbox run -- make dev-embedded
+```
+
+学校管理员从目录选择自己担任群主的群；平台管理员可选择未关联其他学校的群，并有手填已知群标识的例外入口。旧群停用不依赖上游，新建手填群（包括未启用群）必须核验官方详情。完整行为、错误排查和数据保留见 [业务运行手册](docs/runbooks/business.md#客户群目录)。
+
+本轮直接修改现有 `202610200002_business.sql`，没有新增迁移文件。已有开发库须由维护者重新初始化，启动器不会删除既有业务库或改写 SQLx 校验和；嵌入式临时库退出即清理。
