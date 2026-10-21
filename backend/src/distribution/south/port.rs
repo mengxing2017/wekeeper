@@ -2,6 +2,18 @@ use crate::business::{Actor, Result};
 use serde_json::Value;
 use uuid::Uuid;
 pub trait Store: Clone + Send + Sync + 'static {
+    fn get_draft(
+        &self,
+        s: Uuid,
+        id: Uuid,
+    ) -> impl std::future::Future<Output = Result<Value>> + Send;
+    fn related(
+        &self,
+        s: Uuid,
+        id: Uuid,
+        limit: i64,
+        offset: i64,
+    ) -> impl std::future::Future<Output = Result<crate::distribution::domain::RelatedHistory>> + Send;
     fn claim(
         &self,
         a: &Actor,
@@ -27,7 +39,12 @@ pub trait Store: Clone + Send + Sync + 'static {
         id: Uuid,
         revision: i64,
     ) -> impl std::future::Future<Output = Result<Value>> + Send;
-    fn drafts(&self, s: Uuid) -> impl std::future::Future<Output = Result<Vec<Value>>> + Send;
+    fn drafts(
+        &self,
+        s: Uuid,
+        limit: i64,
+        offset: i64,
+    ) -> impl std::future::Future<Output = Result<Vec<Value>>> + Send;
     fn draft(
         &self,
         a: &Actor,
@@ -53,7 +70,12 @@ pub trait Store: Clone + Send + Sync + 'static {
         resend: Option<Uuid>,
         reason: &str,
     ) -> impl std::future::Future<Output = Result<Value>> + Send;
-    fn attempts(&self, s: Uuid) -> impl std::future::Future<Output = Result<Vec<Value>>> + Send;
+    fn attempts(
+        &self,
+        s: Uuid,
+        limit: i64,
+        offset: i64,
+    ) -> impl std::future::Future<Output = Result<Vec<Value>>> + Send;
     fn result(
         &self,
         a: &Actor,

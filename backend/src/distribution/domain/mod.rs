@@ -41,6 +41,17 @@ pub fn render(body: &str, values: &BTreeMap<&str, String>) -> Result<String> {
     out.push_str(rest);
     Ok(out)
 }
+
+#[derive(serde::Serialize)]
+pub struct RelatedHistory {
+    pub items: Vec<serde_json::Value>,
+    pub latest_attempt_id: Option<uuid::Uuid>,
+    pub blocked: bool,
+}
+
+pub fn blocks_resend(row: &serde_json::Value) -> bool {
+    row["state"] == "prepared" || (row["state"] == "unknown" && !row["reconciliation"].is_string())
+}
 #[cfg(test)]
 mod tests {
     use super::*;

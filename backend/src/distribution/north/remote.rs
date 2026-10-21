@@ -6,7 +6,7 @@ use crate::{
 };
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::HeaderMap,
     routing::{get, post, put},
 };
@@ -53,8 +53,24 @@ async fn drafts(
     State(a): State<Application>,
     actor: Actor,
     Path(s): Path<Uuid>,
+    Query(page): Query<crate::business::Page>,
 ) -> Result<Json<Value>> {
-    Ok(data(a.distribution.drafts(&actor, s).await?))
+    Ok(data(a.distribution.drafts(&actor, s, page).await?))
+}
+async fn get_draft(
+    State(a): State<Application>,
+    actor: Actor,
+    Path((s, id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<Value>> {
+    Ok(data(a.distribution.get_draft(&actor, s, id).await?))
+}
+async fn related(
+    State(a): State<Application>,
+    actor: Actor,
+    Path((s, id)): Path<(Uuid, Uuid)>,
+    Query(page): Query<crate::business::Page>,
+) -> Result<Json<Value>> {
+    Ok(data(a.distribution.related(&actor, s, id, page).await?))
 }
 async fn draft(
     State(a): State<Application>,
@@ -89,8 +105,9 @@ async fn attempts(
     State(a): State<Application>,
     actor: Actor,
     Path(s): Path<Uuid>,
+    Query(page): Query<crate::business::Page>,
 ) -> Result<Json<Value>> {
-    Ok(data(a.distribution.attempts(&actor, s).await?))
+    Ok(data(a.distribution.attempts(&actor, s, page).await?))
 }
 async fn claim(
     State(a): State<Application>,
@@ -121,6 +138,14 @@ async fn capability(State(a): State<Application>, _actor: Actor) -> Json<Value> 
 }
 pub fn router() -> Router<Application> {
     Router::new()
+        .route(
+            "/api/v1/schools/{school}/delivery-drafts/{id}",
+            get(get_draft),
+        )
+        .route(
+            "/api/v1/schools/{school}/delivery-drafts/{id}/history",
+            get(related),
+        )
         .route(
             "/api/v1/schools/{school}/delivery-attempts/{id}/invocation",
             post(claim),

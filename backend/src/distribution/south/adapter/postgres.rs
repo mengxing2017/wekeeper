@@ -1,4 +1,5 @@
 use crate::business::{Actor, Error, Result, hash, require};
+use crate::distribution::domain::blocks_resend;
 use serde_json::{Value, json};
 use sqlx::{PgPool, Row};
 use std::collections::BTreeMap;
@@ -8,6 +9,7 @@ pub struct Repository(pub PgPool);
 impl Repository {
     pub async fn claim(&self, a: &Actor, s: Uuid, id: Uuid) -> Result<()> {
         let mut tx = self.0.begin().await?;
+        sqlx::query("SELECT g.id FROM delivery_attempts a JOIN delivery_drafts d ON d.id=a.draft_id JOIN wecom_groups g ON g.id=d.group_id WHERE a.school_id=$1 AND a.id=$2 AND a.actor_id=$3 FOR SHARE OF g").bind(s).bind(id).bind(a.id).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
         let draft:Uuid=sqlx::query_scalar("SELECT d.id FROM delivery_attempts a JOIN delivery_drafts d ON d.id=a.draft_id JOIN wecom_groups g ON g.id=d.group_id JOIN schools s ON s.id=d.school_id WHERE a.school_id=$1 AND a.id=$2 AND a.actor_id=$3 AND d.state='ready' AND g.active AND s.active FOR UPDATE OF a FOR SHARE OF d,g,s").bind(s).bind(id).bind(a.id).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
         let posts=sqlx::query("SELECT p.revision,dp.post_revision,p.audit_status,p.visibility FROM delivery_draft_posts dp JOIN posts p ON p.id=dp.post_id WHERE dp.draft_id=$1 FOR SHARE OF p").bind(draft).fetch_all(&mut *tx).await?;
         require(
@@ -42,8 +44,36 @@ impl Repository {
         tx.commit().await?;
         Ok(item)
     }
-    pub async fn drafts(&self, s: Uuid) -> Result<Vec<Value>> {
-        Ok(sqlx::query_scalar("SELECT to_jsonb(d)||jsonb_build_object('group_name',g.name,'chat_id',g.chat_id) FROM delivery_drafts d JOIN wecom_groups g ON g.id=d.group_id WHERE d.school_id=$1 ORDER BY d.created_at DESC LIMIT 100").bind(s).fetch_all(&self.0).await?)
+    pub async fn drafts(&self, s: Uuid, limit: i64, offset: i64) -> Result<Vec<Value>> {
+        Ok(sqlx::query_scalar("SELECT to_jsonb(d)||jsonb_build_object('group_name',g.name,'chat_id',g.chat_id) FROM delivery_drafts d JOIN wecom_groups g ON g.id=d.group_id WHERE d.school_id=$1 ORDER BY d.created_at DESC,d.id DESC LIMIT $2 OFFSET $3").bind(s).bind(limit).bind(offset).fetch_all(&self.0).await?)
+    }
+    pub async fn get_draft(&self, s: Uuid, id: Uuid) -> Result<Value> {
+        sqlx::query_scalar("SELECT to_jsonb(d)||jsonb_build_object('group_name',g.name,'chat_id',g.chat_id) FROM delivery_drafts d JOIN wecom_groups g ON g.id=d.group_id WHERE d.school_id=$1 AND d.id=$2").bind(s).bind(id).fetch_optional(&self.0).await?.ok_or(Error::NotFound)
+    }
+    pub async fn related(
+        &self,
+        s: Uuid,
+        id: Uuid,
+        limit: i64,
+        offset: i64,
+    ) -> Result<crate::distribution::domain::RelatedHistory> {
+        self.get_draft(s, id).await?;
+        sqlx::query("UPDATE delivery_attempts SET state='unknown',updated_at=now() WHERE school_id=$1 AND state='prepared' AND created_at<now()-interval '2 minutes'").bind(s).execute(&self.0).await?;
+        let rows: Vec<Value> = sqlx::query_scalar("SELECT to_jsonb(a)||jsonb_build_object('group_name',g.name,'content',prior.content,'actor_name',u.display_name) FROM delivery_attempts a JOIN delivery_drafts prior ON prior.id=a.draft_id JOIN delivery_drafts current ON current.id=$1 JOIN wecom_groups g ON g.id=prior.group_id JOIN accounts u ON u.id=a.actor_id WHERE prior.school_id=current.school_id AND prior.group_id=current.group_id AND (prior.id=current.id OR EXISTS(SELECT 1 FROM delivery_draft_posts x JOIN delivery_draft_posts y ON y.post_id=x.post_id WHERE x.draft_id=prior.id AND y.draft_id=current.id)) ORDER BY a.created_at DESC,a.id DESC").bind(id).fetch_all(&self.0).await?;
+        let latest_attempt_id = rows
+            .first()
+            .and_then(|r| r["id"].as_str())
+            .and_then(|id| id.parse().ok());
+        let blocked = rows.iter().any(blocks_resend);
+        Ok(crate::distribution::domain::RelatedHistory {
+            latest_attempt_id,
+            blocked,
+            items: rows
+                .into_iter()
+                .skip(offset as usize)
+                .take(limit as usize)
+                .collect(),
+        })
     }
     pub async fn draft(
         &self,
@@ -123,6 +153,8 @@ impl Repository {
         reason: &str,
     ) -> Result<Value> {
         let mut tx = self.0.begin().await?;
+        // A group lock serializes overlapping content across different drafts as well.
+        sqlx::query("SELECT g.id FROM wecom_groups g JOIN delivery_drafts d ON d.group_id=g.id WHERE d.school_id=$1 AND d.id=$2 FOR UPDATE OF g").bind(s).bind(draft).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
         // Serialize every attempt for the same draft, including concurrent idempotency keys.
         let row=sqlx::query("SELECT d.state,g.chat_id,g.active FROM delivery_drafts d JOIN wecom_groups g ON g.id=d.group_id WHERE d.school_id=$1 AND d.id=$2 FOR UPDATE OF d,g").bind(s).bind(draft).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
         if let Some(existing) = sqlx::query_scalar::<_, Value>(
@@ -156,14 +188,12 @@ impl Repository {
             "内容已修改、撤审或隐藏，请重新生成草稿",
         )?;
         sqlx::query("UPDATE delivery_attempts SET state='unknown',updated_at=now() WHERE school_id=$1 AND state='prepared' AND created_at<now()-interval '2 minutes'").bind(s).execute(&mut *tx).await?;
-        let previous:Option<Value>=sqlx::query_scalar("SELECT to_jsonb(a) FROM delivery_attempts a JOIN delivery_drafts prior ON prior.id=a.draft_id JOIN delivery_drafts current ON current.id=$1 WHERE prior.school_id=current.school_id AND prior.group_id=current.group_id AND (prior.id=current.id OR EXISTS(SELECT 1 FROM delivery_draft_posts x JOIN delivery_draft_posts y ON y.post_id=x.post_id WHERE x.draft_id=prior.id AND y.draft_id=current.id)) ORDER BY a.created_at DESC LIMIT 1").bind(draft).fetch_optional(&mut *tx).await?;
-        if let Some(p) = previous {
-            let state = p["state"].as_str().unwrap_or("");
-            require(state != "prepared", "已有发送尝试正在执行")?;
-            require(
-                state != "unknown" || p["reconciliation"].is_string(),
-                "上次结果不确定，请先人工核对",
-            )?;
+        let previous:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(a) FROM delivery_attempts a JOIN delivery_drafts prior ON prior.id=a.draft_id JOIN delivery_drafts current ON current.id=$1 WHERE prior.school_id=current.school_id AND prior.group_id=current.group_id AND (prior.id=current.id OR EXISTS(SELECT 1 FROM delivery_draft_posts x JOIN delivery_draft_posts y ON y.post_id=x.post_id WHERE x.draft_id=prior.id AND y.draft_id=current.id)) ORDER BY a.created_at DESC,a.id DESC").bind(draft).fetch_all(&mut *tx).await?;
+        require(
+            !previous.iter().any(blocks_resend),
+            "相关内容仍有执行中或未核对的尝试，请先人工核对",
+        )?;
+        if let Some(p) = previous.first() {
             require(
                 resend.is_some_and(|id| p["id"].as_str() == Some(id.to_string().as_str()))
                     && !reason.trim().is_empty(),
@@ -186,9 +216,9 @@ impl Repository {
         tx.commit().await?;
         Ok(item)
     }
-    pub async fn attempts(&self, s: Uuid) -> Result<Vec<Value>> {
+    pub async fn attempts(&self, s: Uuid, limit: i64, offset: i64) -> Result<Vec<Value>> {
         sqlx::query("UPDATE delivery_attempts SET state='unknown',updated_at=now() WHERE school_id=$1 AND state='prepared' AND created_at<now()-interval '2 minutes'").bind(s).execute(&self.0).await?;
-        Ok(sqlx::query_scalar("SELECT to_jsonb(a)||jsonb_build_object('group_name',g.name,'content',d.content) FROM delivery_attempts a JOIN delivery_drafts d ON d.id=a.draft_id JOIN wecom_groups g ON g.id=d.group_id WHERE a.school_id=$1 ORDER BY a.created_at DESC LIMIT 100").bind(s).fetch_all(&self.0).await?)
+        Ok(sqlx::query_scalar("SELECT to_jsonb(a)||jsonb_build_object('group_name',g.name,'content',d.content,'actor_name',u.display_name) FROM delivery_attempts a JOIN delivery_drafts d ON d.id=a.draft_id JOIN wecom_groups g ON g.id=d.group_id JOIN accounts u ON u.id=a.actor_id WHERE a.school_id=$1 ORDER BY a.created_at DESC,a.id DESC LIMIT $2 OFFSET $3").bind(s).bind(limit).bind(offset).fetch_all(&self.0).await?)
     }
     pub async fn result(&self, a: &Actor, s: Uuid, id: Uuid, v: Value) -> Result<Value> {
         let mut tx = self.0.begin().await?;
@@ -198,6 +228,14 @@ impl Repository {
             return Ok(old);
         }
         let state = v["state"].as_str().unwrap_or("");
+        require(
+            !old["client_invoked_at"].is_null(),
+            "尚未领取发送资格，不能上报客户端结果",
+        )?;
+        require(
+            matches!(old["state"].as_str(), Some("prepared" | "unknown")),
+            "当前状态不能接收客户端结果",
+        )?;
         let item=sqlx::query_scalar("UPDATE delivery_attempts SET state=$3,client_result=$4,updated_at=now() WHERE school_id=$1 AND id=$2 RETURNING to_jsonb(delivery_attempts)").bind(s).bind(id).bind(state).bind(&v).fetch_one(&mut *tx).await?;
         crate::audit::record(
             &mut tx,
@@ -224,6 +262,18 @@ impl crate::distribution::south::port::Store for Repository {
     async fn claim(&self, a: &Actor, s: Uuid, id: Uuid) -> Result<()> {
         Repository::claim(self, a, s, id).await
     }
+    async fn get_draft(&self, s: Uuid, id: Uuid) -> Result<Value> {
+        Repository::get_draft(self, s, id).await
+    }
+    async fn related(
+        &self,
+        s: Uuid,
+        id: Uuid,
+        limit: i64,
+        offset: i64,
+    ) -> Result<crate::distribution::domain::RelatedHistory> {
+        Repository::related(self, s, id, limit, offset).await
+    }
     async fn templates(&self, s: Uuid) -> Result<Vec<Value>> {
         Repository::templates(self, s).await
     }
@@ -236,8 +286,8 @@ impl crate::distribution::south::port::Store for Repository {
     async fn publish(&self, a: &Actor, s: Uuid, id: Uuid, revision: i64) -> Result<Value> {
         Repository::publish(self, a, s, id, revision).await
     }
-    async fn drafts(&self, s: Uuid) -> Result<Vec<Value>> {
-        Repository::drafts(self, s).await
+    async fn drafts(&self, s: Uuid, limit: i64, offset: i64) -> Result<Vec<Value>> {
+        Repository::drafts(self, s, limit, offset).await
     }
     async fn draft(
         &self,
@@ -265,8 +315,8 @@ impl crate::distribution::south::port::Store for Repository {
     ) -> Result<Value> {
         Repository::attempt(self, a, s, draft, key, chat, resend, reason).await
     }
-    async fn attempts(&self, s: Uuid) -> Result<Vec<Value>> {
-        Repository::attempts(self, s).await
+    async fn attempts(&self, s: Uuid, limit: i64, offset: i64) -> Result<Vec<Value>> {
+        Repository::attempts(self, s, limit, offset).await
     }
     async fn result(&self, a: &Actor, s: Uuid, id: Uuid, v: Value) -> Result<Value> {
         Repository::result(self, a, s, id, v).await

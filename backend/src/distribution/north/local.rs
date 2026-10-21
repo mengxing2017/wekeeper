@@ -79,6 +79,21 @@ impl<R: Store> Service<R> {
 }
 
 impl<R: Store> Service<R> {
+    pub async fn get_draft(&self, a: &Actor, s: Uuid, id: Uuid) -> Result<Value> {
+        a.authorize(s, "operator")?;
+        self.0.get_draft(s, id).await
+    }
+    pub async fn related(
+        &self,
+        a: &Actor,
+        s: Uuid,
+        id: Uuid,
+        page: crate::business::Page,
+    ) -> Result<crate::distribution::domain::RelatedHistory> {
+        a.authorize(s, "operator")?;
+        let (limit, offset) = page.bounds()?;
+        self.0.related(s, id, limit, offset).await
+    }
     pub async fn templates(&self, a: &Actor, s: Uuid) -> Result<Vec<Value>> {
         a.authorize(s, "operator")?;
         self.0.templates(s).await
@@ -87,13 +102,25 @@ impl<R: Store> Service<R> {
         a.authorize(s, "operator")?;
         self.0.publish(a, s, id, rev).await
     }
-    pub async fn drafts(&self, a: &Actor, s: Uuid) -> Result<Vec<Value>> {
+    pub async fn drafts(
+        &self,
+        a: &Actor,
+        s: Uuid,
+        page: crate::business::Page,
+    ) -> Result<Vec<Value>> {
         a.authorize(s, "operator")?;
-        self.0.drafts(s).await
+        let (limit, offset) = page.bounds()?;
+        self.0.drafts(s, limit, offset).await
     }
-    pub async fn attempts(&self, a: &Actor, s: Uuid) -> Result<Vec<Value>> {
+    pub async fn attempts(
+        &self,
+        a: &Actor,
+        s: Uuid,
+        page: crate::business::Page,
+    ) -> Result<Vec<Value>> {
         a.authorize(s, "operator")?;
-        self.0.attempts(s).await
+        let (limit, offset) = page.bounds()?;
+        self.0.attempts(s, limit, offset).await
     }
     pub async fn prepare(
         &self,
