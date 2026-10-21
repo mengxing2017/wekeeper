@@ -118,8 +118,8 @@ async fn directory_sync_binding_and_identity_boundaries() {
         store: Repository(pool.clone()),
         client: fake.clone(),
         corp: "corp".into(),
-        agent: "1".into(),
-        configured: true,
+        credential_scope: "scope1".into(),
+        server_configured: true,
     };
     svc.ensure_config().await.unwrap();
     assert!(svc.store.configure("other-corp", "1").await.is_err());
@@ -241,14 +241,14 @@ async fn directory_sync_binding_and_identity_boundaries() {
     assert!(
         !app.integrations
             .repository
-            .session_member_matches(bound, 0, "Zhang.San")
+            .session_member_matches(bound, 0, "Zhang.San", 1)
             .await
             .unwrap()
     );
     assert!(
         app.integrations
             .repository
-            .session_member_matches(bound, 1, "Zhang.San")
+            .session_member_matches(bound, 1, "Zhang.San", 1)
             .await
             .unwrap()
     );
@@ -285,11 +285,11 @@ async fn directory_sync_binding_and_identity_boundaries() {
     );
     // A direct observation after a scan began must survive its publication.
     svc.enqueue(&admin).await.unwrap();
-    let job = svc.store.claim().await.unwrap().unwrap();
+    let job = svc.store.claim(1).await.unwrap().unwrap();
     let mut active = fake.0.lock().unwrap().0[0].clone();
     active.status = Some(1);
     svc.store
-        .observe(&active.userid, Some(&active), chrono::Utc::now())
+        .observe(&active.userid, Some(&active), chrono::Utc::now(), 1)
         .await
         .unwrap();
     let stale = fake.0.lock().unwrap().0.clone();
@@ -304,7 +304,7 @@ async fn directory_sync_binding_and_identity_boundaries() {
     assert_eq!(rows[0]["status"], 1);
     // An expired worker cannot publish after another worker takes over.
     svc.enqueue(&admin).await.unwrap();
-    let old = svc.store.claim().await.unwrap().unwrap();
+    let old = svc.store.claim(1).await.unwrap().unwrap();
     sqlx::query(
         "UPDATE wecom_directory_sync_runs SET lease_until=now()-interval '1 second' WHERE id=$1",
     )
@@ -312,12 +312,144 @@ async fn directory_sync_binding_and_identity_boundaries() {
     .execute(&pool)
     .await
     .unwrap();
-    let new = svc.store.claim().await.unwrap().unwrap();
+    let new = svc.store.claim(1).await.unwrap().unwrap();
     assert_ne!(old.lease, new.lease);
     assert!(svc.store.finish(&old, &[], &[]).await.is_err());
     svc.store.fail(&old, "stale").await.unwrap();
     assert_eq!(svc.store.job(new.id).await.unwrap()["state"], "running");
     svc.store.fail(&new, "test_done").await.unwrap();
+    // Rotation validates new credentials first and atomically fences every old writer.
+    fake.0.lock().unwrap().0[0].status = Some(1);
+    svc.verify_account(bound).await.unwrap();
+    let (old_session, _) = app
+        .identity
+        .0
+        .session(bound, "browser", true)
+        .await
+        .unwrap();
+    let school = Uuid::now_v7();
+    sqlx::query("INSERT INTO schools(id,name) VALUES($1,'Rotation school')")
+        .bind(school)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO school_memberships(account_id,school_id,role) VALUES($1,$2,'operator')",
+    )
+    .bind(bound)
+    .bind(school)
+    .execute(&pool)
+    .await
+    .unwrap();
+    svc.enqueue(&admin).await.unwrap();
+    let old_job = svc.store.claim(1).await.unwrap().unwrap();
+    let mut rotated = svc.clone();
+    rotated.credential_scope = "scope2".into();
+    assert!(rotated.ensure_config().await.is_err());
+    assert_eq!(
+        rotated.status(&admin).await.unwrap()["credential_rotation_required"],
+        true
+    );
+    assert!(
+        rotated
+            .rotate(
+                &ordinary,
+                CredentialRotation {
+                    expected_generation: 1
+                }
+            )
+            .await
+            .is_err()
+    );
+    fake.0.lock().unwrap().1 = true;
+    assert!(
+        rotated
+            .rotate(
+                &admin,
+                CredentialRotation {
+                    expected_generation: 1
+                }
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(svc.ensure_config().await.unwrap(), 1);
+    fake.0.lock().unwrap().1 = false;
+    let snapshot_before_rotation = svc.status(&admin).await.unwrap()["snapshot_id"].clone();
+    rotated
+        .rotate(
+            &admin,
+            CredentialRotation {
+                expected_generation: 1,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(rotated.ensure_config().await.unwrap(), 2);
+    assert!(svc.ensure_config().await.is_err());
+    assert!(
+        rotated
+            .rotate(
+                &admin,
+                CredentialRotation {
+                    expected_generation: 1
+                }
+            )
+            .await
+            .is_err()
+    );
+    assert!(svc.store.configure("other-corp", "scope2").await.is_err());
+    assert!(svc.store.renew(&old_job).await.is_err());
+    assert!(svc.store.finish(&old_job, &[], &[]).await.is_err());
+    assert!(svc.store.claim(1).await.is_err());
+    assert!(svc.store.enqueue(Some(admin.id), 0, 1).await.is_err());
+    assert!(
+        svc.store
+            .observe(&active.userid, Some(&active), chrono::Utc::now(), 1)
+            .await
+            .is_err()
+    );
+    assert!(
+        svc.store
+            .bind(admin.id, bound, Some(member), 1, Some(1))
+            .await
+            .is_err()
+    );
+    assert!(
+        app.identity
+            .authenticate(&old_session, "browser")
+            .await
+            .is_err()
+    );
+    assert!(
+        app.identity
+            .0
+            .session(bound, "browser", true)
+            .await
+            .is_err()
+    );
+    assert_eq!(svc.store.account_userid(bound).await.unwrap(), "Zhang.San");
+    assert_eq!(
+        rotated.status(&admin).await.unwrap()["snapshot_id"],
+        snapshot_before_rotation
+    );
+    rotated.run_once(0).await.unwrap();
+    assert!(app.identity.0.session(bound, "browser", true).await.is_ok());
+    assert!(
+        !app.integrations
+            .repository
+            .session_member_matches(bound, 1, "Zhang.San", 1)
+            .await
+            .unwrap()
+    );
+    assert!(
+        app.integrations
+            .repository
+            .session_member_matches(bound, 1, "Zhang.San", 2)
+            .await
+            .unwrap()
+    );
+    let svc = rotated;
     // Unknown status is stored, but never grants enterprise identity.
     fake.0.lock().unwrap().0[0].status = Some(99);
     assert!(svc.verify_account(bound).await.is_err());
@@ -341,7 +473,7 @@ async fn directory_sync_binding_and_identity_boundaries() {
             .fetch_one(&pool)
             .await
             .unwrap(),
-        0
+        1
     );
     assert_eq!(
         sqlx::query_scalar::<_, String>("SELECT display_name FROM accounts WHERE id=$1")
