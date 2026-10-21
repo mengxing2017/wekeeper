@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 #[derive(Clone)]
 pub struct Service {
     pub repository: Repository,
-    client: reqwest::Client,
+    pub(crate) client: reqwest::Client,
     pub corp: String,
     pub agent: String,
     secret: String,
@@ -49,7 +49,7 @@ impl Service {
         }
         Ok(v)
     }
-    async fn token(&self) -> Result<String> {
+    pub(crate) async fn token(&self) -> Result<String> {
         if !self.configured() {
             return Err(Error::Unavailable);
         }
@@ -73,7 +73,7 @@ impl Service {
             })
             .await
     }
-    pub async fn oauth_member(&self, code: &str) -> Result<uuid::Uuid> {
+    pub async fn oauth_member(&self, code: &str) -> Result<(uuid::Uuid, String)> {
         let token = self.token().await?;
         let v = self
             .json(
@@ -82,14 +82,21 @@ impl Service {
                     .query(&[("access_token", token.as_str()), ("code", code)]),
             )
             .await?;
-        self.repository
+        let userid = v["userid"]
+            .as_str()
+            .or(v["UserId"].as_str())
+            .ok_or(Error::Forbidden)?;
+        self.directory().verify(userid).await?;
+        let id = self
+            .repository
             .member(
                 v["userid"]
                     .as_str()
                     .or(v["UserId"].as_str())
                     .ok_or(Error::Forbidden)?,
             )
-            .await
+            .await?;
+        Ok((id, userid.to_owned()))
     }
     pub async fn miniapp(&self, code: &str) -> Result<uuid::Uuid> {
         require(
@@ -133,6 +140,7 @@ impl Service {
     }
     pub async fn verify_group(&self, a: &Actor, corp: &str, chat: &str) -> Result<()> {
         require(a.wecom_authenticated && corp == self.corp, "企业身份不匹配")?;
+        self.directory().verify_account(a.id).await?;
         let userid = self.repository.userid(a.id).await?;
         let token = self.token().await?;
         let v = self
@@ -196,5 +204,19 @@ impl Service {
         let timestamp = chrono::Utc::now().timestamp();
         let signature = sdk_signature(&ticket, &nonce, timestamp, url);
         Ok(json!({"timestamp":timestamp,"nonceStr":nonce,"signature":signature}))
+    }
+}
+
+impl Service {
+    pub fn directory(&self) -> super::directory::Service {
+        super::directory::Service {
+            store: crate::integrations::south::adapter::directory_postgres::Repository(
+                self.repository.0.clone(),
+            ),
+            client: crate::integrations::south::adapter::directory_http::Client(self.clone()),
+            corp: self.corp.clone(),
+            agent: self.agent.clone(),
+            configured: self.configured(),
+        }
     }
 }
