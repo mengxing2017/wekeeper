@@ -101,6 +101,49 @@ Ctrl+C 或 SIGTERM 正常退出时，关闭连接、停止数据库并删除临�
 
 另一个终端运行 `pnpm --dir frontend dev` 即可联调。
 
+#### 注入企业微信凭据
+
+`make dev-embedded` 与 `devbox run -- make dev-embedded` 都继承启动终端中已导出的环境变量，**不会自动读取 `.env`**。仅外部数据库配置被忽略，企业微信配置仍会加载。在项目根目录、启动后端的同一个终端执行：
+
+```bash
+export WEKEEPER_WECOM_CORP_ID='替换为企业 CorpID'
+# 执行下一行后输入应用 Secret 并按回车，输入不会回显。
+read -rs WEKEEPER_WECOM_SECRET
+export WEKEEPER_WECOM_SECRET
+# 目录同步和成员绑定可留空；填写时须与 Secret 属于同一自建应用。
+export WEKEEPER_WECOM_AGENT_ID=''
+# 如需填写：export WEKEEPER_WECOM_AGENT_ID='1000002'
+devbox run -- make dev-embedded
+# 若当前终端已有项目所需工具链，最后一行也可直接使用 make dev-embedded。
+```
+
+这些变量只需注入后端，不需注入另一个终端的 Vite，也不要改成 `VITE_*`。启动后在 `/admin?view=wecom-directory` 检查服务端配置并同步；填写真实凭据后会访问官方接口，仍需配置 API 出口可信 IP 和应用可见范围。
+
+若希望复用本地配置，可创建已被 `.gitignore` 排除的 `.env.wecom.local`，内容如下（替换占位值，使用合法的 shell 赋值语法）：
+
+```bash
+WEKEEPER_WECOM_CORP_ID='替换为企业 CorpID'
+WEKEEPER_WECOM_SECRET='替换为应用 Secret'
+WEKEEPER_WECOM_AGENT_ID=''
+```
+
+然后显式加载并启动，括号使变量仅作用于本次启动的子 shell：
+
+```bash
+chmod 600 .env.wecom.local
+(
+  set -a
+  . ./.env.wecom.local
+  set +a
+  devbox run -- make dev-embedded
+)
+```
+
+修改终端变量或配置文件后需重启后端才会生效；嵌入式库重启会清空目录、账号绑定和其他临时数据，需要重新同步、绑定。
+
+**嵌入式入口强制 `insecure_local_auth=true`**，设置 `WEKEEPER_INSECURE_LOCAL_AUTH=false` 或 HTTPS origin 也不会覆盖这一行为。注入 CorpID/Secret 可验证目录与绑定，注入 AgentID 可验证配置识别，但 OAuth 与客户端分享始终关闭。实际 OAuth/分享验收请使用普通 API 或 Compose 的 HTTPS 部署，关闭 insecure_local_auth，步骤见 [企业微信接入手册](docs/runbooks/wecom.md)。
+
+
 ### 外部 PostgreSQL / Docker 数据库（保留开发数据）
 
 ```bash
