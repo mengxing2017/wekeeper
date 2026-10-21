@@ -15,6 +15,7 @@ export const navigation: NavigationItem[] = [
   { key: 'audit', label: '操作审计', description: '追踪学校内的关键操作与变更记录。', group: '系统管理' },
   { key: 'settings', label: '学校设置', description: '设置学校信息、审核方式与主题颜色。', group: '系统管理' },
   { key: 'schools', label: '学校管理', description: '查看学校列表，创建学校并进入学校配置或成员管理。', group: '平台管理' },
+  { key: 'wecom-directory', label: '企业通讯录', description: '同步应用可见成员与部门，查看同步状态。', group: '平台管理' },
   { key: 'accounts', label: '账号管理', description: '管理全平台普通账号、登录状态与企业微信身份映射。', group: '平台管理' },
   { key: 'administrators', label: '本地管理员管理', description: '查看平台管理员身份与状态，管理登录密码。', group: '平台管理' },
   { key: 'platform-resources', label: '平台展示配置', description: '维护跨学校共用的默认资源与屏蔽词。', group: '平台管理' },

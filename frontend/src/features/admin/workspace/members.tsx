@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Alert, Button, Input, Space, Table } from 'antd';
 import { identity, workspace, type Row, type School } from './api';
+import { memberStatus, verificationName } from './directory';
 import { schoolRoleLabel } from '../../../app/shell';
 
 export function Members({ school, platformAdmin, refresh }: { school: School; platformAdmin: boolean; refresh: () => Promise<void> }) {
@@ -46,6 +47,8 @@ export function Members({ school, platformAdmin, refresh }: { school: School; pl
         } : undefined} columns={[
             { title: '账号', render: (_, a) => String(a.username ?? '') },
             { title: '昵称', render: (_, a) => String(a.display_name ?? '') },
+            { title: '企业姓名 / 部门', render: (_, a) => `${a.wecom_name ?? '未绑定'} · ${Array.isArray(a.wecom_departments) ? a.wecom_departments.join(' / ') : ''}` },
+            { title: '企业状态', render: (_, a) => `${memberStatus(typeof a.wecom_status === 'number' ? a.wecom_status : null)} · ${verificationName(String(a.wecom_verification ?? 'unverified'))}` },
             { title: '本校角色', render: (_, a) => a.role === 'unassigned' ? '未授权' : schoolRoleLabel(String(a.role)) },
             ...(platformAdmin ? [
                 { title: '账号状态', render: (_: unknown, a: Row) => a.active ? '启用' : '停用' },

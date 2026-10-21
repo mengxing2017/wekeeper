@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Card, Input, Modal, Select, Space, Table, Tag } from 'antd';
 import { identity, workspace, type Row, type School, type User } from './api';
+import { WecomBinding } from './directory';
 import { Editor } from './editor';
 import { schoolRoleLabel } from '../../../app/shell';
 
@@ -49,7 +50,7 @@ export function Accounts({ administrators, user, schools }: {
     const cache = useQueryClient();
     const q = useQuery({ queryKey: ['accounts'], queryFn: identity.accounts });
     const [search, setSearch] = useState(''), [status, setStatus] = useState(''), [binding, setBinding] = useState(''), [page, setPage] = useState(1);
-    const [creating, setCreating] = useState(false), [selected, setSelected] = useState<string>(), [action, setAction] = useState<'details' | 'edit' | 'password'>('details');
+    const [creating, setCreating] = useState(false), [selected, setSelected] = useState<string>(), [action, setAction] = useState<'details' | 'edit' | 'password' | 'binding'>('details');
     const refresh = () => cache.invalidateQueries({ queryKey: ['accounts'] });
     const records = q.data?.filter(a => Boolean(a.platform_admin) === administrators) ?? [];
     const rows = records.filter(a => `${value(a, 'username')} ${value(a, 'display_name')}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()) && (!status || String(a.active) === status) && (!binding || String(Boolean(a.wecom_userid)) === binding));
@@ -65,14 +66,15 @@ export function Accounts({ administrators, user, schools }: {
             { title: '昵称', render: (_, a) => value(a, 'display_name') },
             { title: '身份', render: (_, a) => a.platform_admin ? '平台管理员' : '普通账号' },
             { title: '状态', render: (_, a) => <Tag>{a.active ? '启用' : '停用'}</Tag> },
-            { title: '企业微信', render: (_, a) => a.wecom_userid ? value(a, 'wecom_userid') : '未绑定' },
-            { title: '操作', render: (_, a) => <Space wrap><Button onClick={() => open(a, 'details')}>详情</Button>{!administrators && a.id !== user.id && <Button onClick={() => open(a, 'edit')}>编辑账号</Button>}<Button onClick={() => open(a, 'password')}>重置密码</Button></Space> },
+            { title: '企业微信', render: (_, a) => a.wecom_userid ? `${value(a, 'wecom_name')} · ${value(a, 'wecom_userid')} · ${value(a, 'wecom_verification')}` : '未绑定' },
+            { title: '操作', render: (_, a) => <Space wrap><Button onClick={() => open(a, 'details')}>详情</Button>{!administrators && a.id !== user.id && <><Button onClick={() => open(a, 'edit')}>编辑账号</Button><Button onClick={() => open(a, 'binding')}>绑定企微成员</Button></>}<Button onClick={() => open(a, 'password')}>重置密码</Button></Space> },
         ]}/>
         {creating && <Modal open title="新建账号" footer={null} onCancel={() => setCreating(false)}><Editor fields={[{ name: 'username', title: '账号' }, { name: 'display_name', title: '昵称' }, { name: 'password', title: '初始密码（至少12个字符）', type: 'password' }]} submit="创建账号" onSave={async v => { await identity.create({ username: v.username, display_name: v.display_name, password: v.password }); await refresh(); setCreating(false); }}/></Modal>}
         {account && <Modal open title={`${value(account, 'display_name')} · ${value(account, 'username')}`} footer={null} onCancel={() => setSelected(undefined)}>
             <p>账号 ID：{account.id}</p>
             {action === 'details' && (administrators ? <p>权限范围：全平台、所有学校，无需逐校授权。</p> : <AccountSchools account={account} schools={schools}/>)}
-            {action === 'edit' && !administrators && <Editor key={`${account.id}:edit`} fields={[{ name: 'display_name', title: '昵称', value: value(account, 'display_name') }, { name: 'wecom_userid', title: '企业微信成员 UserID', optional: true, value: value(account, 'wecom_userid') }, { name: 'active', title: '账号状态（全平台）', value: String(account.active), options: statusOptions.slice(1) }]} onSave={async v => { await identity.update(account.id, { display_name: v.display_name, active: v.active === 'true', wecom_userid: v.wecom_userid || null }); await refresh(); }}/>}
+            {action === 'edit' && !administrators && <Editor key={`${account.id}:edit`} fields={[{ name: 'display_name', title: '昵称', value: value(account, 'display_name') }, { name: 'active', title: '账号状态（全平台）', value: String(account.active), options: statusOptions.slice(1) }]} onSave={async v => { await identity.update(account.id, { display_name: v.display_name, active: v.active === 'true' }); await refresh(); }}/>}
+            {action === 'binding' && !administrators && <WecomBinding key={account.id} account={account} refresh={refresh}/>}
             {action === 'password' && <><p>重置后将退出该账号的所有登录会话。{account.id === user.id && '这是当前登录账号，保存后需要重新登录。'}</p><Editor key={`${account.id}:password`} fields={[{ name: 'password', title: '新密码（至少12个字符）', type: 'password' }]} submit="确认重置密码" onSave={async v => { await identity.reset(account.id, v.password); if (account.id === user.id) { await cache.cancelQueries(); cache.removeQueries({ predicate: query => query.queryKey[0] !== 'session' }); cache.setQueryData(['session'], null); } }}/></>}
         </Modal>}
     </Card>;

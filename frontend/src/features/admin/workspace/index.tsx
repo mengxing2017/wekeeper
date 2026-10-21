@@ -3,6 +3,7 @@ import { AppShell, navigation, schoolRoleLabel } from '../../../app/shell';
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Card, Input, Select, Space, Tag } from 'antd';
+import { Directory } from './directory';
 import { Members } from './members';
 import { Editor } from './editor';
 import { Accounts, Schools } from './platform';
@@ -64,7 +65,8 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
     return <AppShell active={tab} onNavigate={navigate} username={user.display_name} platformAdmin={user.platform_admin} allowedKeys={allowedKeys} schoolRole={role} onLogout={logout}>
       {q.error && <Alert type="error" title={q.error.message} showIcon/>}
       {!platformView && <div className="scope-toolbar"><div><span className="field-caption">当前学校</span><Select aria-label="当前学校" className="school-select" loading={q.isPending} value={school?.id} options={visibleSchools?.map(s => ({ value: s.id, label: s.name }))} placeholder="选择学校" onChange={async (s) => { await cache.cancelQueries({ queryKey: ['business'] }); cache.removeQueries({ queryKey: ['business'] }); setParams(previous => { const next = new URLSearchParams(previous); next.set('school', s); return next; }); }}/></div><span className="scope-note">{school ? '所有业务操作均限定在当前学校' : '选择学校后开始管理业务'}</span>{school && <span>当前权限：{user.platform_admin ? '平台管理员' : schoolRoleLabel(role)}</span>}</div>}
-      {tab === 'schools' && user.platform_admin ? <Schools schools={q.data ?? []} loading={q.isPending} refresh={refresh} enter={enterSchool}/>
+      {tab === 'wecom-directory' && user.platform_admin ? <Directory/>
+        : tab === 'schools' && user.platform_admin ? <Schools schools={q.data ?? []} loading={q.isPending} refresh={refresh} enter={enterSchool}/>
         : (tab === 'accounts' || tab === 'administrators') && user.platform_admin ? <Accounts key={tab} administrators={tab === 'administrators'} user={user} schools={q.data ?? []}/>
         : tab === 'platform-resources' && user.platform_admin ? <Card title="平台默认展示配置"><GlobalResources /></Card>
         : q.isPending ? <div className="empty-state" role="status">正在加载学校…</div>
