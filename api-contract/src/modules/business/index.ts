@@ -62,6 +62,11 @@ export interface Attempt extends Row {
     reconciliation: 'operator_confirmed' | 'operator_rejected' | null;
     client_result: Json;
 }
+export interface RelatedHistory {
+    items: Attempt[];
+    latest_attempt_id: string | null;
+    blocked: boolean;
+}
 export interface Signature {
     timestamp: number;
     nonceStr: string;
@@ -98,6 +103,8 @@ export const workspace = {
     updateSchool: (s: string, body: unknown) => data<School>(`/api/v1/schools/${part(s)}`, 'PUT', body),
     bind: (s: string) => data(scope(s, 'bind'), 'POST'),
     list: <T extends Row = Row>(s: string, resource: Resource, query = '', signal?: AbortSignal) => data<T[]>(scope(s, resource) + query, 'GET', undefined, signal),
+    getDraft: (s: string, id: string) => data<Draft>(scope(s, `delivery-drafts/${part(id)}`)),
+    relatedHistory: (s: string, id: string, page = 1) => data<RelatedHistory>(scope(s, `delivery-drafts/${part(id)}/history`) + `?page=${page}&page_size=30`),
     getPost: (s: string, id: string) => data<Post>(scope(s, `posts/${part(id)}`)),
     comments: (s: string, id: string) => data<Row[]>(scope(s, `posts/${part(id)}/comments`)),
     mutate: <T = Row>(s: string, path: string, body?: unknown, method = 'POST') => data<T>(scope(s, path), method, body),
