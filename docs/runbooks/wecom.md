@@ -14,7 +14,7 @@ Vite 与 TypeScript 均直接引用 `api-contract` 业务源码，避免本地 `
 修改 Vite 配置后需重启 `pnpm --dir frontend dev`；浏览器保留旧模块时刷新页面。
 懒加载/渲染失败会显示重新加载和返回后台入口；错误边界不是成功加载业务页面的替代品。
 
-公开的 `GET /api/v1/wecom/status` 仅返回 `configured` 与 `oauth_available` 两个布尔值，
+公开的 `GET /api/v1/wecom/status` 返回 `server_configured`、`client_configured`、`oauth_available`、`share_available` 四个布尔值，
 不暴露企业 Secret、Token、应用 ID 或学校业务数据；状态为 true 也不代表腾讯权限已验收。
 
 ## 环境配置
@@ -26,9 +26,9 @@ Vite 与 TypeScript 均直接引用 `api-contract` 业务源码，避免本地 `
 | 配置 | 用途 |
 | --- | --- |
 | `WEKEEPER_PUBLIC_ORIGIN` | 浏览器使用的 HTTPS 域名，协议、主机、端口必须一致 |
-| `WEKEEPER_WECOM_CORP_ID` | 企业 ID |
-| `WEKEEPER_WECOM_AGENT_ID` | 当前自建应用的数字 AgentID |
-| `WEKEEPER_WECOM_SECRET` | 应用 Secret，仅配置到 API |
+| `WEKEEPER_WECOM_CORP_ID` | 服务端必需的企业 ID |
+| `WEKEEPER_WECOM_AGENT_ID` | 当前客户端分享必需的正整数 AgentID，目录/OAuth 可留空；与 Secret 对应同一应用 |
+| `WEKEEPER_WECOM_SECRET` | 服务端必需的应用 Secret，仅配置到 API |
 | `WEKEEPER_INSECURE_LOCAL_AUTH` | 生产 HTTPS 环境保持 false |
 
 在企业管理后台配置应用可信域名、域名归属验证、应用可见范围及相应客户联系权限。
@@ -42,10 +42,24 @@ OAuth 回调地址为 `https://域名/api/v1/wecom/oauth/callback`。
 当前部署只接入一个企业，新增群的企业 ID 必须匹配环境配置。启用群在保存前读取官方群详情核验；未配置凭证或无读取权限时不能保存启用群。
 群身份保存后不可更换，编辑只能调整名称和启用状态。撤销已有群不依赖上游接口，便于平台故障期间及时停用。
 学校授权支持搜索本地账号姓名/账号并多选成员；企业通讯录在平台“企业通讯录”入口独立同步。
-`/api/v1/capabilities` 的配置状态仅表明凭据已填写，不能证明腾讯授权或接口调用成功。
+`/api/v1/capabilities` 同样使用上述四个能力字段，仅表示本地配置与部署门禁，不能证明腾讯授权或接口调用成功。
+
+## 首次配置、补填 AgentID 与凭据轮换
+
+- 首次只配置 CorpID/Secret 即可同步目录、核验绑定；正式 HTTPS 且 `WEKEEPER_INSECURE_LOCAL_AUTH=false` 时可 OAuth 登录。AgentID 为空或无效只禁用当前客户端分享。
+- HTTP 或 insecure 本地环境仍可使用后台目录与普通账号预览，OAuth 和分享均关闭。
+- 后续补填同一应用的 AgentID 并重启 API，无须重置目录或重新绑定。分享仍需企业微信客户端、学校授权与目标群核验。
+- 更换 Secret 后，先将 API 实例统一部署到新配置，再用平台管理员的本地账号登录“企业通讯录”，点击“验证并切换服务端凭据”并确认。此操作读取服务器当前配置，不在浏览器输入 Secret；先验证新配置可读取目录，再按页面读取的旧代次原子切换。验证失败保留原状态；页面版本已过期则刷新后重试。
+- 切换取消旧代次排队/运行任务，退出旧企业身份会话，将成员标为待核验，并自动创建新代次同步任务；旧快照保留供诊断，账号、绑定、学校角色均保留。旧实例不能继续领取或发布，也不能把迟到成员核验写入新代次。凭据回退也需显式切换；状态查询不会自动切换。
+- CorpID 不同拒绝复用目录，本项目不支持借此切换企业。Secret 与 AgentID 是否对应、官方权限是否满足仍须真实企业验收。
+
+平台写接口 `POST /api/v1/platform/wecom-directory/credential-rotations` 使用 JSON:API 类型 `wecom-credential-rotations`，attributes 仅含 `expected_generation`；需要平台管理员、同源请求与 CSRF。目录状态返回 `server_configured`、`credential_generation`、`credential_rotation_required`，不返回凭据指纹。
+
+缓存按 CorpID/Secret 的版本化 SHA-256 作用域隔离，token 与两种 ticket 使用不同键。AgentID 不影响缓存身份。不要把数据库缓存或内部凭据指纹复制到日志或公开状态接口。
 
 ## 代码行为
 
+- 分享准备、单次领取、SDK 配置与签名入口都检查 share_available；结果上报、人工核对与历史读取不额外要求 AgentID。
 - OAuth state 有效期五分钟，原子消费后不可重放；成功登录删除浏览器 state Cookie。
 - 授权完成后回到 `/wecom` 并恢复学校/草稿选择，仍由学校授权控制数据读取。
 - SDK 固定加载 `wecom-jssdk-2.4.0.js`；15 秒未加载成功会提示错误，允许人工再次读取群。
@@ -102,7 +116,7 @@ Rust 覆盖签名摘要、内部成员/外部联系人区分、OAuth 返回路�
 
 参考入口：[官方 JS-SDK](https://developer.work.weixin.qq.com/document/path/90514)、
 [分享消息到当前会话](https://developer.work.weixin.qq.com/document/path/100749)。
-本次官方页面与 CDN 自动抓取未成功，未宣称在线文档核验或真实发送通过。
+早期接入阶段未完成 CDN 和真机验收；本次凭据拆分的官方依据见 [实施方案](../../report/23-企业微信服务端凭证与客户端分享配置拆分实施方案.md)，自动化替身不代表真实发送通过。
 
 ## 企业通讯录与账号绑定
 
