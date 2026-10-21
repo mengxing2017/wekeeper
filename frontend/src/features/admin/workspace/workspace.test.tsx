@@ -102,7 +102,7 @@ it('shows account grants across schools and saves global account state without a
   fireEvent.click(screen.getByRole('button', {name:'编辑账号'}))
   fireEvent.change(screen.getByLabelText('账号状态（全平台）'), {target:{value:'false'}})
   fireEvent.click(screen.getByRole('button', {name:'保存'}))
-  await waitFor(() => expect(identity.update).toHaveBeenCalledWith('ordinary', {display_name:'本地管理员',active:false,wecom_userid:'wx-user'}))
+  await waitFor(() => expect(identity.update).toHaveBeenCalledWith('ordinary', {display_name:'本地管理员',active:false}))
 })
 
 it.each(['member','operator'] as const)('blocks school settings and member administration for %s even through a direct URL', async role => {
