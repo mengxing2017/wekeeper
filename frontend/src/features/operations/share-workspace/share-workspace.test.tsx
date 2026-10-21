@@ -10,7 +10,7 @@ beforeEach(()=>{
  vi.spyOn(navigator,'userAgent','get').mockReturnValue('wxwork');
  vi.mocked(workspace.wecomStatus).mockResolvedValue({configured:true,oauth_available:true});
  vi.mocked(workspace.getDraft).mockResolvedValue({id:'d',school_id:'s',group_id:'g',template_version_id:'v',content:'Frozen text',content_hash:'h',state:'ready',chat_id:'chat',group_name:'Target'});
- vi.mocked(workspace.relatedHistory).mockResolvedValue({items:[],latest_attempt_id:null,blocked:false});
+ vi.mocked(workspace.relatedHistory).mockResolvedValue({page:{number:1,size:30,has_more:false},items:[],latest_attempt_id:null,blocked:false});
 })
 afterEach(()=>{vi.restoreAllMocks();cleanup();vi.resetAllMocks();localStorage.clear();sessionStorage.clear();window.history.replaceState({},'', '/')})
 function renderPage(){const c=new QueryClient({defaultOptions:{queries:{retry:false},mutations:{retry:false}}});return render(<QueryClientProvider client={c}><ShareWorkspace/></QueryClientProvider>)}
@@ -20,7 +20,7 @@ it('requires enterprise identity before offering a send action',async()=>{
 it('does not invoke the SDK twice when reporting the first result fails',async()=>{
  vi.mocked(identity.session).mockResolvedValue({csrf:'csrf',user:{id:'u',username:'u',display_name:'Operator',platform_admin:false,bound_school_id:'s',grants:[{school_id:'s',role:'operator'}],wecom_authenticated:true}})
  vi.mocked(workspace.schools).mockResolvedValue([{id:'s',name:'School',active:true,revision:1,config:{}}])
- vi.mocked(workspace.list).mockImplementation(async(_s,kind)=>kind==='delivery-drafts'?[{id:'d',school_id:'s',group_id:'g',template_version_id:'v',content:'Frozen text',content_hash:'h',state:'ready',chat_id:'chat',group_name:'Target'}]:[])
+ vi.mocked(workspace.list).mockImplementation(async(_s,kind)=>({items:kind==='delivery-drafts'?[{id:'d',school_id:'s',group_id:'g',template_version_id:'v',content:'Frozen text',content_hash:'h',state:'ready',chat_id:'chat',group_name:'Target'}]:[],page:{number:1,size:30,has_more:false}}))
  vi.mocked(currentChat).mockResolvedValue('chat');vi.mocked(workspace.prepare).mockResolvedValue({id:'attempt',school_id:'s',draft_id:'d',actor_id:'u',state:'prepared',reconciliation:null,client_result:null});vi.mocked(workspace.claim).mockResolvedValue({});vi.mocked(sendText).mockResolvedValue(undefined);vi.mocked(workspace.result).mockRejectedValue(new Error('result lost'))
  renderPage();await screen.findByText('Target · Frozen text');fireEvent.change(screen.getAllByRole('combobox')[1],{target:{value:'d'}});fireEvent.click(await screen.findByText('读取并核对当前客户群'));await screen.findByText('当前群：chat');fireEvent.click(screen.getByText('确认正文并在当前群分享'));await waitFor(()=>expect(sendText).toHaveBeenCalledTimes(1));await screen.findByRole('alert');fireEvent.click(screen.getByText('确认正文并在当前群分享'));expect(sendText).toHaveBeenCalledTimes(1);expect(workspace.prepare).toHaveBeenCalledTimes(1)
 })
@@ -28,7 +28,7 @@ it('does not invoke the SDK twice when reporting the first result fails',async()
 function setupShare() {
  vi.mocked(identity.session).mockResolvedValue({csrf:'csrf',user:{id:'u',username:'u',display_name:'Operator',platform_admin:false,bound_school_id:'s',grants:[{school_id:'s',role:'operator'}],wecom_authenticated:true}})
  vi.mocked(workspace.schools).mockResolvedValue([{id:'s',name:'School',active:true,revision:1,config:{}}])
- vi.mocked(workspace.list).mockImplementation(async(_s,kind)=>kind==='delivery-drafts'?[{id:'d',school_id:'s',group_id:'g',template_version_id:'v',content:'Frozen text',content_hash:'h',state:'ready',chat_id:'chat',group_name:'Target'}]:[])
+ vi.mocked(workspace.list).mockImplementation(async(_s,kind)=>({items:kind==='delivery-drafts'?[{id:'d',school_id:'s',group_id:'g',template_version_id:'v',content:'Frozen text',content_hash:'h',state:'ready',chat_id:'chat',group_name:'Target'}]:[],page:{number:1,size:30,has_more:false}}))
  vi.mocked(currentChat).mockResolvedValue('chat');vi.mocked(workspace.prepare).mockResolvedValue({id:'attempt',school_id:'s',draft_id:'d',actor_id:'u',state:'prepared',reconciliation:null,client_result:null});vi.mocked(workspace.claim).mockResolvedValue({});vi.mocked(sendText).mockResolvedValue(undefined);vi.mocked(workspace.result).mockResolvedValue({id:'attempt',school_id:'s',draft_id:'d',actor_id:'u',state:'client_reported_success',reconciliation:null,client_result:null})
 
 }
@@ -73,14 +73,14 @@ it('shows recoverable errors when configuration and session requests fail',async
 
 it('loads an older draft directly even when it is absent from the first page', async()=>{
  setupShare();window.history.replaceState({},'', '/wecom?school=s&draft=d');
- vi.mocked(workspace.list).mockResolvedValue([]);renderPage();
+ vi.mocked(workspace.list).mockResolvedValue({items:[], page:{number:1,size:30,has_more:false}});renderPage();
  expect(await screen.findByText('目标客户群：Target（chat）')).toBeTruthy();
  expect(workspace.getDraft).toHaveBeenCalledWith('s','d');
  window.history.replaceState({},'', '/');
 })
 it('offers history from an overlapping older draft for explicit resend', async()=>{
  setupShare();vi.mocked(identity.session).mockResolvedValue({csrf:'csrf',user:{id:'u',username:'u',display_name:'Admin',platform_admin:true,bound_school_id:'s',grants:[],wecom_authenticated:true}});
- vi.mocked(workspace.relatedHistory).mockResolvedValue({blocked:false,latest_attempt_id:'old-attempt',items:[{id:'old-attempt',school_id:'s',draft_id:'different-draft',actor_id:'u',state:'client_reported_success',reconciliation:null,client_result:null,group_name:'Target',created_at:'2026-10-21'}]});
+ vi.mocked(workspace.relatedHistory).mockResolvedValue({page:{number:1,size:30,has_more:false},blocked:false,latest_attempt_id:'old-attempt',items:[{id:'old-attempt',school_id:'s',draft_id:'different-draft',actor_id:'u',state:'client_reported_success',reconciliation:null,client_result:null,group_name:'Target',created_at:'2026-10-21'}]});
  await selectAndCheck();
  expect((screen.getByText('确认正文并在当前群分享') as HTMLButtonElement).disabled).toBe(true);
  fireEvent.change(screen.getByLabelText('引用历史尝试'),{target:{value:'old-attempt'}});
@@ -90,7 +90,7 @@ it('offers history from an overlapping older draft for explicit resend', async()
  await waitFor(()=>expect(workspace.prepare).toHaveBeenCalledWith('s','d',expect.any(String),expect.objectContaining({resend_of:'old-attempt',reason:'核对后再次分享'})));
 })
 it('blocks sending when an older overlapping item still has an unresolved result', async()=>{
- setupShare();vi.mocked(workspace.relatedHistory).mockResolvedValue({blocked:true,latest_attempt_id:'newer',items:[]});
+ setupShare();vi.mocked(workspace.relatedHistory).mockResolvedValue({page:{number:1,size:30,has_more:false},blocked:true,latest_attempt_id:'newer',items:[]});
  await selectAndCheck();
  expect((screen.getByText('确认正文并在当前群分享') as HTMLButtonElement).disabled).toBe(true);
  expect(sendText).not.toHaveBeenCalled();

@@ -8,8 +8,8 @@ import { PageErrorBoundary } from './page-error-boundary'
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 it('loads the real lazy WeCom route and contract without mocking feature modules', async () => {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => url.endsWith('/wecom/status')
-    ? Response.json({data:{configured:false,oauth_available:false}})
-    : Response.json({error:{code:'unauthorized',message:'请先登录'}},{status:401})))
+    ? Response.json({data:{type:'wecom-status',id:'current',attributes:{configured:false,oauth_available:false}}},{headers:{'Content-Type':'application/vnd.api+json'}})
+    : Response.json({errors:[{status:'401',code:'unauthorized',title:'Unauthorized',detail:'请先登录'}]},{status:401})))
   const cache = new QueryClient({defaultOptions:{queries:{retry:false}}})
   render(<QueryClientProvider client={cache}><MemoryRouter initialEntries={['/wecom']}><AppRoutes/></MemoryRouter></QueryClientProvider>)
   expect(await screen.findByRole('heading',{name:'企业微信人工分享'})).toBeTruthy()
