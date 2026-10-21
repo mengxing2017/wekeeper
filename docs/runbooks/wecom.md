@@ -149,6 +149,23 @@ Rust 覆盖签名摘要、内部成员/外部联系人区分、OAuth 返回路�
 
 `WEKEEPER_WECOM_DIRECTORY_INTERVAL_SECONDS` 默认 1800，非零须至少 60；设为 0 仅关闭周期同步，手动任务仍由 backend 执行。任务每 5 秒检查一次，使用数据库租约和发布令牌协调多个 API 实例；进程退出后过期任务可重新领取。目录读取共享数据库限速，token 失效受控刷新；重试不适用于发送 SDK。
 
+### 从终端确认同步结果
+
+默认日志级别已包含同步 INFO 日志。若自行配置了 `RUST_LOG=warn`，启动前改为 `RUST_LOG=wekeeper_api=info` 才能看到开始、进度和成功信息。
+
+| 日志 message | 含义 |
+| --- | --- |
+| `wecom directory worker initialized; interval 0 disables scheduled sync only` | 执行器初始化，查看 server_configured、interval_seconds；不是同步成功。 |
+| `wecom directory sync requested; queued or existing active job returned` | 手动同步请求已受理，可能复用已有排队/运行任务；不是同步成功。 |
+| `wecom directory sync started` | 已领取任务并开始读取目录。 |
+| `wecom directory sync in progress; collecting visible directory` | 长任务每 20 秒输出一次，表示仍在采集且续租成功。 |
+| `wecom directory sync succeeded; snapshot committed` | 完整目录已提交数据库，department_count、member_count 为本次同步的部门数及去重成员数，elapsed_ms 为本轮执行耗时。 |
+| `wecom directory sync failed; previous snapshot retained` | 采集失败，本次未发布，旧快照保留；查看 error_code。 |
+
+任务执行日志的 JSON `span` / `spans` 中包含 `job_id` 和 `generation`，可按任务 ID 与后台“最近任务”关联；期间官方接口返回的错误码也带有同一任务上下文。续租、发布及失败状态保存出错分别记录 stage 为 lease_renewal、publish、record_failure；发布报错时不会输出成功日志，应到后台核对任务状态。空闲轮询不逐次输出日志。
+
+日志不包含 Secret、token、凭据指纹、成员姓名、UserID 或部门名称。出现开始日志并不代表成功，以 `snapshot committed` 或后台任务 succeeded 为准。
+
 同步期间数据暂存于执行器内存，完整成功后在一个事务中更新目录和快照。失败保留旧目录，已绑定但未出现在部门扫描中的成员会补做单成员核验。保存最近两次成功快照，其他快照正文清空，完成任务记录保留 30 天。进程中断会重新读取本轮，不从内存进度续传。
 
 当前实现采用周期对账，不接收通讯录变更回调。目录变化并非实时；不能承诺离职瞬时撤权。成员不可见、网络错误和真实停用分别处理；报错中的 `wecom_数字` 对照官方错误码排查可信 IP、凭据、可见范围和限流。
