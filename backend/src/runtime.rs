@@ -57,9 +57,28 @@ async fn serve_inner(
         }
     }
     info!(address = %listener.local_addr()?, "WeKeeper API listening");
-    axum::serve(listener, http::app_router(application))
+    let directory = application.integrations.directory();
+    let interval = std::env::var("WEKEEPER_WECOM_DIRECTORY_INTERVAL_SECONDS")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(1800);
+    if interval != 0 && interval < 60 {
+        return Err("directory interval must be 0 or at least 60 seconds".into());
+    }
+    let worker = tokio::spawn(async move {
+        loop {
+            if directory.configured && directory.run_once(interval).await.is_err() {
+                tracing::warn!("directory worker failed; inspect configuration and sync status");
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
+    });
+    let result = axum::serve(listener, http::app_router(application))
         .with_graceful_shutdown(shutdown_signal())
-        .await?;
+        .await;
+    worker.abort();
+    let _ = worker.await;
+    result?;
     Ok(())
 }
 
