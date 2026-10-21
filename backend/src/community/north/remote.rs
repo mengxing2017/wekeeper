@@ -2,178 +2,233 @@ use crate::{
     bootstrap::Application,
     business::{Actor, Decision, Page, Result, Revision},
     community::domain::{CommentInput, PostInput},
-    http::error::data,
+    http::jsonapi::{ApiResponse, Input, collection, completed, resource},
 };
 use axum::{
-    Json, Router,
+    Router,
     extract::{Path, Query, State},
     routing::{get, post, put},
 };
-use serde_json::{Value, json};
+use serde_json::Value;
 use uuid::Uuid;
 async fn posts(
     State(a): State<Application>,
     actor: Actor,
     Path(s): Path<Uuid>,
     Query(p): Query<Page>,
-) -> Result<Json<Value>> {
-    Ok(data(a.community.posts(&actor, s, p).await?))
+) -> Result<ApiResponse> {
+    Ok(collection(
+        "posts",
+        a.community.posts(&actor, s, p.clone()).await?,
+        &p,
+    ))
 }
 async fn detail(
     State(a): State<Application>,
     actor: Actor,
     Path((s, id)): Path<(Uuid, Uuid)>,
-) -> Result<Json<Value>> {
-    Ok(data(a.community.detail(&actor, s, id).await?))
+) -> Result<ApiResponse> {
+    Ok(resource("posts", a.community.detail(&actor, s, id).await?))
 }
 async fn create(
     State(a): State<Application>,
     actor: Actor,
     Path(s): Path<Uuid>,
-    Json(v): Json<PostInput>,
-) -> Result<Json<Value>> {
-    Ok(data(a.community.post(&actor, s, None, v).await?))
+    input_document: Input,
+) -> Result<ApiResponse> {
+    let v = input_document.decode::<PostInput>("posts")?;
+    Ok(resource(
+        "posts",
+        a.community.post(&actor, s, None, v).await?,
+    ))
 }
 async fn update(
     State(a): State<Application>,
     actor: Actor,
     Path((s, id)): Path<(Uuid, Uuid)>,
-    Json(v): Json<PostInput>,
-) -> Result<Json<Value>> {
-    Ok(data(a.community.post(&actor, s, Some(id), v).await?))
+    input_document: Input,
+) -> Result<ApiResponse> {
+    let v = input_document.decode::<PostInput>("posts")?;
+    Ok(resource(
+        "posts",
+        a.community.post(&actor, s, Some(id), v).await?,
+    ))
 }
 async fn visibility(
     State(a): State<Application>,
     actor: Actor,
     Path((s, id)): Path<(Uuid, Uuid)>,
-    Json(v): Json<Value>,
-) -> Result<Json<Value>> {
-    Ok(data(a.community.visibility(&actor, s, id, v).await?))
+    input_document: Input,
+) -> Result<ApiResponse> {
+    let v = input_document.decode::<Value>("posts")?;
+    Ok(resource(
+        "posts",
+        a.community.visibility(&actor, s, id, v).await?,
+    ))
 }
 async fn moderate(
     State(a): State<Application>,
     actor: Actor,
     Path((s, id)): Path<(Uuid, Uuid)>,
-    Json(v): Json<Decision>,
-) -> Result<Json<Value>> {
-    Ok(data(a.community.moderate(&actor, s, id, v, false).await?))
+    input_document: Input,
+) -> Result<ApiResponse> {
+    let v = input_document.decode::<Decision>("posts")?;
+    Ok(resource(
+        "posts",
+        a.community.moderate(&actor, s, id, v, false).await?,
+    ))
 }
 async fn moderate_comment(
     State(a): State<Application>,
     actor: Actor,
     Path((s, id)): Path<(Uuid, Uuid)>,
-    Json(v): Json<Decision>,
-) -> Result<Json<Value>> {
-    Ok(data(a.community.moderate(&actor, s, id, v, true).await?))
+    input_document: Input,
+) -> Result<ApiResponse> {
+    let v = input_document.decode::<Decision>("comments")?;
+    Ok(resource(
+        "comments",
+        a.community.moderate(&actor, s, id, v, true).await?,
+    ))
 }
 async fn comments(
     State(a): State<Application>,
     actor: Actor,
     Path((s, id)): Path<(Uuid, Uuid)>,
     Query(p): Query<Page>,
-) -> Result<Json<Value>> {
-    Ok(data(a.community.comments(&actor, s, Some(id), p).await?))
+) -> Result<ApiResponse> {
+    Ok(collection(
+        "comments",
+        a.community.comments(&actor, s, Some(id), p.clone()).await?,
+        &p,
+    ))
 }
 async fn all_comments(
     State(a): State<Application>,
     actor: Actor,
     Path(s): Path<Uuid>,
     Query(p): Query<Page>,
-) -> Result<Json<Value>> {
-    Ok(data(a.community.comments(&actor, s, None, p).await?))
+) -> Result<ApiResponse> {
+    Ok(collection(
+        "comments",
+        a.community.comments(&actor, s, None, p.clone()).await?,
+        &p,
+    ))
 }
 async fn comment(
     State(a): State<Application>,
     actor: Actor,
     Path((s, id)): Path<(Uuid, Uuid)>,
-    Json(v): Json<CommentInput>,
-) -> Result<Json<Value>> {
-    Ok(data(a.community.comment(&actor, s, id, v).await?))
+    input_document: Input,
+) -> Result<ApiResponse> {
+    let v = input_document.decode::<CommentInput>("comments")?;
+    Ok(resource(
+        "comments",
+        a.community.comment(&actor, s, id, v).await?,
+    ))
 }
 async fn delete_comment(
     State(a): State<Application>,
     actor: Actor,
     Path((s, id)): Path<(Uuid, Uuid)>,
-    Json(v): Json<Revision>,
-) -> Result<Json<Value>> {
+    input_document: Input,
+) -> Result<ApiResponse> {
+    let v = input_document.decode::<Revision>("comments")?;
     a.community
         .delete_comment(&actor, s, id, v.revision)
         .await?;
-    Ok(data(json!({"ok":true})))
+    Ok(completed())
 }
 async fn reaction(
     State(a): State<Application>,
     actor: Actor,
     Path((s, id, kind)): Path<(Uuid, Uuid, String)>,
     method: axum::http::Method,
-) -> Result<Json<Value>> {
+) -> Result<ApiResponse> {
     a.community
         .react(&actor, s, id, &kind, method == axum::http::Method::PUT)
         .await?;
-    Ok(data(json!({"ok":true})))
+    Ok(completed())
 }
 async fn reactions(
     State(a): State<Application>,
     actor: Actor,
     Path(s): Path<Uuid>,
-) -> Result<Json<Value>> {
-    Ok(data(a.community.reactions(&actor, s).await?))
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "reactions",
+        a.community.reactions(&actor, s).await?,
+    ))
 }
 async fn follow(
     State(a): State<Application>,
     actor: Actor,
     Path((s, id)): Path<(Uuid, Uuid)>,
     method: axum::http::Method,
-) -> Result<Json<Value>> {
+) -> Result<ApiResponse> {
     a.community
         .follow(&actor, s, id, method == axum::http::Method::PUT)
         .await?;
-    Ok(data(json!({"ok":true})))
+    Ok(completed())
 }
 async fn follows(
     State(a): State<Application>,
     actor: Actor,
     Path(s): Path<Uuid>,
-) -> Result<Json<Value>> {
-    Ok(data(a.community.follows(&actor, s).await?))
+) -> Result<ApiResponse> {
+    Ok(resource("accounts", a.community.follows(&actor, s).await?))
 }
 async fn notices(
     State(a): State<Application>,
     actor: Actor,
     Path(s): Path<Uuid>,
-) -> Result<Json<Value>> {
-    Ok(data(a.community.notifications(&actor, s).await?))
+    Query(page): Query<Page>,
+) -> Result<ApiResponse> {
+    Ok(collection(
+        "notifications",
+        a.community.notifications(&actor, s, page.clone()).await?,
+        &page,
+    ))
 }
 async fn read(
     State(a): State<Application>,
     actor: Actor,
     Path((s, id)): Path<(Uuid, Uuid)>,
-) -> Result<Json<Value>> {
+) -> Result<ApiResponse> {
     a.community.read(&actor, s, id).await?;
-    Ok(data(json!({"ok":true})))
+    Ok(completed())
 }
 async fn cases(
     State(a): State<Application>,
     actor: Actor,
     Path(s): Path<Uuid>,
-) -> Result<Json<Value>> {
-    Ok(data(a.community.cases(&actor, s).await?))
+    Query(page): Query<Page>,
+) -> Result<ApiResponse> {
+    Ok(collection(
+        "cases",
+        a.community.cases(&actor, s, page.clone()).await?,
+        &page,
+    ))
 }
 async fn case(
     State(a): State<Application>,
     actor: Actor,
     Path(s): Path<Uuid>,
-    Json(v): Json<Value>,
-) -> Result<Json<Value>> {
-    Ok(data(a.community.case(&actor, s, v).await?))
+    input_document: Input,
+) -> Result<ApiResponse> {
+    let v = input_document.decode::<Value>("cases")?;
+    Ok(resource("cases", a.community.case(&actor, s, v).await?))
 }
 async fn resolve(
     State(a): State<Application>,
     actor: Actor,
     Path((s, id)): Path<(Uuid, Uuid)>,
-    Json(v): Json<Value>,
-) -> Result<Json<Value>> {
-    Ok(data(a.community.resolve(&actor, s, id, v).await?))
+    input_document: Input,
+) -> Result<ApiResponse> {
+    let v = input_document.decode::<Value>("cases")?;
+    Ok(resource(
+        "cases",
+        a.community.resolve(&actor, s, id, v).await?,
+    ))
 }
 pub fn router() -> Router<Application> {
     Router::new()

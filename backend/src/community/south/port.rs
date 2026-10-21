@@ -103,6 +103,7 @@ pub trait Store: Clone + Send + Sync + 'static {
         &self,
         a: &Actor,
         s: Uuid,
+        page: Page,
     ) -> impl std::future::Future<Output = Result<Vec<Value>>> + Send;
     fn read(
         &self,
@@ -114,6 +115,7 @@ pub trait Store: Clone + Send + Sync + 'static {
         &self,
         a: &Actor,
         s: Uuid,
+        page: Page,
     ) -> impl std::future::Future<Output = Result<Vec<Value>>> + Send;
     fn case(
         &self,

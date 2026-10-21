@@ -2,7 +2,7 @@ use super::super::{
     domain::{CommentInput, PostInput},
     south::adapter::postgres::Repository,
 };
-use crate::business::{Actor, Decision, Result, require, text};
+use crate::business::{Actor, Decision, Page, Result, require, text};
 use crate::community::south::port::Store;
 use serde_json::Value;
 use uuid::Uuid;
@@ -113,17 +113,17 @@ impl<R: Store> Service<R> {
         a.authorize(s, "member")?;
         self.0.follows(a, s).await
     }
-    pub async fn notifications(&self, a: &Actor, s: Uuid) -> Result<Vec<Value>> {
+    pub async fn notifications(&self, a: &Actor, s: Uuid, page: Page) -> Result<Vec<Value>> {
         a.authorize(s, "member")?;
-        self.0.notifications(a, s).await
+        self.0.notifications(a, s, page).await
     }
     pub async fn read(&self, a: &Actor, s: Uuid, id: Uuid) -> Result<()> {
         a.authorize(s, "member")?;
         self.0.read(a, s, id).await
     }
-    pub async fn cases(&self, a: &Actor, s: Uuid) -> Result<Vec<Value>> {
+    pub async fn cases(&self, a: &Actor, s: Uuid, page: Page) -> Result<Vec<Value>> {
         a.authorize(s, "member")?;
-        self.0.cases(a, s).await
+        self.0.cases(a, s, page).await
     }
     pub async fn resolve(&self, a: &Actor, s: Uuid, id: Uuid, v: Value) -> Result<Value> {
         a.authorize(s, "operator")?;

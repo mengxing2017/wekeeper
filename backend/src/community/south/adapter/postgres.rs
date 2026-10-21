@@ -34,7 +34,7 @@ impl Repository {
         )
     }
     pub async fn posts(&self, a: &Actor, s: Uuid, p: Page) -> Result<Vec<Value>> {
-        let (l, o) = p.bounds()?;
+        let (l, o) = p.fetch_bounds()?;
         let search = format!("%{}%", p.search.unwrap_or_default());
         Ok(sqlx::query_scalar("SELECT to_jsonb(p)||jsonb_build_object('author_name',a.display_name,'like_count',(SELECT count(*) FROM post_reactions WHERE post_id=p.id AND kind='like'),'collect_count',(SELECT count(*) FROM post_reactions WHERE post_id=p.id AND kind='collect'),'comment_count',(SELECT count(*) FROM comments WHERE post_id=p.id AND audit_status='approved' AND NOT deleted)) FROM posts p JOIN accounts a ON a.id=p.author_id WHERE p.school_id=$1 AND ($2 OR (p.audit_status='approved' AND p.visibility='visible') OR p.author_id=$3) AND ($4::text IS NULL OR p.audit_status=$4) AND (NOT $5 OR p.author_id=$3) AND (p.title ILIKE $6 OR p.content ILIKE $6) AND ($9::text IS NULL OR ($9='collect' AND EXISTS(SELECT 1 FROM post_reactions r WHERE r.post_id=p.id AND r.account_id=$3 AND r.kind='collect')) OR ($9='following' AND EXISTS(SELECT 1 FROM follows f WHERE f.school_id=p.school_id AND f.follower_id=$3 AND f.target_id=p.author_id))) ORDER BY p.top_sort DESC,p.created_at DESC,p.id LIMIT $7 OFFSET $8").bind(s).bind(a.can(s,"operator")).bind(a.id).bind(p.status).bind(p.mine.unwrap_or(false)).bind(search).bind(l).bind(o).bind(p.kind).fetch_all(&self.0).await?)
     }
@@ -159,7 +159,7 @@ impl Repository {
         Ok(())
     }
     pub async fn reactions(&self, a: &Actor, s: Uuid) -> Result<Vec<Value>> {
-        Ok(sqlx::query_scalar("SELECT to_jsonb(r) FROM post_reactions r JOIN posts p ON p.id=r.post_id WHERE r.school_id=$1 AND r.account_id=$2 AND p.audit_status='approved' AND p.visibility='visible'").bind(s).bind(a.id).fetch_all(&self.0).await?)
+        Ok(sqlx::query_scalar("SELECT to_jsonb(r)||jsonb_build_object('id',r.school_id::text||':'||r.account_id::text||':'||r.post_id::text||':'||r.kind) FROM post_reactions r JOIN posts p ON p.id=r.post_id WHERE r.school_id=$1 AND r.account_id=$2 AND p.audit_status='approved' AND p.visibility='visible'").bind(s).bind(a.id).fetch_all(&self.0).await?)
     }
     pub async fn comments(
         &self,
@@ -168,8 +168,8 @@ impl Repository {
         id: Option<Uuid>,
         p: Page,
     ) -> Result<Vec<Value>> {
-        let (l, o) = p.bounds()?;
-        Ok(sqlx::query_scalar("SELECT to_jsonb(c)||jsonb_build_object('author_name',a.display_name) FROM comments c JOIN posts p ON p.id=c.post_id JOIN accounts a ON a.id=c.author_id WHERE c.school_id=$1 AND ($2::uuid IS NULL OR c.post_id=$2) AND ($3 OR (p.visibility='visible' AND p.audit_status='approved' AND NOT c.deleted AND (c.audit_status='approved' OR c.author_id=$4))) AND ($5::text IS NULL OR c.audit_status=$5) ORDER BY c.created_at DESC LIMIT $6 OFFSET $7").bind(s).bind(id).bind(a.can(s,"operator")).bind(a.id).bind(p.status).bind(l).bind(o).fetch_all(&self.0).await?)
+        let (l, o) = p.fetch_bounds()?;
+        Ok(sqlx::query_scalar("SELECT to_jsonb(c)||jsonb_build_object('author_name',a.display_name) FROM comments c JOIN posts p ON p.id=c.post_id JOIN accounts a ON a.id=c.author_id WHERE c.school_id=$1 AND ($2::uuid IS NULL OR c.post_id=$2) AND ($3 OR (p.visibility='visible' AND p.audit_status='approved' AND NOT c.deleted AND (c.audit_status='approved' OR c.author_id=$4))) AND ($5::text IS NULL OR c.audit_status=$5) ORDER BY c.created_at DESC,c.id DESC LIMIT $6 OFFSET $7").bind(s).bind(id).bind(a.can(s,"operator")).bind(a.id).bind(p.status).bind(l).bind(o).fetch_all(&self.0).await?)
     }
     pub async fn comment(&self, a: &Actor, s: Uuid, id: Uuid, v: CommentInput) -> Result<Value> {
         let mut tx = self.0.begin().await?;
@@ -223,15 +223,17 @@ impl Repository {
     pub async fn follows(&self, a: &Actor, s: Uuid) -> Result<Vec<Value>> {
         Ok(sqlx::query_scalar("SELECT jsonb_build_object('id',a.id,'display_name',a.display_name) FROM follows f JOIN accounts a ON a.id=f.target_id WHERE f.school_id=$1 AND f.follower_id=$2").bind(s).bind(a.id).fetch_all(&self.0).await?)
     }
-    pub async fn notifications(&self, a: &Actor, s: Uuid) -> Result<Vec<Value>> {
-        Ok(sqlx::query_scalar("SELECT to_jsonb(n) FROM notifications n WHERE school_id=$1 AND account_id=$2 ORDER BY created_at DESC LIMIT 100").bind(s).bind(a.id).fetch_all(&self.0).await?)
+    pub async fn notifications(&self, a: &Actor, s: Uuid, page: Page) -> Result<Vec<Value>> {
+        let (limit, offset) = page.fetch_bounds()?;
+        Ok(sqlx::query_scalar("SELECT to_jsonb(n) FROM notifications n WHERE school_id=$1 AND account_id=$2 ORDER BY created_at DESC,id DESC LIMIT $3 OFFSET $4").bind(s).bind(a.id).bind(limit).bind(offset).fetch_all(&self.0).await?)
     }
     pub async fn read(&self, a: &Actor, s: Uuid, id: Uuid) -> Result<()> {
         sqlx::query("UPDATE notifications SET read_at=coalesce(read_at,now()) WHERE school_id=$1 AND account_id=$2 AND id=$3").bind(s).bind(a.id).bind(id).execute(&self.0).await?;
         Ok(())
     }
-    pub async fn cases(&self, a: &Actor, s: Uuid) -> Result<Vec<Value>> {
-        Ok(sqlx::query_scalar("SELECT to_jsonb(c) FROM cases c WHERE school_id=$1 AND ($2 OR account_id=$3) ORDER BY created_at DESC LIMIT 100").bind(s).bind(a.can(s,"operator")).bind(a.id).fetch_all(&self.0).await?)
+    pub async fn cases(&self, a: &Actor, s: Uuid, page: Page) -> Result<Vec<Value>> {
+        let (limit, offset) = page.fetch_bounds()?;
+        Ok(sqlx::query_scalar("SELECT to_jsonb(c) FROM cases c WHERE school_id=$1 AND ($2 OR account_id=$3) ORDER BY created_at DESC,id DESC LIMIT $4 OFFSET $5").bind(s).bind(a.can(s,"operator")).bind(a.id).bind(limit).bind(offset).fetch_all(&self.0).await?)
     }
     pub async fn case(&self, a: &Actor, s: Uuid, v: Value) -> Result<Value> {
         let post = v["post_id"].as_str().and_then(|x| x.parse::<Uuid>().ok());
@@ -310,14 +312,14 @@ impl crate::community::south::port::Store for Repository {
     async fn follows(&self, a: &Actor, s: Uuid) -> Result<Vec<Value>> {
         Repository::follows(self, a, s).await
     }
-    async fn notifications(&self, a: &Actor, s: Uuid) -> Result<Vec<Value>> {
-        Repository::notifications(self, a, s).await
+    async fn notifications(&self, a: &Actor, s: Uuid, page: Page) -> Result<Vec<Value>> {
+        Repository::notifications(self, a, s, page).await
     }
     async fn read(&self, a: &Actor, s: Uuid, id: Uuid) -> Result<()> {
         Repository::read(self, a, s, id).await
     }
-    async fn cases(&self, a: &Actor, s: Uuid) -> Result<Vec<Value>> {
-        Repository::cases(self, a, s).await
+    async fn cases(&self, a: &Actor, s: Uuid, page: Page) -> Result<Vec<Value>> {
+        Repository::cases(self, a, s, page).await
     }
     async fn case(&self, a: &Actor, s: Uuid, v: Value) -> Result<Value> {
         Repository::case(self, a, s, v).await
