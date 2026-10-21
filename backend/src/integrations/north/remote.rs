@@ -1,11 +1,11 @@
 use crate::{
     bootstrap::Application,
     business::{Actor, Error, Result, require, text},
-    http::error::data,
+    http::jsonapi::{ApiResponse, Input, singleton},
     identity::north::remote::{check_origin, cookie},
 };
 use axum::{
-    Json, Router,
+    Router,
     extract::{Query, State},
     http::{HeaderMap, header},
     response::{IntoResponse, Redirect, Response},
@@ -119,7 +119,9 @@ async fn sign(
 ) -> Result<Response> {
     Ok((
         [(header::CACHE_CONTROL, "no-store")],
-        data(
+        singleton(
+            "wecom-signatures",
+            "current",
             a.integrations
                 .signature(&actor, &v.url, &a.options.public_origin, v.agent)
                 .await?,
@@ -143,21 +145,30 @@ async fn status(State(a): State<Application>) -> Response {
 
     (
         [(header::CACHE_CONTROL, "no-store")],
-        data(WecomStatus {
-            configured,
-            oauth_available: oauth_available(&a),
-        }),
+        singleton(
+            "wecom-status",
+            "current",
+            WecomStatus {
+                configured,
+                oauth_available: oauth_available(&a),
+            },
+        ),
     )
         .into_response()
 }
-async fn info(State(a): State<Application>, _actor: Actor) -> Json<Value> {
-    data(json!({"corpId":a.integrations.corp,"agentId":a.integrations.agent}))
+async fn info(State(a): State<Application>, _actor: Actor) -> ApiResponse {
+    singleton(
+        "wecom-config",
+        "current",
+        json!({"corpId":a.integrations.corp,"agentId":a.integrations.agent}),
+    )
 }
 async fn mini(
     State(a): State<Application>,
     h: HeaderMap,
-    Json(v): Json<Value>,
+    input_document: Input,
 ) -> Result<Response> {
+    let v = input_document.decode::<Value>("sessions")?;
     if h.contains_key(header::ORIGIN) {
         check_origin(&h, &a)?;
     }
@@ -166,7 +177,7 @@ async fn mini(
     let (token, user) = a.identity.0.session(id, "miniapp", false).await?;
     Ok((
         [(header::CACHE_CONTROL, "no-store")],
-        data(json!({"token":token,"user":user})),
+        singleton("sessions", "current", json!({"token":token,"user":user})),
     )
         .into_response())
 }

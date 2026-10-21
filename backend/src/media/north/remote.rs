@@ -1,7 +1,7 @@
 use crate::{
     bootstrap::Application,
     business::{Actor, Result},
-    http::error::data,
+    http::jsonapi::{ApiResponse, singleton},
 };
 use axum::{
     Router,
@@ -18,8 +18,13 @@ async fn upload(
     actor: Actor,
     Path(s): Path<Uuid>,
     b: Bytes,
-) -> Result<axum::Json<serde_json::Value>> {
-    Ok(data(json!({"url":a.media.put(&actor,s,b.to_vec()).await?})))
+) -> Result<ApiResponse> {
+    let url = a.media.put(&actor, s, b.to_vec()).await?;
+    Ok(singleton(
+        "media",
+        url.rsplit('/').next().unwrap_or(&url),
+        json!({"url":url}),
+    ))
 }
 async fn download(
     State(a): State<Application>,
