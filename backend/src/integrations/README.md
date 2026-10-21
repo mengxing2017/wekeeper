@@ -15,3 +15,6 @@
 - south/adapter/postgres/：SQL 与行转换。
 
 业务与权限回归位于 backend/tests/business.rs，共享 client 位于 api-contract/src/modules/business。
+
+通讯录：`north/directory.rs` 编排同步与核验；`south/port` 隔离官方 client 和仓储；`directory_http` 处理凭据、错误码及读取重试，`directory_postgres` 处理租约、原子发布和绑定事务。
+任务在 backend runtime 中运行，不增加部署应用。数据库集成回归见 `backend/tests/directory.rs`。
