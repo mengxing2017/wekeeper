@@ -3,7 +3,7 @@ import { cleanup, configure, fireEvent, render, screen, waitFor } from '@testing
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { Directory, WecomBinding } from './directory';
 import { directory } from './api';
-vi.mock('./api',async importOriginal=>({...await importOriginal<typeof import('./api')>(),directory:{members:vi.fn(),departments:vi.fn(),status:vi.fn(),sync:vi.fn(),bind:vi.fn(),unbind:vi.fn()}}));
+vi.mock('./api',async importOriginal=>({...await importOriginal<typeof import('./api')>(),directory:{members:vi.fn(),departments:vi.fn(),status:vi.fn(),sync:vi.fn(),rotate:vi.fn(),bind:vi.fn(),unbind:vi.fn()}}));
 class TestResizeObserver { observe() {} unobserve() {} disconnect() {} }
 vi.stubGlobal('ResizeObserver', TestResizeObserver);
 configure({ asyncUtilTimeout: 5000 });
@@ -29,8 +29,21 @@ it('does not allow a member already bound to another account',async()=>{
     expect((await screen.findByText('选择成员')).closest('button')?.disabled).toBe(true);
 });
 it('shows sync errors and the last successful snapshot without claiming success',async()=>{
-    vi.mocked(directory.status).mockResolvedValue({id:'current',configured:true,configuration_error:null,snapshot_id:'snapshot',last_success_at:'2026-10-21',latest_run:{id:'run',state:'failed',error_code:'wecom_60011',created_at:'',started_at:null,finished_at:null,department_count:0,member_count:0}});
+    vi.mocked(directory.status).mockResolvedValue({id:'current',server_configured:true,credential_generation:1,credential_rotation_required:false,configuration_error:null,snapshot_id:'snapshot',last_success_at:'2026-10-21',latest_run:{id:'run',state:'failed',error_code:'wecom_60011',created_at:'',started_at:null,finished_at:null,department_count:0,member_count:0}});
     show(<Directory/>);
     expect((await screen.findByText(/同步失败/)).textContent).toContain('wecom_60011');
     expect(screen.getByText(/最近完整同步/).textContent).toContain('2026-10-21');
+});
+it('allows sync with server credentials alone and requires confirmation for rotation',async()=>{
+    vi.mocked(directory.status).mockResolvedValue({id:'current',server_configured:true,credential_generation:2,credential_rotation_required:false,configuration_error:null,snapshot_id:null,last_success_at:null,latest_run:null});
+    show(<Directory/>);
+    await waitFor(()=>expect(screen.getByText('立即同步').closest('button')?.disabled).toBe(false));
+    fireEvent.click(screen.getByText('立即同步'));await waitFor(()=>expect(directory.sync).toHaveBeenCalledTimes(1));
+    cleanup();
+    vi.mocked(directory.status).mockResolvedValue({id:'current',server_configured:true,credential_generation:2,credential_rotation_required:true,configuration_error:'凭据待切换',snapshot_id:null,last_success_at:null,latest_run:null});
+    vi.mocked(directory.rotate).mockResolvedValue(null);show(<Directory/>);
+    fireEvent.click(await screen.findByText('验证并切换服务端凭据'));
+    expect(directory.rotate).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByText('验证并切换'));
+    await waitFor(()=>expect(directory.rotate).toHaveBeenCalledWith(2));
 });

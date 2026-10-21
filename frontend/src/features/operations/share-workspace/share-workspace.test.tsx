@@ -8,7 +8,7 @@ vi.mock('./api',async importOriginal=>({...await importOriginal<typeof import('.
 vi.mock('./sdk',async importOriginal=>({...await importOriginal<typeof import('./sdk')>(),currentChat:vi.fn(),sendText:vi.fn()}))
 beforeEach(()=>{
  vi.spyOn(navigator,'userAgent','get').mockReturnValue('wxwork');
- vi.mocked(workspace.wecomStatus).mockResolvedValue({configured:true,oauth_available:true});
+ vi.mocked(workspace.wecomStatus).mockResolvedValue({server_configured:true,client_configured:true,oauth_available:true,share_available:true});
  vi.mocked(workspace.getDraft).mockResolvedValue({id:'d',school_id:'s',group_id:'g',template_version_id:'v',content:'Frozen text',content_hash:'h',state:'ready',chat_id:'chat',group_name:'Target'});
  vi.mocked(workspace.relatedHistory).mockResolvedValue({page:{number:1,size:30,has_more:false},items:[],latest_attempt_id:null,blocked:false});
 })
@@ -53,7 +53,7 @@ it('never invokes the SDK if the invocation claim response is lost', async()=>{
 })
 
 it('renders configuration guidance when enterprise credentials are absent', async()=>{
- vi.mocked(workspace.wecomStatus).mockResolvedValue({configured:false,oauth_available:false});
+ vi.mocked(workspace.wecomStatus).mockResolvedValue({server_configured:false,client_configured:false,oauth_available:false,share_available:false});
  vi.mocked(identity.session).mockRejectedValue(Object.assign(new Error('请先登录'),{status:401}));
  renderPage();expect(await screen.findByText('企业微信尚未配置')).toBeTruthy();
  expect(screen.getByText('登录运营后台')).toBeTruthy();expect(screen.queryByText('企业微信授权登录')).toBeNull();
@@ -95,3 +95,16 @@ it('blocks sending when an older overlapping item still has an unresolved result
  expect((screen.getByText('确认正文并在当前群分享') as HTMLButtonElement).disabled).toBe(true);
  expect(sendText).not.toHaveBeenCalled();
 })
+it('allows server-only OAuth and preview while disabling both SDK actions', async()=>{
+ setupShare();vi.mocked(workspace.wecomStatus).mockResolvedValue({server_configured:true,client_configured:false,oauth_available:true,share_available:false});
+ renderPage();await screen.findByText('Target · Frozen text');fireEvent.change(screen.getAllByRole('combobox')[1],{target:{value:'d'}});
+ expect(screen.getByText('企业微信登录可用，客户端分享尚未配置')).toBeTruthy();
+ expect((await screen.findByText('读取并核对当前客户群') as HTMLButtonElement).disabled).toBe(true);
+ expect((screen.getByText('确认正文并在当前群分享') as HTMLButtonElement).disabled).toBe(true);
+ expect(currentChat).not.toHaveBeenCalled();expect(workspace.prepare).not.toHaveBeenCalled();
+});
+it('keeps the OAuth link when only the client application identity is missing',async()=>{
+ vi.mocked(workspace.wecomStatus).mockResolvedValue({server_configured:true,client_configured:false,oauth_available:true,share_available:false});
+ vi.mocked(identity.session).mockRejectedValue(new Error('unauthorized'));renderPage();
+ expect(await screen.findByText('企业微信授权登录')).toBeTruthy();
+});
