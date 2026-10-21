@@ -15,7 +15,7 @@
 生产使用独立 PostgreSQL；嵌入式 PostgreSQL 仅用于源码开发。
 
 准备支持 BuildKit 的 Docker Engine、支持 `up --wait` 的 Compose v2，以及足够的磁盘与构建内存。
-构建机需访问基础镜像仓库、crates.io、npm 和 Debian 包源；仅运行镜像的服务器无需安装 Rust、Node、pnpm。
+构建机需访问基础镜像仓库、GitHub、crates.io、npm 和 Debian 包源；仅运行镜像的服务器无需安装 Rust、Node、pnpm。
 
 ```bash
 docker version
@@ -142,7 +142,7 @@ docker build --pull --progress=plain -f backend/Dockerfile -t "$API_IMAGE" .
 
 `--pull` 更新基础镜像缓存，不保证可重现的基础镜像 digest；有严格重现要求时需另行固定 Dockerfile 基础镜像摘要。
 
-API 构建通过 BuildKit cache mount 缓存 Cargo registry 和 target；同一 builder 可复用。
+API 构建通过 BuildKit cache mount 缓存 Cargo registry、Git 和 target；同一 builder 可复用。
 不要为了普通增量发布常规使用 `--no-cache`。临时 CI 的跨机器缓存需要另外配置，不是当前命令自动提供的。
 
 上述普通构建面向构建机原生平台。服务器架构不同时，可使用 Buildx：
