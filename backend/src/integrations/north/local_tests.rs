@@ -275,3 +275,273 @@ async fn server_only_oauth_directory_cache_and_share_http_gates() {
         .unwrap();
     admin_pool.close().await;
 }
+
+#[tokio::test]
+#[ignore = "requires isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn asset_http_reads_preserve_errors_and_do_not_need_agent_id() {
+    use crate::integrations::{
+        domain::directory::ReadError,
+        south::{adapter::directory_http::Client, port::assets::AssetClient},
+    };
+    use axum::{Json, extract::State, routing::post};
+    use serde_json::json;
+    #[derive(Default)]
+    struct Mock {
+        token_error: i64,
+        code: i64,
+        calls: usize,
+        missing_members: bool,
+        unknown_type: bool,
+    }
+    async fn token(State(s): State<Arc<Mutex<Mock>>>) -> Json<Value> {
+        let s = s.lock().unwrap();
+        if s.token_error != 0 {
+            Json(json!({"errcode":s.token_error,"errmsg":"must not be copied"}))
+        } else {
+            Json(json!({"access_token":"test-token","expires_in":7200}))
+        }
+    }
+    async fn groups(State(s): State<Arc<Mutex<Mock>>>, Json(v): Json<Value>) -> Json<Value> {
+        assert_eq!(v["status_filter"], 0);
+        assert_eq!(v["limit"], 100);
+        assert_eq!(v["owner_filter"]["userid_list"][0], "Alice");
+        let mut s = s.lock().unwrap();
+        s.calls += 1;
+        if s.code != 0 {
+            Json(json!({"errcode":s.code}))
+        } else {
+            Json(json!({"errcode":0,"group_chat_list":[],"next_cursor":""}))
+        }
+    }
+    async fn group(State(s): State<Arc<Mutex<Mock>>>, Json(v): Json<Value>) -> Json<Value> {
+        assert_eq!(v["need_name"], 0);
+        let s = s.lock().unwrap();
+        let mut g = json!({"chat_id":v["chat_id"],"owner":"Alice","member_list":[{"userid":"External","type":if s.unknown_type{3}else{2}}]});
+        if s.missing_members {
+            g.as_object_mut().unwrap().remove("member_list");
+        }
+        Json(json!({"errcode":0,"group_chat":g}))
+    }
+    let url = std::env::var("WEKEEPER_TEST_DATABASE_URL").expect("isolated database required");
+    let root = sqlx::PgPool::connect(&url).await.unwrap();
+    let schema = format!("assets_http_{}", uuid::Uuid::new_v4().simple());
+    sqlx::query(&format!("CREATE SCHEMA {schema}"))
+        .execute(&root)
+        .await
+        .unwrap();
+    let search = schema.clone();
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .after_connect(move |c, _| {
+            let sql = format!("SET search_path TO {search}");
+            Box::pin(async move {
+                sqlx::query(&sql).execute(c).await?;
+                Ok(())
+            })
+        })
+        .connect(&url)
+        .await
+        .unwrap();
+    crate::database::migrate(&pool).await.unwrap();
+    let mock = Arc::new(Mutex::new(Mock::default()));
+    let router = axum::Router::new()
+        .route("/cgi-bin/gettoken", get(token))
+        .route("/cgi-bin/user/get",get(|Query(q):Query<HashMap<String,String>>|async move {Json(json!({"errcode":0,"userid":q["userid"],"name":"企业成员","status":1,"department":[]}))}))
+        .route("/cgi-bin/externalcontact/groupchat/list", post(groups))
+        .route("/cgi-bin/externalcontact/groupchat/get", post(group))
+        .with_state(mock.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut integration = service(pool.clone());
+    integration.api_origin = Some(format!("http://{}", listener.local_addr().unwrap()));
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    integration.directory().ensure_config().await.unwrap();
+    let client = Client(integration.clone());
+    assert!(integration.agent.is_empty());
+    assert!(
+        client
+            .groups(&["Alice".into()], "")
+            .await
+            .unwrap()
+            .group_chat_list
+            .is_empty()
+    );
+    assert_eq!(
+        client.group("CHAT").await.unwrap().member_list[0].userid,
+        "External"
+    );
+    mock.lock().unwrap().missing_members = true;
+    assert!(matches!(
+        client.group("CHAT").await,
+        Err(ReadError::Invalid)
+    ));
+    mock.lock().unwrap().missing_members = false;
+    mock.lock().unwrap().unknown_type = true;
+    assert!(matches!(
+        client.group("CHAT").await,
+        Err(ReadError::Invalid)
+    ));
+    mock.lock().unwrap().code = 60020;
+    assert!(matches!(
+        client.groups(&["Alice".into()], "").await,
+        Err(ReadError::Rejected(60020))
+    ));
+    mock.lock().unwrap().code = 45009;
+    mock.lock().unwrap().calls = 0;
+    assert!(matches!(
+        client.groups(&["Alice".into()], "").await,
+        Err(ReadError::Transient)
+    ));
+    assert_eq!(mock.lock().unwrap().calls, 3);
+    integration
+        .repository
+        .expire_token(&integration.cache_key("token"), "stale-token")
+        .await
+        .unwrap();
+    assert_eq!(integration.token().await.unwrap(), "test-token");
+    integration
+        .repository
+        .expire_token(&integration.cache_key("token"), "test-token")
+        .await
+        .unwrap();
+    mock.lock().unwrap().token_error = 40001;
+    assert!(matches!(
+        client.groups(&["Alice".into()], "").await,
+        Err(ReadError::Rejected(40001))
+    ));
+    // Actual API authorization stays outside all enterprise-wide asset reads.
+    let mut app = crate::bootstrap::build_application(pool.clone());
+    app.integrations = integration;
+    let aid = app
+        .identity
+        .bootstrap("admin", "admin", "test-password-123", true)
+        .await
+        .unwrap();
+    let (admin_token, _) = app.identity.0.session(aid, "browser", false).await.unwrap();
+    let uid = app
+        .identity
+        .bootstrap("user", "user", "test-password-123", false)
+        .await
+        .unwrap();
+    let (_user_token, _) = app.identity.0.session(uid, "browser", false).await.unwrap();
+    // Bind an account to a verified member; local nickname never grants ownership.
+    let member_id = uuid::Uuid::new_v4();
+    sqlx::query("INSERT INTO wecom_members(id,userid,name,status,verification,checked_at) VALUES($1,'Alice','企业成员',1,'verified',now())").bind(member_id).execute(&pool).await.unwrap();
+    sqlx::query("UPDATE accounts SET wecom_member_id=$2,wecom_binding_revision=1 WHERE id=$1")
+        .bind(uid)
+        .bind(member_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (_, admin_actor) = app.identity.0.session(aid, "browser", false).await.unwrap();
+    let school = app.schools.create(&admin_actor, "School").await.unwrap();
+    let school: uuid::Uuid = school["id"].as_str().unwrap().parse().unwrap();
+    app.schools
+        .grant(&admin_actor, school, uid, "admin")
+        .await
+        .unwrap();
+    let (bound_token, bound_actor) = app.identity.0.session(uid, "browser", false).await.unwrap();
+    mock.lock().unwrap().token_error = 0;
+    mock.lock().unwrap().code = 0;
+    mock.lock().unwrap().unknown_type = false;
+    let official = client.group("BOUND").await.unwrap();
+    app.integrations
+        .assets()
+        .store
+        .observe(1, &official, chrono::Utc::now())
+        .await
+        .unwrap();
+    let router = crate::http::app_router(app.clone());
+    let path = format!("/api/v1/schools/{school}/wecom-group-candidates");
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&path)
+                .header("cookie", format!("wekeeper_session={bound_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let candidates: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 16384).await.unwrap()).unwrap();
+    assert_eq!(candidates["data"].as_array().unwrap().len(), 1);
+    assert!(
+        candidates["data"][0]["attributes"]
+            .get("member_list")
+            .is_none()
+    );
+    let selected = &candidates["data"][0];
+    let input = crate::integrations::domain::assets::GroupBinding {
+        directory_group_id: selected["id"].as_str().unwrap().parse().unwrap(),
+        expected_generation: 1,
+        expected_checked_at: serde_json::from_value(selected["attributes"]["checked_at"].clone())
+            .unwrap(),
+        name: None,
+    };
+    app.integrations
+        .assets()
+        .bind(&bound_actor, school, input)
+        .await
+        .unwrap();
+    for role in ["operator", "member"] {
+        app.schools
+            .grant(&admin_actor, school, uid, role)
+            .await
+            .unwrap();
+        let (role_token, _) = app.identity.0.session(uid, "browser", false).await.unwrap();
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(&path)
+                    .header("cookie", format!("wekeeper_session={role_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 403);
+    }
+    let (user_token, _) = app.identity.0.session(uid, "browser", false).await.unwrap();
+    for (path, token, expected) in [
+        ("/api/v1/platform/wecom-assets/status", &admin_token, 200),
+        ("/api/v1/platform/wecom-assets/customers", &admin_token, 404),
+        (
+            "/api/v1/platform/wecom-assets/contact-members",
+            &admin_token,
+            404,
+        ),
+        ("/api/v1/platform/wecom-assets/groups", &user_token, 403),
+        (
+            "/api/v1/platform/wecom-assets/groups?corp_id=forged",
+            &admin_token,
+            400,
+        ),
+        (
+            "/api/v1/platform/wecom-assets/member-statistics?associated=true",
+            &admin_token,
+            422,
+        ),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .header("cookie", format!("wekeeper_session={token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status().as_u16(), expected, "{path}");
+    }
+    server.abort();
+    pool.close().await;
+    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+        .execute(&root)
+        .await
+        .unwrap();
+    root.close().await;
+}
