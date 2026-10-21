@@ -87,7 +87,7 @@ impl<R: Store> Service<R> {
         &self,
         a: &Actor,
         school: Uuid,
-        v: Value,
+        mut v: Value,
         integration: &crate::integrations::north::local::Service,
     ) -> Result<Value> {
         if school.is_nil() {
@@ -95,23 +95,35 @@ impl<R: Store> Service<R> {
         } else {
             a.authorize(school, "admin")?;
         }
+        if v["revision"].as_i64().unwrap_or(0) == 0 {
+            a.platform()?;
+        }
         for k in ["corp_id", "chat_id", "name"] {
             text(v[k].as_str().unwrap_or(""), 1, 200)?;
         }
         // Revocation remains possible during platform outages or credential changes.
         let active = v["active"].as_bool().unwrap_or(true);
-        if active {
-            integration
-                .validate_group(
-                    v["corp_id"].as_str().unwrap_or(""),
-                    v["chat_id"].as_str().unwrap_or(""),
-                )
-                .await?;
-        } else if v["revision"].as_i64().unwrap_or(0) == 0 {
+        v.as_object_mut()
+            .ok_or(crate::business::Error::Conflict)?
+            .remove("directory_group_id");
+        v.as_object_mut().unwrap().remove("verified_generation");
+        if active || v["revision"].as_i64().unwrap_or(0) == 0 {
             require(
-                !integration.corp.is_empty() && v["corp_id"].as_str() == Some(&integration.corp),
+                v["corp_id"].as_str() == Some(&integration.corp),
                 "企业 ID 必须与当前应用配置一致",
             )?;
+            use crate::integrations::south::port::assets::AssetClient;
+            let generation = integration.directory().ensure_config().await?;
+            let at = chrono::Utc::now();
+            let assets = integration.assets();
+            let group = assets
+                .client
+                .group(v["chat_id"].as_str().unwrap_or(""))
+                .await
+                .map_err(|_| crate::business::Error::Unavailable)?;
+            let id = assets.store.observe(generation, &group, at).await?;
+            v["directory_group_id"] = serde_json::json!(id);
+            v["verified_generation"] = serde_json::json!(generation);
         }
         self.0.group(a, school, v).await
     }
