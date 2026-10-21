@@ -62,3 +62,18 @@ it('reads the public WeCom status using the backend fixture', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(fixture)))
   expect(await workspace.wecomStatus()).toEqual({configured:false,oauth_available:false})
 })
+
+it('reads cross-draft related history with the Rust serialization contract', async () => {
+  const fixture = (await import('../fixtures/delivery-history.json')).default
+  const fetchMock = vi.fn().mockResolvedValue(Response.json(fixture))
+  vi.stubGlobal('fetch', fetchMock)
+  const history = await workspace.relatedHistory('school', 'old-draft', 2)
+  expect(history).toEqual(fixture.data)
+  expect(fetchMock).toHaveBeenCalledWith('/api/v1/schools/school/delivery-drafts/old-draft/history?page=2&page_size=30', expect.anything())
+})
+it('loads a draft by ID without depending on the current list page', async () => {
+  const fetchMock = vi.fn().mockResolvedValue(Response.json({data:{id:'old-draft'}}))
+  vi.stubGlobal('fetch', fetchMock)
+  expect(await workspace.getDraft('school','old-draft')).toEqual({id:'old-draft'})
+  expect(fetchMock).toHaveBeenCalledWith('/api/v1/schools/school/delivery-drafts/old-draft', expect.anything())
+})
