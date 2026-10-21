@@ -93,6 +93,3 @@ impl IntoResponse for Error {
         response(status, code, &message)
     }
 }
-pub fn data(value: impl serde::Serialize) -> Json<serde_json::Value> {
-    Json(serde_json::json!({"data":value}))
-}

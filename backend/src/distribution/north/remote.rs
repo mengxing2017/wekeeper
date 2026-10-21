@@ -2,10 +2,10 @@ use super::local::{AttemptInput, DraftInput};
 use crate::{
     bootstrap::Application,
     business::{Actor, Named, Result, Revision},
-    http::error::data,
+    http::jsonapi::{ApiResponse, Input, collection, completed, resource, singleton},
 };
 use axum::{
-    Json, Router,
+    Router,
     extract::{Path, Query, State},
     http::HeaderMap,
     routing::{get, post, put},
@@ -16,24 +16,33 @@ async fn templates(
     State(a): State<Application>,
     actor: Actor,
     Path(s): Path<Uuid>,
-) -> Result<Json<Value>> {
-    Ok(data(a.distribution.templates(&actor, s).await?))
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "templates",
+        a.distribution.templates(&actor, s).await?,
+    ))
 }
 async fn template(
     State(a): State<Application>,
     actor: Actor,
     Path(s): Path<Uuid>,
-    Json(v): Json<Named>,
-) -> Result<Json<Value>> {
-    Ok(data(a.distribution.template(&actor, s, &v.name).await?))
+    input_document: Input,
+) -> Result<ApiResponse> {
+    let v = input_document.decode::<Named>("templates")?;
+    Ok(resource(
+        "templates",
+        a.distribution.template(&actor, s, &v.name).await?,
+    ))
 }
 async fn version(
     State(a): State<Application>,
     actor: Actor,
     Path((s, id)): Path<(Uuid, Uuid)>,
-    Json(v): Json<Value>,
-) -> Result<Json<Value>> {
-    Ok(data(
+    input_document: Input,
+) -> Result<ApiResponse> {
+    let v = input_document.decode::<Value>("template-versions")?;
+    Ok(resource(
+        "template-versions",
         a.distribution
             .version(&actor, s, id, v["body"].as_str().unwrap_or(""))
             .await?,
@@ -43,9 +52,11 @@ async fn publish(
     State(a): State<Application>,
     actor: Actor,
     Path((s, id)): Path<(Uuid, Uuid)>,
-    Json(v): Json<Revision>,
-) -> Result<Json<Value>> {
-    Ok(data(
+    input_document: Input,
+) -> Result<ApiResponse> {
+    let v = input_document.decode::<Revision>("template-versions")?;
+    Ok(resource(
+        "template-versions",
         a.distribution.publish(&actor, s, id, v.revision).await?,
     ))
 }
@@ -54,31 +65,42 @@ async fn drafts(
     actor: Actor,
     Path(s): Path<Uuid>,
     Query(page): Query<crate::business::Page>,
-) -> Result<Json<Value>> {
-    Ok(data(a.distribution.drafts(&actor, s, page).await?))
+) -> Result<ApiResponse> {
+    Ok(collection(
+        "delivery-drafts",
+        a.distribution.drafts(&actor, s, page.clone()).await?,
+        &page,
+    ))
 }
 async fn get_draft(
     State(a): State<Application>,
     actor: Actor,
     Path((s, id)): Path<(Uuid, Uuid)>,
-) -> Result<Json<Value>> {
-    Ok(data(a.distribution.get_draft(&actor, s, id).await?))
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "delivery-drafts",
+        a.distribution.get_draft(&actor, s, id).await?,
+    ))
 }
 async fn related(
     State(a): State<Application>,
     actor: Actor,
     Path((s, id)): Path<(Uuid, Uuid)>,
     Query(page): Query<crate::business::Page>,
-) -> Result<Json<Value>> {
-    Ok(data(a.distribution.related(&actor, s, id, page).await?))
+) -> Result<ApiResponse> {
+    let history = a.distribution.related(&actor, s, id, page.clone()).await?;
+    Ok(collection("delivery-attempts", history.items, &page)
+        .meta(json!({"latest_attempt_id":history.latest_attempt_id,"blocked":history.blocked})))
 }
 async fn draft(
     State(a): State<Application>,
     actor: Actor,
     Path(s): Path<Uuid>,
-    Json(v): Json<DraftInput>,
-) -> Result<Json<Value>> {
-    Ok(data(
+    input_document: Input,
+) -> Result<ApiResponse> {
+    let v = input_document.decode::<DraftInput>("delivery-drafts")?;
+    Ok(resource(
+        "delivery-drafts",
         a.distribution
             .draft(&actor, s, v, &a.options.public_origin)
             .await?,
@@ -89,13 +111,15 @@ async fn attempt(
     actor: Actor,
     Path((s, id)): Path<(Uuid, Uuid)>,
     headers: HeaderMap,
-    Json(v): Json<AttemptInput>,
-) -> Result<Json<Value>> {
+    input_document: Input,
+) -> Result<ApiResponse> {
+    let v = input_document.decode::<AttemptInput>("delivery-attempts")?;
     let key = headers
         .get("idempotency-key")
         .and_then(|s| s.to_str().ok())
         .unwrap_or("");
-    Ok(data(
+    Ok(resource(
+        "delivery-attempts",
         a.distribution
             .prepare(&actor, s, id, key, v, &a.integrations)
             .await?,
@@ -106,35 +130,51 @@ async fn attempts(
     actor: Actor,
     Path(s): Path<Uuid>,
     Query(page): Query<crate::business::Page>,
-) -> Result<Json<Value>> {
-    Ok(data(a.distribution.attempts(&actor, s, page).await?))
+) -> Result<ApiResponse> {
+    Ok(collection(
+        "delivery-attempts",
+        a.distribution.attempts(&actor, s, page.clone()).await?,
+        &page,
+    ))
 }
 async fn claim(
     State(a): State<Application>,
     actor: Actor,
     Path((s, id)): Path<(Uuid, Uuid)>,
-) -> Result<Json<Value>> {
+) -> Result<ApiResponse> {
     a.distribution.claim(&actor, s, id).await?;
-    Ok(data(json!({"ok":true})))
+    Ok(completed())
 }
 async fn result(
     State(a): State<Application>,
     actor: Actor,
     Path((s, id)): Path<(Uuid, Uuid)>,
-    Json(v): Json<Value>,
-) -> Result<Json<Value>> {
-    Ok(data(a.distribution.result(&actor, s, id, v).await?))
+    input_document: Input,
+) -> Result<ApiResponse> {
+    let v = input_document.decode::<Value>("delivery-attempts")?;
+    Ok(resource(
+        "delivery-attempts",
+        a.distribution.result(&actor, s, id, v).await?,
+    ))
 }
 async fn reconcile(
     State(a): State<Application>,
     actor: Actor,
     Path((s, id)): Path<(Uuid, Uuid)>,
-    Json(v): Json<Value>,
-) -> Result<Json<Value>> {
-    Ok(data(a.distribution.reconcile(&actor, s, id, v).await?))
+    input_document: Input,
+) -> Result<ApiResponse> {
+    let v = input_document.decode::<Value>("delivery-attempts")?;
+    Ok(resource(
+        "delivery-attempts",
+        a.distribution.reconcile(&actor, s, id, v).await?,
+    ))
 }
-async fn capability(State(a): State<Application>, _actor: Actor) -> Json<Value> {
-    data(json!({"wecom_configured":a.integrations.configured()}))
+async fn capability(State(a): State<Application>, _actor: Actor) -> ApiResponse {
+    singleton(
+        "capabilities",
+        "current",
+        json!({"wecom_configured":a.integrations.configured()}),
+    )
 }
 pub fn router() -> Router<Application> {
     Router::new()

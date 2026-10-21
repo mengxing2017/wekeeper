@@ -91,7 +91,7 @@ impl<R: Store> Service<R> {
         page: crate::business::Page,
     ) -> Result<crate::distribution::domain::RelatedHistory> {
         a.authorize(s, "operator")?;
-        let (limit, offset) = page.bounds()?;
+        let (limit, offset) = page.fetch_bounds()?;
         self.0.related(s, id, limit, offset).await
     }
     pub async fn templates(&self, a: &Actor, s: Uuid) -> Result<Vec<Value>> {
@@ -109,7 +109,7 @@ impl<R: Store> Service<R> {
         page: crate::business::Page,
     ) -> Result<Vec<Value>> {
         a.authorize(s, "operator")?;
-        let (limit, offset) = page.bounds()?;
+        let (limit, offset) = page.fetch_bounds()?;
         self.0.drafts(s, limit, offset).await
     }
     pub async fn attempts(
@@ -119,7 +119,7 @@ impl<R: Store> Service<R> {
         page: crate::business::Page,
     ) -> Result<Vec<Value>> {
         a.authorize(s, "operator")?;
-        let (limit, offset) = page.bounds()?;
+        let (limit, offset) = page.fetch_bounds()?;
         self.0.attempts(s, limit, offset).await
     }
     pub async fn prepare(
