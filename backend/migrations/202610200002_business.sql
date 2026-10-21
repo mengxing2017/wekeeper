@@ -146,3 +146,64 @@ CREATE TABLE wecom_members (
  checked_at TIMESTAMPTZ, snapshot_id UUID
 );
 ALTER TABLE accounts ADD FOREIGN KEY(wecom_member_id) REFERENCES wecom_members(id);
+
+-- Customer groups and their members form a complete snapshot, scoped to the directory credential generation.
+CREATE TABLE wecom_asset_sync_state (
+ dataset TEXT PRIMARY KEY CHECK(dataset IN ('groups')), current_run_id UUID,
+ last_success_at TIMESTAMPTZ, published_generation BIGINT, freshness TEXT NOT NULL DEFAULT 'unverified',
+ scope JSONB NOT NULL DEFAULT '[]', scope_changed BOOLEAN NOT NULL DEFAULT FALSE
+);
+INSERT INTO wecom_asset_sync_state(dataset) VALUES('groups');
+CREATE TABLE wecom_asset_sync_runs (
+ id UUID PRIMARY KEY, dataset TEXT NOT NULL REFERENCES wecom_asset_sync_state(dataset), actor_id UUID REFERENCES accounts(id),
+ generation BIGINT NOT NULL, state TEXT NOT NULL DEFAULT 'queued' CHECK(state IN ('queued','running','succeeded','failed')),
+ stage TEXT NOT NULL DEFAULT 'queued', created_at TIMESTAMPTZ NOT NULL DEFAULT now(), started_at TIMESTAMPTZ, finished_at TIMESTAMPTZ,
+ lease_id UUID, lease_until TIMESTAMPTZ, processed BIGINT NOT NULL DEFAULT 0, pages BIGINT NOT NULL DEFAULT 0,
+ total BIGINT NOT NULL DEFAULT 0, error_code TEXT, complete BOOLEAN NOT NULL DEFAULT FALSE,
+ scope JSONB NOT NULL DEFAULT '[]', scope_changed BOOLEAN NOT NULL DEFAULT FALSE
+);
+CREATE UNIQUE INDEX wecom_assets_one_active ON wecom_asset_sync_runs(dataset) WHERE state IN ('queued','running');
+CREATE TABLE wecom_asset_sync_items (
+ run_id UUID NOT NULL REFERENCES wecom_asset_sync_runs(id) ON DELETE CASCADE,
+ kind TEXT NOT NULL, key TEXT NOT NULL, data JSONB NOT NULL, PRIMARY KEY(run_id,kind,key)
+);
+-- Normalized minimal payloads; identity and relation keys are indexed separately from optional official fields.
+CREATE TABLE wecom_asset_objects (
+ id UUID PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('groups','members')),
+ corp_id TEXT NOT NULL, key TEXT NOT NULL, parent_key TEXT, member_key TEXT,
+ member_type INTEGER CHECK(member_type IN (1,2)), data JSONB NOT NULL,
+ last_seen_run_id UUID, checked_at TIMESTAMPTZ NOT NULL, credential_generation BIGINT NOT NULL,
+ visibility TEXT NOT NULL CHECK(visibility IN ('visible','not_seen')),
+ verification TEXT NOT NULL CHECK(verification IN ('verified','unavailable','unverified')),
+ source TEXT NOT NULL DEFAULT 'snapshot' CHECK(source IN ('snapshot','point')),
+ UNIQUE(corp_id,kind,key)
+);
+CREATE INDEX wecom_assets_parent ON wecom_asset_objects(kind,parent_key);
+CREATE INDEX wecom_assets_member ON wecom_asset_objects(kind,member_key);
+CREATE VIEW wecom_group_directory AS SELECT * FROM wecom_asset_objects WHERE kind='groups';
+CREATE VIEW wecom_group_directory_members AS SELECT o.*,g.id AS directory_group_id,m.id AS member_id FROM wecom_asset_objects o LEFT JOIN wecom_asset_objects g ON g.kind='groups' AND g.corp_id=o.corp_id AND g.key=o.parent_key LEFT JOIN wecom_members m ON o.member_type=1 AND m.userid_key=o.member_key WHERE o.kind='members';
+ALTER TABLE wecom_groups ADD COLUMN directory_group_id UUID UNIQUE REFERENCES wecom_asset_objects(id);
+-- The polymorphic directory reference must always denote this exact official group.
+CREATE FUNCTION check_wecom_directory_group() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF NEW.directory_group_id IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM wecom_asset_objects WHERE id=NEW.directory_group_id AND kind='groups' AND corp_id=NEW.corp_id AND key=NEW.chat_id
+ ) THEN RAISE EXCEPTION 'directory group identity mismatch' USING ERRCODE='23514'; END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER wecom_group_directory_identity BEFORE INSERT OR UPDATE ON wecom_groups FOR EACH ROW EXECUTE FUNCTION check_wecom_directory_group();
+ALTER TABLE wecom_asset_sync_runs ADD COLUMN failed_owner TEXT;
+CREATE TABLE wecom_asset_owner_exclusions (
+ owner_key TEXT PRIMARY KEY, generation BIGINT NOT NULL, actor_id UUID NOT NULL REFERENCES accounts(id),
+ reason TEXT NOT NULL, confirmed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- Deferred parent identity FK allows publishing objects and relations in the same transaction.
+ALTER TABLE wecom_asset_objects ADD COLUMN parent_kind TEXT GENERATED ALWAYS AS (
+ CASE kind WHEN 'members' THEN 'groups' ELSE NULL END
+) STORED;
+ALTER TABLE wecom_asset_objects ADD CONSTRAINT wecom_asset_parent_identity
+ FOREIGN KEY(corp_id,parent_kind,parent_key) REFERENCES wecom_asset_objects(corp_id,kind,key) DEFERRABLE INITIALLY DEFERRED;
+ALTER TABLE wecom_asset_objects ADD CHECK (kind<>'members' OR (parent_key IS NOT NULL AND member_key IS NOT NULL));
+ALTER TABLE wecom_asset_objects ADD CHECK (kind<>'members' OR member_type IS NOT NULL);
+ALTER TABLE wecom_asset_objects ADD CHECK (credential_generation>0);
+CREATE UNIQUE INDEX wecom_group_member_identity ON wecom_asset_objects(corp_id,parent_key,member_type,member_key) WHERE kind='members';
