@@ -20,7 +20,16 @@ report/          原系统分析及重构实施方案
 
 后端以 `system` 模块展示完整的 domain、north/local、north/remote、south/port、south/adapter/postgres 分层。
 业务模块按用例、领域与 PostgreSQL 端口实现；审核事务归入 community。
-前端接口调用通过 `@wekeeper/api-contract/*`；后台与 H5 懒加载隔离，H5 不加载 Ant Design 后台入口。
+前端接口调用通过 `@wekeeper/api-contract/*`；后台、社区与企业微信页面按入口懒加载，使用统一主题。
+
+## Docker 文档导航
+
+- [完整镜像打包、发布与部署手册](docs/runbooks/docker.md)：本地构建、仓库发布、离线交付、HTTPS、初始化、备份与回滚。
+- [企业微信配置与验收](docs/runbooks/wecom.md)：可信域名、OAuth、草稿预览及真机验证。
+- [业务运行与数据迁移](docs/runbooks/business.md)：账号、学校、审核、历史数据导入与切换。
+
+部署单元为 `api`、`web`、`postgres`；`api-contract` 参与构建但不单独运行。
+`compose.yaml` 运行已发布镜像，`compose.dev.yaml` 才提供源码构建配置。
 
 ## Docker 本地启动
 
@@ -46,6 +55,7 @@ docker compose --env-file .env -f compose.yaml -f compose.dev.yaml up --build --
 `/readyz` 实际检查 PostgreSQL 与初始化 schema；数据库不可用时返回 503。
 迁移失败时 api 启动失败，不会以“健康”状态接收请求。
 H5 配置平台凭据并通过 OAuth 后，读取当前客户群，人工确认调用官方 SDK；客户端报告成功不等于平台送达证明。
+Docker 不自动创建管理员；启动成功后按下方“首次创建管理员”执行。
 
 ```bash
 make smoke
@@ -140,7 +150,7 @@ devbox run -- make check-backend
 ```
 
 前者包含 contract 类型/测试、React 类型检查、ESLint、行为测试与生产构建。
-后者包含 Rust 格式、Clippy 与不依赖数据库的 HTTP/契约测试。
+后者包含 Rust 格式、普通构建、Clippy 与不依赖数据库的 HTTP/契约测试。
 数据库测试默认忽略，必须明确提供可丢弃的测试数据库后执行：
 
 ```bash
@@ -161,27 +171,98 @@ CI 额外启动隔离 PostgreSQL，验证 migration 可重复执行，并构建 
 当前状态接口的 JSON 样例同时由 Rust HTTP 测试与 TypeScript client 测试核对。
 本次本地执行结果与容器验证限制见 [骨架交付验证记录](docs/runbooks/foundation-validation.md)。
 
-## 生产发布
+## Docker 镜像打包与发布
 
-构建上下文必须是仓库根目录；`.dockerignore` 仅允许三个新应用进入上下文，排除历史凭证、归档和二进制资源。
+在安装 Docker Engine、Compose v2 和 BuildKit 的构建机执行。运行服务器仅需 Docker 与配置文件，不需要源码工具链。
+先完成上面的质量检查，然后选择与源码 commit 对应的版本标签：
 
 ```bash
-docker build -f backend/Dockerfile -t your-registry/wekeeper-api:your-version .
-docker build -f frontend/Dockerfile -t your-registry/wekeeper-web:your-version .
-docker push your-registry/wekeeper-api:your-version
-docker push your-registry/wekeeper-web:your-version
+export WK_REGISTRY=registry.example.com/team
+export WK_VERSION=2026.10.21-abcdef0
+export API_IMAGE="$WK_REGISTRY/wekeeper-api:$WK_VERSION"
+export WEB_IMAGE="$WK_REGISTRY/wekeeper-web:$WK_VERSION"
+docker login registry.example.com
+
+docker build --pull -f backend/Dockerfile -t "$API_IMAGE" .
+docker build --pull -f frontend/Dockerfile -t "$WEB_IMAGE" .
+docker push "$API_IMAGE"
+docker push "$WEB_IMAGE"
 ```
 
-在服务器 `.env` 设置 `API_IMAGE`、`WEB_IMAGE` 为已发布的镜像，优先固定 digest。
-配置强数据库密码、公开域名与 TLS 入口，再执行：
+将示例仓库和版本替换为实际值。**构建上下文必须是仓库根目录 `.`**，前端打包依赖同仓库的 `api-contract/`。
+后端使用 Rust 多阶段构建及 Cargo 缓存，运行镜像为非 root；Web 镜像使用 Caddy 提供 React 页面与同源反向代理。
+`.dockerignore` 排除历史目录、环境文件、node_modules 和本地编译产物。
+发布记录保存 commit、镜像 digest、构建时间与 migration 版本；生产优先按 digest 固定镜像。
 
 ```bash
+docker image inspect "$API_IMAGE" --format '{{json .RepoDigests}}'
+docker image inspect "$WEB_IMAGE" --format '{{json .RepoDigests}}'
+```
+
+离线 `docker save/load`、跨架构 Buildx 及缓存说明见 [完整打包手册](docs/runbooks/docker.md#4-构建并发布版本镜像)。
+
+## 生产部署
+
+将 `compose.yaml`、`env.example` 交付到服务器，首次创建 `.env` 并限制权限：
+
+```bash
+cp env.example .env
+chmod 600 .env
+```
+
+已有 `.env` 时直接编辑。至少配置发布的 `API_IMAGE`、`WEB_IMAGE`、强 `POSTGRES_PASSWORD`、公开 origin 和 TLS 入口。
+
+| 部署方式 | 关键配置 |
+| --- | --- |
+| 本地 HTTP 调试 | `WEKEEPER_WEB_LISTEN=:80`、`WEKEEPER_PUBLIC_ORIGIN=http://127.0.0.1:8088`、`WEKEEPER_INSECURE_LOCAL_AUTH=true` |
+| Caddy 直接提供 HTTPS | `WEB_BIND_HOST=0.0.0.0`、HTTP/HTTPS 端口 `80/443`、`WEKEEPER_WEB_LISTEN=keeper.example.com`、`WEKEEPER_PUBLIC_ORIGIN=https://keeper.example.com`、insecure 为 `false` |
+| 同机 Nginx / 1Panel 提供 HTTPS | Web 保持 `127.0.0.1:8088`、`WEKEEPER_WEB_LISTEN=:80`，入口代理至 Web；public origin 填真实 HTTPS 域名、insecure 为 `false` |
+
+所有域名替换为实际值；Caddy 直接 TLS 需 DNS 和公网 80/443 就绪。
+配置企业微信/小程序时填写相应凭据；本地预览不要求这些凭据。
+当前 Compose 固定连接内置 `postgres` 与 `api:8080`，外部数据库或自定义上游需要调整编排，不能只在 `.env` 加同名变量。
+完整变量表见 [运行配置](docs/runbooks/docker.md#5-运行配置)。
+
+```bash
+docker compose --env-file .env -f compose.yaml config --quiet
 docker compose --env-file .env -f compose.yaml pull
-docker compose --env-file .env -f compose.yaml up -d --wait
+docker compose --env-file .env -f compose.yaml up --no-build -d --wait --wait-timeout 180
+docker compose --env-file .env -f compose.yaml ps
 ```
 
-完整的 HTTPS、网络、备份和更新步骤见 [Docker 部署手册](docs/runbooks/docker.md)。
+生产仅使用 `compose.yaml`。Shell 中已 export 的镜像变量会覆盖 `.env`，部署前确认没有遗留构建环境的值。
+
+### 首次创建管理员
+
+Docker 没有默认账号密码，以下在宿主机 Bash 执行，密码不回显：
+
+```bash
+read -r -s -p '管理员密码（12–128 字节）: ' WK_ADMIN_PASSWORD
+printf '\n'
+printf '%s' "$WK_ADMIN_PASSWORD" |
+  docker compose --env-file .env -f compose.yaml exec -T api \
+    /usr/local/bin/wekeeper-api --create-admin admin
+unset WK_ADMIN_PASSWORD
+```
+
+使用 `admin` 和刚输入的密码登录。同名账号已存在时 CLI 不会覆盖旧密码。
+生产不设置 `WEKEEPER_DEV_ADMIN_PASSWORD`；嵌入式开发的自动管理员流程不适用于 Docker。
+
+### 验收、备份与更新
+
+```bash
+WEKEEPER_SMOKE_ORIGIN=https://keeper.example.com make smoke
+docker compose --env-file .env -f compose.yaml logs --tail 100 api web
+```
+
+仅交付 Compose 文件的服务器可直接用 curl 检查 `/healthz` 和 `/readyz`；`make smoke` 额外需要 Makefile、tools/smoke.sh、curl 和 Python 3。
+冒烟检查 SPA HTML 不能证明页面已渲染，还需在浏览器验证登录、学校、审核、图片及 `/wecom` 草稿预览。
+
+业务与媒体图片保存在 `postgres-data` 命名卷，证书状态保存在 `caddy-data` / `caddy-config`。
+更新前保存数据库备份与旧镜像 digest；修改镜像引用后重新 pull、up 并验收。
+不要使用 `down --volumes` 清理有数据的部署；forward-only migration 需要单独评估旧镜像兼容性。
+完整备份、隔离恢复、更新回滚和排障命令见 [Docker 部署手册](docs/runbooks/docker.md)。
+
 工程决策见 [基础骨架 ADR](docs/adr/0001-foundation.md)。
 业务目标见 [Rust 与 React 重构实施方案](report/11-Rust与React重构实施方案.md)。
-
-首次管理员初始化、业务操作、平台配置、旧数据迁移和增量追平命令详见 [业务运行手册](docs/runbooks/business.md)。
+首次管理员、平台配置与旧数据迁移详见 [业务运行手册](docs/runbooks/business.md)。
