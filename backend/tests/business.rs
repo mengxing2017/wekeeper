@@ -61,7 +61,8 @@ async fn complete_business_flow_and_security_boundaries() {
     .await
     .unwrap();
     database::migrate(&pool).await.unwrap();
-    let a = bootstrap::build_application(pool.clone());
+    let mut a = bootstrap::build_application(pool.clone());
+    a.integrations.corp = "corp-test".into();
     let return_path = format!("/wecom?school={}", Uuid::new_v4());
     let oauth_state = a
         .integrations
@@ -364,15 +365,36 @@ async fn complete_business_flow_and_security_boundaries() {
             .iter()
             .any(|r| r["id"] == resource["id"])
     );
-    let group = ok(
-        &app,
-        "POST",
-        &format!("{root}/groups"),
-        &admin_token,
-        &admin,
-        json!({"name":"Group","corp_id":"corp-test","chat_id":format!("chat-{suffix}")}),
-    )
-    .await;
+    // Wrong enterprise is rejected before any upstream request.
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &format!("{root}/groups"),
+            &admin_token,
+            &admin.csrf,
+            json!({"name":"Wrong","corp_id":"other-corp","chat_id":"chat","active":false})
+        )
+        .await
+        .0,
+        422
+    );
+    let inactive = ok(&app, "POST", &format!("{root}/groups"), &admin_token, &admin,
+        json!({"name":"Inactive","corp_id":"corp-test","chat_id":format!("inactive-{suffix}"),"active":false})).await;
+    assert_eq!(inactive["active"], false);
+    assert_eq!(call(&app, "POST", &format!("{root}/groups"), &admin_token, &admin.csrf,
+        json!({"id":inactive["id"],"revision":1,"name":"Changed","corp_id":"corp-test","chat_id":"changed","active":false})).await.0,409);
+    // Offline fixture only: active groups in production must pass upstream validation.
+    let group = a
+        .schools
+        .0
+        .group(
+            &admin,
+            s,
+            json!({"name":"Group","corp_id":"corp-test","chat_id":format!("chat-{suffix}")}),
+        )
+        .await
+        .unwrap();
     let template = ok(
         &app,
         "POST",
@@ -435,6 +457,32 @@ async fn complete_business_flow_and_security_boundaries() {
         .await
         .unwrap();
     let at = id(&attempt);
+    assert_eq!(
+        call(
+            &app,
+            "PUT",
+            &format!("{root}/delivery-attempts/{at}/client-result"),
+            &admin_token,
+            &admin.csrf,
+            json!({"state":"client_reported_success"})
+        )
+        .await
+        .0,
+        422
+    );
+    assert_eq!(
+        call(
+            &app,
+            "PUT",
+            &format!("{root}/delivery-attempts/{at}/client-result"),
+            &admin_token,
+            &admin.csrf,
+            json!({"state":"cancelled"})
+        )
+        .await
+        .0,
+        422
+    );
     a.distribution.0.claim(&admin, s, at).await.unwrap();
     assert!(
         a.distribution.0.claim(&admin, s, at).await.is_err(),
@@ -477,7 +525,7 @@ async fn complete_business_flow_and_security_boundaries() {
         .execute(&pool)
         .await
         .unwrap();
-    let history = a.distribution.0.attempts(s).await.unwrap();
+    let history = a.distribution.0.attempts(s, 100, 0).await.unwrap();
     assert_eq!(history[0]["state"], "unknown");
     assert!(
         a.distribution
@@ -530,6 +578,267 @@ async fn complete_business_flow_and_security_boundaries() {
         .await
         .unwrap();
     assert_ne!(again["id"], attempt["id"]);
+    let old_detail = ok(
+        &app,
+        "GET",
+        &format!("{root}/delivery-drafts/{d}"),
+        &admin_token,
+        &admin,
+        Value::Null,
+    )
+    .await;
+    assert_eq!(old_detail["id"], draft["id"]);
+    let related = ok(
+        &app,
+        "GET",
+        &format!("{root}/delivery-drafts/{}/history?page_size=1", id(&other)),
+        &admin_token,
+        &admin,
+        Value::Null,
+    )
+    .await;
+    assert_eq!(related["blocked"], true);
+    assert_eq!(related["latest_attempt_id"], again["id"]);
+    assert_eq!(related["items"].as_array().unwrap().len(), 1);
+    assert!(related["items"][0]["actor_name"].is_string());
+    assert_eq!(
+        call(
+            &app,
+            "GET",
+            &format!("{root}/delivery-drafts/{d}"),
+            &token,
+            &member.csrf,
+            Value::Null
+        )
+        .await
+        .0,
+        403
+    );
+    assert_eq!(
+        call(
+            &app,
+            "GET",
+            &format!("{root}/delivery-drafts/{d}/history"),
+            &token,
+            &member.csrf,
+            Value::Null
+        )
+        .await
+        .0,
+        403
+    );
+    let page1 = ok(
+        &app,
+        "GET",
+        &format!("{root}/delivery-drafts?page_size=1&page=1"),
+        &admin_token,
+        &admin,
+        Value::Null,
+    )
+    .await;
+    let page2 = ok(
+        &app,
+        "GET",
+        &format!("{root}/delivery-drafts?page_size=1&page=2"),
+        &admin_token,
+        &admin,
+        Value::Null,
+    )
+    .await;
+    assert_ne!(page1[0]["id"], page2[0]["id"]);
+    assert_eq!(
+        call(
+            &app,
+            "GET",
+            &format!("{root}/delivery-attempts?page=0"),
+            &admin_token,
+            &admin.csrf,
+            Value::Null
+        )
+        .await
+        .0,
+        422
+    );
+
+    // A's unresolved result must block A+B even when B has a newer completed attempt.
+    sqlx::query("UPDATE delivery_attempts SET state='unknown',created_at=now()-interval '4 minutes' WHERE id=$1").bind(id(&again)).execute(&pool).await.unwrap();
+    let p_b = Uuid::now_v7();
+    sqlx::query("INSERT INTO posts(id,school_id,author_id,title,content,audit_status,visibility) VALUES($1,$2,$3,'B','B','approved','visible')").bind(p_b).bind(s).bind(admin.id).execute(&pool).await.unwrap();
+    let draft_b = a
+        .distribution
+        .0
+        .draft(
+            &admin,
+            s,
+            id(&group),
+            id(&version),
+            vec![p_b],
+            "http://localhost:5173",
+        )
+        .await
+        .unwrap();
+    let attempt_b = a
+        .distribution
+        .0
+        .attempt(&admin, s, id(&draft_b), "B-only", chat, None, "")
+        .await
+        .unwrap();
+    a.distribution
+        .0
+        .claim(&admin, s, id(&attempt_b))
+        .await
+        .unwrap();
+    a.distribution
+        .0
+        .result(
+            &admin,
+            s,
+            id(&attempt_b),
+            json!({"state":"client_reported_success"}),
+        )
+        .await
+        .unwrap();
+    let merged = a
+        .distribution
+        .0
+        .draft(
+            &admin,
+            s,
+            id(&group),
+            id(&version),
+            vec![p, p_b],
+            "http://localhost:5173",
+        )
+        .await
+        .unwrap();
+    assert!(
+        a.distribution
+            .0
+            .attempt(
+                &admin,
+                s,
+                id(&merged),
+                "merged-blocked",
+                chat,
+                Some(id(&attempt_b)),
+                "again"
+            )
+            .await
+            .is_err()
+    );
+    let related = a
+        .distribution
+        .0
+        .related(s, id(&merged), 1, 0)
+        .await
+        .unwrap();
+    assert!(related.blocked);
+    assert_eq!(related.latest_attempt_id, Some(id(&attempt_b)));
+    a.distribution
+        .0
+        .reconcile(
+            &admin,
+            s,
+            id(&again),
+            json!({"decision":"operator_rejected","reason":"checked A"}),
+        )
+        .await
+        .unwrap();
+    assert!(
+        !a.distribution
+            .0
+            .related(s, id(&merged), 1, 0)
+            .await
+            .unwrap()
+            .blocked
+    );
+    a.distribution
+        .0
+        .attempt(
+            &admin,
+            s,
+            id(&merged),
+            "merged-allowed",
+            chat,
+            Some(id(&attempt_b)),
+            "checked all",
+        )
+        .await
+        .unwrap();
+
+    let p_c = Uuid::now_v7();
+    sqlx::query("INSERT INTO posts(id,school_id,author_id,title,content,audit_status,visibility) VALUES($1,$2,$3,'C','C','approved','visible')").bind(p_c).bind(s).bind(admin.id).execute(&pool).await.unwrap();
+    let c1 = a
+        .distribution
+        .0
+        .draft(
+            &admin,
+            s,
+            id(&group),
+            id(&version),
+            vec![p_c],
+            "http://localhost:5173",
+        )
+        .await
+        .unwrap();
+    let c2 = a
+        .distribution
+        .0
+        .draft(
+            &admin,
+            s,
+            id(&group),
+            id(&version),
+            vec![p_c],
+            "http://localhost:5173",
+        )
+        .await
+        .unwrap();
+    let (left, right) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        tokio::join!(
+            a.distribution
+                .0
+                .attempt(&admin, s, id(&c1), "concurrent-left", chat, None, ""),
+            a.distribution
+                .0
+                .attempt(&admin, s, id(&c2), "concurrent-right", chat, None, "")
+        )
+    })
+    .await
+    .expect("overlapping drafts must not deadlock");
+    assert_eq!(
+        usize::from(left.is_ok()) + usize::from(right.is_ok()),
+        1,
+        "only one overlapping draft may be prepared"
+    );
+    sqlx::query("INSERT INTO delivery_drafts(id,school_id,group_id,template_version_id,creator_id,content,content_hash,created_at) SELECT gen_random_uuid(),school_id,group_id,template_version_id,creator_id,content,content_hash,now()+interval '1 second' FROM delivery_drafts CROSS JOIN generate_series(1,101) WHERE id=$1").bind(d).execute(&pool).await.unwrap();
+    let first = a.distribution.0.drafts(s, 100, 0).await.unwrap();
+    assert!(!first.iter().any(|r| r["id"] == draft["id"]));
+    assert_eq!(
+        ok(
+            &app,
+            "GET",
+            &format!("{root}/delivery-drafts/{d}"),
+            &admin_token,
+            &admin,
+            Value::Null
+        )
+        .await["id"],
+        draft["id"]
+    );
+    assert_eq!(
+        call(
+            &app,
+            "GET",
+            &format!("/api/v1/schools/{b}/delivery-drafts/{d}"),
+            &admin_token,
+            &admin.csrf,
+            Value::Null
+        )
+        .await
+        .0,
+        404
+    );
     ok(
         &app,
         "PUT",
