@@ -87,31 +87,38 @@ impl Repository {
                 .await?
                 .ok_or(Error::NotFound)?;
         }
-        let name: String = sqlx::query_scalar("SELECT name FROM schools WHERE id=$1")
-            .bind(s)
-            .fetch_one(&mut *tx)
-            .await?;
-        let body: String = sqlx::query_scalar("SELECT body FROM template_versions WHERE school_id=$1 AND id=$2 AND published FOR SHARE").bind(s).bind(input.template_version_id).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
-        let mut snippets = Vec::new();
         let mut revisions = Vec::new();
-        for post in &input.post_ids {
-            let p = sqlx::query("SELECT title,content,revision FROM posts WHERE school_id=$1 AND id=$2 AND audit_status='approved' AND visibility='visible' FOR SHARE").bind(s).bind(post).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
-            let content: String = p.get("content");
-            snippets.push(crate::distribution::domain::render(
-                &body,
-                &std::collections::BTreeMap::from([
-                    ("school.name", name.clone()),
-                    ("post.title", p.get("title")),
-                    ("post.summary", content.chars().take(200).collect()),
-                    (
-                        "post.detail_url",
-                        format!("{origin}/community/{s}/posts/{post}"),
-                    ),
-                ]),
-            )?);
-            revisions.push(p.get::<i64, _>("revision"));
-        }
-        let content = snippets.join("\n\n");
+        let content = match input.content_source {
+            ContentSource::Text => {
+                normalize_text(input.text_content.as_deref().unwrap_or_default())?
+            }
+            ContentSource::Posts => {
+                let name: String = sqlx::query_scalar("SELECT name FROM schools WHERE id=$1")
+                    .bind(s)
+                    .fetch_one(&mut *tx)
+                    .await?;
+                let body: String = sqlx::query_scalar("SELECT body FROM template_versions WHERE school_id=$1 AND id=$2 AND published FOR SHARE").bind(s).bind(input.template_version_id).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
+                let mut snippets = Vec::new();
+                for post in &input.post_ids {
+                    let p = sqlx::query("SELECT title,content,revision FROM posts WHERE school_id=$1 AND id=$2 AND audit_status='approved' AND visibility='visible' FOR SHARE").bind(s).bind(post).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
+                    let content: String = p.get("content");
+                    snippets.push(crate::distribution::domain::render(
+                        &body,
+                        &std::collections::BTreeMap::from([
+                            ("school.name", name.clone()),
+                            ("post.title", p.get("title")),
+                            ("post.summary", content.chars().take(200).collect()),
+                            (
+                                "post.detail_url",
+                                format!("{origin}/community/{s}/posts/{post}"),
+                            ),
+                        ]),
+                    )?);
+                    revisions.push(p.get::<i64, _>("revision"));
+                }
+                snippets.join("\n\n")
+            }
+        };
         validate_content(&content)?;
         let mut groups = Vec::new();
         let mut sorted = input.group_ids.clone();
@@ -134,9 +141,9 @@ impl Repository {
                 .bind(task)
                 .execute(&mut *tx)
                 .await?;
-            sqlx::query("UPDATE broadcast_tasks SET revision=revision+1,template_version_id=$2,content=$3,content_hash=$4,corp_id=$5,generation=$6,source_task_id=$7,source_draft_id=$8,resend_reason=$9 WHERE id=$1").bind(task).bind(input.template_version_id).bind(&content).bind(hash(&content)).bind(&corp).bind(generation).bind(input.source_task_id).bind(input.source_draft_id).bind(&input.reason).execute(&mut *tx).await?;
+            sqlx::query("UPDATE broadcast_tasks SET revision=revision+1,template_version_id=$2,content=$3,content_hash=$4,corp_id=$5,generation=$6,source_task_id=$7,source_draft_id=$8,resend_reason=$9,content_source=$10 WHERE id=$1").bind(task).bind(input.template_version_id).bind(&content).bind(hash(&content)).bind(&corp).bind(generation).bind(input.source_task_id).bind(input.source_draft_id).bind(&input.reason).bind(input.content_source.as_str()).execute(&mut *tx).await?;
         } else {
-            sqlx::query("INSERT INTO broadcast_tasks(id,school_id,creator_id,template_version_id,content,content_hash,corp_id,generation,source_task_id,source_draft_id,resend_reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)").bind(task).bind(s).bind(a.id).bind(input.template_version_id).bind(&content).bind(hash(&content)).bind(&corp).bind(generation).bind(input.source_task_id).bind(input.source_draft_id).bind(&input.reason).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO broadcast_tasks(id,school_id,creator_id,template_version_id,content,content_hash,corp_id,generation,source_task_id,source_draft_id,resend_reason,content_source) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)").bind(task).bind(s).bind(a.id).bind(input.template_version_id).bind(&content).bind(hash(&content)).bind(&corp).bind(generation).bind(input.source_task_id).bind(input.source_draft_id).bind(&input.reason).bind(input.content_source.as_str()).execute(&mut *tx).await?;
         }
         for (position, (post, revision)) in input.post_ids.iter().zip(revisions).enumerate() {
             sqlx::query("INSERT INTO broadcast_task_posts VALUES($1,$2,$3,$4,$5)")
@@ -169,7 +176,14 @@ impl Repository {
         let actor: Uuid = t
             .get::<Option<Uuid>, _>("confirmed_by")
             .unwrap_or(t.get("creator_id"));
-        auth(tx, actor, s, false).await?;
+        auth(
+            tx,
+            actor,
+            s,
+            t.get::<String, _>("content_source") == "text"
+                && t.get::<Option<Uuid>, _>("confirmed_by").is_some(),
+        )
+        .await?;
         sqlx::query("SELECT singleton FROM wecom_directory_state WHERE corp_id=$1 AND credential_generation=$2 FOR SHARE").bind(t.get::<String,_>("corp_id")).bind(t.get::<i64,_>("generation")).fetch_optional(&mut **tx).await?.ok_or(Error::Conflict)?;
         let posts=sqlx::query("SELECT p.id FROM posts p JOIN broadcast_task_posts x ON x.post_id=p.id WHERE x.task_id=$1 AND p.school_id=x.school_id AND p.revision=x.post_revision AND p.audit_status='approved' AND p.visibility='visible' FOR SHARE OF p").bind(task).fetch_all(&mut **tx).await?;
         let count: i64 =
@@ -178,7 +192,16 @@ impl Repository {
                 .fetch_one(&mut **tx)
                 .await?;
         require(
-            count > 0 && posts.len() as i64 == count,
+            match t.get::<String, _>("content_source").as_str() {
+                "text" => {
+                    count == 0
+                        && t.get::<Option<Uuid>, _>("template_version_id").is_none()
+                        && normalize_text(&t.get::<String, _>("content"))
+                            .is_ok_and(|body| body == t.get::<String, _>("content"))
+                }
+                "posts" => count > 0 && posts.len() as i64 == count,
+                _ => false,
+            },
             "内容已变化，请重新预览",
         )?;
         let groups=sqlx::query("SELECT g.id FROM broadcast_targets x JOIN broadcast_batches b ON b.id=x.batch_id JOIN wecom_groups g ON g.id=x.group_id JOIN wecom_asset_objects o ON o.id=g.directory_group_id JOIN accounts a ON a.id=b.sender_account JOIN wecom_members m ON m.id=a.wecom_member_id JOIN school_memberships sm ON sm.account_id=a.id AND sm.school_id=x.school_id WHERE x.task_id=$1 AND g.school_id=x.school_id AND g.active AND g.revision=x.group_revision AND g.chat_id=x.chat_id AND g.corp_id=b.corp_id AND o.credential_generation=$2 AND o.verification='verified' AND o.visibility='visible' AND o.checked_at>now()-interval '24 hours' AND lower(o.data->>'owner' COLLATE \"C\")=m.userid_key AND lower(b.sender COLLATE \"C\")=m.userid_key AND a.active AND a.wecom_binding_revision=b.binding_revision AND m.verification='verified' AND m.status=1 AND sm.role IN ('operator','admin') ORDER BY g.id FOR UPDATE OF g FOR SHARE OF a,m,sm,o")
@@ -270,6 +293,9 @@ impl Repository {
                 .fetch_optional(&mut *tx)
                 .await?
                 .ok_or(Error::NotFound)?;
+        if operation == "confirm" && t.get::<String, _>("content_source") == "text" {
+            auth(&mut tx, a.id, s, true).await?;
+        }
         let request_hash = hash(&json!({"task":id,"input":input}).to_string());
         // Also serialize keys used on different tasks, not just double clicks on one task.
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")

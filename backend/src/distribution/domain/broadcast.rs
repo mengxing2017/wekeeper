@@ -4,10 +4,30 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContentSource {
+    #[default]
+    Posts,
+    Text,
+}
+impl ContentSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Posts => "posts",
+            Self::Text => "text",
+        }
+    }
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DraftInput {
-    pub template_version_id: Uuid,
+    pub text_content: Option<String>,
+    pub template_version_id: Option<Uuid>,
+    #[serde(default)]
+    pub content_source: ContentSource,
+    #[serde(default)]
     pub post_ids: Vec<Uuid>,
     pub group_ids: Vec<Uuid>,
     pub revision: Option<i64>,
@@ -18,10 +38,29 @@ pub struct DraftInput {
 }
 impl DraftInput {
     pub fn validate(&self) -> Result<()> {
-        require(
-            (1..=20).contains(&self.post_ids.len()),
-            "请选择 1–20 条内容",
-        )?;
+        match self.content_source {
+            ContentSource::Posts => {
+                require(
+                    self.template_version_id.is_some() && (1..=20).contains(&self.post_ids.len()),
+                    "请选择已发布模板及 1–20 条内容",
+                )?;
+                require(
+                    self.text_content.as_deref().is_none_or(str::is_empty),
+                    "社区内容模式不能填写直接文本",
+                )?;
+            }
+            ContentSource::Text => {
+                require(
+                    self.template_version_id.is_none() && self.post_ids.is_empty(),
+                    "直接文本不能关联帖子或模板",
+                )?;
+                normalize_text(self.text_content.as_deref().unwrap_or_default())?;
+                require(
+                    self.source_draft_id.is_none(),
+                    "历史分享草稿须按社区内容迁移",
+                )?;
+            }
+        }
         require(
             (1..=10000).contains(&self.group_ids.len()),
             "请选择 1–10000 个客户群",
@@ -54,7 +93,9 @@ pub struct Task {
     pub id: Uuid,
     pub school_id: Uuid,
     pub creator_id: Uuid,
-    pub template_version_id: Uuid,
+    pub template_version_id: Option<Uuid>,
+    #[serde(default)]
+    pub content_source: ContentSource,
     pub content: String,
     pub revision: i64,
     pub state: String,
@@ -126,6 +167,18 @@ pub struct Results {
     pub groups: Vec<Observation>,
 }
 
+pub fn normalize_text(content: &str) -> Result<String> {
+    let content = content.replace("\r\n", "\n").replace('\r', "\n");
+    validate_content(&content)?;
+    require(
+        !content
+            .chars()
+            .any(|c| c.is_control() && c != '\n' && c != '\t'),
+        "正文包含不支持的控制字符",
+    )?;
+    Ok(content)
+}
+
 pub fn validate_content(content: &str) -> Result<()> {
     require(
         !content.trim().is_empty() && content.len() <= 4000,
@@ -180,6 +233,36 @@ pub fn created_response(v: Value, chats: &[String]) -> Outcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn direct_text_validation_and_legacy_input() {
+        assert_eq!(
+            normalize_text("通知\r\n第二行\r第三行\t链接").unwrap(),
+            "通知\n第二行\n第三行\t链接"
+        );
+        assert!(normalize_text(&"😀".repeat(1000)).is_ok());
+        assert!(normalize_text(&format!("{}a", "😀".repeat(1000))).is_err());
+        for bad in [" \t\n", "hello\0", "hello\u{85}"] {
+            assert!(normalize_text(bad).is_err());
+        }
+        let id = Uuid::new_v4();
+        let legacy = serde_json::json!({"template_version_id":id,"post_ids":[id],"group_ids":[id]});
+        let input: DraftInput = serde_json::from_value(legacy).unwrap();
+        assert_eq!(input.content_source, ContentSource::Posts);
+        assert!(input.validate().is_ok());
+        let direct =
+            serde_json::json!({"content_source":"text","text_content":"notice","group_ids":[id]});
+        let mut input: DraftInput = serde_json::from_value(direct.clone()).unwrap();
+        assert!(input.validate().is_ok());
+        input.template_version_id = Some(id);
+        assert!(input.validate().is_err());
+        input.template_version_id = None;
+        input.post_ids = vec![id];
+        assert!(input.validate().is_err());
+        let mut unknown = direct;
+        unknown["content_source"] = serde_json::json!("other");
+        assert!(serde_json::from_value::<DraftInput>(unknown).is_err());
+    }
+
     #[test]
     fn byte_limit_and_owner_partition() {
         assert!(validate_content(&"中".repeat(1333)).is_ok());
