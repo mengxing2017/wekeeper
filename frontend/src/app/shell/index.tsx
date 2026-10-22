@@ -10,8 +10,7 @@ export const navigation: NavigationItem[] = [
   { key: 'resources', label: '展示与屏蔽词', description: '管理校园展示资源、服务入口与内容规则。', group: '内容运营' },
   { key: 'groups', label: '客户群', description: '维护学校对应的企业微信客户群。', group: '企业微信' },
   { key: 'templates', label: '消息模板', description: '管理模板正文、版本与发布状态。', group: '企业微信' },
-  { key: 'delivery-drafts', label: '分享草稿', description: '组合已审核内容，预览待分享正文。', group: '企业微信' },
-  { key: 'delivery-attempts', label: '分享记录', description: '查看客户端结果，人工核对不确定的分享。', group: '企业微信' },
+  { key: 'broadcast-tasks', label: '群发任务', description: '统一创建客户群任务，查看成员执行和各群结果。', group: '企业微信' },
   { key: 'members', label: '学校成员', description: '查看本校成员及角色，学校授权由平台管理员维护。', group: '系统管理' },
   { key: 'audit', label: '操作审计', description: '追踪学校内的关键操作与变更记录。', group: '系统管理' },
   { key: 'settings', label: '学校设置', description: '设置学校信息、审核方式与主题颜色。', group: '系统管理' },
@@ -60,7 +59,7 @@ export function AppShell({ children, active, onNavigate, username, platformAdmin
       <div className="account-menu">
         <Dropdown trigger={['click']} placement="topLeft" menu={{ items: [
           { key: 'community', label: <Link to="/community">校园社区 ↗</Link> },
-          { key: 'share', label: <Link to="/wecom">人工分享 ↗</Link> },
+
           { type: 'divider' },
           { key: 'logout', label: signingOut ? '退出中' : '退出登录', danger: true, disabled: signingOut },
         ], onClick: async ({ key }) => {
@@ -75,6 +74,6 @@ export function AppShell({ children, active, onNavigate, username, platformAdmin
         </Dropdown>
       </div>
     </aside>
-    <div className="workspace-content"><Breadcrumb className="breadcrumb" items={[{ title: '运营工作台' }, { title: current.group }, { title: current.label }]} /><main id="workspace-main" className="page-content"><header className="page-heading"><div><h1>{current.label}</h1><p>{current.description}</p></div><Tag color="cyan" className="workspace-badge">{current.group === '平台管理' ? '全平台管理' : '学校工作空间'}</Tag></header>{children}</main><footer className="workspace-footer">WeKeeper · 校园社区与人工分享</footer></div>
+    <div className="workspace-content"><Breadcrumb className="breadcrumb" items={[{ title: '运营工作台' }, { title: current.group }, { title: current.label }]} /><main id="workspace-main" className="page-content"><header className="page-heading"><div><h1>{current.label}</h1><p>{current.description}</p></div><Tag color="cyan" className="workspace-badge">{current.group === '平台管理' ? '全平台管理' : '学校工作空间'}</Tag></header>{children}</main><footer className="workspace-footer">WeKeeper · 校园社区与企业群发</footer></div>
   </div>
 }

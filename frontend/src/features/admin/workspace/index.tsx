@@ -7,7 +7,8 @@ import { useSearchParams } from 'react-router-dom';
 import { AppShell, navigation, schoolRoleLabel } from '../../../app/shell';
 import { useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Button, Card, Checkbox, Form, Input, Select, Space, Tag , Empty } from 'antd';
+import { Alert, Button, Card, Form, Input, Select, Space, Tag , Empty } from 'antd';
+import BroadcastTasks from '../../operations/broadcast-tasks'
 import { Directory } from './directory';
 import { Assets, GroupPicker } from './assets';
 import { Members } from './members';
@@ -45,7 +46,7 @@ export function SessionGate({ children, wecom = false, showSessionBar = true }: 
     }
     if (q.isPending) return <div className="loading" role="status">正在确认登录状态…</div>;
     if (!q.data) return <div className="auth-page"><section className="auth-panel">
-        <div className="auth-brand"><span className="brand-mark">W</span> WeKeeper</div><div><h1>登录工作空间</h1><p>校园社区 · 内容运营 · 人工分享</p></div>
+        <div className="auth-brand"><span className="brand-mark">W</span> WeKeeper</div><div><h1>登录工作空间</h1><p>校园社区 · 内容运营 · 企业群发</p></div>
         {error && <Alert type="error" title={error} showIcon/>}<Form layout="vertical" onFinish={login} disabled={busy} className="business-form"><Field name="username" required label={<>账号</>}><Input name="username" placeholder="请输入账号" autoComplete="username" maxLength={100}/></Field><Field name="password" required label={<>密码</>}><Input.Password name="password" placeholder="请输入密码" autoComplete="current-password" maxLength={128}/></Field><Button type="primary" htmlType="submit" block loading={busy} disabled={busy}>{busy ? '正在登录…' : '登录'}</Button></Form>{wecom && <a href="/api/v1/wecom/oauth/start">使用企业微信身份登录</a>}
         <p className="auth-caption">使用管理员分配的账号进入工作空间</p>
     </section></div>;
@@ -62,7 +63,8 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
     const school = visibleSchools?.find(s => s.id === (selected || visibleSchools[0]?.id));
     const role = school?.active ? user.grants.find(g => g.school_id === school.id)?.role : undefined;
     const allowedKeys = navigation.filter(n => user.platform_admin || (n.group !== '平台管理' && (['members', 'settings'].includes(n.key) ? role === 'admin' : role === 'admin' || role === 'operator'))).map(n => n.key);
-    const requestedTab = params.get('view') ?? 'posts';
+    const oldTab = params.get('view') ?? 'posts';
+    const requestedTab = ['delivery-drafts','delivery-attempts'].includes(oldTab) ? 'broadcast-tasks' : oldTab;
     const tab = allowedKeys.includes(requestedTab) ? requestedTab : allowedKeys[0] ?? '';
     const navigate = (key: string) => setParams(previous => { const next = new URLSearchParams(previous); next.set('view', key); return next; });
     const enterSchool = (id: string, view: string) => setParams({ school: id, view });
@@ -78,7 +80,7 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
         : q.isPending ? <Empty className="empty-state" description={<>正在加载学校…</>} />
         : !school ? <Empty className="empty-state" description={<><h2>尚未选择学校</h2><p>{user.platform_admin ? '请在「学校管理」中创建学校，或选择已有学校。' : '请联系管理员为账号分配学校权限。'}</p>{user.platform_admin && <Button type="primary" onClick={() => navigate('schools')}>创建学校</Button>}</>} />
         : !tab ? <Alert type="info" title="当前账号没有该学校的后台管理权限，请联系平台管理员。"/>
-        : <div className="business-panel">{tab === 'members' ? <Members key={school.id} school={school} platformAdmin={user.platform_admin} refresh={refresh}/> : tab === 'settings' ? <Card title={`${school.name} · 学校设置`}><Settings key={school.id} school={school} refresh={refresh}/></Card> : <Panel platformAdmin={user.platform_admin} key={`${school.id}:${tab}`} schoolAdmin={user.platform_admin || role === 'admin'} school={school} resource={tab as Resource} refresh={refresh}/>}</div>}
+        : <div className="business-panel">{tab === 'broadcast-tasks' ? <BroadcastTasks key={school.id} school={school.id} admin={role === 'admin'} platformAdmin={user.platform_admin}/> : tab === 'members' ? <Members key={school.id} school={school} platformAdmin={user.platform_admin} refresh={refresh}/> : tab === 'settings' ? <Card title={`${school.name} · 学校设置`}><Settings key={school.id} school={school} refresh={refresh}/></Card> : <Panel platformAdmin={user.platform_admin} key={`${school.id}:${tab}`} schoolAdmin={user.platform_admin || role === 'admin'} school={school} resource={tab as Resource} refresh={refresh}/>}</div>}
     </AppShell>;
 }
 function Settings({ school, refresh }: {
@@ -114,7 +116,6 @@ function Panel({ school, resource, refresh, schoolAdmin, platformAdmin }: {
  {resource === 'groups' && schoolAdmin && !editing && <GroupPicker key={school.id} school={school.id} onSaved={refresh}/>}
  {resource === 'groups' && schoolAdmin && (editing || platformAdmin) && <Disclosure title={<>{editing ? '编辑学校群' : '平台例外：手填已知群标识'}</>} open={!!editing}><Editor key={editing?.id ?? 'new'} fields={[{ name: 'name', title: '群名称', value: label(editing?.name) }, { name: 'corp_id', title: '企业 ID（与应用配置一致）', readOnly: !!editing, value: label(editing?.corp_id) }, { name: 'chat_id', title: '客户群 ID（保存后不可更换）', readOnly: !!editing, value: label(editing?.chat_id) }, { name: 'active', title: '启用状态', value: editing ? String(editing.active) : 'true', options: [{ value: 'true', label: '启用' }, { value: 'false', label: '撤销' }] }]} onSave={v => mutation('groups', { ...v, id: editing?.id, revision: editing?.revision ?? 0, active: v.active === 'true' })}/></Disclosure>}
  {resource === 'templates' && <Editor fields={[{ name: 'name', title: '模板名称' }]} onSave={v => mutation('templates', v)}/>}
- {resource === 'delivery-drafts' && <DraftEditor school={s} save={v => mutation('delivery-drafts', v)}/>}
  {q.isPending && <Alert type="info" role="status"  title={<>正在加载…</>} />}{q.data?.items.length === 0 && <Empty className="empty-state" description={<><h3>暂无记录</h3><p>当前学校下没有符合条件的记录。</p></>} />}
  <div className="record-list">{q.data?.items.map(r => <Card key={r.id} size="small" title={label(r.title ?? r.name ?? r.group_name ?? r.display_name ?? r.action) || r.id} extra={<Tag>{stateLabel(r.audit_status ?? r.state ?? r.role ?? r.kind)}</Tag>}>
  {resource === 'members' && <p>{school.name} · {label(r.username)} · {schoolRoleLabel(label(r.role))}</p>}
@@ -134,16 +135,4 @@ function ResourceEditor({ item, save }: {
     item?: Row;
     save: (v: unknown) => Promise<unknown>;
 }) { return <Editor fields={[{ name: 'kind', title: '类型', value: label(item?.kind), options: [['banner', '轮播'], ['qrcode', '二维码'], ['service', '客服'], ['legal', '法律文本'], ['tag', '标签'], ['blocked_word', '屏蔽词']].map(([value, label]) => ({ value, label })) }, { name: 'title', title: '标题或屏蔽词', value: label(item?.title) }, { name: 'content', title: '正文 / 说明', type: 'textarea', optional: true, value: label(item?.content) }, { name: 'url', title: '图片或跳转链接', optional: true, value: label(item?.url) }, { name: 'sort_order', title: '排序', type: 'number', value: label(item?.sort_order) || 0 }, { name: 'starts_at', title: '生效时间', type: 'datetime', optional: true, value: label(item?.starts_at) }, { name: 'ends_at', title: '失效时间', type: 'datetime', optional: true, value: label(item?.ends_at) }, { name: 'active', title: '状态', value: item ? String(item.active) : 'true', options: [{ value: 'true', label: '启用' }, { value: 'false', label: '停用' }] }]} onSave={v => save({ ...v, id: item?.id, revision: item?.revision ?? 0, active: v.active === 'true', sort_order: Number(v.sort_order), starts_at: v.starts_at || null, ends_at: v.ends_at || null })}/>; }
-function DraftEditor({ school, save }: {
-    school: string;
-    save: (v: unknown) => Promise<unknown>;
-}) {
-    const groups = useQuery({ queryKey: ['business', school, 'groups'], queryFn: () => workspace.list(school, 'groups') });
-    const templates = useQuery({ queryKey: ['business', school, 'templates'], queryFn: () => workspace.list(school, 'templates') });
-    const [page, setPage] = useState(1), [search, setSearch] = useState('');
-    const posts = useQuery({ queryKey: ['business', school, 'approved-posts', page, search], queryFn: () => workspace.list(school, 'posts', `?status=approved&page[size]=30&page[number]=${page}&search=${encodeURIComponent(search)}`) });
-    const [chosen, setChosen] = useState<string[]>([]);
-    const versions = templates.data?.items.flatMap(t => Array.isArray(t.versions) ? t.versions.filter(v => (v as Row).published).map(v => ({ value: (v as Row).id, label: `${label(t.name)} · ${(v as Row).id}` })) : []) ?? [];
-    return <Disclosure title={<>生成分享草稿</>} open><p>选择仍在展示的已审核内容，生成后正文固定。正文上限为 2000 UTF-8 字节。</p><Field label={<>搜索已审核内容</>}><Input value={search} onChange={e => { setSearch(e.target.value); setPage(1); }}/></Field>{[groups, templates, posts].map((q, i) => q.error ? <Alert type="error" showIcon key={i}  title={<>{['客户群', '模板', '内容'][i]}加载失败：{q.error.message}<Button onClick={() => void q.refetch()}>重新加载</Button></>} /> : q.isPending ? <Alert type="info" role="status" key={i} title={<>正在加载{['客户群', '模板', '内容'][i]}…</>} /> : null)}<p>已选 {chosen.length} 条内容<Button onClick={() => setChosen([])}>清空选择</Button></p>{posts.data?.items.filter(p => p.visibility === 'visible').map(p => <Checkbox className="check-row" key={p.id} checked={chosen.includes(p.id)} onChange={e => setChosen(e.target.checked ? [...chosen, p.id] : chosen.filter(id => id !== p.id))}>{label(p.title)}</Checkbox>)}<PaginationControls page={page} more={posts.data?.page?.has_more} busy={posts.isFetching} change={setPage} subject="内容" /><Editor fields={[{ name: 'group_id', title: '目标客户群', options: groups.data?.items.filter(g => g.active).map(g => ({ value: g.id, label: label(g.name) })) ?? [] }, { name: 'template_version_id', title: '已发布模板版本', options: versions }]} onSave={v => save({ ...v, post_ids: chosen })} submit="生成并预览草稿"/></Disclosure>;
-}
 function GlobalResources() { const q = useQuery({ queryKey: ['global-resources'], queryFn: workspace.globalResources }); const [item, setItem] = useState<Row>(); return <section><h3>平台默认展示配置</h3><p>学校有同类启用配置时优先使用学校配置；全局屏蔽词始终生效。</p><ResourceEditor key={item?.id ?? 'global'} item={item} save={async (v) => { await workspace.globalResource(v); await q.refetch(); }}/>{q.data?.map(r => <p key={r.id}>{label(r.title)} <Button onClick={() => setItem(r)}>编辑</Button></p>)}{q.error && <Alert type="error" showIcon   title={<>{q.error.message}</>} />}</section>; }
