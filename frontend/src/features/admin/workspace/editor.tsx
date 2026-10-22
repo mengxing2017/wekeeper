@@ -1,33 +1,51 @@
-import { useState, type FormEvent } from 'react';
-import { Alert } from 'antd';
+import { useId, useState } from 'react'
+import { Alert, Button, ColorPicker, Form, Input, InputNumber, Select } from 'antd'
 
 interface Field {
-    name: string;
-    title: string;
-    type?: string;
-    options?: {
-        value: string;
-        label: string;
-    }[];
-    optional?: boolean;
-    readOnly?: boolean;
-    value?: string | number;
+  name: string
+  title: string
+  type?: string
+  options?: { value: string; label: string }[]
+  optional?: boolean
+  readOnly?: boolean
+  value?: string | number
 }
+
 export function Editor({ fields, onSave, submit = '保存' }: {
-    fields: Field[];
-    onSave: (v: Record<string, string>) => Promise<unknown>;
-    submit?: string;
+  fields: Field[]
+  onSave: (v: Record<string, string>) => Promise<unknown>
+  submit?: string
 }) {
-    const [busy, setBusy] = useState(false), [error, setError] = useState(''), [done, setDone] = useState(false);
-    async function save(e: FormEvent<HTMLFormElement>) { e.preventDefault(); const form = e.currentTarget; const v = Object.fromEntries(new FormData(form).entries()) as Record<string, string>; setBusy(true); setError(''); setDone(false); try {
-        await onSave(v);
-        setDone(true);
+  const formName = useId()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [done, setDone] = useState(false)
+  async function save(values: Record<string, string>) {
+    setBusy(true); setError(''); setDone(false)
+    try {
+      await onSave(Object.fromEntries(fields.map(field => [field.name, String(values[field.name] ?? '')])))
+      setDone(true)
+    } catch (error) {
+      setError((error as Error).message)
+    } finally {
+      setBusy(false)
     }
-    catch (e) {
-        setError((e as Error).message);
-    }
-    finally {
-        setBusy(false);
-    } }
-    return <form onSubmit={save} className="business-form">{fields.map(f => <label key={f.name}>{f.title}{f.type === 'textarea' ? <textarea name={f.name} required={!f.optional} defaultValue={f.value} rows={4}/> : f.options ? <select name={f.name} required={!f.optional} defaultValue={f.value}><option value="">请选择</option>{f.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select> : <input readOnly={f.readOnly} name={f.name} type={f.type ?? 'text'} required={!f.optional} defaultValue={f.value}/>}</label>)}{error && <Alert type="error" title={error}/>}{done && <p role="status">已保存</p>}<button disabled={busy}>{busy ? '正在保存…' : submit}</button></form>;
+  }
+  return <Form name={formName} layout="vertical" onFinish={save} className="business-form" disabled={busy}
+    initialValues={Object.fromEntries(fields.map(field => [field.name, field.value]))}>
+    {fields.map(field => <Form.Item key={field.name} name={field.name} label={field.title}
+      getValueFromEvent={field.type === 'color' ? color => color.toHexString() : undefined}
+      className={field.type === 'textarea' ? 'form-wide' : undefined}
+      rules={[{ required: !field.optional, message: `请填写${field.title}` }]}>
+      {field.options ? <Select placeholder="请选择" options={field.options} aria-label={field.title} />
+        : field.type === 'color' ? <ColorPicker showText disabledAlpha />
+        : field.type === 'number' ? <InputNumber className="full-width" />
+        : field.type === 'textarea' ? <Input.TextArea readOnly={field.readOnly} rows={4} />
+        : field.type === 'password' ? <Input.Password readOnly={field.readOnly} />
+        : <Input readOnly={field.readOnly} type={field.type ?? 'text'} />}
+    </Form.Item>)}
+    <Button type="primary" htmlType="submit" loading={busy}>{busy ? '正在保存…' : submit}</Button>
+    {error && <Alert type="error" title={error} showIcon />}
+    {done && <Alert type="success" role="status" title="已保存" showIcon />}
+  </Form>
 }
