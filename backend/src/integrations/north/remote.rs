@@ -1,7 +1,7 @@
 use crate::{
     bootstrap::Application,
     business::{Actor, Error, Result, require, text},
-    http::jsonapi::{ApiResponse, Input, singleton},
+    http::jsonapi::{Input, singleton},
     identity::north::remote::{check_origin, cookie},
 };
 use axum::{
@@ -116,45 +116,13 @@ async fn callback_inner(
     )
         .into_response())
 }
-#[derive(Deserialize)]
-struct Sign {
-    url: String,
-    #[serde(default)]
-    agent: bool,
-}
-async fn sign(
-    State(a): State<Application>,
-    actor: Actor,
-    Query(v): Query<Sign>,
-) -> Result<Response> {
-    require_share(&a, &actor)?;
-    Ok((
-        [(header::CACHE_CONTROL, "no-store")],
-        singleton(
-            "wecom-signatures",
-            "current",
-            a.integrations
-                .signature(&actor, &v.url, &a.options.public_origin, v.agent)
-                .await?,
-        ),
-    )
-        .into_response())
+async fn retired_share(_actor: Actor) -> Result<Response> {
+    Err(Error::Invalid("逐群分享已停用，请创建企业群发任务".into()))
 }
 fn oauth_available(a: &Application) -> bool {
     a.integrations
         .capabilities(&a.options.public_origin, a.options.insecure_local_auth)
         .oauth_available
-}
-pub(crate) fn require_share(a: &Application, actor: &Actor) -> Result<()> {
-    if !actor.wecom_authenticated {
-        return Err(Error::Forbidden);
-    }
-    require(
-        a.integrations
-            .capabilities(&a.options.public_origin, a.options.insecure_local_auth)
-            .share_available,
-        "当前客户端分享不可用：请检查应用 AgentID、服务端凭据与 HTTPS 部署配置",
-    )
 }
 async fn status(State(a): State<Application>) -> Response {
     (
@@ -167,14 +135,6 @@ async fn status(State(a): State<Application>) -> Response {
         ),
     )
         .into_response()
-}
-async fn info(State(a): State<Application>, actor: Actor) -> Result<ApiResponse> {
-    require_share(&a, &actor)?;
-    Ok(singleton(
-        "wecom-config",
-        "current",
-        json!({"corpId":a.integrations.corp,"agentId":a.integrations.agent}),
-    ))
 }
 async fn mini(
     State(a): State<Application>,
@@ -199,8 +159,8 @@ pub fn router() -> Router<Application> {
         .route("/api/v1/wecom/status", get(status))
         .route("/api/v1/wecom/oauth/start", get(start))
         .route("/api/v1/wecom/oauth/callback", get(callback))
-        .route("/api/v1/wecom/js-sdk-config", get(sign))
-        .route("/api/v1/wecom/config", get(info))
+        .route("/api/v1/wecom/js-sdk-config", get(retired_share))
+        .route("/api/v1/wecom/config", get(retired_share))
         .route("/api/v1/auth/miniapp", post(mini))
 }
 

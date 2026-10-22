@@ -1,6 +1,6 @@
 use super::super::south::adapter::postgres::Repository;
-use crate::business::{Actor, Error, Result, require, secret};
-use crate::integrations::domain::{group_contains_member, sdk_signature};
+use crate::business::{Actor, Error, Result, require};
+use crate::integrations::domain::group_contains_member;
 use serde_json::{Value, json};
 #[derive(Clone)]
 pub struct Service {
@@ -48,7 +48,7 @@ impl Service {
             server_configured: self.server_configured(),
             client_configured: self.client_configured(),
             oauth_available: self.server_configured() && deployment,
-            share_available: self.client_configured() && deployment,
+            share_available: false,
         }
     }
     pub(crate) fn credential_scope(&self) -> String {
@@ -195,57 +195,6 @@ impl Service {
             group_contains_member(g, chat, &userid),
             "当前成员不在目标群内",
         )
-    }
-
-    async fn ticket(&self, agent: bool) -> Result<String> {
-        let key = self.cache_key(if agent {
-            "ticket:application"
-        } else {
-            "ticket:enterprise"
-        });
-        let token = self.token().await?;
-        self.repository
-            .cached_or_fetch(&key, || async {
-                let path = if agent {
-                    "ticket/get"
-                } else {
-                    "get_jsapi_ticket"
-                };
-                let mut req = self
-                    .client
-                    .get(self.endpoint(path))
-                    .query(&[("access_token", token.as_str())]);
-                if agent {
-                    req = req.query(&[("type", "agent_config")]);
-                }
-                let v = self.json(req).await?;
-                Ok((
-                    v["ticket"].as_str().ok_or(Error::Unavailable)?.to_owned(),
-                    v["expires_in"].as_i64().unwrap_or(7200) - 300,
-                ))
-            })
-            .await
-    }
-    pub async fn signature(
-        &self,
-        a: &Actor,
-        url: &str,
-        origin: &str,
-        agent: bool,
-    ) -> Result<Value> {
-        require(a.wecom_authenticated, "请在企业微信登录")?;
-        let parsed = reqwest::Url::parse(url).map_err(|_| Error::Invalid("签名地址无效".into()))?;
-        require(
-            parsed.origin().ascii_serialization() == origin
-                && parsed.path() == "/wecom"
-                && parsed.fragment().is_none(),
-            "签名地址不受信任",
-        )?;
-        let ticket = self.ticket(agent).await?;
-        let nonce = secret();
-        let timestamp = chrono::Utc::now().timestamp();
-        let signature = sdk_signature(&ticket, &nonce, timestamp, url);
-        Ok(json!({"timestamp":timestamp,"nonceStr":nonce,"signature":signature}))
     }
 }
 
