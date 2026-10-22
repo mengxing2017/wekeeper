@@ -41,3 +41,5 @@ pnpm --dir api-contract test
 ## 企业群发
 
 `broadcast` client 提供任务草稿创建/修改、确认、目标与事件分页、刷新、提醒、停止和核对。所有操作绑定学校，写操作使用 JSON:API `broadcast-tasks`，确认与管理动作带 Idempotency-Key。Task 汇总、成员状态和群级 official_status 分别建模；旧 SDK client 已移除，历史读取仍保留。Rust 序列化测试与 TypeScript 共用 broadcast-task / broadcast-target fixture。
+
+群发新增 `content_source: posts | text`；未提供来源的旧请求按 posts 处理。text 请求使用 `text_content`，不需模板或帖子；输出统一使用冻结 `content`，`template_version_id` 为 null，`post_ids` 为空数组。posts/text 请求互斥，草稿 PATCH 仍需 revision。`broadcast-text-task.json` 与旧来源 fixture 均经 Rust 实际序列化及 TS client 验证。

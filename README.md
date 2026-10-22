@@ -141,7 +141,7 @@ chmod 600 .env.wecom.local
 
 修改终端变量或配置文件后需重启后端才会生效；嵌入式库重启会清空目录、账号绑定和其他临时数据，需要重新同步、绑定。
 
-**嵌入式入口强制 `insecure_local_auth=true`**，设置 `WEKEEPER_INSECURE_LOCAL_AUTH=false` 或 HTTPS origin 也不会覆盖这一行为。注入 CorpID/Secret 可验证目录与绑定，注入 AgentID 可验证配置识别，但 OAuth 与群发写入始终关闭。实际 OAuth/群发验收请使用普通 API 或 Compose 的 HTTPS 部署，关闭 insecure_local_auth，步骤见 [企业微信接入手册](docs/runbooks/wecom.md)。
+**嵌入式入口强制 `insecure_local_auth=true`**，设置 `WEKEEPER_INSECURE_LOCAL_AUTH=false` 或 HTTPS origin 也不会覆盖这一行为。注入 CorpID/Secret 可验证目录与绑定，注入 AgentID 可验证配置识别，OAuth 始终关闭；服务端群发独立控制，配置凭据并设置 `WEKEEPER_WECOM_BROADCAST_ENABLED=true` 即可在本地调试。OAuth 验收仍须使用普通 API 或 Compose 的 HTTPS 部署并关闭 insecure_local_auth，步骤见 [企业微信接入手册](docs/runbooks/wecom.md)。
 
 
 ### 外部 PostgreSQL / Docker 数据库（保留开发数据）
@@ -329,8 +329,10 @@ devbox run -- make dev-embedded
 
 ### 企业统一群发（FE-03）
 
-学校工作区“群发任务”统一选择内容和多个客户群，预览后人工确认；成员在企业微信确认执行。按群主拆分、每批最多 2000 群，文本最多 4000 UTF-8 字节；unknown 不自动重发。独立分享草稿/记录菜单已收敛，历史数据保留在任务页。
+学校工作区“群发任务”支持直接填写文本（无需帖子或模板），或从已审核社区内容及模板生成正文；选择多个客户群，预览后人工确认；成员在企业微信确认执行。按群主拆分、每批最多 2000 群，文本最多 4000 UTF-8 字节；unknown 不自动重发。独立分享草稿/记录菜单已收敛，历史数据保留在任务页。
 
-`WEKEEPER_WECOM_BROADCAST_ENABLED=false` 为默认。核验客户联系可调用应用权限、群主学校授权及企业微信 4.1.10+ 终端后启用。AgentID 不再是发送前提。关闭创建开关后，正式 HTTPS/有效凭据环境仍可查询和停止既有任务。详见 [企业微信接入与验收](docs/runbooks/wecom.md)。
+`WEKEEPER_WECOM_BROADCAST_ENABLED=false` 为默认。核验客户联系可调用应用权限、群主学校授权及企业微信 4.1.10+ 终端后启用。AgentID 不再是发送前提。关闭创建开关后，有效凭据环境仍可查询和停止既有任务。详见 [企业微信接入与验收](docs/runbooks/wecom.md)。
 
 本次新增 `backend/migrations/202610220001_broadcast_tasks.sql`，启动自动 forward-only 升级，保留旧数据；不要求重置已有数据库。真实企业权限及终端行为仍需部署验收。
+
+直接文本由本校 operator/admin 保存草稿，仅 admin 可确认提交；社区内容沿用原权限。新增迁移 `202610220002_broadcast_text.sql` 保留已有任务与正文哈希。升级须停止旧 API/worker 并配套部署新版前后端，不能在文本任务出现后混跑旧 worker。
