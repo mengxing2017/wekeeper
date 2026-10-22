@@ -22,3 +22,10 @@ it('draft editing uses PATCH and preserves explicit selected groups',async()=>{
  expect(fetch.mock.calls[0][1].method).toBe('PATCH')
  expect(JSON.parse(fetch.mock.calls[0][1].body).data.attributes).toEqual(input)
 })
+it('saves direct text without posts or templates and decodes nullable Rust fields',async()=>{
+ const {default:textTask}=await import('../fixtures/broadcast-text-task.json')
+ const fetch=vi.fn().mockResolvedValue(Response.json(textTask,{headers:{'Content-Type':'application/vnd.api+json'}}));vi.stubGlobal('fetch',fetch)
+ const result=await broadcast.save('school',{content_source:'text',text_content:'校园通知',group_ids:['g']})
+ expect(JSON.parse(fetch.mock.calls[0][1].body).data.attributes).toEqual({content_source:'text',text_content:'校园通知',group_ids:['g']})
+ expect(result).toMatchObject({content_source:'text',template_version_id:null,post_ids:[],content:'校园通知'})
+})
