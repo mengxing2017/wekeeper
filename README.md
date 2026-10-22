@@ -2,7 +2,7 @@
 
 校园社区与企业微信内容运营重构工程。新应用采用 Rust + React。
 
-现已接入身份与学校权限、社区内容和互动、审核治理、运营配置、模板版本、分享草稿、企业微信人工分享及记录、小程序身份入口和数据迁移工具。
+现已接入身份与学校权限、社区内容和互动、审核治理、运营配置、模板版本、企业微信统一群发任务及历史分享记录、小程序身份入口和数据迁移工具。
 运行与数据切换见 [业务运行手册](docs/runbooks/business.md)。真实平台权限、真机及生产数据切换仍需验收。
 旧 PHP、uni-app、Java 和附带资源保留用于迁移核对，新容器不会运行它们。
 
@@ -53,7 +53,7 @@ docker compose --env-file .env -f compose.yaml -f compose.dev.yaml up --build --
 
 `/readyz` 实际检查 PostgreSQL 与初始化 schema；数据库不可用时返回 503。
 迁移失败时 api 启动失败，不会以“健康”状态接收请求。
-H5 配置平台凭据并通过 OAuth 后，读取当前客户群，人工确认调用官方 SDK；客户端报告成功不等于平台送达证明。
+后台在学校范围内确认群发任务，API 按群主创建官方任务，成员在企业微信确认执行；创建成功不等于已发送，历史客户端结果不等于平台送达证明。
 Docker 不自动创建管理员；启动成功后按下方“首次创建管理员”执行。
 
 ```bash
@@ -141,7 +141,7 @@ chmod 600 .env.wecom.local
 
 修改终端变量或配置文件后需重启后端才会生效；嵌入式库重启会清空目录、账号绑定和其他临时数据，需要重新同步、绑定。
 
-**嵌入式入口强制 `insecure_local_auth=true`**，设置 `WEKEEPER_INSECURE_LOCAL_AUTH=false` 或 HTTPS origin 也不会覆盖这一行为。注入 CorpID/Secret 可验证目录与绑定，注入 AgentID 可验证配置识别，但 OAuth 与客户端分享始终关闭。实际 OAuth/分享验收请使用普通 API 或 Compose 的 HTTPS 部署，关闭 insecure_local_auth，步骤见 [企业微信接入手册](docs/runbooks/wecom.md)。
+**嵌入式入口强制 `insecure_local_auth=true`**，设置 `WEKEEPER_INSECURE_LOCAL_AUTH=false` 或 HTTPS origin 也不会覆盖这一行为。注入 CorpID/Secret 可验证目录与绑定，注入 AgentID 可验证配置识别，但 OAuth 与群发写入始终关闭。实际 OAuth/群发验收请使用普通 API 或 Compose 的 HTTPS 部署，关闭 insecure_local_auth，步骤见 [企业微信接入手册](docs/runbooks/wecom.md)。
 
 
 ### 外部 PostgreSQL / Docker 数据库（保留开发数据）
@@ -326,3 +326,11 @@ devbox run -- make dev-embedded
 学校管理员从目录选择自己担任群主的群；平台管理员可选择未关联其他学校的群，并有手填已知群标识的例外入口。旧群停用不依赖上游，新建手填群（包括未启用群）必须核验官方详情。完整行为、错误排查和数据保留见 [业务运行手册](docs/runbooks/business.md#客户群目录)。
 
 本轮直接修改现有 `202610200002_business.sql`，没有新增迁移文件。已有开发库须由维护者重新初始化，启动器不会删除既有业务库或改写 SQLx 校验和；嵌入式临时库退出即清理。
+
+### 企业统一群发（FE-03）
+
+学校工作区“群发任务”统一选择内容和多个客户群，预览后人工确认；成员在企业微信确认执行。按群主拆分、每批最多 2000 群，文本最多 4000 UTF-8 字节；unknown 不自动重发。独立分享草稿/记录菜单已收敛，历史数据保留在任务页。
+
+`WEKEEPER_WECOM_BROADCAST_ENABLED=false` 为默认。核验客户联系可调用应用权限、群主学校授权及企业微信 4.1.10+ 终端后启用。AgentID 不再是发送前提。关闭创建开关后，正式 HTTPS/有效凭据环境仍可查询和停止既有任务。详见 [企业微信接入与验收](docs/runbooks/wecom.md)。
+
+本次新增 `backend/migrations/202610220001_broadcast_tasks.sql`，启动自动 forward-only 升级，保留旧数据；不要求重置已有数据库。真实企业权限及终端行为仍需部署验收。

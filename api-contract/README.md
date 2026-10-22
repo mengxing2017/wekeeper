@@ -37,3 +37,7 @@ pnpm --dir api-contract test
 `directory` client 提供平台目录状态、部门与成员分页筛选、同步任务、账号绑定与解绑。全目录仅平台管理员可访问；学校内绑定摘要遵循学校权限。绑定资源为 `wecom-bindings`，PUT 提交 member_id/revision，DELETE 用带引号的 If-Match 传递绑定版本。
 账号更新只接受 display_name/active，不能提交 wecom_userid。该字段在账号读取中仅是目录关联得到的只读显示值。
 `fixtures/wecom-directory-member.json` 由 Rust 序列化契约和 TypeScript client 共同验证。
+
+## 企业群发
+
+`broadcast` client 提供任务草稿创建/修改、确认、目标与事件分页、刷新、提醒、停止和核对。所有操作绑定学校，写操作使用 JSON:API `broadcast-tasks`，确认与管理动作带 Idempotency-Key。Task 汇总、成员状态和群级 official_status 分别建模；旧 SDK client 已移除，历史读取仍保留。Rust 序列化测试与 TypeScript 共用 broadcast-task / broadcast-target fixture。
