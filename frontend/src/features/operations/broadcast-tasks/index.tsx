@@ -33,68 +33,93 @@ export default function BroadcastTasks({school, admin, platformAdmin = false}: {
     {tab==='history' ? <History school={school} admin={admin} migrate={input=>{setEditing({input});setSelected('');setTab('tasks')}}/> : <>
       <Space><Button onClick={()=>{setEditing({});setSelected('')}}>新建群发任务</Button><Select aria-label="任务状态" value={status} onChange={v=>{setStatus(v);setPage(1)}} options={[{value:'',label:'全部任务'},{value:'draft',label:'草稿'},{value:'confirmed',label:'已确认'},{value:'pending',label:'待执行'},{value:'issues',label:'异常'},{value:'abandoned',label:'已放弃'}]}/><Button onClick={()=>void refresh()}>刷新列表</Button></Space>
       {editing && <DraftEditor school={school} initial={editing.input} id={editing.id} saved={async t=>{setEditing(null);setSelected(t.id);await refresh()}} cancel={()=>setEditing(null)}/>}
-      {selected && <Detail key={selected} school={school} id={selected} admin={admin} platformAdmin={platformAdmin} enabled={capability.data?.broadcast_available ?? false} managementAvailable={capability.data?.management_available ?? false} refresh={refresh} edit={(id,input)=>{setEditing({id,input});setSelected('')}}/>}
+      {selected && <Detail key={selected} school={school} id={selected} admin={admin} platformAdmin={platformAdmin} enabled={capability.data?.broadcast_available ?? false} unavailableReason={capability.error?'群发能力读取失败，请刷新页面重试。':capability.data?.reason??'正在检查群发能力…'} managementAvailable={capability.data?.management_available ?? false} refresh={refresh} edit={(id,input)=>{setEditing({id,input});setSelected('')}}/>}
       {query.error && <Alert type="error" title={query.error.message}/>}
       {query.isPending && <p role="status">正在加载任务…</p>}
-      {query.data?.items.map(t=><Card key={t.id} title={<><Tag>{taskLabel(t)}</Tag>{formatDate(t.created_at)}</>}><p>{t.content.slice(0,100)}</p><p>{t.total} 群 · {t.batch_count} 批次 · 已发送 {t.sent} · 拒绝 {t.rejected} · 不确定批次 {t.uncertain}</p><Button onClick={()=>{setSelected(t.id);setEditing(null)}}>查看任务 {t.id.slice(-6)}</Button></Card>)}
+      {query.data?.items.map(t=><Card key={t.id} title={<><Tag>{taskLabel(t)}</Tag><Tag>{t.content_source==='text'?'直接填写':'社区内容'}</Tag>{formatDate(t.created_at)}</>}><p>{t.content.slice(0,100)}</p><p>{t.total} 群 · {t.batch_count} 批次 · 已发送 {t.sent} · 拒绝 {t.rejected} · 不确定批次 {t.uncertain}</p><Button onClick={()=>{setSelected(t.id);setEditing(null)}}>查看任务 {t.id.slice(-6)}</Button></Card>)}
       {query.isSuccess && !query.data.items.length && <p>暂无群发任务</p>}
       <PaginationControls page={page} more={query.data?.page?.has_more} busy={query.isFetching} change={setPage}/>
     </>}
   </section>
 }
 function DraftEditor({school,initial,id,saved,cancel}:{school:string;initial?:BroadcastDraftInput;id?:string;saved:(task:BroadcastTask)=>Promise<void>;cancel:()=>void}) {
+  const [source,setSource]=useState<'posts'|'text'>(initial ? initial.content_source??'posts' : 'text')
+  const [text,setText]=useState(initial?.content_source==='text'?initial.text_content:'')
+  const dialogs=useDialogs()
+  const normalized=text.replace(/\r\n?/g,'\n'), bytes=new TextEncoder().encode(normalized).length
+  const textValid=normalized.trim().length>0&&bytes<=4000&&!Array.from(normalized).some(c=>{const n=c.codePointAt(0)!;return (n<32||(n>=127&&n<=159))&&c!=='\n'&&c!=='\t'})
   const [chosen,setChosen]=useState(initial?.post_ids??[]), [groups,setGroups]=useState(initial?.group_ids??[]), [version,setVersion]=useState(initial?.template_version_id??'')
   const [search,setSearch]=useState(''),[page,setPage]=useState(1),[reason,setReason]=useState(initial?.reason??'')
   const [error,setError]=useState(''),[busy,setBusy]=useState(false);const lock=useRef(false)
-  const posts=useQuery({queryKey:['business',school,'broadcast-posts',search,page],queryFn:()=>workspace.list<Post>(school,'posts',`?status=approved&page[number]=${page}&page[size]=30&search=${encodeURIComponent(search)}`)})
+  const posts=useQuery({enabled:source==='posts',queryKey:['business',school,'broadcast-posts',search,page],queryFn:()=>workspace.list<Post>(school,'posts',`?status=approved&page[number]=${page}&page[size]=30&search=${encodeURIComponent(search)}`)})
   const targets=useQuery({queryKey:['business',school,'groups'],queryFn:()=>workspace.list(school,'groups')})
-  const templates=useQuery({queryKey:['business',school,'templates'],queryFn:()=>workspace.list(school,'templates')})
+  const templates=useQuery({enabled:source==='posts',queryKey:['business',school,'templates'],queryFn:()=>workspace.list(school,'templates')})
   const versions=templates.data?.items.flatMap(t=>Array.isArray(t.versions)?(t.versions as Row[]).filter(v=>v.published).map(v=>({value:v.id,label:`${String(t.name)} · ${v.id.slice(-6)}`})):[])??[]
   async function save() {
     if(lock.current)return;lock.current=true;setBusy(true);setError('')
-    try {await saved(await broadcast.save(school,{...initial,template_version_id:version,post_ids:chosen,group_ids:groups,reason},id))}catch(e){setError((e as Error).message)}finally{lock.current=false;setBusy(false)}
+    try {
+      const common={group_ids:groups,reason,revision:initial?.revision,source_task_id:initial?.source_task_id,source_draft_id:initial?.source_draft_id}
+      const input:BroadcastDraftInput=source==='text'?{...common,content_source:'text',text_content:normalized}:{...common,content_source:'posts',template_version_id:version,post_ids:chosen}
+      await saved(await broadcast.save(school,input,id))
+    }catch(e){setError((e as Error).message)}finally{lock.current=false;setBusy(false)}
   }
-  return <Card title={id?'修改任务草稿':'创建任务草稿'}>
-    <p>选择 1–20 条已审核内容和本校客户群。保存仅生成预览，不创建企业微信任务。正文上限 4000 UTF-8 字节。</p>
-    {[posts,targets,templates].map((q,i)=>q.error&&<Alert key={i} type="error" title={q.error.message}/>)}
-    <Field label="搜索已审核内容"><Input value={search} onChange={e=>{setSearch(e.target.value);setPage(1)}}/></Field>
+  return <Card title={id?'修改任务草稿':'创建任务草稿'}>{dialogs.contextHolder}
+    <p>保存仅生成预览，不创建企业微信任务。正文上限 4000 UTF-8 字节。</p>
+    <Field label="内容来源"><Select aria-label="内容来源" value={source} disabled={busy||!!initial?.source_draft_id} options={[{value:'text',label:'直接填写'},{value:'posts',label:'从社区内容生成'}]} onChange={v=>void (async()=>{if(v!==source&&await dialogs.confirm('切换内容来源将清空当前正文、帖子及模板选择，是否继续？')){setSource(v);setText('');setChosen([]);setVersion('')}})()}/></Field>
+    {source==='text'&&<>
+      <Field label="群发正文"><Input.TextArea aria-label="群发正文" rows={6} value={text} onChange={e=>setText(e.target.value)} placeholder="直接输入通知，无需社区帖子或模板"/></Field>
+      <p>{bytes} / 4000 UTF-8 字节 · 直接文本需本校管理员确认提交，运营人员可保存草稿。</p>
+      <pre className="message-preview" aria-label="正文预览">{normalized}</pre>
+      {!!text&&!textValid&&<Alert type="error" title="正文须为非空文本，不超过 4000 UTF-8 字节，且不能包含不支持的控制字符"/>}
+    </>}
+    {(source==='posts'?[posts,targets,templates]:[targets]).map((q,i)=>q.error&&<Alert key={i} type="error" title={q.error.message}/>)}
+    {source==='posts'&&<><Field label="搜索已审核内容"><Input value={search} onChange={e=>{setSearch(e.target.value);setPage(1)}}/></Field>
     <p>已选 {chosen.length} 条<Button onClick={()=>setChosen([])}>清空内容</Button></p>
     {posts.data?.items.filter(p=>p.visibility==='visible').map(p=><Checkbox className="check-row" key={p.id} checked={chosen.includes(p.id)} onChange={e=>setChosen(e.target.checked?[...chosen,p.id]:chosen.filter(id=>id!==p.id))}>{p.title}</Checkbox>)}
     <PaginationControls page={page} more={posts.data?.page?.has_more} busy={posts.isFetching} change={setPage} subject="内容"/>
-    <Field label="已发布模板"><Select aria-label="已发布模板" className="full-width" value={version||undefined} options={versions} onChange={setVersion}/></Field>
+    <Field label="已发布模板"><Select aria-label="已发布模板" className="full-width" value={version||undefined} options={versions} onChange={setVersion}/></Field></>}
     <Field label="目标客户群"><Select aria-label="目标客户群" className="full-width" mode="multiple" value={groups} options={targets.data?.items.filter(g=>g.active).map(g=>({value:g.id,label:String(g.name)}))} onChange={setGroups}/></Field>
+    {targets.isSuccess&&!targets.data.items.some(g=>g.active)&&<p>暂无可用客户群。可先填写并预览正文，配置本校客户群后才能保存任务。</p>}
     <p>保存时核验目录新鲜度和群主学校授权；确认前再次实时核验。失效群会阻止保存，不会静默跳过。</p>
     {(initial?.source_task_id||initial?.source_draft_id)&&<Field label="再次发送 / 迁移原因"><Input.TextArea value={reason} maxLength={1000} onChange={e=>setReason(e.target.value)}/></Field>}
     {error&&<Alert type="error" title={error}/>}
-    <Space><Button type="primary" loading={busy} disabled={!chosen.length||!groups.length||!version} onClick={()=>void save()}>保存并预览</Button><Button disabled={busy} onClick={cancel}>关闭</Button></Space>
+    <Space><Button type="primary" loading={busy} disabled={!groups.length||(source==='text'?!textValid:!chosen.length||!version)} onClick={()=>void save()}>保存并预览</Button><Button disabled={busy} onClick={cancel}>关闭</Button></Space>
   </Card>
 }
+function taskContent(t:BroadcastTask) {
+  return t.content_source==='text'?{content_source:'text' as const,text_content:t.content}:{content_source:'posts' as const,template_version_id:t.template_version_id!,post_ids:t.post_ids}
+}
 async function allTargets(s:string,id:string) {const rows:BroadcastTarget[]=[];for(let page=1;page<=100;page++){const result=await broadcast.targets(s,id,page);rows.push(...result.items);if(!result.page?.has_more)return rows}throw new Error('目标数量超过支持范围')}
-function Detail({school,id,admin,platformAdmin,enabled,managementAvailable,refresh,edit}:{school:string;id:string;admin:boolean;platformAdmin:boolean;enabled:boolean;managementAvailable:boolean;refresh:()=>Promise<void>;edit:(id:string|undefined,input:BroadcastDraftInput)=>void}) {
+function Detail({school,id,admin,platformAdmin,enabled,unavailableReason,managementAvailable,refresh,edit}:{school:string;id:string;admin:boolean;platformAdmin:boolean;enabled:boolean;unavailableReason:string;managementAvailable:boolean;refresh:()=>Promise<void>;edit:(id:string|undefined,input:BroadcastDraftInput)=>void}) {
   const [page,setPage]=useState(1),[eventPage,setEventPage]=useState(1),[error,setError]=useState(''),[busy,setBusy]=useState(false)
   const [batch,setBatch]=useState(''),[decision,setDecision]=useState<BroadcastAction['decision']>('not_created'),[reason,setReason]=useState(''),[msgid,setMsgid]=useState('')
   const [candidates,setCandidates]=useState<Row[]>([])
-  const keys=useRef(new Map<string,string>()),lock=useRef(false),dialogs=useDialogs()
+  const keys=useRef(new Map<string,string>()),lock=useRef(false),dialogs=useDialogs(),cache=useQueryClient()
   const task=useQuery({queryKey:['business',school,'broadcast-task',id],queryFn:()=>broadcast.task(school,id),refetchInterval:15000})
   const targets=useQuery({queryKey:['business',school,'broadcast-targets',id,page],queryFn:()=>broadcast.targets(school,id,page),refetchInterval:15000})
   const events=useQuery({queryKey:['business',school,'broadcast-events',id,eventPage],queryFn:()=>broadcast.events(school,id,eventPage)})
   async function run(job:()=>Promise<unknown>) {if(lock.current)return;lock.current=true;setBusy(true);setError('');try{await job();await refresh()}catch(e){setError((e as Error).message)}finally{lock.current=false;setBusy(false)}}
   async function act(operation:Parameters<typeof broadcast.action>[2],input:BroadcastAction={}) {
     const signature=JSON.stringify([operation,input]);let key=keys.current.get(signature);if(!key){key=crypto.randomUUID();keys.current.set(signature,key)}
-    await broadcast.action(school,id,operation,key,input);keys.current.delete(signature)
+    const updated=await broadcast.action(school,id,operation,key,input);keys.current.delete(signature)
+    cache.setQueryData(['business',school,'broadcast-task',id],updated)
   }
   const t=task.data
   if(!t)return <Alert type={task.error?'error':'info'} title={task.error?.message??'正在读取任务…'}/>
   return <Card title={<>{taskLabel(t)} · 任务详情</>}>{dialogs.contextHolder}
+    {t.state==='draft'&&<Alert type={enabled&&(t.content_source!=='text'||admin)?'info':'warning'} title={!enabled?unavailableReason:t.content_source==='text'&&!admin?'当前账号没有本校管理员权限，不能提交直接文本群发。请本校管理员打开此草稿确认提交；平台管理员身份不能替代学校授权。':'草稿尚未提交到企业微信。请检查下方正文和目标群，再点击“确认创建企业微信群发任务”。'}/>}
+    {t.state==='confirmed'&&<Alert type="info" title="已确认提交，后台正在创建或跟踪企业微信任务。取得官方任务 ID 后，请执行成员到企业微信群发助手确认发送；逐群结果见下方。"/>}
+    <Tag>{t.content_source==='text'?'直接填写':'社区内容'}</Tag>
+    {t.state==='draft'&&t.content_source==='text'&&!admin&&<p>直接文本草稿需本校管理员检查并确认提交。</p>}
     <pre className="message-preview">{t.content}</pre><p>{new TextEncoder().encode(t.content).length} 字节 · {t.total} 群 · {t.batch_count} 个群主批次</p>
     <p>目标清单分页展示；确认将涵盖全部 {t.total} 个群。执行成员须使用企业微信 4.1.10 或更新版本。</p>
     {error&&<Alert type="error" title={error}/>}
     <Space wrap>
-      {t.state==='draft'&&<><Button type="primary" disabled={!enabled||busy} onClick={()=>void run(async()=>{if(await dialogs.confirm(`确认正文和全部 ${t.total} 个客户群，创建企业微信任务？成员仍需确认发送。`))await act('confirm',{revision:t.revision})})}>确认创建企业微信群发任务</Button><Button disabled={busy} onClick={()=>void run(async()=>edit(id,{template_version_id:t.template_version_id,post_ids:t.post_ids,group_ids:(await allTargets(school,id)).map(x=>x.group_id),revision:t.revision,source_task_id:t.source_task_id??undefined,source_draft_id:t.source_draft_id??undefined,reason:t.resend_reason}))}>修改草稿</Button><Button disabled={busy} onClick={()=>void run(()=>act('abandon'))}>放弃草稿</Button></>}
-      {t.state==='confirmed'&&<><Button disabled={busy} onClick={()=>void run(()=>act('refresh'))}>同步平台结果</Button><Button disabled={!enabled||busy||t.stopped} onClick={()=>void run(async()=>{if(await dialogs.confirm('提醒未执行成员完成群发任务？'))await act('reminders')})}>提醒成员</Button>{admin&&<><Button danger disabled={!managementAvailable||busy} onClick={()=>void run(async()=>{if(await dialogs.confirm('停止尚未执行的任务？已经发送的消息无法撤回。'))await act('stop')})}>停止后续发送</Button><Button disabled={busy} onClick={()=>void run(async()=>{const reason=await dialogs.prompt('再次发送原因（先停止并核对原任务）');if(!reason)return;const rows=(await allTargets(school,id)).filter(x=>x.official_status!==1);edit(undefined,{template_version_id:t.template_version_id,post_ids:t.post_ids,group_ids:rows.map(x=>x.group_id),source_task_id:id,reason})})}>生成再次发送草稿</Button></>}</>}
+      {t.state==='draft'&&<><Button type="primary" loading={busy} disabled={!enabled||busy||(t.content_source==='text'&&!admin)} onClick={()=>void run(async()=>{if(await dialogs.confirm(`确认正文和全部 ${t.total} 个客户群，创建企业微信任务？成员仍需确认发送。`))await act('confirm',{revision:t.revision})})}>确认创建企业微信群发任务</Button><Button disabled={busy} onClick={()=>void run(async()=>edit(id,{...taskContent(t),group_ids:(await allTargets(school,id)).map(x=>x.group_id),revision:t.revision,source_task_id:t.source_task_id??undefined,source_draft_id:t.source_draft_id??undefined,reason:t.resend_reason}))}>修改草稿</Button><Button disabled={busy} onClick={()=>void run(()=>act('abandon'))}>放弃草稿</Button></>}
+      {t.state==='confirmed'&&<><Button disabled={busy} onClick={()=>void run(()=>act('refresh'))}>同步平台结果</Button><Button disabled={!enabled||busy||t.stopped} onClick={()=>void run(async()=>{if(await dialogs.confirm('提醒未执行成员完成群发任务？'))await act('reminders')})}>提醒成员</Button>{admin&&<><Button danger disabled={!managementAvailable||busy} onClick={()=>void run(async()=>{if(await dialogs.confirm('停止尚未执行的任务？已经发送的消息无法撤回。'))await act('stop')})}>停止后续发送</Button><Button disabled={busy} onClick={()=>void run(async()=>{const reason=await dialogs.prompt('再次发送原因（先停止并核对原任务）');if(!reason)return;const rows=(await allTargets(school,id)).filter(x=>x.official_status!==1);edit(undefined,{...taskContent(t),group_ids:rows.map(x=>x.group_id),source_task_id:id,reason})})}>生成再次发送草稿</Button></>}</>}
     </Space>
     {targets.error&&<Alert type="error" title={targets.error.message}/>}
-    {targets.data?.items.map(x=><Card size="small" key={x.id} title={`${x.group_name} · ${x.sender}`}><p>{x.chat_id}</p>{x.msgid&&<p>官方任务：{x.msgid}</p>}<p>{targetLabel(x)}</p><p>成员任务：{x.member_status===2?'成员已执行（不代表所有群成功）':x.member_status===0?'成员未执行':'未取得成员结果'} · 最后同步：{x.last_synced_at?formatDate(x.last_synced_at):'尚未同步'}</p>{x.sync_error&&<p>同步未完成，保留上次结果</p>}{x.error_code&&<p>创建原因：{x.error_code}</p>}{x.stop_state!=='none'&&<p>停止状态：{x.stop_state}</p>}{x.reconciliation&&<p>人工核对：{x.reconciliation}（与平台事实独立）</p>}{admin&&(x.creation_state==='unknown'||x.stop_state==='unknown'||x.operation_unknown)&&<Button onClick={()=>setBatch(x.batch_id)}>核对此批次</Button>}</Card>)}
+    {targets.data?.items.map(x=><Card size="small" key={x.id} title={`${x.group_name} · ${x.sender}`}><p>{x.chat_id}</p>{x.msgid&&<p>官方任务：{x.msgid}</p>}<p>{t.state==='draft'?'已选为目标群，等待确认提交':targetLabel(x)}</p>{t.state==='confirmed'&&x.msgid&&<p>成员任务：{x.member_status===2?'成员已执行（不代表所有群成功）':x.member_status===0?'成员未执行':'未取得成员结果'} · 最后同步：{x.last_synced_at?formatDate(x.last_synced_at):'尚未同步'}</p>}{x.sync_error&&<p>同步未完成，保留上次结果</p>}{x.error_code&&<p>创建原因：{x.error_code}</p>}{x.stop_state!=='none'&&<p>停止状态：{x.stop_state}</p>}{x.reconciliation&&<p>人工核对：{x.reconciliation}（与平台事实独立）</p>}{admin&&(x.creation_state==='unknown'||x.stop_state==='unknown'||x.operation_unknown)&&<Button onClick={()=>setBatch(x.batch_id)}>核对此批次</Button>}</Card>)}
     <PaginationControls page={page} more={targets.data?.page?.has_more} busy={targets.isFetching} change={setPage} subject="目标群"/>
     {admin&&batch&&<Card title="核对创建结果不确定的批次"><p>没有查到记录不能证明未创建。请结合企业微信管理端证据，未核对前禁止再次发送。</p><Select aria-label="核对结论" value={decision} options={[{value:'not_created',label:'有证据确认未创建'},{value:'sent',label:'人工确认已发送（仍保留未知平台状态）'},{value:'linked',label:'关联已确认的官方任务 ID'},{value:'stop_confirmed',label:'有证据确认停止已生效'},{value:'reminder_reviewed',label:'提醒已核对（不重新发送）'}]} onChange={setDecision}/><Input aria-label="官方任务 ID" placeholder="关联时填写 msgid" value={msgid} onChange={e=>setMsgid(e.target.value)}/><Input.TextArea aria-label="核对依据" placeholder="核对依据" maxLength={1000} value={reason} onChange={e=>setReason(e.target.value)}/><Button disabled={busy||!reason.trim()} onClick={()=>void run(()=>act('reconciliations',{batch_id:batch,decision,reason,...(decision==='linked'?{msgid}:{})}))}>保存核对依据</Button>{platformAdmin&&<Button disabled={busy} onClick={()=>void run(async()=>{const end=Math.floor(Date.now()/1000);setCandidates(await broadcast.candidates(end-86400,end))})}>查询企业最近一天候选任务</Button>}{candidates.map(c=><p key={c.id}>{c.id} · {JSON.stringify(c.text)}（候选不代表匹配）</p>)}</Card>}
     <h3>操作记录</h3>{events.error&&<Alert type="error" title={events.error.message}/>}{events.data?.items.map(e=><p key={e.id}>{formatDate(e.created_at)} · {e.action} · {JSON.stringify(e.detail)}</p>)}<PaginationControls page={eventPage} more={events.data?.page?.has_more} busy={events.isFetching} change={setEventPage} subject="操作记录"/>
