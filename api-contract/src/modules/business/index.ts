@@ -187,7 +187,7 @@ export const assets = {
 };
 
 export interface BroadcastTask {
-    id: string; school_id: string; creator_id: string; template_version_id: string; content: string;
+    id: string; school_id: string; creator_id: string; template_version_id: string|null; content_source: 'posts'|'text'; content: string;
     revision: number; state: 'draft'|'confirmed'|'abandoned'; stopped: boolean; created_at: string;
     total: number; sent: number; rejected: number; uncertain: number; pending: number; batch_count: number;
     post_ids: string[]; source_task_id: string|null; source_draft_id: string|null; resend_reason: string;
@@ -199,10 +199,13 @@ export interface BroadcastTarget {
     last_synced_at: string|null; sync_error: string|null; error_code: string|null;
     stop_state: 'none'|'requested'|'stopped'|'unknown'|'rejected'; reconciliation: string|null; operation_unknown: boolean;
 }
-export interface BroadcastDraftInput {
-    template_version_id: string; post_ids: string[]; group_ids: string[]; revision?: number;
+export type BroadcastDraftInput = {
+    group_ids: string[]; revision?: number;
     source_task_id?: string; source_draft_id?: string; reason?: string;
-}
+} & (
+    {content_source?: 'posts'; template_version_id: string; post_ids: string[]; text_content?: never} |
+    {content_source: 'text'; text_content: string; template_version_id?: null; post_ids?: never[]}
+);
 export interface BroadcastAction {
     revision?: number; batch_id?: string; decision?: 'not_created'|'sent'|'linked'|'stop_confirmed'|'reminder_reviewed'; msgid?: string; reason?: string;
 }

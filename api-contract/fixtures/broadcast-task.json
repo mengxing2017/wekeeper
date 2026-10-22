@@ -22,7 +22,8 @@
       ],
       "source_task_id": null,
       "source_draft_id": null,
-      "resend_reason": ""
+      "resend_reason": "",
+      "content_source": "posts"
     }
   }
 }
