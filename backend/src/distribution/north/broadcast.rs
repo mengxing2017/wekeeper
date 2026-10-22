@@ -94,7 +94,7 @@ impl<R: Store, C: Client> Service<R, C> {
         if operation == "stop" {
             require(
                 self.management_available,
-                "群发管理需要有效企业凭据和 HTTPS 部署",
+                "群发管理需要有效企业微信服务端凭据",
             )?;
         }
         if operation == "confirm" && task.state == "draft" {
@@ -151,7 +151,7 @@ impl<R: Store, C: Client> Service<R, C> {
         self.client.candidates(start, end).await
     }
     pub async fn run_once(&self) -> Result<()> {
-        // Disabled also in embedded mode: merely exporting a Secret never enables writes.
+        // Credentials alone never enable writes; the explicit switch applies in every runtime.
         if !self.management_available {
             return Ok(());
         }
@@ -207,15 +207,30 @@ impl<R: Store, C: Client> Service<R, C> {
         Ok(())
     }
 }
+fn unavailable_reason(configured: bool, enabled: bool) -> Option<&'static str> {
+    if !configured {
+        Some(
+            "未配置企业微信服务端凭据，无法提交群发。请在 API 配置 WEKEEPER_WECOM_CORP_ID 和 WEKEEPER_WECOM_SECRET 后重启服务。",
+        )
+    } else if !enabled {
+        Some(
+            "企业微信群发开关未开启。核验应用群发权限和执行成员后，将 API 的 WEKEEPER_WECOM_BROADCAST_ENABLED 设为 true 并重启服务，再刷新本页。",
+        )
+    } else {
+        None
+    }
+}
+
 impl crate::bootstrap::Application {
+    pub fn broadcast_unavailable_reason(&self) -> Option<&'static str> {
+        unavailable_reason(
+            self.integrations.server_configured(),
+            std::env::var("WEKEEPER_WECOM_BROADCAST_ENABLED").is_ok_and(|v| v == "true"),
+        )
+    }
     pub fn broadcast(&self) -> Service {
-        let management_available = self
-            .integrations
-            .capabilities(
-                &self.options.public_origin,
-                self.options.insecure_local_auth,
-            )
-            .oauth_available;
+        // Server-to-server operations do not depend on browser origin or OAuth login.
+        let management_available = self.integrations.server_configured();
         let enabled = management_available
             && std::env::var("WEKEEPER_WECOM_BROADCAST_ENABLED").is_ok_and(|v| v == "true");
         Service {

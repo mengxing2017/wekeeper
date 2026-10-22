@@ -126,7 +126,7 @@ async fn capability(
     Ok(singleton(
         "broadcast-capabilities",
         "current",
-        json!({"broadcast_available":b.enabled,"management_available":b.management_available,"reason":if b.enabled{None}else{Some("需配置自建应用权限、HTTPS 部署并显式启用群发（成员终端须至少 4.1.10）")}}),
+        json!({"broadcast_available":b.enabled,"management_available":b.management_available,"reason":a.broadcast_unavailable_reason()}),
     ))
 }
 #[derive(Deserialize)]
