@@ -1,13 +1,11 @@
-use super::local::{AttemptInput, DraftInput};
 use crate::{
     bootstrap::Application,
     business::{Actor, Named, Result, Revision},
-    http::jsonapi::{ApiResponse, Input, collection, completed, resource, singleton},
+    http::jsonapi::{ApiResponse, Input, collection, resource, singleton},
 };
 use axum::{
     Router,
     extract::{Path, Query, State},
-    http::HeaderMap,
     routing::{get, post, put},
 };
 use serde_json::{Value, json};
@@ -92,40 +90,6 @@ async fn related(
     Ok(collection("delivery-attempts", history.items, &page)
         .meta(json!({"latest_attempt_id":history.latest_attempt_id,"blocked":history.blocked})))
 }
-async fn draft(
-    State(a): State<Application>,
-    actor: Actor,
-    Path(s): Path<Uuid>,
-    input_document: Input,
-) -> Result<ApiResponse> {
-    let v = input_document.decode::<DraftInput>("delivery-drafts")?;
-    Ok(resource(
-        "delivery-drafts",
-        a.distribution
-            .draft(&actor, s, v, &a.options.public_origin)
-            .await?,
-    ))
-}
-async fn attempt(
-    State(a): State<Application>,
-    actor: Actor,
-    Path((s, id)): Path<(Uuid, Uuid)>,
-    headers: HeaderMap,
-    input_document: Input,
-) -> Result<ApiResponse> {
-    crate::integrations::north::remote::require_share(&a, &actor)?;
-    let v = input_document.decode::<AttemptInput>("delivery-attempts")?;
-    let key = headers
-        .get("idempotency-key")
-        .and_then(|s| s.to_str().ok())
-        .unwrap_or("");
-    Ok(resource(
-        "delivery-attempts",
-        a.distribution
-            .prepare(&actor, s, id, key, v, &a.integrations)
-            .await?,
-    ))
-}
 async fn attempts(
     State(a): State<Application>,
     actor: Actor,
@@ -137,15 +101,6 @@ async fn attempts(
         a.distribution.attempts(&actor, s, page.clone()).await?,
         &page,
     ))
-}
-async fn claim(
-    State(a): State<Application>,
-    actor: Actor,
-    Path((s, id)): Path<(Uuid, Uuid)>,
-) -> Result<ApiResponse> {
-    crate::integrations::north::remote::require_share(&a, &actor)?;
-    a.distribution.claim(&actor, s, id).await?;
-    Ok(completed())
 }
 async fn result(
     State(a): State<Application>,
@@ -179,6 +134,11 @@ async fn capability(State(a): State<Application>, _actor: Actor) -> ApiResponse 
             .capabilities(&a.options.public_origin, a.options.insecure_local_auth),
     )
 }
+async fn retired(_actor: Actor) -> Result<ApiResponse> {
+    Err(crate::business::Error::Invalid(
+        "逐群分享已停用，请创建企业群发任务".into(),
+    ))
+}
 pub fn router() -> Router<Application> {
     Router::new()
         .route(
@@ -191,7 +151,7 @@ pub fn router() -> Router<Application> {
         )
         .route(
             "/api/v1/schools/{school}/delivery-attempts/{id}/invocation",
-            post(claim),
+            post(retired),
         )
         .route("/api/v1/capabilities", get(capability))
         .route(
@@ -208,11 +168,11 @@ pub fn router() -> Router<Application> {
         )
         .route(
             "/api/v1/schools/{school}/delivery-drafts",
-            get(drafts).post(draft),
+            get(drafts).post(retired),
         )
         .route(
             "/api/v1/schools/{school}/delivery-drafts/{id}/attempts",
-            post(attempt),
+            post(retired),
         )
         .route("/api/v1/schools/{school}/delivery-attempts", get(attempts))
         .route(
