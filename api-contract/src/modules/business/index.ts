@@ -201,3 +201,37 @@ export const assets = {
     candidates:(school:string,filter:Pick<AssetFilter,'page'|'search'>={})=>requestCollection<GroupCandidate>(scope(school,'wecom-group-candidates')+`?${assetQuery(filter)}`),
     bind:(school:string,input:{directory_group_id:string;expected_generation:number;expected_checked_at:string;name?:string})=>requestResource<Row>(scope(school,'groups/from-directory'),'POST',input),
 };
+
+export interface BroadcastTask {
+    id: string; school_id: string; creator_id: string; template_version_id: string; content: string;
+    revision: number; state: 'draft'|'confirmed'|'abandoned'; stopped: boolean; created_at: string;
+    total: number; sent: number; rejected: number; uncertain: number; pending: number; batch_count: number;
+    post_ids: string[]; source_task_id: string|null; source_draft_id: string|null; resend_reason: string;
+}
+export interface BroadcastTarget {
+    id: string; group_id: string; chat_id: string; group_name: string; batch_id: string; sender: string;
+    creation_state: 'queued'|'submitting'|'created'|'rejected'|'unknown'|'cancelled'; msgid: string|null;
+    rejected: boolean; official_status: number|null; send_time: number|null; member_status: number|null;
+    last_synced_at: string|null; sync_error: string|null; error_code: string|null;
+    stop_state: 'none'|'requested'|'stopped'|'unknown'|'rejected'; reconciliation: string|null; operation_unknown: boolean;
+}
+export interface BroadcastDraftInput {
+    template_version_id: string; post_ids: string[]; group_ids: string[]; revision?: number;
+    source_task_id?: string; source_draft_id?: string; reason?: string;
+}
+export interface BroadcastAction {
+    revision?: number; batch_id?: string; decision?: 'not_created'|'sent'|'linked'|'stop_confirmed'|'reminder_reviewed'; msgid?: string; reason?: string;
+}
+export interface BroadcastEvent {id: string; action: string; detail: Record<string, Json>; created_at: string}
+export interface BroadcastCapability {id: string; broadcast_available: boolean; management_available: boolean; reason: string|null}
+const broadcastPath = (s: string, id?: string) => scope(s, `broadcast-tasks${id ? `/${part(id)}` : ''}`);
+export const broadcast = {
+    capability: (s: string) => requestResource<BroadcastCapability>(scope(s, 'broadcast-capabilities')),
+    list: (s: string, page = 1, status = '') => requestCollection<BroadcastTask>(`${broadcastPath(s)}?page[number]=${page}&page[size]=30${status ? `&status=${part(status)}` : ''}`),
+    task: (s: string, id: string) => requestResource<BroadcastTask>(broadcastPath(s,id)),
+    save: (s: string, input: BroadcastDraftInput, id?: string) => requestResource<BroadcastTask>(broadcastPath(s,id), id ? 'PATCH' : 'POST', input),
+    targets: (s: string, id: string, page = 1) => requestCollection<BroadcastTarget>(`${broadcastPath(s,id)}/targets?page[number]=${page}&page[size]=100`),
+    events: (s: string, id: string, page = 1) => requestCollection<BroadcastEvent>(`${broadcastPath(s,id)}/events?page[number]=${page}&page[size]=30`),
+    action: (s: string, id: string, operation: 'confirm'|'abandon'|'refresh'|'reminders'|'stop'|'reconciliations', key: string, input: BroadcastAction = {}) => requestResource<BroadcastTask>(`${broadcastPath(s,id)}/${operation}`, 'POST', input, undefined, {'Idempotency-Key': key}),
+    candidates: (start_time: number, end_time: number) => requestResource<Row[]>(`/api/v1/platform/broadcast-candidates?start_time=${start_time}&end_time=${end_time}`),
+};
