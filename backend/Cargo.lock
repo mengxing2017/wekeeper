@@ -3391,7 +3391,6 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sha1",
  "sha2 0.10.9",
  "sqlx 0.8.6",
  "tokio",
