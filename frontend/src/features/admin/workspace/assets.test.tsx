@@ -1,3 +1,4 @@
+import { formatDate } from '../../../shared/format-date';
 import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
 import {cleanup,configure,fireEvent,render,screen,waitFor} from '@testing-library/react';
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
@@ -13,7 +14,7 @@ const status:AssetStatus={server_configured:true,configuration_error:null,creden
 beforeEach(()=>{vi.clearAllMocks();vi.mocked(assets.status).mockResolvedValue(status);vi.mocked(assets.list).mockResolvedValue({items:[],page:{number:1,size:30,has_more:false}});vi.mocked(directory.members).mockResolvedValue({items:[]});vi.mocked(assets.sync).mockResolvedValue([]);});
 function show(node:React.ReactNode){render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}>{node}</QueryClientProvider>);}
 it('keeps the previous snapshot visible after group failure and allows server-only sync',async()=>{
- show(<Assets/>);expect(screen.queryByRole('tab',{name:'客户'})).toBeNull();expect(screen.queryByRole('tab',{name:'客户联系成员'})).toBeNull();expect(await screen.findByText(/同步失败：wecom_60020/)).toBeTruthy();expect(screen.getByText(/2026-10-21 12:00/)).toBeTruthy();fireEvent.click(screen.getByText('同步客户群'));await waitFor(()=>expect(assets.sync).toHaveBeenCalledWith('groups'));
+ show(<Assets/>);expect(screen.queryByRole('tab',{name:'客户'})).toBeNull();expect(screen.queryByRole('tab',{name:'客户联系成员'})).toBeNull();expect(await screen.findByText(/同步失败：wecom_60020/)).toBeTruthy();expect(screen.getByText(text => text.includes(formatDate('2026-10-21 12:00')))).toBeTruthy();fireEvent.click(screen.getByText('同步客户群'));await waitFor(()=>expect(assets.sync).toHaveBeenCalledWith('groups'));
 });
 it('paginates group assets using the selected resource',async()=>{
  vi.mocked(assets.list).mockResolvedValue({items:[],page:{number:1,size:30,has_more:true}});show(<Assets/>);await waitFor(()=>expect((screen.getByRole('button',{name:'下一页'}) as HTMLButtonElement).disabled).toBe(false));fireEvent.click(screen.getByRole('button',{name:'下一页'}));await waitFor(()=>expect(assets.list).toHaveBeenCalledWith('groups',{page:2}));

@@ -1,3 +1,4 @@
+import { formatDate } from '../../../shared/format-date';
 import { selectOption } from '../../../test/select-option'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, fireEvent, waitFor } from '@testing-library/react'
@@ -85,7 +86,7 @@ it('offers history from an overlapping older draft for explicit resend', async()
  await selectAndCheck();
  expect((screen.getByRole('button', { name: '确认正文并在当前群分享' }) as HTMLButtonElement).disabled).toBe(true);
  fireEvent.click(screen.getByRole('button', { name: '明确再次分享' }));
- await selectOption(await screen.findByLabelText('引用历史尝试'), 'Target · 2026-10-21 · 客户端报告成功 · old-attempt');
+ await selectOption(await screen.findByLabelText('引用历史尝试'), `Target · ${formatDate('2026-10-21')} · 客户端报告成功 · old-attempt`);
  fireEvent.change(screen.getByLabelText('再次分享原因'),{target:{value:'核对后再次分享'}});
  fireEvent.click(screen.getByText('准备明确再次分享'));
  fireEvent.click(screen.getByRole('button', { name: '确认正文并在当前群分享' }));

@@ -1,3 +1,4 @@
+import { formatDate } from '../../../shared/format-date';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, configure, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -32,7 +33,7 @@ it('shows sync errors and the last successful snapshot without claiming success'
     vi.mocked(directory.status).mockResolvedValue({id:'current',server_configured:true,credential_generation:1,credential_rotation_required:false,configuration_error:null,snapshot_id:'snapshot',last_success_at:'2026-10-21',latest_run:{id:'run',state:'failed',error_code:'wecom_60011',created_at:'',started_at:null,finished_at:null,department_count:0,member_count:0}});
     show(<Directory/>);
     expect((await screen.findByText(/同步失败/)).textContent).toContain('wecom_60011');
-    expect(screen.getByText(/最近完整同步/).textContent).toContain('2026-10-21');
+    expect(screen.getByText(/最近完整同步/).textContent).toContain(formatDate('2026-10-21'));
 });
 it('allows sync with server credentials alone and requires confirmation for rotation',async()=>{
     vi.mocked(directory.status).mockResolvedValue({id:'current',server_configured:true,credential_generation:2,credential_rotation_required:false,configuration_error:null,snapshot_id:null,last_success_at:null,latest_run:null});
