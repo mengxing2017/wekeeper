@@ -1,5 +1,7 @@
+import dayjs from 'dayjs'
+import { parseDate } from '../../../shared/format-date'
 import { useId, useState } from 'react'
-import { Alert, Button, ColorPicker, Form, Input, InputNumber, Select } from 'antd'
+import { Alert, Button, ColorPicker, DatePicker, Form, Input, InputNumber, Select } from 'antd'
 
 interface Field {
   name: string
@@ -34,10 +36,12 @@ export function Editor({ fields, onSave, submit = '保存' }: {
   return <Form name={formName} layout="vertical" onFinish={save} className="business-form" disabled={busy}
     initialValues={Object.fromEntries(fields.map(field => [field.name, field.value]))}>
     {fields.map(field => <Form.Item key={field.name} name={field.name} label={field.title}
-      getValueFromEvent={field.type === 'color' ? color => color.toHexString() : undefined}
+      getValueProps={field.type === 'datetime' ? value => ({ value: parseDate(value) ? dayjs(parseDate(value)) : null }) : undefined}
+      getValueFromEvent={field.type === 'datetime' ? date => date?.toISOString() ?? '' : field.type === 'color' ? color => color.toHexString() : undefined}
       className={field.type === 'textarea' ? 'form-wide' : undefined}
       rules={[{ required: !field.optional, message: `请填写${field.title}` }]}>
       {field.options ? <Select placeholder="请选择" options={field.options} aria-label={field.title} />
+        : field.type === 'datetime' ? <DatePicker showTime format="YYYY/M/D HH:mm:ss" className="full-width" />
         : field.type === 'color' ? <ColorPicker showText disabledAlpha />
         : field.type === 'number' ? <InputNumber className="full-width" />
         : field.type === 'textarea' ? <Input.TextArea readOnly={field.readOnly} rows={4} />
