@@ -114,5 +114,5 @@ it('exposes authoritative page metadata and empty collections',async()=>{
 })
 it('rejects a successful application/json response after the protocol cutover',async()=>{
   vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json({data:null})))
-  await expect(workspace.claim('s','a')).rejects.toMatchObject({code:'invalid_document'})
+  await expect(workspace.mutate('s','posts/p/visibility',{revision:1})).rejects.toMatchObject({code:'invalid_document'})
 })

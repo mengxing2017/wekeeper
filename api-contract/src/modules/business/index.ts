@@ -68,11 +68,6 @@ export interface RelatedHistory {
     latest_attempt_id: string | null;
     blocked: boolean;
 }
-export interface Signature {
-    timestamp: number;
-    nonceStr: string;
-    signature: string;
-}
 export type Resource = 'posts' | 'comments' | 'cases' | 'resources' | 'groups' | 'templates' | 'delivery-drafts' | 'delivery-attempts' | 'audit' | 'members' | 'follows' | 'notifications' | 'reactions';
 const part = (s: string) => encodeURIComponent(s);
 export const scope = (school: string, path: string) => `/api/v1/schools/${part(school)}/${path}`;
@@ -114,18 +109,7 @@ export const workspace = {
     upload: (s: string, file: Blob) => requestResource<{
         url: string;
     }>(scope(s, 'media'), 'POST', file),
-    prepare: (s: string, id: string, key: string, body: {
-        current_chat_id: string;
-        resend_of?: string;
-        reason: string;
-    }) => requestResource<Attempt>(scope(s, `delivery-drafts/${part(id)}/attempts`), 'POST', body, undefined, { 'Idempotency-Key': key }),
-    claim: (s: string, id: string) => requestResource(scope(s, `delivery-attempts/${part(id)}/invocation`), 'POST'),
-    result: (s: string, id: string, state: ClientState) => requestResource<Attempt>(scope(s, `delivery-attempts/${part(id)}/client-result`), 'PUT', { state }),
-    wecomInfo: () => requestResource<{
-        corpId: string;
-        agentId: string;
-    }>('/api/v1/wecom/config'),
-    signature: (url: string, agent: boolean) => requestResource<Signature>(`/api/v1/wecom/js-sdk-config?${new URLSearchParams({ url, agent: String(agent) })}`),
+
 };
 
 /** OAuth only accepts UUID selections; arbitrary return URLs are not supported. */
