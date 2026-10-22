@@ -24,6 +24,24 @@ async fn capabilities_and_cache_identity_are_independent_of_agent_id() {
     let pool = sqlx::postgres::PgPoolOptions::new()
         .connect_lazy("postgres://unused@127.0.0.1:1/unused")
         .unwrap();
+    let mut app = crate::bootstrap::build_application(pool.clone());
+    app.integrations = service(pool.clone());
+    for (origin, local_login) in [
+        ("http://localhost:8080", true),
+        ("https://example.test", false),
+    ] {
+        app.options.public_origin = origin.into();
+        app.options.insecure_local_auth = local_login;
+        let broadcast = app.broadcast();
+        assert!(broadcast.management_available);
+        assert_eq!(
+            broadcast.enabled,
+            std::env::var("WEKEEPER_WECOM_BROADCAST_ENABLED").is_ok_and(|v| v == "true")
+        );
+    }
+    app.integrations.secret.clear();
+    assert!(!app.broadcast().management_available);
+    assert!(!app.broadcast().enabled);
     let mut s = service(pool);
     let key = s.cache_key("token");
     for agent in ["", " ", "0", "-1", "+1", "abc", "4294967296"] {

@@ -242,3 +242,18 @@ impl crate::bootstrap::Application {
         }
     }
 }
+
+#[cfg(test)]
+mod availability_tests {
+    use super::unavailable_reason;
+    #[test]
+    fn server_credentials_and_explicit_switch_control_broadcast() {
+        assert!(unavailable_reason(false, true).unwrap().contains("凭据"));
+        assert!(
+            unavailable_reason(true, false)
+                .unwrap()
+                .contains("WEKEEPER_WECOM_BROADCAST_ENABLED")
+        );
+        assert!(unavailable_reason(true, true).is_none());
+    }
+}
