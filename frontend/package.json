@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@ant-design/icons": "6.3.4",
     "@tanstack/react-query": "^5.66.0",
     "@wekeeper/api-contract": "file:../api-contract",
     "antd": "^6.6.5",
