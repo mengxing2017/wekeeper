@@ -20,7 +20,7 @@ export function Schools({ schools, loading, refresh, enter }: {
         <Table<School> rowKey="id" loading={loading} dataSource={rows} scroll={{ x: 600 }} pagination={{ current: page, pageSize: 10, onChange: setPage, showSizeChanger: false, showTotal: total => `共 ${total} 所学校` }} columns={[
             { title: '学校名称', dataIndex: 'name' },
             { title: '状态', render: (_, row) => <Tag>{row.active ? '启用' : '停用'}</Tag> },
-            { title: '操作', render: (_, row) => <Space><Button onClick={() => setDetail(row)}>详情</Button><Button onClick={() => enter(row.id, 'settings')}>学校配置</Button><Button onClick={() => enter(row.id, 'members')}>学校成员</Button></Space> },
+            { title: '操作', render: (_, row) => <Space><Button size="small" type="link" onClick={() => setDetail(row)}>详情</Button><Button size="small" type="link" onClick={() => enter(row.id, 'settings')}>学校配置</Button><Button size="small" type="link" onClick={() => enter(row.id, 'members')}>学校成员</Button></Space> },
         ]}/>
         {detail && <Modal open title={`${detail.name} · 学校详情`} footer={null} onCancel={() => setDetail(undefined)}><p>学校 ID：{detail.id}</p><p>状态：{detail.active ? '启用' : '停用'}</p><p>帖子审核：{detail.config.post_audit_mode === 'auto' ? '自动通过' : '人工审核'}</p><p>评论审核：{detail.config.comment_audit_mode === 'auto' ? '自动通过' : '人工审核'}</p><Space><Button onClick={() => enter(detail.id, 'settings')}>学校配置</Button><Button onClick={() => enter(detail.id, 'members')}>学校成员</Button></Space></Modal>}
     </Card>;
@@ -67,7 +67,7 @@ export function Accounts({ administrators, user, schools }: {
             { title: '身份', render: (_, a) => a.platform_admin ? '平台管理员' : '普通账号' },
             { title: '状态', render: (_, a) => <Tag>{a.active ? '启用' : '停用'}</Tag> },
             { title: '企业微信', render: (_, a) => a.wecom_userid ? `${value(a, 'wecom_name')} · ${value(a, 'wecom_userid')} · ${value(a, 'wecom_verification')}` : '未绑定' },
-            { title: '操作', render: (_, a) => <Space wrap><Button onClick={() => open(a, 'details')}>详情</Button>{!administrators && a.id !== user.id && <><Button onClick={() => open(a, 'edit')}>编辑账号</Button><Button onClick={() => open(a, 'binding')}>绑定企微成员</Button></>}<Button onClick={() => open(a, 'password')}>重置密码</Button></Space> },
+            { title: '操作', render: (_, a) => <Space wrap><Button size="small" type="link" onClick={() => open(a, 'details')}>详情</Button>{!administrators && a.id !== user.id && <><Button size="small" type="link" onClick={() => open(a, 'edit')}>编辑账号</Button><Button size="small" type="link" onClick={() => open(a, 'binding')}>绑定企微成员</Button></>}<Button size="small" type="link" onClick={() => open(a, 'password')}>重置密码</Button></Space> },
         ]}/>
         {creating && <Modal open title="新建账号" footer={null} onCancel={() => setCreating(false)}><Editor fields={[{ name: 'username', title: '账号' }, { name: 'display_name', title: '昵称' }, { name: 'password', title: '初始密码（至少12个字符）', type: 'password' }]} submit="创建账号" onSave={async v => { await identity.create({ username: v.username, display_name: v.display_name, password: v.password }); await refresh(); setCreating(false); }}/></Modal>}
         {account && <Modal open title={`${value(account, 'display_name')} · ${value(account, 'username')}`} footer={null} onCancel={() => setSelected(undefined)}>

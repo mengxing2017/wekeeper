@@ -1,8 +1,12 @@
+import { PaginationControls } from '../../../shared/pagination-controls'
+import { Field } from '../../../shared/field'
+import { useDialogs } from '../../../shared/use-dialogs'
+import { Disclosure } from '../../../shared/disclosure'
 import { useSearchParams } from 'react-router-dom';
 import { AppShell, navigation, schoolRoleLabel } from '../../../app/shell';
-import { useState, type FormEvent, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Button, Card, Input, Select, Space, Tag } from 'antd';
+import { Alert, Button, Card, Checkbox, Form, Input, Select, Space, Tag , Empty } from 'antd';
 import { Directory } from './directory';
 import { Assets, GroupPicker } from './assets';
 import { Members } from './members';
@@ -21,8 +25,8 @@ export function SessionGate({ children, wecom = false, showSessionBar = true }: 
     const q = useQuery({ queryKey: ['session'], queryFn: identity.session, retry: false });
     const [error, setError] = useState('');
     const [busy, setBusy] = useState(false);
-    async function login(e: FormEvent<HTMLFormElement>) { e.preventDefault(); const f = new FormData(e.currentTarget); setBusy(true); try {
-        const s = await identity.login(String(f.get('username')), String(f.get('password')));
+    async function login(values: { username: string; password: string }) { setBusy(true); try {
+        const s = await identity.login(values.username, values.password);
         await cache.cancelQueries();
         cache.clear();
         cache.setQueryData(['session'], s);
@@ -41,10 +45,10 @@ export function SessionGate({ children, wecom = false, showSessionBar = true }: 
     if (q.isPending) return <div className="loading" role="status">正在确认登录状态…</div>;
     if (!q.data) return <div className="auth-page"><section className="auth-panel">
         <div className="auth-brand"><span className="brand-mark">W</span> WeKeeper</div><div><h1>登录工作空间</h1><p>校园社区 · 内容运营 · 人工分享</p></div>
-        {error && <Alert type="error" title={error} showIcon/>}<form onSubmit={login} className="business-form"><label>账号<input name="username" placeholder="请输入账号" autoComplete="username" required maxLength={100}/></label><label>密码<input name="password" placeholder="请输入密码" type="password" autoComplete="current-password" required maxLength={128}/></label><button className="primary-button" disabled={busy}>{busy ? '正在登录…' : '登录'}</button></form>{wecom && <a href="/api/v1/wecom/oauth/start">使用企业微信身份登录</a>}
+        {error && <Alert type="error" title={error} showIcon/>}<Form layout="vertical" onFinish={login} disabled={busy} className="business-form"><Field name="username" required label={<>账号</>}><Input name="username" placeholder="请输入账号" autoComplete="username" maxLength={100}/></Field><Field name="password" required label={<>密码</>}><Input.Password name="password" placeholder="请输入密码" autoComplete="current-password" maxLength={128}/></Field><Button type="primary" htmlType="submit" block loading={busy} disabled={busy}>{busy ? '正在登录…' : '登录'}</Button></Form>{wecom && <a href="/api/v1/wecom/oauth/start">使用企业微信身份登录</a>}
         <p className="auth-caption">使用管理员分配的账号进入工作空间</p>
     </section></div>;
-    return <>{showSessionBar && <div className="session-bar"><span>{q.data.user.display_name}</span><Button onClick={logout}>退出登录</Button></div>}{error && <div className="session-error" role="alert">{error}</div>}{children(q.data.user, logout)}</>;
+    return <>{showSessionBar && <div className="session-bar"><span>{q.data.user.display_name}</span><Button onClick={logout}>退出登录</Button></div>}{error && <Alert type="error" showIcon  className="session-error" title={<>{error}</>} />}{children(q.data.user, logout)}</>;
 }
 
 export function Workspace() { return <SessionGate showSessionBar={false}>{(user, logout) => <Admin user={user} logout={logout}/>}</SessionGate>; }
@@ -70,8 +74,8 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
         : tab === 'schools' && user.platform_admin ? <Schools schools={q.data ?? []} loading={q.isPending} refresh={refresh} enter={enterSchool}/>
         : (tab === 'accounts' || tab === 'administrators') && user.platform_admin ? <Accounts key={tab} administrators={tab === 'administrators'} user={user} schools={q.data ?? []}/>
         : tab === 'platform-resources' && user.platform_admin ? <Card title="平台默认展示配置"><GlobalResources /></Card>
-        : q.isPending ? <div className="empty-state" role="status">正在加载学校…</div>
-        : !school ? <div className="empty-state"><span className="empty-mark">◇</span><h2>尚未选择学校</h2><p>{user.platform_admin ? '请在「学校管理」中创建学校，或选择已有学校。' : '请联系管理员为账号分配学校权限。'}</p>{user.platform_admin && <Button type="primary" onClick={() => navigate('schools')}>创建学校</Button>}</div>
+        : q.isPending ? <Empty className="empty-state" description={<>正在加载学校…</>} />
+        : !school ? <Empty className="empty-state" description={<><h2>尚未选择学校</h2><p>{user.platform_admin ? '请在「学校管理」中创建学校，或选择已有学校。' : '请联系管理员为账号分配学校权限。'}</p>{user.platform_admin && <Button type="primary" onClick={() => navigate('schools')}>创建学校</Button>}</>} />
         : !tab ? <Alert type="info" title="当前账号没有该学校的后台管理权限，请联系平台管理员。"/>
         : <div className="business-panel">{tab === 'members' ? <Members key={school.id} school={school} platformAdmin={user.platform_admin} refresh={refresh}/> : tab === 'settings' ? <Card title={`${school.name} · 学校设置`}><Settings key={school.id} school={school} refresh={refresh}/></Card> : <Panel platformAdmin={user.platform_admin} key={`${school.id}:${tab}`} schoolAdmin={user.platform_admin || role === 'admin'} school={school} resource={tab as Resource} refresh={refresh}/>}</div>}
     </AppShell>;
@@ -92,6 +96,7 @@ function Panel({ school, resource, refresh, schoolAdmin, platformAdmin }: {
     const [error, setError] = useState(''), [busy, setBusy] = useState(false), [editing, setEditing] = useState<Row>();
     const query = `?${new URLSearchParams({ 'page[number]': String(page), 'page[size]': '30', ...(search ? { search } : {}), ...(status ? { status } : {}) })}`;
     const q = useQuery({ queryKey: ['business', s, resource, query], queryFn: ({ signal }) => workspace.list(s, resource, query, signal) });
+    const dialogs = useDialogs();
     async function act(path: string, body: unknown, method = 'POST') { setBusy(true); setError(''); try {
         await workspace.mutate(s, path, body, method);
         await refresh();
@@ -103,25 +108,25 @@ function Panel({ school, resource, refresh, schoolAdmin, platformAdmin }: {
         setBusy(false);
     } }
     const mutation = async (path: string, body: unknown, method = 'POST') => { await workspace.mutate(s, path, body, method); await refresh(); };
-    return <><div className="list-toolbar"><Space wrap><Input.Search aria-label="搜索内容" placeholder="搜索标题或正文" onSearch={v => { setSearch(v); setPage(1); }}/>{['posts', 'comments'].includes(resource) && <Select aria-label="审核状态" value={status} style={{ width: 140 }} onChange={setStatus} options={[{ value: '', label: '全部状态' }, ...['pending', 'approved', 'rejected'].map(value => ({ value, label: states[value] }))]}/>}<Button onClick={() => q.refetch()} loading={q.isFetching}>刷新</Button></Space><span className="list-count">{q.data ? `本页 ${q.data.items.length} 条记录` : '正在获取记录'}</span></div>{(error || q.error) && <Alert type="error" title={error || q.error?.message}/>}
+    return <>{dialogs.contextHolder}<div className="list-toolbar"><Space wrap><Input.Search aria-label="搜索内容" placeholder="搜索标题或正文" onSearch={v => { setSearch(v); setPage(1); }}/>{['posts', 'comments'].includes(resource) && <Select aria-label="审核状态" value={status} style={{ width: 140 }} onChange={setStatus} options={[{ value: '', label: '全部状态' }, ...['pending', 'approved', 'rejected'].map(value => ({ value, label: states[value] }))]}/>}<Button onClick={() => q.refetch()} loading={q.isFetching}>刷新</Button></Space><span className="list-count">{q.data ? `本页 ${q.data.items.length} 条记录` : '正在获取记录'}</span></div>{(error || q.error) && <Alert type="error" title={error || q.error?.message}/>}
  {resource === 'resources' && schoolAdmin && <ResourceEditor key={editing?.id ?? 'new'} item={editing} save={v => mutation('resources', v)}/>}
  {resource === 'groups' && schoolAdmin && !editing && <GroupPicker key={school.id} school={school.id} onSaved={refresh}/>}
- {resource === 'groups' && schoolAdmin && (editing || platformAdmin) && <details open={!!editing}><summary>{editing ? '编辑学校群' : '平台例外：手填已知群标识'}</summary><Editor key={editing?.id ?? 'new'} fields={[{ name: 'name', title: '群名称', value: label(editing?.name) }, { name: 'corp_id', title: '企业 ID（与应用配置一致）', readOnly: !!editing, value: label(editing?.corp_id) }, { name: 'chat_id', title: '客户群 ID（保存后不可更换）', readOnly: !!editing, value: label(editing?.chat_id) }, { name: 'active', title: '启用状态', value: editing ? String(editing.active) : 'true', options: [{ value: 'true', label: '启用' }, { value: 'false', label: '撤销' }] }]} onSave={v => mutation('groups', { ...v, id: editing?.id, revision: editing?.revision ?? 0, active: v.active === 'true' })}/></details>}
+ {resource === 'groups' && schoolAdmin && (editing || platformAdmin) && <Disclosure title={<>{editing ? '编辑学校群' : '平台例外：手填已知群标识'}</>} open={!!editing}><Editor key={editing?.id ?? 'new'} fields={[{ name: 'name', title: '群名称', value: label(editing?.name) }, { name: 'corp_id', title: '企业 ID（与应用配置一致）', readOnly: !!editing, value: label(editing?.corp_id) }, { name: 'chat_id', title: '客户群 ID（保存后不可更换）', readOnly: !!editing, value: label(editing?.chat_id) }, { name: 'active', title: '启用状态', value: editing ? String(editing.active) : 'true', options: [{ value: 'true', label: '启用' }, { value: 'false', label: '撤销' }] }]} onSave={v => mutation('groups', { ...v, id: editing?.id, revision: editing?.revision ?? 0, active: v.active === 'true' })}/></Disclosure>}
  {resource === 'templates' && <Editor fields={[{ name: 'name', title: '模板名称' }]} onSave={v => mutation('templates', v)}/>}
  {resource === 'delivery-drafts' && <DraftEditor school={s} save={v => mutation('delivery-drafts', v)}/>}
- {q.isPending && <p role="status">正在加载…</p>}{q.data?.items.length === 0 && <div className="empty-state"><span className="empty-mark">◇</span><h3>暂无记录</h3><p>当前学校下没有符合条件的记录。</p></div>}
+ {q.isPending && <Alert type="info" role="status"  title={<>正在加载…</>} />}{q.data?.items.length === 0 && <Empty className="empty-state" description={<><h3>暂无记录</h3><p>当前学校下没有符合条件的记录。</p></>} />}
  <div className="record-list">{q.data?.items.map(r => <Card key={r.id} size="small" title={label(r.title ?? r.name ?? r.group_name ?? r.display_name ?? r.action) || r.id} extra={<Tag>{stateLabel(r.audit_status ?? r.state ?? r.role ?? r.kind)}</Tag>}>
  {resource === 'members' && <p>{school.name} · {label(r.username)} · {schoolRoleLabel(label(r.role))}</p>}
  {r.content && <p className="text-content">{label(r.content)}</p>}{r.body && <p className="text-content">{label(r.body)}</p>}{r.contact && <p>联系方式：{label(r.contact)}</p>}{r.visibility && <Tag>{stateLabel(r.visibility)}</Tag>}{r.reconciliation && <p>核对结果：{stateLabel(r.reconciliation)} · {label(r.reconciliation_note)}</p>}<small>{label(r.created_at)} {r.id}</small>
  {r.detail && <pre>{label(r.detail)}</pre>}{r.url && <p><a href={label(r.url)} target="_blank" rel="noreferrer">查看资源链接</a></p>}
- {['posts', 'comments'].includes(resource) && <Space wrap>{['approved', 'rejected', 'pending'].map(decision => <Button key={decision} disabled={busy} onClick={() => { const reason = window.prompt('审核说明'); if (reason !== null)
+ {['posts', 'comments'].includes(resource) && <Space wrap>{['approved', 'rejected', 'pending'].map(decision => <Button key={decision} disabled={busy} onClick={async () => { const reason = await dialogs.prompt('审核说明'); if (reason !== null)
             void act(`${resource}/${r.id}/moderation-decisions`, { revision: r.revision, decision, reason }); }}>{states[decision]}</Button>)}{resource === 'posts' && <>{['visible', 'hidden', 'deleted'].map(visibility => <Button key={visibility} disabled={busy} onClick={() => act(`posts/${r.id}/visibility`, { revision: r.revision, visibility, top_sort: r.top_sort ?? 0 }, 'PUT')}>{states[visibility]}</Button>)}<Button disabled={busy} onClick={() => act(`posts/${r.id}/visibility`, { revision: r.revision, visibility: r.visibility, top_sort: r.top_sort ? 0 : 100 }, 'PUT')}>{r.top_sort ? '取消置顶' : '置顶'}</Button></>}</Space>}
  {resource === 'cases' && r.state === 'open' && <Editor fields={[{ name: 'resolution', title: '处理说明' }, { name: 'state', title: '处理结果', options: [{ value: 'resolved', label: '已处理' }, { value: 'dismissed', label: '驳回' }] }]} onSave={v => mutation(`cases/${r.id}`, { ...v, revision: r.revision }, 'PUT')}/>}
  {['resources', 'groups'].includes(resource) && schoolAdmin && <Button onClick={() => setEditing(r)}>编辑</Button>}
  {resource === 'templates' && <><Editor fields={[{ name: 'body', title: '新版本正文（支持 {{school.name}}、{{post.title}}、{{post.summary}}、{{post.detail_url}}）', type: 'textarea' }]} onSave={v => mutation(`templates/${r.id}/versions`, v)}/>{Array.isArray(r.versions) && r.versions.map(v => { const version = v as Row; return <div key={version.id}><pre>{label(version.body)}</pre>{version.published ? <Tag>已发布 · {version.id}</Tag> : <Button disabled={busy} onClick={() => act(`template-versions/${version.id}/publish`, { revision: version.revision })}>发布此版本</Button>}</div>; })}</>}
  {resource === 'delivery-drafts' && <a href={`/wecom?school=${s}&draft=${r.id}`}>预览草稿与客户群入口说明 ↗</a>}
  {resource === 'delivery-attempts' && schoolAdmin && <><p>客户端结果与人工核对独立保存；不确定结果不会自动重发。</p><Editor fields={[{ name: 'decision', title: '核对结论', options: [{ value: 'operator_confirmed', label: '人工确认已发送' }, { value: 'operator_rejected', label: '人工确认未发送' }] }, { name: 'reason', title: '核对依据', type: 'textarea' }]} onSave={v => mutation(`delivery-attempts/${r.id}/reconciliations`, v)}/></>}
- </Card>)}</div>{['posts', 'comments', 'audit', 'delivery-drafts', 'delivery-attempts', 'cases', 'notifications'].includes(resource) && <Space><Button disabled={page === 1} onClick={() => setPage(page - 1)}>上一页</Button><span>第 {page} 页</span><Button disabled={!q.data?.page?.has_more} onClick={() => setPage(page + 1)}>下一页</Button></Space>}
+ </Card>)}</div>{['posts', 'comments', 'audit', 'delivery-drafts', 'delivery-attempts', 'cases', 'notifications'].includes(resource) && <PaginationControls page={page} more={q.data?.page?.has_more} busy={q.isFetching} change={setPage} />}
  </>;
 }
 function ResourceEditor({ item, save }: {
@@ -138,8 +143,6 @@ function DraftEditor({ school, save }: {
     const posts = useQuery({ queryKey: ['business', school, 'approved-posts', page, search], queryFn: () => workspace.list(school, 'posts', `?status=approved&page[size]=30&page[number]=${page}&search=${encodeURIComponent(search)}`) });
     const [chosen, setChosen] = useState<string[]>([]);
     const versions = templates.data?.items.flatMap(t => Array.isArray(t.versions) ? t.versions.filter(v => (v as Row).published).map(v => ({ value: (v as Row).id, label: `${label(t.name)} · ${(v as Row).id}` })) : []) ?? [];
-    return <details open><summary>生成分享草稿</summary><p>选择仍在展示的已审核内容，生成后正文固定。正文上限为 2000 UTF-8 字节。</p><label>搜索已审核内容<input value={search} onChange={e => { setSearch(e.target.value); setPage(1); }}/></label>
-    {[groups, templates, posts].map((q, i) => q.error ? <p role="alert" key={i}>{['客户群', '模板', '内容'][i]}加载失败：{q.error.message}<button onClick={() => void q.refetch()}>重新加载</button></p> : q.isPending ? <p role="status" key={i}>正在加载{['客户群', '模板', '内容'][i]}…</p> : null)}
-    <p>已选 {chosen.length} 条内容<button onClick={() => setChosen([])}>清空选择</button></p>{posts.data?.items.filter(p => p.visibility === 'visible').map(p => <label className="check-row" key={p.id}><input type="checkbox" checked={chosen.includes(p.id)} onChange={e => setChosen(e.target.checked ? [...chosen, p.id] : chosen.filter(id => id !== p.id))}/>{label(p.title)}</label>)}<div><button disabled={page === 1} onClick={() => setPage(p => p - 1)}>上一页内容</button><span>第 {page} 页</span><button disabled={!posts.data?.page?.has_more} onClick={() => setPage(p => p + 1)}>下一页内容</button></div><Editor fields={[{ name: 'group_id', title: '目标客户群', options: groups.data?.items.filter(g => g.active).map(g => ({ value: g.id, label: label(g.name) })) ?? [] }, { name: 'template_version_id', title: '已发布模板版本', options: versions }]} onSave={v => save({ ...v, post_ids: chosen })} submit="生成并预览草稿"/></details>;
+    return <Disclosure title={<>生成分享草稿</>} open><p>选择仍在展示的已审核内容，生成后正文固定。正文上限为 2000 UTF-8 字节。</p><Field label={<>搜索已审核内容</>}><Input value={search} onChange={e => { setSearch(e.target.value); setPage(1); }}/></Field>{[groups, templates, posts].map((q, i) => q.error ? <Alert type="error" showIcon key={i}  title={<>{['客户群', '模板', '内容'][i]}加载失败：{q.error.message}<Button onClick={() => void q.refetch()}>重新加载</Button></>} /> : q.isPending ? <Alert type="info" role="status" key={i} title={<>正在加载{['客户群', '模板', '内容'][i]}…</>} /> : null)}<p>已选 {chosen.length} 条内容<Button onClick={() => setChosen([])}>清空选择</Button></p>{posts.data?.items.filter(p => p.visibility === 'visible').map(p => <Checkbox className="check-row" key={p.id} checked={chosen.includes(p.id)} onChange={e => setChosen(e.target.checked ? [...chosen, p.id] : chosen.filter(id => id !== p.id))}>{label(p.title)}</Checkbox>)}<PaginationControls page={page} more={posts.data?.page?.has_more} busy={posts.isFetching} change={setPage} subject="内容" /><Editor fields={[{ name: 'group_id', title: '目标客户群', options: groups.data?.items.filter(g => g.active).map(g => ({ value: g.id, label: label(g.name) })) ?? [] }, { name: 'template_version_id', title: '已发布模板版本', options: versions }]} onSave={v => save({ ...v, post_ids: chosen })} submit="生成并预览草稿"/></Disclosure>;
 }
-function GlobalResources() { const q = useQuery({ queryKey: ['global-resources'], queryFn: workspace.globalResources }); const [item, setItem] = useState<Row>(); return <section><h3>平台默认展示配置</h3><p>学校有同类启用配置时优先使用学校配置；全局屏蔽词始终生效。</p><ResourceEditor key={item?.id ?? 'global'} item={item} save={async (v) => { await workspace.globalResource(v); await q.refetch(); }}/>{q.data?.map(r => <p key={r.id}>{label(r.title)} <Button onClick={() => setItem(r)}>编辑</Button></p>)}{q.error && <p role="alert">{q.error.message}</p>}</section>; }
+function GlobalResources() { const q = useQuery({ queryKey: ['global-resources'], queryFn: workspace.globalResources }); const [item, setItem] = useState<Row>(); return <section><h3>平台默认展示配置</h3><p>学校有同类启用配置时优先使用学校配置；全局屏蔽词始终生效。</p><ResourceEditor key={item?.id ?? 'global'} item={item} save={async (v) => { await workspace.globalResource(v); await q.refetch(); }}/>{q.data?.map(r => <p key={r.id}>{label(r.title)} <Button onClick={() => setItem(r)}>编辑</Button></p>)}{q.error && <Alert type="error" showIcon   title={<>{q.error.message}</>} />}</section>; }

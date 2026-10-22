@@ -1,3 +1,4 @@
+import { PaginationControls } from '../../../shared/pagination-controls'
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Card, Input, Popconfirm, Select, Space, Table } from 'antd';
@@ -30,9 +31,9 @@ function DirectoryBrowser({ account, onSelect, busy = false }: { account?: strin
             {title:'企业状态',render:(_,m)=>`${memberStatus(m.status)} · ${verificationName(m.verification)}${m.visibility==='not_seen'?' · 不在当前快照':''}`},
             {title:'本地账号',render:(_,m)=>m.bound_account_name ?? '未绑定'},
             {title:'核验时间',render:(_,m)=>m.checked_at ?? '尚未核验'},
-            ...(onSelect ? [{title:'操作',render:(_:unknown,m:DirectoryMember)=><Button disabled={busy || m.status!==1 || m.verification!=='verified' || m.visibility!=='visible' || (!!m.bound_account_id && m.bound_account_id!==account)} onClick={()=>onSelect(m)}>选择成员</Button>}] : []),
+            ...(onSelect ? [{title:'操作',render:(_:unknown,m:DirectoryMember)=><Button size="small" type="link" disabled={busy || m.status!==1 || m.verification!=='verified' || m.visibility!=='visible' || (!!m.bound_account_id && m.bound_account_id!==account)} onClick={()=>onSelect(m)}>选择成员</Button>}] : []),
         ]}/>
-        <Space><Button disabled={page===1 || members.isFetching} onClick={()=>setPage(p=>p-1)}>上一页成员</Button><span>第 {page} 页</span><Button disabled={!members.data?.page?.has_more || members.isFetching} onClick={()=>setPage(p=>p+1)}>下一页成员</Button></Space>
+        <PaginationControls page={page} more={members.data?.page?.has_more} busy={members.isFetching} change={setPage} subject="成员" />
     </section>;
 }
 export function Directory() {
@@ -44,11 +45,11 @@ export function Directory() {
     async function rotate(){if(!status.data?.credential_generation)return;setBusy(true);setError('');try{await directory.rotate(status.data.credential_generation);await cache.invalidateQueries({queryKey:['wecom-directory']});}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
     return <Card title="应用可见通讯录">
         <p>仅显示当前企业自建应用可见的部门和成员。同步不会创建本地账号或分配学校角色。</p>
-        {status.isPending && <p role="status">正在读取同步状态…</p>}
+        {status.isPending && <Alert type="info" role="status"  title={<>正在读取同步状态…</>} />}
         {status.error && <Alert type="error" title={status.error.message} action={<Button onClick={()=>void status.refetch()}>重试状态</Button>}/>}
         {status.data?.configuration_error && <Alert type="error" title={status.data.configuration_error}/>}
         <p>最近完整同步：{status.data?.last_success_at ?? '尚未同步'}。目录可能已变化，绑定和企业登录时会重新核验。</p>
-        {run && <p role="status">最近任务：{({queued:'排队中',running:'同步中',succeeded:'同步成功',failed:'同步失败'})[run.state]} · {run.department_count} 个部门 / {run.member_count} 位成员 {run.error_code && `· ${run.error_code}`}</p>}
+        {run && <Alert type="info" role="status"  title={<>最近任务：{({queued:'排队中',running:'同步中',succeeded:'同步成功',failed:'同步失败'})[run.state]}· {run.department_count}个部门 / {run.member_count}位成员 {run.error_code && `· ${run.error_code}`}</>} />}
         {error && <Alert type="error" title={error}/>}
         <Space><Button onClick={()=>void sync()} disabled={busy || !status.data?.server_configured || !!status.data?.configuration_error || run?.state==='queued' || run?.state==='running'}>立即同步</Button><Button onClick={()=>void cache.invalidateQueries({queryKey:['wecom-directory']})}>刷新目录与状态</Button></Space>
         {status.data?.server_configured && status.data.credential_rotation_required && <p><Popconfirm title="验证并切换服务器当前凭据？" description="旧企业会话将退出，旧任务停止，成员待重新核验；账号绑定和学校授权保留。" onConfirm={()=>void rotate()} okText="验证并切换" cancelText="取消"><Button loading={busy} disabled={busy}>验证并切换服务端凭据</Button></Popconfirm></p>}
@@ -66,7 +67,7 @@ export function WecomBinding({account,refresh}:{account:Row;refresh:()=>Promise<
     }catch(e){setError((e as Error).message);}finally{setBusy(false);}}
     return <section><h3>绑定企业微信成员</h3><p>当前绑定：{String(account.wecom_name ?? '')} {String(account.wecom_userid ?? '未绑定')}。绑定变更将退出此账号现有会话，不改变学校角色。</p>
         <a href="/admin?view=wecom-directory">查看同步状态或同步通讯录</a>
-        {error && <Alert type="error" title={error}/>}{done && <p role="status">{done}</p>}
+        {error && <Alert type="error" title={error}/>}{done && <Alert type="info" role="status"  title={<>{done}</>} />}
         <DirectoryBrowser account={account.id} onSelect={m=>{setSelected(m);setDone('');}} busy={busy}/>
         {selected && <p>待绑定：{selected.name} · {selected.userid} · {selected.departments.map(d=>d.name).join(' / ')}</p>}
         <Space><Button type="primary" disabled={busy || !selected || !account.active} onClick={()=>void save()}>核验并保存绑定</Button><Button disabled={busy || !account.wecom_member_id} onClick={()=>void save(true)}>解除绑定</Button><Button disabled={busy} onClick={()=>void refresh()}>刷新账号绑定版本</Button></Space>

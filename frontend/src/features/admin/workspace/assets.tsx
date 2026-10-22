@@ -1,3 +1,4 @@
+import { PaginationControls as Pager } from '../../../shared/pagination-controls'
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Card, Drawer, Input, Select, Space, Table, Tabs } from 'antd';
@@ -6,7 +7,6 @@ import { verificationName } from './directory';
 const show = (v: unknown) => v === null || v === undefined ? '—' : typeof v === 'object' ? JSON.stringify(v) : String(v);
 const fieldLabels:Record<string,string>={name:'名称',userid:'UserID',chat_id:'客户群标识',owner:'群主 UserID',member_name:'企业成员',member_count:'成员数量',checked_at:'核验时间',verification:'核验状态',source:'资料来源',created_at:'创建时间',started_at:'开始时间',finished_at:'结束时间',dataset:'数据集',state:'任务状态',stage:'任务阶段',processed:'已处理项目',total:'枚举成员 / 群主数量',pages:'已读取页数',error_code:'错误码',scope_count:'范围成员数量',scope_changed:'范围是否缩小',complete:'采集是否完整'};
 const stateName = (v: unknown) => ({queued:'排队中',running:'同步中',succeeded:'同步成功',failed:'同步失败'})[String(v)] ?? show(v);
-function Pager({page,more,busy,change}:{page:number;more?:boolean;busy:boolean;change:(p:number)=>void}) {return <Space><Button disabled={page===1||busy} onClick={()=>change(page-1)}>上一页</Button><span>第 {page} 页</span><Button disabled={!more||busy} onClick={()=>change(page+1)}>下一页</Button></Space>;}
 export function Assets() {
     const cache=useQueryClient(), [kind,setKind]=useState<AssetList>('groups'),[filter,setFilter]=useState<AssetFilter>({page:1}),[error,setError]=useState(''),[busy,setBusy]=useState(false),[relationship,setRelationship]=useState<'owner'|'participant'>('owner'),[selected,setSelected]=useState<{kind:'groups'|'sync-runs';id:string}>();
     const status=useQuery({queryKey:['wecom-assets','status'],queryFn:assets.status,refetchInterval:3000});
@@ -34,7 +34,7 @@ export function Assets() {
         </Space>
         {list.error&&<Alert type="error" title={list.error.message}/>}
         <Table<Row> rowKey="id" loading={list.isFetching} dataSource={list.data?.items} pagination={false} scroll={{x:800}} columns={kind==='sync-runs'?[
-            {title:'状态',render:(_,r)=>stateName(r.state)},{title:'阶段',dataIndex:'stage'},{title:'已处理 / 预计范围',render:(_,r)=>`${show(r.processed)} / ${show(r.total)}`},{title:'页数',dataIndex:'pages'},{title:'错误码',dataIndex:'error_code'},{title:'创建时间',dataIndex:'created_at'},{title:'详情',render:(_,r)=><Button onClick={()=>setSelected({kind:'sync-runs',id:r.id})}>任务详情</Button>},
+            {title:'状态',render:(_,r)=>stateName(r.state)},{title:'阶段',dataIndex:'stage'},{title:'已处理 / 预计范围',render:(_,r)=>`${show(r.processed)} / ${show(r.total)}`},{title:'页数',dataIndex:'pages'},{title:'错误码',dataIndex:'error_code'},{title:'创建时间',dataIndex:'created_at'},{title:'详情',render:(_,r)=><Button size="small" type="link" onClick={()=>setSelected({kind:'sync-runs',id:r.id})}>任务详情</Button>},
         ]:kind==='member-statistics'?[
             {title:'企业成员',dataIndex:'name'},{title:'UserID',dataIndex:'userid'},{title:'群主群',dataIndex:'owned_group_count'},{title:'参与群',dataIndex:'participating_group_count'},
         ]:[
@@ -42,7 +42,7 @@ export function Assets() {
             {title:'群主',render:(_,r)=>show(r.member_name??r.owner)},
             ...(kind==='groups'?[{title:'人数',dataIndex:'member_count'},{title:'学校关联',render:(_:unknown,r:Row)=>r.school_id?'已关联':'未关联'}]:[]),
             {title:'核验',render:(_,r)=>`${verificationName(String(r.verification))}${r.visibility==='not_seen'?' · 本轮未见':''}`},{title:'核验时间',dataIndex:'checked_at'},
-            ...(kind==='groups'?[{title:'详情',render:(_:unknown,r:Row)=><Button onClick={()=>setSelected({kind:kind as 'groups',id:r.id})}>查看关系</Button>}]:[]),
+            ...(kind==='groups'?[{title:'详情',render:(_:unknown,r:Row)=><Button size="small" type="link" onClick={()=>setSelected({kind:kind as 'groups',id:r.id})}>查看关系</Button>}]:[]),
         ]}/>
         <Pager page={filter.page??1} more={list.data?.page?.has_more} busy={list.isFetching} change={page=>setFilter(f=>({...f,page}))}/>
         {selected&&<AssetDetail key={`${selected.kind}:${selected.id}`} {...selected} close={()=>setSelected(undefined)}/>}
@@ -65,7 +65,7 @@ export function GroupPicker({school,onSaved}:{school:string;onSaved:()=>Promise<
     return <Card size="small" title="从同步目录选择客户群"><p>学校管理员仅可选择自己担任群主的群。未绑定企业成员时，请联系平台管理员配置。</p>
         <Input aria-label="搜索候选客户群" value={search} placeholder="群名或 chat_id" onChange={e=>{setSearch(e.target.value);setPage(1);setSelected(undefined);}}/>
         {(error||q.error)&&<Alert type="error" title={error||q.error?.message} action={<Button onClick={()=>void q.refetch()}>刷新候选</Button>}/>}
-        <Table<GroupCandidate> rowKey="id" loading={q.isFetching} dataSource={q.error?[]:q.data?.items} pagination={false} locale={{emptyText:'暂无可选群：请检查同步状态、绑定身份及群主范围；其他学校已关联的群不会显示'}} columns={[{title:'官方群名',dataIndex:'name'},{title:'群主',render:(_,g)=>g.owner_name??g.owner},{title:'人数',dataIndex:'member_count'},{title:'操作',render:(_,g)=><Button disabled={busy||g.already_associated} onClick={()=>{setSelected(g);setName(g.name??'');}}>{g.already_associated?'已关联本校':'选择群'}</Button>}]}/>
+        <Table<GroupCandidate> rowKey="id" loading={q.isFetching} dataSource={q.error?[]:q.data?.items} pagination={false} locale={{emptyText:'暂无可选群：请检查同步状态、绑定身份及群主范围；其他学校已关联的群不会显示'}} columns={[{title:'官方群名',dataIndex:'name'},{title:'群主',render:(_,g)=>g.owner_name??g.owner},{title:'人数',dataIndex:'member_count'},{title:'操作',render:(_,g)=><Button size="small" type="link" disabled={busy||g.already_associated} onClick={()=>{setSelected(g);setName(g.name??'');}}>{g.already_associated?'已关联本校':'选择群'}</Button>}]}/>
         <Pager page={page} more={q.data?.page?.has_more} busy={q.isFetching} change={setPage}/>
         {selected&&<Space orientation="vertical"><p>已选 {selected.name??selected.chat_id} · {selected.corp_id} · {selected.chat_id}</p><Input aria-label="学校群显示名" value={name} onChange={e=>setName(e.target.value)} maxLength={200}/><Button loading={busy} onClick={()=>void save()}>关联到当前学校</Button></Space>}
     </Card>;

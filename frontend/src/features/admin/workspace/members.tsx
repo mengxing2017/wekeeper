@@ -1,6 +1,7 @@
+import { Field } from '../../../shared/field'
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Alert, Button, Input, Space, Table } from 'antd';
+import { Alert, Button, Input, Select, Space, Table } from 'antd';
 import { identity, workspace, type Row, type School } from './api';
 import { memberStatus, verificationName } from './directory';
 import { schoolRoleLabel } from '../../../app/shell';
@@ -38,7 +39,7 @@ export function Members({ school, platformAdmin, refresh }: { school: School; pl
         <Space wrap><Input aria-label="搜索学校成员账号" placeholder="搜索账号或昵称" value={search} onChange={e => { setSearch(e.target.value); setPage(1); }}/><Button disabled={busy} loading={members.isFetching || (platformAdmin && accounts.isFetching)} onClick={() => void reload()}>刷新账号与授权</Button></Space>
         {loadError && <Alert type="error" title={`账号或学校授权加载失败：${loadError.message}`}/>}
         {error && <Alert type="error" title={error}/>}
-        {done && <p role="status">{done}</p>}
+        {done && <Alert type="info" role="status"  title={<>{done}</>} />}
         <Table<Row> rowKey="id" loading={loading} dataSource={loadError ? [] : filtered} scroll={{ x: 600 }} locale={{ emptyText: loadError ? '加载失败，请刷新重试' : platformAdmin ? '没有匹配的普通账号，请先在账号管理中新建账号' : '本校暂无成员' }} pagination={{ current: page, pageSize: 10, showSizeChanger: false, onChange: setPage }} rowSelection={platformAdmin ? {
             selectedRowKeys: selected,
             onChange: keys => setSelected(keys.map(String)),
@@ -55,6 +56,6 @@ export function Members({ school, platformAdmin, refresh }: { school: School; pl
                 { title: '企业微信', render: (_: unknown, a: Row) => a.wecom_userid ? String(a.wecom_userid) : '未绑定' },
             ] : []),
         ]}/>
-        {platformAdmin && <div className="business-form"><p>已选择 {selected.length} 个账号。操作仅影响【{school.name}】的授权，不改变账号启停或其他学校角色。</p><label>所选账号在【{school.name}】的角色<select disabled={busy} value={role} onChange={e => setRole(e.target.value)}><option value="member">普通成员</option><option value="operator">运营</option><option value="admin">学校管理员</option><option value="revoked">撤销学校授权</option></select></label><Button type="primary" disabled={busy || loading || !!loadError || !selected.length} onClick={() => void save()}>保存所选成员授权</Button></div>}
+        {platformAdmin && <div className="business-form"><p>已选择 {selected.length} 个账号。操作仅影响【{school.name}】的授权，不改变账号启停或其他学校角色。</p><Field label={<>所选账号在【{school.name}】的角色</>}><Select aria-label="学校角色" className="full-width" disabled={busy} value={role} onChange={value => setRole(value)}><Select.Option value="member">普通成员</Select.Option><Select.Option value="operator">运营</Select.Option><Select.Option value="admin">学校管理员</Select.Option><Select.Option value="revoked">撤销学校授权</Select.Option></Select></Field><Button type="primary" disabled={busy || loading || !!loadError || !selected.length} onClick={() => void save()}>保存所选成员授权</Button></div>}
     </section>;
 }
