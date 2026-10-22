@@ -490,19 +490,21 @@ async fn complete_business_flow_and_security_boundaries() {
     .await;
     let draft_input =
         json!({"group_id":id(&group),"template_version_id":id(&version),"post_ids":[p]});
-    let draft = ok(
-        &app,
-        "POST",
-        &format!("{root}/delivery-drafts"),
-        &admin_token,
-        &admin,
-        draft_input.clone(),
-    )
-    .await;
+    // Construct an existing legacy snapshot to exercise historical reads after retirement.
+    let draft = a
+        .distribution
+        .draft(
+            &admin,
+            s,
+            serde_json::from_value(draft_input.clone()).unwrap(),
+            "http://localhost:5173",
+        )
+        .await
+        .unwrap();
     assert_eq!(draft["content"], "School A: Campus\nHello");
     let d = id(&draft);
     let chat = group["chat_id"].as_str().unwrap();
-    // HTTP cannot impersonate a verified enterprise identity, even with a platform admin session.
+    // The old write route is retired even for an authenticated platform administrator.
     assert_eq!(
         call(
             &app,
@@ -514,7 +516,7 @@ async fn complete_business_flow_and_security_boundaries() {
         )
         .await
         .0,
-        403
+        422
     );
     let attempt = a
         .distribution
@@ -580,15 +582,17 @@ async fn complete_business_flow_and_security_boundaries() {
             .await
             .is_err()
     );
-    let other = ok(
-        &app,
-        "POST",
-        &format!("{root}/delivery-drafts"),
-        &admin_token,
-        &admin,
-        draft_input.clone(),
-    )
-    .await;
+    // Construct an existing legacy snapshot to exercise historical reads after retirement.
+    let other = a
+        .distribution
+        .draft(
+            &admin,
+            s,
+            serde_json::from_value(draft_input.clone()).unwrap(),
+            "http://localhost:5173",
+        )
+        .await
+        .unwrap();
     assert!(
         a.distribution
             .0

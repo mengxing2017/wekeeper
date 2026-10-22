@@ -37,7 +37,7 @@ async fn capabilities_and_cache_identity_are_independent_of_agent_id() {
     }
     s.agent = "1000002".into();
     assert!(
-        s.capabilities("https://example.test", false)
+        !s.capabilities("https://example.test", false)
             .share_available
     );
     assert_eq!(s.cache_key("token"), key);
@@ -256,7 +256,7 @@ async fn server_only_oauth_directory_cache_and_share_http_gates() {
         assert_eq!(response.status(), 422, "{path}");
         let body = String::from_utf8(to_bytes(response.into_body(), 8192).await.unwrap().to_vec())
             .unwrap();
-        assert!(body.contains("AgentID"), "{path}: {body}");
+        assert!(body.contains("逐群分享已停用"), "{path}: {body}");
     }
     // The new scope never silently adopts the old directory.
     assert_eq!(
@@ -544,4 +544,79 @@ async fn asset_http_reads_preserve_errors_and_do_not_need_agent_id() {
         .await
         .unwrap();
     root.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn broadcast_http_preserves_explicit_targets_and_never_retries_writes() {
+    use crate::distribution::{
+        domain::broadcast::{Outcome, Work},
+        south::port::broadcast::Client,
+    };
+    use axum::routing::post;
+    let url = std::env::var("WEKEEPER_TEST_DATABASE_URL").unwrap();
+    let base = sqlx::PgPool::connect(&url).await.unwrap();
+    let schema = format!("broadcast_http_{}", uuid::Uuid::new_v4().simple());
+    sqlx::query(&format!("CREATE SCHEMA {schema}"))
+        .execute(&base)
+        .await
+        .unwrap();
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .after_connect(move |c, _| {
+            let sql = format!("SET search_path TO {schema}");
+            Box::pin(async move {
+                sqlx::query(&sql).execute(c).await?;
+                Ok(())
+            })
+        })
+        .connect(&url)
+        .await
+        .unwrap();
+    crate::database::migrate(&pool).await.unwrap();
+    let writes = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+    let seen = writes.clone();
+    let router=axum::Router::new()
+      .route("/cgi-bin/gettoken",get(||async{axum::Json(json!({"errcode":0,"access_token":"mock-token","expires_in":7200}))}))
+      .route("/cgi-bin/externalcontact/add_msg_template",post(move|axum::Json(v):axum::Json<serde_json::Value>|{seen.lock().unwrap().push(v);async{(axum::http::StatusCode::BAD_GATEWAY,"lost response")}}))
+      .route("/cgi-bin/externalcontact/get_groupmsg_task",post(||async{axum::Json(json!({"errcode":0,"next_cursor":"","task_list":[{"userid":"owner","status":2}]}))}))
+      .route("/cgi-bin/externalcontact/get_groupmsg_send_result",post(|axum::Json(v):axum::Json<serde_json::Value>|async move{
+          axum::Json(if v["cursor"]=="second" {json!({"errcode":0,"next_cursor":"","send_list":[{"userid":"owner","chat_id":"chat-b","status":3}]})} else {json!({"errcode":0,"next_cursor":"second","send_list":[{"userid":"owner","chat_id":"chat-a","status":1,"send_time":1700000000}]})})
+      }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let mut integration = service(pool);
+    integration.api_origin = Some(origin);
+    integration.directory().ensure_config().await.unwrap();
+    let corp = integration.corp.clone();
+    let client = crate::integrations::south::adapter::broadcast_http::Client(integration);
+    let id = uuid::Uuid::new_v4();
+    let mut w = Work {
+        id,
+        school_id: id,
+        task_id: id,
+        sender: "owner".into(),
+        sender_account: id,
+        content: "Frozen text".into(),
+        corp_id: corp,
+        generation: 1,
+        chats: vec!["chat-a".into(), "chat-b".into()],
+        msgid: None,
+        operation: "create".into(),
+        operation_id: None,
+    };
+    assert!(matches!(client.invoke(&w).await, Outcome::Unknown));
+    assert_eq!(writes.lock().unwrap().len(), 1);
+    assert_eq!(
+        writes.lock().unwrap()[0],
+        json!({"chat_type":"group","sender":"owner","chat_id_list":["chat-a","chat-b"],"text":{"content":"Frozen text"}})
+    );
+    w.msgid = Some("msgid".into());
+    w.operation = "read".into();
+    let result = client.results(&w).await.unwrap();
+    assert_eq!(result.member_status, Some(2));
+    assert_eq!(result.groups.len(), 2);
+    assert_eq!(result.groups[0].status, 1);
+    assert_eq!(result.groups[1].status, 3);
+    server.abort();
 }
