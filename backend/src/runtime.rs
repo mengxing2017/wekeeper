@@ -111,9 +111,20 @@ async fn serve_inner(
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         }
     });
+    let broadcast = application.broadcast();
+    let broadcast_worker = tokio::spawn(async move {
+        loop {
+            if broadcast.run_once().await.is_err() {
+                tracing::warn!("broadcast worker failed; inspect persisted task state");
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
+    });
     let result = axum::serve(listener, http::app_router(application))
         .with_graceful_shutdown(shutdown_signal())
         .await;
+    broadcast_worker.abort();
+    let _ = broadcast_worker.await;
     assets_worker.abort();
     let _ = assets_worker.await;
     worker.abort();
