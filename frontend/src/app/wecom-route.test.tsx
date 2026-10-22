@@ -12,9 +12,8 @@ it('loads the real lazy WeCom route and contract without mocking feature modules
     : Response.json({errors:[{status:'401',code:'unauthorized',title:'Unauthorized',detail:'请先登录'}]},{status:401})))
   const cache = new QueryClient({defaultOptions:{queries:{retry:false}}})
   render(<QueryClientProvider client={cache}><MemoryRouter initialEntries={['/wecom']}><AppRoutes/></MemoryRouter></QueryClientProvider>)
-  expect(await screen.findByRole('heading',{name:'企业微信人工分享'}, { timeout: 5000 })).toBeTruthy()
-  expect(await screen.findByText('企业微信尚未配置')).toBeTruthy()
-  expect(await screen.findByText('登录运营后台')).toBeTruthy()
+  expect(await screen.findByRole('heading',{name:'分享入口已迁移'}, { timeout: 5000 })).toBeTruthy()
+  expect(await screen.findByText('登录运营后台查看群发任务')).toBeTruthy()
 })
 it('renders recovery controls instead of a blank page on a render failure', () => {
   vi.spyOn(console,'error').mockImplementation(()=>{})

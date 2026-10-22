@@ -17,8 +17,8 @@ it('shows role-appropriate navigation and routes business selections', () => {
   const { onNavigate } = show()
   expect(screen.queryByRole('menuitem', { name: '学校管理' })).toBeNull()
   expect(screen.getByRole('menuitem', { name: '内容审核' }).getAttribute('aria-current')).toBe('page')
-  fireEvent.click(screen.getByRole('menuitem', { name: '分享记录' }))
-  expect(onNavigate).toHaveBeenCalledWith('delivery-attempts')
+  fireEvent.click(screen.getByRole('menuitem', { name: '群发任务' }))
+  expect(onNavigate).toHaveBeenCalledWith('broadcast-tasks')
 })
 it('provides platform management and logout for an administrator', async () => {
   const { onLogout } = show(true)
