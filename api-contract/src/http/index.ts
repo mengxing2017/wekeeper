@@ -109,7 +109,7 @@ export function resourceType(path: string): string {
     if (kind === 'posts' && parts[6] === 'comments') return 'comments'
     if (kind === 'templates' && parts[6] === 'versions') return 'template-versions'
     if (kind === 'delivery-drafts' && parts[6] === 'attempts') return 'delivery-attempts'
-    if (['schools','posts','comments','cases','resources','groups','templates','template-versions','delivery-drafts','delivery-attempts'].includes(kind)) return kind
+    if (['broadcast-tasks','schools','posts','comments','cases','resources','groups','templates','template-versions','delivery-drafts','delivery-attempts'].includes(kind)) return kind
   }
   throw new Error('Unknown write resource path')
 }

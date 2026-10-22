@@ -1,0 +1,25 @@
+{
+  "data": {
+    "type": "broadcast-targets",
+    "id": "00000000-0000-0000-0000-000000000001",
+    "attributes": {
+      "group_id": "00000000-0000-0000-0000-000000000001",
+      "chat_id": "CHAT",
+      "group_name": "校园群",
+      "batch_id": "00000000-0000-0000-0000-000000000001",
+      "sender": "owner",
+      "creation_state": "created",
+      "rejected": false,
+      "official_status": null,
+      "send_time": null,
+      "member_status": 2,
+      "last_synced_at": null,
+      "sync_error": null,
+      "error_code": null,
+      "stop_state": "none",
+      "reconciliation": null,
+      "operation_unknown": false,
+      "msgid": "official-task"
+    }
+  }
+}
