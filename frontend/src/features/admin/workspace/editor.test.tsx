@@ -1,3 +1,4 @@
+import dayjs from 'dayjs'
 import { afterEach, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { Editor } from './editor'
@@ -32,4 +33,13 @@ it('keeps a read-only identity in the payload and allows retry after an error', 
   await waitFor(() => expect(save).toHaveBeenCalledTimes(2))
   expect(save).toHaveBeenLastCalledWith({ id: 'fixed' })
   expect(await screen.findByRole('status')).toBeTruthy()
+})
+
+it('displays a local date while preserving the original timestamp on unchanged save', async () => {
+  const value = '2026-10-21T08:00:00.123456+08:00'
+  const save = vi.fn().mockResolvedValue(undefined)
+  render(<Editor fields={[{ name: 'starts_at', title: '生效时间', type: 'datetime', optional: true, value }]} onSave={save} />)
+  expect((screen.getByLabelText('生效时间') as HTMLInputElement).value).toBe(dayjs(value).format('YYYY/M/D HH:mm:ss'))
+  fireEvent.click(screen.getByRole('button', { name: '保 存' }))
+  await waitFor(() => expect(save).toHaveBeenCalledWith({ starts_at: value }))
 })
