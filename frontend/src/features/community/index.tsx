@@ -1,3 +1,4 @@
+import { formatDate } from '../../shared/format-date'
 import { PaginationControls } from '../../shared/pagination-controls'
 import { Field } from '../../shared/field'
 import { useDialogs } from '../../shared/use-dialogs'
@@ -67,7 +68,7 @@ function Content({ user }: {
       });
       return false;
     }}><Button disabled={busy} loading={busy}>选择图片</Button></Upload></div>{images.map(src => <div key={src}><img src={src} alt="上传预览" width={100}/><Button htmlType="button" onClick={() => setImages(images.filter(v => v !== src))}>移除</Button></div>)}<Button type="primary" htmlType="submit" loading={busy} disabled={busy}>提交审核</Button></Form>}
- {view === 'notifications' && <>{notices.data?.items.map(n => <p key={n.id}>{label(n.kind)} · {label(n.created_at)} <Button disabled={busy || !!n.read_at} onClick={() => run(() => workspace.mutate(s, `notifications/${n.id}/read`, undefined, 'PUT'))}>{n.read_at ? '已读' : '标记已读'}</Button></p>)}<PaginationControls page={noticePage} more={notices.data?.page?.has_more} busy={notices.isFetching} change={setNoticePage} subject="消息" /></>}
+ {view === 'notifications' && <>{notices.data?.items.map(n => <p key={n.id}>{label(n.kind)} · {formatDate(n.created_at)} <Button disabled={busy || !!n.read_at} onClick={() => run(() => workspace.mutate(s, `notifications/${n.id}/read`, undefined, 'PUT'))}>{n.read_at ? '已读' : '标记已读'}</Button></p>)}<PaginationControls page={noticePage} more={notices.data?.page?.has_more} busy={notices.isFetching} change={setNoticePage} subject="消息" /></>}
  {view === 'resources' && resources.data?.items.filter(r => r.kind !== 'blocked_word').map(r => <Card className="community-card" key={r.id}><h2>{label(r.title)}</h2><p className="text-content">{label(r.content)}</p>{r.url && <a href={label(r.url)} rel="noreferrer" target="_blank" onClick={() => { if (r.kind === 'banner')
         void run(() => workspace.mutate(s, `resources/${r.id}/click`)); }}>打开 {label(r.title)}</a>}</Card>)}
  {view === 'profile' && <Form layout="vertical" className="business-form" initialValues={{ name: user.display_name }} disabled={busy} onFinish={({ name }: { name: string }) => run(async () => { await identity.profile(name); await cache.invalidateQueries({ queryKey: ['session'] }); })}><Field name="name" required label="昵称"><Input /></Field><Button type="primary" htmlType="submit" loading={busy} disabled={busy}>更新昵称</Button><h2>我的关注</h2>{follows.data?.items.map(f => <p key={f.id}>{label(f.display_name)} <Button htmlType="button" onClick={() => run(() => workspace.mutate(s, `follows/${f.id}`, undefined, 'DELETE'))}>取消关注</Button></p>)}</Form>}

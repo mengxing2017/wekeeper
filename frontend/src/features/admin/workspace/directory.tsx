@@ -1,3 +1,4 @@
+import { formatDate } from '../../../shared/format-date'
 import { PaginationControls } from '../../../shared/pagination-controls'
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -30,7 +31,7 @@ function DirectoryBrowser({ account, onSelect, busy = false }: { account?: strin
             {title:'部门',render:(_,m)=>m.departments.map(d=>departmentPath(d.id,departments.data ?? m.departments)).join('；') || '部门不可见'},
             {title:'企业状态',render:(_,m)=>`${memberStatus(m.status)} · ${verificationName(m.verification)}${m.visibility==='not_seen'?' · 不在当前快照':''}`},
             {title:'本地账号',render:(_,m)=>m.bound_account_name ?? '未绑定'},
-            {title:'核验时间',render:(_,m)=>m.checked_at ?? '尚未核验'},
+            {title:'核验时间',render:(_,m)=>formatDate(m.checked_at, '尚未核验')},
             ...(onSelect ? [{title:'操作',render:(_:unknown,m:DirectoryMember)=><Button size="small" type="link" disabled={busy || m.status!==1 || m.verification!=='verified' || m.visibility!=='visible' || (!!m.bound_account_id && m.bound_account_id!==account)} onClick={()=>onSelect(m)}>选择成员</Button>}] : []),
         ]}/>
         <PaginationControls page={page} more={members.data?.page?.has_more} busy={members.isFetching} change={setPage} subject="成员" />
@@ -48,7 +49,7 @@ export function Directory() {
         {status.isPending && <Alert type="info" role="status"  title={<>正在读取同步状态…</>} />}
         {status.error && <Alert type="error" title={status.error.message} action={<Button onClick={()=>void status.refetch()}>重试状态</Button>}/>}
         {status.data?.configuration_error && <Alert type="error" title={status.data.configuration_error}/>}
-        <p>最近完整同步：{status.data?.last_success_at ?? '尚未同步'}。目录可能已变化，绑定和企业登录时会重新核验。</p>
+        <p>最近完整同步：{formatDate(status.data?.last_success_at, '尚未同步')}。目录可能已变化，绑定和企业登录时会重新核验。</p>
         {run && <Alert type="info" role="status"  title={<>最近任务：{({queued:'排队中',running:'同步中',succeeded:'同步成功',failed:'同步失败'})[run.state]}· {run.department_count}个部门 / {run.member_count}位成员 {run.error_code && `· ${run.error_code}`}</>} />}
         {error && <Alert type="error" title={error}/>}
         <Space><Button onClick={()=>void sync()} disabled={busy || !status.data?.server_configured || !!status.data?.configuration_error || run?.state==='queued' || run?.state==='running'}>立即同步</Button><Button onClick={()=>void cache.invalidateQueries({queryKey:['wecom-directory']})}>刷新目录与状态</Button></Space>

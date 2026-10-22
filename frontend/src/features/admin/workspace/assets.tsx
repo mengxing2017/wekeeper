@@ -1,9 +1,11 @@
+import { formatDate, formatUnixSeconds } from '../../../shared/format-date'
 import { PaginationControls as Pager } from '../../../shared/pagination-controls'
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Card, Drawer, Input, Select, Space, Table, Tabs } from 'antd';
 import { assets, directory, type AssetList, type AssetFilter, type GroupCandidate, type Row } from './api';
 import { verificationName } from './directory';
+const formatDateValue = (value: unknown) => formatDate(value);
 const show = (v: unknown) => v === null || v === undefined ? '—' : typeof v === 'object' ? JSON.stringify(v) : String(v);
 const fieldLabels:Record<string,string>={name:'名称',userid:'UserID',chat_id:'客户群标识',owner:'群主 UserID',member_name:'企业成员',member_count:'成员数量',checked_at:'核验时间',verification:'核验状态',source:'资料来源',created_at:'创建时间',started_at:'开始时间',finished_at:'结束时间',dataset:'数据集',state:'任务状态',stage:'任务阶段',processed:'已处理项目',total:'枚举成员 / 群主数量',pages:'已读取页数',error_code:'错误码',scope_count:'范围成员数量',scope_changed:'范围是否缩小',complete:'采集是否完整'};
 const stateName = (v: unknown) => ({queued:'排队中',running:'同步中',succeeded:'同步成功',failed:'同步失败'})[String(v)] ?? show(v);
@@ -23,7 +25,7 @@ export function Assets() {
         <p>同步当前应用可见的客户群与群成员，按运营成员查看群主群和参与群。同步不会发送消息或分配学校权限。</p>
         {(error||status.error||status.data?.configuration_error)&&<Alert type="error" title={error||status.error?.message||status.data?.configuration_error}/>}
         <Button loading={busy} disabled={!status.data?.server_configured||!!status.data?.configuration_error||running} onClick={()=>void sync()}>同步客户群</Button>
-        {status.data?.datasets.map(d=><div key={d.dataset}><p><strong>客户群与成员</strong> · 最近完整成功：{d.last_success_at??'尚未同步'} · {stateName(d.latest_run?.state)} · 已处理 {d.latest_run?.processed??0} · 页数 {d.latest_run?.pages??0}</p>{d.latest_run?.error_code&&<Alert type="error" title={`同步失败：${d.latest_run.error_code}；保留上次成功快照`}/>} {d.scope_changed&&<Alert type="warning" title="应用可见范围缩小：缺失数据已标记待核验，统计仅包含当前可见资产"/>}{d.freshness==='unverified'&&<Alert type="info" title="当前凭据代次尚无完整快照"/>}{d.freshness==='stale'&&<Alert type="warning" title="快照已超过 24 小时，请重新同步；过期数据不进入候选和当前统计"/>}</div>)}
+        {status.data?.datasets.map(d=><div key={d.dataset}><p><strong>客户群与成员</strong> · 最近完整成功：{formatDate(d.last_success_at, '尚未同步')} · {stateName(d.latest_run?.state)} · 已处理 {d.latest_run?.processed??0} · 页数 {d.latest_run?.pages??0}</p>{d.latest_run?.error_code&&<Alert type="error" title={`同步失败：${d.latest_run.error_code}；保留上次成功快照`}/>} {d.scope_changed&&<Alert type="warning" title="应用可见范围缩小：缺失数据已标记待核验，统计仅包含当前可见资产"/>}{d.freshness==='unverified'&&<Alert type="info" title="当前凭据代次尚无完整快照"/>}{d.freshness==='stale'&&<Alert type="warning" title="快照已超过 24 小时，请重新同步；过期数据不进入候选和当前统计"/>}</div>)}
         <Tabs activeKey={kind} onChange={k=>{setKind(k as AssetList);setFilter({page:1});}} items={[{key:'groups',label:'客户群'},{key:'member-statistics',label:'运营成员统计'},{key:'sync-runs',label:'同步任务'}]}/>
         <Space wrap>{kind!=='sync-runs'&&<Input aria-label="搜索客户群" placeholder="名称或官方标识" value={filter.search??''} onChange={e=>update({search:e.target.value})}/>}
             {['groups','member-statistics'].includes(kind)&&<Select aria-label="筛选运营成员" placeholder="全部运营成员" allowClear showSearch filterOption={false} onSearch={setMemberSearch} style={{minWidth:220}} value={filter.member_id??filter.owner_member_id??filter.participant_member_id} options={members.data?.items.map(m=>({value:m.id,label:`${m.name} (${m.userid})`}))} onChange={id=>update(kind==='groups'?{owner_member_id:relationship==='participant'?undefined:id,participant_member_id:relationship==='participant'?id:undefined}:{member_id:id})}/>}
@@ -34,14 +36,14 @@ export function Assets() {
         </Space>
         {list.error&&<Alert type="error" title={list.error.message}/>}
         <Table<Row> rowKey="id" loading={list.isFetching} dataSource={list.data?.items} pagination={false} scroll={{x:800}} columns={kind==='sync-runs'?[
-            {title:'状态',render:(_,r)=>stateName(r.state)},{title:'阶段',dataIndex:'stage'},{title:'已处理 / 预计范围',render:(_,r)=>`${show(r.processed)} / ${show(r.total)}`},{title:'页数',dataIndex:'pages'},{title:'错误码',dataIndex:'error_code'},{title:'创建时间',dataIndex:'created_at'},{title:'详情',render:(_,r)=><Button size="small" type="link" onClick={()=>setSelected({kind:'sync-runs',id:r.id})}>任务详情</Button>},
+            {title:'状态',render:(_,r)=>stateName(r.state)},{title:'阶段',dataIndex:'stage'},{title:'已处理 / 预计范围',render:(_,r)=>`${show(r.processed)} / ${show(r.total)}`},{title:'页数',dataIndex:'pages'},{title:'错误码',dataIndex:'error_code'},{title:'创建时间',dataIndex:'created_at',render:formatDateValue},{title:'详情',render:(_,r)=><Button size="small" type="link" onClick={()=>setSelected({kind:'sync-runs',id:r.id})}>任务详情</Button>},
         ]:kind==='member-statistics'?[
             {title:'企业成员',dataIndex:'name'},{title:'UserID',dataIndex:'userid'},{title:'群主群',dataIndex:'owned_group_count'},{title:'参与群',dataIndex:'participating_group_count'},
         ]:[
             {title:'名称 / 成员',render:(_,r)=>show(r.name??r.member_name??r.userid)},{title:'官方标识',render:(_,r)=>show(r.chat_id??r.userid)},
             {title:'群主',render:(_,r)=>show(r.member_name??r.owner)},
             ...(kind==='groups'?[{title:'人数',dataIndex:'member_count'},{title:'学校关联',render:(_:unknown,r:Row)=>r.school_id?'已关联':'未关联'}]:[]),
-            {title:'核验',render:(_,r)=>`${verificationName(String(r.verification))}${r.visibility==='not_seen'?' · 本轮未见':''}`},{title:'核验时间',dataIndex:'checked_at'},
+            {title:'核验',render:(_,r)=>`${verificationName(String(r.verification))}${r.visibility==='not_seen'?' · 本轮未见':''}`},{title:'核验时间',dataIndex:'checked_at',render:formatDateValue},
             ...(kind==='groups'?[{title:'详情',render:(_:unknown,r:Row)=><Button size="small" type="link" onClick={()=>setSelected({kind:kind as 'groups',id:r.id})}>查看关系</Button>}]:[]),
         ]}/>
         <Pager page={filter.page??1} more={list.data?.page?.has_more} busy={list.isFetching} change={page=>setFilter(f=>({...f,page}))}/>
@@ -53,9 +55,9 @@ function AssetDetail({kind,id,close}:{kind:'groups'|'sync-runs';id:string;close:
     const relations=useQuery({queryKey:['wecom-assets','detail',kind,id,page],queryFn:()=>assets.relations(kind as 'groups',id,page),enabled:kind!=='sync-runs'});
     return <Drawer open onClose={close} title={kind==='sync-runs'?'同步任务详情':'资产关系'} size="large">
         {(detail.error||relations.error)&&<Alert type="error" title={detail.error?.message??relations.error?.message}/>}
-        {detail.data&&<dl>{Object.entries(detail.data).filter(([k])=>fieldLabels[k]).map(([k,v])=><div key={k}><dt>{fieldLabels[k]}</dt><dd>{k==='state'?stateName(v):k==='verification'?verificationName(String(v)):show(v)}</dd></div>)}</dl>}
+        {detail.data&&<dl>{Object.entries(detail.data).filter(([k])=>fieldLabels[k]).map(([k,v])=><div key={k}><dt>{fieldLabels[k]}</dt><dd>{k.endsWith('_at')?formatDate(v):k==='state'?stateName(v):k==='verification'?verificationName(String(v)):show(v)}</dd></div>)}</dl>}
         {kind==='sync-runs'&&detail.data?.failed_owner&&<Space orientation="vertical"><Alert type="warning" title={`历史群主 ${show(detail.data.failed_owner)} 无法枚举。先核对权限；确认已不属于可见范围后，可保留其历史数据并从后续历史补扫中排除。在职或重新可见成员仍会被扫描。`}/><Input aria-label="范围变更依据" placeholder="填写核对依据（至少 5 个字）" value={reason} onChange={e=>setReason(e.target.value)}/><Button disabled={reason.trim().length<5||scopeBusy} onClick={async()=>{setScopeBusy(true);try{await assets.confirmOwnerScope({run_id:id,owner_userid:String(detail.data?.failed_owner),expected_generation:Number(detail.data?.generation),reason});setReason('');await detail.refetch();}catch(e){setScopeError((e as Error).message);}finally{setScopeBusy(false);}}}>确认历史群主范围变化</Button>{scopeError&&<Alert type="error" title={scopeError}/>}</Space>}
-        {kind!=='sync-runs'&&<><Table rowKey="id" loading={relations.isFetching} dataSource={relations.data?.items} pagination={false} columns={[{title:'成员',render:(_,r)=>show(r.member_name??r.userid)},{title:'身份',render:(_,r)=>r.member_type===1?'企业成员':'外部联系人'},{title:'资料',render:(_,r)=>r.member_id?'已解析企业成员':'仅保留群成员标识'},{title:'入群时间',render:(_,r)=>show(r.join_time)},{title:'核验状态',render:(_,r)=>verificationName(r.verification)}]}/><Pager page={page} more={relations.data?.page?.has_more} busy={relations.isFetching} change={setPage}/></>}
+        {kind!=='sync-runs'&&<><Table rowKey="id" loading={relations.isFetching} dataSource={relations.data?.items} pagination={false} columns={[{title:'成员',render:(_,r)=>show(r.member_name??r.userid)},{title:'身份',render:(_,r)=>r.member_type===1?'企业成员':'外部联系人'},{title:'资料',render:(_,r)=>r.member_id?'已解析企业成员':'仅保留群成员标识'},{title:'入群时间',render:(_,r)=>formatUnixSeconds(r.join_time)},{title:'核验状态',render:(_,r)=>verificationName(r.verification)}]}/><Pager page={page} more={relations.data?.page?.has_more} busy={relations.isFetching} change={setPage}/></>}
     </Drawer>;
 }
 export function GroupPicker({school,onSaved}:{school:string;onSaved:()=>Promise<void>}){
