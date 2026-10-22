@@ -441,3 +441,69 @@ async fn directory_member_contract_matches_shared_fixture() {
     .unwrap();
     assert_eq!(actual, fixture);
 }
+
+#[tokio::test]
+async fn broadcast_rust_serialization_matches_shared_fixtures() {
+    use axum::response::IntoResponse;
+    use uuid::Uuid;
+    use wekeeper_api::distribution::domain::broadcast::{Target, Task};
+    let id = Uuid::from_u128(1);
+    let task = Task {
+        id,
+        school_id: id,
+        creator_id: id,
+        template_version_id: id,
+        content: "校园通知".into(),
+        revision: 1,
+        state: "confirmed".into(),
+        stopped: false,
+        created_at: "2026-10-22T00:00:00Z".into(),
+        total: 2,
+        sent: 1,
+        rejected: 0,
+        uncertain: 0,
+        pending: 1,
+        batch_count: 1,
+        post_ids: vec![id],
+        source_task_id: None,
+        source_draft_id: None,
+        resend_reason: String::new(),
+    };
+    let target = Target {
+        id,
+        group_id: id,
+        chat_id: "CHAT".into(),
+        group_name: "校园群".into(),
+        batch_id: id,
+        sender: "owner".into(),
+        creation_state: "created".into(),
+        msgid: Some("official-task".into()),
+        rejected: false,
+        official_status: None,
+        send_time: None,
+        member_status: Some(2),
+        last_synced_at: None,
+        sync_error: None,
+        error_code: None,
+        stop_state: "none".into(),
+        reconciliation: None,
+        operation_unknown: false,
+    };
+    for (kind, value, fixture) in [
+        (
+            "broadcast-tasks",
+            serde_json::to_value(task).unwrap(),
+            include_str!("../../api-contract/fixtures/broadcast-task.json"),
+        ),
+        (
+            "broadcast-targets",
+            serde_json::to_value(target).unwrap(),
+            include_str!("../../api-contract/fixtures/broadcast-target.json"),
+        ),
+    ] {
+        let response = http::jsonapi::resource(kind, value).into_response();
+        let actual: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 8192).await.unwrap()).unwrap();
+        assert_eq!(actual, serde_json::from_str::<Value>(fixture).unwrap());
+    }
+}
