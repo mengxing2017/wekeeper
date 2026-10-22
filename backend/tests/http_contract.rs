@@ -452,7 +452,8 @@ async fn broadcast_rust_serialization_matches_shared_fixtures() {
         id,
         school_id: id,
         creator_id: id,
-        template_version_id: id,
+        template_version_id: Some(id),
+        content_source: wekeeper_api::distribution::domain::broadcast::ContentSource::Posts,
         content: "校园通知".into(),
         revision: 1,
         state: "confirmed".into(),
@@ -489,7 +490,16 @@ async fn broadcast_rust_serialization_matches_shared_fixtures() {
         reconciliation: None,
         operation_unknown: false,
     };
+    let mut text_task = task.clone();
+    text_task.content_source = wekeeper_api::distribution::domain::broadcast::ContentSource::Text;
+    text_task.template_version_id = None;
+    text_task.post_ids.clear();
     for (kind, value, fixture) in [
+        (
+            "broadcast-tasks",
+            serde_json::to_value(text_task).unwrap(),
+            include_str!("../../api-contract/fixtures/broadcast-text-task.json"),
+        ),
         (
             "broadcast-tasks",
             serde_json::to_value(task).unwrap(),
