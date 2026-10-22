@@ -80,6 +80,11 @@ impl<R: Store, C: Client> Service<R, C> {
         let key = text(key, 1, 128)?;
         require(!key.starts_with("child:"), "幂等键前缀保留")?;
         let task = self.store.task(s, id).await?;
+        if operation == "confirm"
+            && task.content_source == crate::distribution::domain::broadcast::ContentSource::Text
+        {
+            self.store.authorize(a.id, s, true).await?;
+        }
         if matches!(operation, "confirm" | "remind") {
             require(
                 self.enabled,
