@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Avatar, Breadcrumb, Button, Dropdown, Menu, Tag } from 'antd'
 import { Link } from 'react-router-dom'
 
 export interface NavigationItem { key: string; label: string; description: string; group: string }
@@ -35,7 +36,7 @@ export function AppShell({ children, active, onNavigate, username, platformAdmin
   const current = navigation.find(item => item.key === active) ?? { group: '学校工作区', label: '学校工作区', description: '选择学校后使用已授权的管理功能。' }
   useEffect(() => {
     if (!open) return
-    sidebar.current?.querySelector<HTMLButtonElement>('button')?.focus()
+    sidebar.current?.querySelector<HTMLElement>('[role=menuitem]')?.focus()
     const close = (event: KeyboardEvent) => {
       if (event.key === 'Escape') { setOpen(false); toggle.current?.focus() }
     }
@@ -44,16 +45,36 @@ export function AppShell({ children, active, onNavigate, username, platformAdmin
   }, [open])
   return <div className="workspace-shell">
     <a className="skip-link" href="#workspace-main">跳到主要内容</a>
-    <header className="mobile-bar"><button ref={toggle} className="icon-button" aria-label="打开导航" aria-expanded={open} aria-controls="app-sidebar" onClick={() => setOpen(!open)}>☰</button><strong>WeKeeper</strong><span>运营工作台</span></header>
-    {open && <button className="nav-scrim" aria-label="关闭导航" onClick={() => { setOpen(false); toggle.current?.focus() }} />}
+    <header className="mobile-bar"><Button type="text" ref={instance => { toggle.current = instance as HTMLButtonElement | null }} className="icon-button" aria-label="打开导航" aria-expanded={open} aria-controls="app-sidebar" onClick={() => setOpen(!open)}>☰</Button><strong>WeKeeper</strong><span>运营工作台</span></header>
+    {open && <Button className="nav-scrim" aria-label="关闭导航" onClick={() => { setOpen(false); toggle.current?.focus() }} />}
     <aside ref={sidebar} id="app-sidebar" className={`app-sidebar ${open ? 'open' : ''}`}>
-      <Link className="sidebar-brand" to="/admin"><span className="brand-mark">W</span><span><strong>WeKeeper</strong><small>校园内容运营</small></span></Link>
+      <Link className="sidebar-brand" to="/admin"><span className="brand-mark">W</span><strong>WeKeeper</strong></Link>
       <nav className="app-navigation" aria-label="运营导航">
-        {['内容运营', '企业微信', '系统管理', ...(platformAdmin ? ['平台管理'] : [])].filter(group => navigation.some(item => item.group === group && (!allowedKeys || allowedKeys.includes(item.key)))).map(group => <div className="nav-group" key={group}><p>{group}</p>{navigation.filter(item => item.group === group && (!allowedKeys || allowedKeys.includes(item.key))).map(item => <button key={item.key} aria-current={active === item.key ? 'page' : undefined} onClick={() => { onNavigate(item.key); setOpen(false) }}><span className="nav-indicator" aria-hidden="true" />{item.label}</button>)}</div>)}
+        <Menu mode="inline" theme="dark" selectedKeys={[active]}
+          items={['内容运营', '企业微信', '系统管理', ...(platformAdmin ? ['平台管理'] : [])].flatMap(group => {
+            const items = navigation.filter(item => item.group === group && (!allowedKeys || allowedKeys.includes(item.key)))
+            return items.length ? [{ type: 'group' as const, key: group, label: group, children: items.map(item => ({ key: item.key, label: item.label, 'aria-current': active === item.key ? 'page' as const : undefined })) }] : []
+          })}
+          onClick={({ key }) => { onNavigate(key); setOpen(false) }} />
       </nav>
-      <div className="sidebar-links"><Link to="/community">校园社区 ↗</Link><Link to="/wecom">人工分享 ↗</Link></div>
-      <div className="account-menu"><span className="account-avatar">{username.slice(0, 1).toUpperCase()}</span><div><strong>{username}</strong><small>{platformAdmin ? '平台管理员' : schoolRoleLabel(schoolRole)}</small></div><button disabled={signingOut} onClick={async () => { setSigningOut(true); try { await onLogout() } finally { setSigningOut(false) } }} aria-label="退出登录">{signingOut ? '退出中' : '退出'}</button></div>
+      <div className="account-menu">
+        <Dropdown trigger={['click']} placement="topLeft" menu={{ items: [
+          { key: 'community', label: <Link to="/community">校园社区 ↗</Link> },
+          { key: 'share', label: <Link to="/wecom">人工分享 ↗</Link> },
+          { type: 'divider' },
+          { key: 'logout', label: signingOut ? '退出中' : '退出登录', danger: true, disabled: signingOut },
+        ], onClick: async ({ key }) => {
+          setOpen(false)
+          if (key === 'logout') { setSigningOut(true); try { await onLogout() } finally { setSigningOut(false) } }
+        } }}>
+          <Button type="text" className="account-trigger" aria-label="账号菜单">
+            <Avatar size={32}>{username.trim().charAt(0).toUpperCase() || '?'}</Avatar>
+            <span className="account-details"><strong>{username}</strong><span>{platformAdmin ? '平台管理员' : schoolRoleLabel(schoolRole)}</span></span>
+            <span className="account-chevron" aria-hidden="true">⌄</span>
+          </Button>
+        </Dropdown>
+      </div>
     </aside>
-    <div className="workspace-content"><div className="breadcrumb"><span>运营工作台</span><span aria-hidden="true">/</span><span>{current.group}</span><span aria-hidden="true">/</span><strong>{current.label}</strong></div><main id="workspace-main" className="page-content"><header className="page-heading"><div><h1>{current.label}</h1><p>{current.description}</p></div><span className="workspace-badge">{current.group === '平台管理' ? '全平台管理' : '学校工作空间'}</span></header>{children}</main><footer className="workspace-footer">WeKeeper · 校园社区与人工分享</footer></div>
+    <div className="workspace-content"><Breadcrumb className="breadcrumb" items={[{ title: '运营工作台' }, { title: current.group }, { title: current.label }]} /><main id="workspace-main" className="page-content"><header className="page-heading"><div><h1>{current.label}</h1><p>{current.description}</p></div><Tag color="cyan" className="workspace-badge">{current.group === '平台管理' ? '全平台管理' : '学校工作空间'}</Tag></header>{children}</main><footer className="workspace-footer">WeKeeper · 校园社区与人工分享</footer></div>
   </div>
 }
