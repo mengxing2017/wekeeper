@@ -28,7 +28,7 @@ test-unit:
 
 test-integration:
 	@test -n "$$WEKEEPER_TEST_DATABASE_URL" || (echo "Set isolated WEKEEPER_TEST_DATABASE_URL" >&2; exit 1)
-	cargo test --locked --manifest-path backend/Cargo.toml --lib --test database --test business --test directory --test assets -- --ignored
+	cargo test --locked --manifest-path backend/Cargo.toml --lib --test database --test business --test directory --test assets --test broadcast -- --ignored
 
 api-dev:
 	cargo run --locked --manifest-path backend/Cargo.toml
