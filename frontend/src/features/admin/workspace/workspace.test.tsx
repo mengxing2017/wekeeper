@@ -1,3 +1,4 @@
+import { selectOption } from '../../../test/select-option'
 import { afterEach, expect, it, vi } from 'vitest'
 import { cleanup, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
@@ -8,7 +9,6 @@ vi.mock('./api', () => ({ identity: { session: vi.fn(), accounts: vi.fn(), creat
 class TestResizeObserver { observe() {} unobserve() {} disconnect() {} }
 vi.stubGlobal('ResizeObserver', TestResizeObserver)
 configure({ asyncUtilTimeout: 5000 })
-vi.setConfig({ testTimeout: 20000 })
 const originalComputedStyle = window.getComputedStyle;
 window.getComputedStyle = element => originalComputedStyle(element);
 afterEach(() => { cleanup(); vi.resetAllMocks() })
@@ -22,7 +22,7 @@ it('restores the selected school and business page from its URL', async () => {
   render(<QueryClientProvider client={client}><MemoryRouter initialEntries={['/admin?school=school&view=groups']}><Workspace/></MemoryRouter></QueryClientProvider>)
   expect(await screen.findByRole('heading', { name: '客户群', level: 1 })).toBeTruthy()
   await waitFor(() => expect(workspace.list).toHaveBeenCalledWith('school','groups',expect.any(String),expect.any(AbortSignal)))
-  fireEvent.click(screen.getByRole('button', { name: '学校管理' }))
+  fireEvent.click(screen.getByRole('menuitem', { name: '学校管理' }))
   expect(await screen.findByRole('heading', { name: '学校管理', level: 1 })).toBeTruthy()
   expect(screen.queryByLabelText('当前学校')).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: '新建学校' }))
@@ -41,9 +41,9 @@ it('keeps an existing group identity read-only while saving its revocation', asy
   fireEvent.click(within(groupCard).getByRole('button',{name:/编\s*辑/}))
   expect((screen.getByLabelText('企业 ID（与应用配置一致）') as HTMLInputElement).readOnly).toBe(true)
   expect((screen.getByLabelText('客户群 ID（保存后不可更换）') as HTMLInputElement).readOnly).toBe(true)
-  fireEvent.change(screen.getByLabelText('启用状态'),{target:{value:'false'}})
+  await selectOption(screen.getByLabelText('启用状态'), '撤销')
   const groupEditor = screen.getByLabelText('启用状态').closest('form')!
-  fireEvent.click(within(groupEditor).getByRole('button',{name:'保存'}))
+  fireEvent.click(within(groupEditor).getByRole('button',{name:/^保\s*存$/}))
   await waitFor(()=>expect(workspace.mutate).toHaveBeenCalledWith('school','groups',expect.objectContaining({id:'g',corp_id:'corp',chat_id:'chat',active:false,revision:1}),'POST'))
 })
 
@@ -65,7 +65,7 @@ it('separates ordinary accounts and administrators by privilege, not display nam
   expect(screen.queryByLabelText('当前学校')).toBeNull()
   expect(screen.queryByText('平台维护者')).toBeNull()
   expect(screen.queryByRole('button', {name:'新建学校'})).toBeNull()
-  fireEvent.click(screen.getByRole('button', {name:'本地管理员管理'}))
+  fireEvent.click(screen.getByRole('menuitem', {name:'本地管理员管理'}))
   expect(await screen.findByText('平台维护者')).toBeTruthy()
   expect(screen.queryByText('ordinary')).toBeNull()
   expect(screen.queryByRole('button', {name:'新建账号'})).toBeNull()
@@ -108,8 +108,8 @@ it('shows account grants across schools and saves global account state without a
   await waitFor(() => expect(details.isConnected).toBe(false))
   fireEvent.click(row.getByRole('button', {name:'编辑账号'}))
   const editor = within(screen.getByRole('dialog'))
-  fireEvent.change(editor.getByLabelText('账号状态（全平台）'), {target:{value:'false'}})
-  fireEvent.click(editor.getByRole('button', {name:'保存'}))
+  await selectOption(editor.getByLabelText('账号状态（全平台）'), '停用')
+  fireEvent.click(editor.getByRole('button', {name:/^保\s*存$/}))
   await waitFor(() => expect(identity.update).toHaveBeenCalledWith('ordinary', {display_name:'本地管理员',active:false}))
 })
 
@@ -117,10 +117,10 @@ it.each(['member','operator'] as const)('blocks school settings and member admin
   showManagement('settings',false,role)
   await screen.findByLabelText('当前学校')
   await waitFor(() => expect(workspace.schools).toHaveBeenCalled())
-  expect(screen.queryByRole('button', {name:'学校设置'})).toBeNull()
-  expect(screen.queryByRole('button', {name:'学校成员'})).toBeNull()
+  expect(screen.queryByRole('menuitem', {name:'学校设置'})).toBeNull()
+  expect(screen.queryByRole('menuitem', {name:'学校成员'})).toBeNull()
   expect(screen.queryByLabelText('学校名称')).toBeNull()
-  expect(screen.queryByRole('button', {name:'账号管理'})).toBeNull()
+  expect(screen.queryByRole('menuitem', {name:'账号管理'})).toBeNull()
 })
 
 it('allows a school administrator to read members without offering grant changes', async () => {

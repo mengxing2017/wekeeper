@@ -1,3 +1,4 @@
+import { selectOption } from '../../../test/select-option'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -22,7 +23,7 @@ it('does not invoke the SDK twice when reporting the first result fails',async()
  vi.mocked(workspace.schools).mockResolvedValue([{id:'s',name:'School',active:true,revision:1,config:{}}])
  vi.mocked(workspace.list).mockImplementation(async(_s,kind)=>({items:kind==='delivery-drafts'?[{id:'d',school_id:'s',group_id:'g',template_version_id:'v',content:'Frozen text',content_hash:'h',state:'ready',chat_id:'chat',group_name:'Target'}]:[],page:{number:1,size:30,has_more:false}}))
  vi.mocked(currentChat).mockResolvedValue('chat');vi.mocked(workspace.prepare).mockResolvedValue({id:'attempt',school_id:'s',draft_id:'d',actor_id:'u',state:'prepared',reconciliation:null,client_result:null});vi.mocked(workspace.claim).mockResolvedValue({});vi.mocked(sendText).mockResolvedValue(undefined);vi.mocked(workspace.result).mockRejectedValue(new Error('result lost'))
- renderPage();await screen.findByText('Target · Frozen text');fireEvent.change(screen.getAllByRole('combobox')[1],{target:{value:'d'}});fireEvent.click(await screen.findByText('读取并核对当前客户群'));await screen.findByText('当前群：chat');fireEvent.click(screen.getByText('确认正文并在当前群分享'));await waitFor(()=>expect(sendText).toHaveBeenCalledTimes(1));await screen.findByRole('alert');fireEvent.click(screen.getByText('确认正文并在当前群分享'));expect(sendText).toHaveBeenCalledTimes(1);expect(workspace.prepare).toHaveBeenCalledTimes(1)
+ renderPage();await selectOption(await screen.findByRole('combobox', { name: '待分享草稿' }), 'Target · Frozen text');fireEvent.click(await screen.findByRole('button', { name: '读取并核对当前客户群' }));await screen.findByText('当前群：chat');fireEvent.click(screen.getByRole('button', { name: '确认正文并在当前群分享' }));await waitFor(()=>expect(sendText).toHaveBeenCalledTimes(1));await screen.findByRole('alert');fireEvent.click(screen.getByRole('button', { name: '确认正文并在当前群分享' }));expect(sendText).toHaveBeenCalledTimes(1);expect(workspace.prepare).toHaveBeenCalledTimes(1)
 })
 
 function setupShare() {
@@ -33,22 +34,22 @@ function setupShare() {
 
 }
 async function selectAndCheck() {
- renderPage();await screen.findByText('Target · Frozen text');fireEvent.change(screen.getAllByRole('combobox')[1],{target:{value:'d'}});fireEvent.click(await screen.findByText('读取并核对当前客户群'));await screen.findByText('当前群：chat');
+ renderPage();await selectOption(await screen.findByRole('combobox', { name: '待分享草稿' }), 'Target · Frozen text');fireEvent.click(await screen.findByRole('button', { name: '读取并核对当前客户群' }));await screen.findByText('当前群：chat');
 }
 it('refuses sharing when the current chat changes after preview', async()=>{
  setupShare();await selectAndCheck();vi.mocked(currentChat).mockResolvedValue('another-chat');
- fireEvent.click(screen.getByText('确认正文并在当前群分享'));await screen.findByRole('alert');
+ fireEvent.click(screen.getByRole('button', { name: '确认正文并在当前群分享' }));await screen.findByRole('alert');
  expect(workspace.prepare).not.toHaveBeenCalled();expect(sendText).not.toHaveBeenCalled();
 })
 it('records cancellation without automatically retrying', async()=>{
  setupShare();vi.mocked(sendText).mockRejectedValue({errMsg:'sendChatMessage:cancel'});await selectAndCheck();
- fireEvent.click(screen.getByText('确认正文并在当前群分享'));
+ fireEvent.click(screen.getByRole('button', { name: '确认正文并在当前群分享' }));
  await waitFor(()=>expect(workspace.result).toHaveBeenCalledWith('s','attempt','cancelled'));
  expect(sendText).toHaveBeenCalledTimes(1);
 })
 it('never invokes the SDK if the invocation claim response is lost', async()=>{
  setupShare();vi.mocked(workspace.claim).mockRejectedValue(new Error('claim response lost'));await selectAndCheck();
- fireEvent.click(screen.getByText('确认正文并在当前群分享'));await screen.findByRole('alert');
+ fireEvent.click(screen.getByRole('button', { name: '确认正文并在当前群分享' }));await screen.findByRole('alert');
  expect(sendText).not.toHaveBeenCalled();expect(localStorage.getItem('wekeeper.invoked:attempt')).toBe('true');
 })
 
@@ -60,9 +61,9 @@ it('renders configuration guidance when enterprise credentials are absent', asyn
 })
 it('allows ordinary browser preview but disables SDK sending', async()=>{
  setupShare();vi.spyOn(navigator,'userAgent','get').mockReturnValue('Mozilla');renderPage();
- await screen.findByText('Target · Frozen text');fireEvent.change(screen.getAllByRole('combobox')[1],{target:{value:'d'}});
+ await selectOption(await screen.findByRole('combobox', { name: '待分享草稿' }), 'Target · Frozen text');
  expect(screen.getByText('当前为普通浏览器')).toBeTruthy();
- expect((await screen.findByText('确认正文并在当前群分享') as HTMLButtonElement).disabled).toBe(true);
+ expect((await screen.findByRole('button', { name: '确认正文并在当前群分享' }) as HTMLButtonElement).disabled).toBe(true);
  expect(sendText).not.toHaveBeenCalled();
 })
 it('shows recoverable errors when configuration and session requests fail',async()=>{
@@ -82,25 +83,26 @@ it('offers history from an overlapping older draft for explicit resend', async()
  setupShare();vi.mocked(identity.session).mockResolvedValue({csrf:'csrf',user:{id:'u',username:'u',display_name:'Admin',platform_admin:true,bound_school_id:'s',grants:[],wecom_authenticated:true}});
  vi.mocked(workspace.relatedHistory).mockResolvedValue({page:{number:1,size:30,has_more:false},blocked:false,latest_attempt_id:'old-attempt',items:[{id:'old-attempt',school_id:'s',draft_id:'different-draft',actor_id:'u',state:'client_reported_success',reconciliation:null,client_result:null,group_name:'Target',created_at:'2026-10-21'}]});
  await selectAndCheck();
- expect((screen.getByText('确认正文并在当前群分享') as HTMLButtonElement).disabled).toBe(true);
- fireEvent.change(screen.getByLabelText('引用历史尝试'),{target:{value:'old-attempt'}});
+ expect((screen.getByRole('button', { name: '确认正文并在当前群分享' }) as HTMLButtonElement).disabled).toBe(true);
+ fireEvent.click(screen.getByRole('button', { name: '明确再次分享' }));
+ await selectOption(await screen.findByLabelText('引用历史尝试'), 'Target · 2026-10-21 · 客户端报告成功 · old-attempt');
  fireEvent.change(screen.getByLabelText('再次分享原因'),{target:{value:'核对后再次分享'}});
  fireEvent.click(screen.getByText('准备明确再次分享'));
- fireEvent.click(screen.getByText('确认正文并在当前群分享'));
+ fireEvent.click(screen.getByRole('button', { name: '确认正文并在当前群分享' }));
  await waitFor(()=>expect(workspace.prepare).toHaveBeenCalledWith('s','d',expect.any(String),expect.objectContaining({resend_of:'old-attempt',reason:'核对后再次分享'})));
 })
 it('blocks sending when an older overlapping item still has an unresolved result', async()=>{
  setupShare();vi.mocked(workspace.relatedHistory).mockResolvedValue({page:{number:1,size:30,has_more:false},blocked:true,latest_attempt_id:'newer',items:[]});
  await selectAndCheck();
- expect((screen.getByText('确认正文并在当前群分享') as HTMLButtonElement).disabled).toBe(true);
+ expect((screen.getByRole('button', { name: '确认正文并在当前群分享' }) as HTMLButtonElement).disabled).toBe(true);
  expect(sendText).not.toHaveBeenCalled();
 })
 it('allows server-only OAuth and preview while disabling both SDK actions', async()=>{
  setupShare();vi.mocked(workspace.wecomStatus).mockResolvedValue({server_configured:true,client_configured:false,oauth_available:true,share_available:false});
- renderPage();await screen.findByText('Target · Frozen text');fireEvent.change(screen.getAllByRole('combobox')[1],{target:{value:'d'}});
+ renderPage();await selectOption(await screen.findByRole('combobox', { name: '待分享草稿' }), 'Target · Frozen text');
  expect(screen.getByText('企业微信登录可用，客户端分享尚未配置')).toBeTruthy();
- expect((await screen.findByText('读取并核对当前客户群') as HTMLButtonElement).disabled).toBe(true);
- expect((screen.getByText('确认正文并在当前群分享') as HTMLButtonElement).disabled).toBe(true);
+ expect((await screen.findByRole('button', { name: '读取并核对当前客户群' }) as HTMLButtonElement).disabled).toBe(true);
+ expect((screen.getByRole('button', { name: '确认正文并在当前群分享' }) as HTMLButtonElement).disabled).toBe(true);
  expect(currentChat).not.toHaveBeenCalled();expect(workspace.prepare).not.toHaveBeenCalled();
 });
 it('keeps the OAuth link when only the client application identity is missing',async()=>{

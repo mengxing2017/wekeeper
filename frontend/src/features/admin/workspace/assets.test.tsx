@@ -16,7 +16,7 @@ it('keeps the previous snapshot visible after group failure and allows server-on
  show(<Assets/>);expect(screen.queryByRole('tab',{name:'客户'})).toBeNull();expect(screen.queryByRole('tab',{name:'客户联系成员'})).toBeNull();expect(await screen.findByText(/同步失败：wecom_60020/)).toBeTruthy();expect(screen.getByText(/2026-10-21 12:00/)).toBeTruthy();fireEvent.click(screen.getByText('同步客户群'));await waitFor(()=>expect(assets.sync).toHaveBeenCalledWith('groups'));
 });
 it('paginates group assets using the selected resource',async()=>{
- vi.mocked(assets.list).mockResolvedValue({items:[],page:{number:1,size:30,has_more:true}});show(<Assets/>);await waitFor(()=>expect(screen.getByText('下一页').closest('button')?.disabled).toBe(false));fireEvent.click(screen.getByText('下一页'));await waitFor(()=>expect(assets.list).toHaveBeenCalledWith('groups',{page:2}));
+ vi.mocked(assets.list).mockResolvedValue({items:[],page:{number:1,size:30,has_more:true}});show(<Assets/>);await waitFor(()=>expect((screen.getByRole('button',{name:'下一页'}) as HTMLButtonElement).disabled).toBe(false));fireEvent.click(screen.getByRole('button',{name:'下一页'}));await waitFor(()=>expect(assets.list).toHaveBeenCalledWith('groups',{page:2}));
 });
 it('saves only a selected candidate and its generation/version; refreshes after conflict',async()=>{
  const candidate={already_associated:false,id:'directory',name:'官方群',chat_id:'CHAT',corp_id:'corp',owner:'Alice',owner_name:'张三',member_count:3,credential_generation:2,checked_at:'2026-10-21T00:00:00Z'};
