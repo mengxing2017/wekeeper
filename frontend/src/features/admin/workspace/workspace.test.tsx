@@ -138,9 +138,21 @@ it('shows newly created unassigned accounts directly in school members and grant
   vi.mocked(workspace.mutate).mockImplementation(async () => { granted = true; return {id:'ordinary'} })
   const row = (await screen.findByText('ordinary')).closest('tr')!
   expect(within(row).getByText('未授权')).toBeTruthy()
-  expect(screen.queryByText('平台维护者')).toBeNull()
+  expect(screen.getByText('平台维护者')).toBeTruthy()
   fireEvent.click(within(row).getByRole('checkbox'))
   fireEvent.click(screen.getByRole('button', {name:'保存所选成员授权'}))
   await waitFor(() => expect(workspace.mutate).toHaveBeenCalledWith('school','members/ordinary',{role:'operator'},'PUT'))
   await waitFor(() => expect(within(screen.getByText('ordinary').closest('tr')!).getByText('运营')).toBeTruthy())
+})
+
+it('allows explicit school administrator grants for platform accounts and refreshes session permissions', async () => {
+  showManagement('members')
+  vi.mocked(workspace.mutate).mockResolvedValue({id:'u'})
+  const row=(await screen.findByText('平台维护者')).closest('tr')!
+  fireEvent.click(within(row).getByRole('checkbox'))
+  await selectOption(screen.getByRole('combobox',{name:'学校角色'}),'学校管理员')
+  const calls=vi.mocked(identity.session).mock.calls.length
+  fireEvent.click(screen.getByRole('button',{name:'保存所选成员授权'}))
+  await waitFor(()=>expect(workspace.mutate).toHaveBeenCalledWith('school','members/u',{role:'admin'},'PUT'))
+  await waitFor(()=>expect(vi.mocked(identity.session).mock.calls.length).toBeGreaterThan(calls))
 })
