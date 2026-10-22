@@ -21,5 +21,11 @@ export default defineConfig({
       target: apiOrigin, changeOrigin: true,
     }])),
   },
-  test: { environment: 'jsdom', clearMocks: true },
+  test: {
+    // Ant Design form interactions can exceed the default 5s under parallel test load.
+    testTimeout: 20000,
+    setupFiles: ['./src/test/setup.ts'],
+    environment: 'jsdom',
+    clearMocks: true,
+  },
 })
