@@ -1,16 +1,18 @@
 # WeKeeper
 
-校园社区与企业微信内容运营重构工程。新应用采用 Rust + React。
+校园社区与企业微信内容运营重构工程。新应用采用 Rust API、React Web 与 uni-app Vue 3 + TypeScript 小程序。
 
 现已接入身份与学校权限、社区内容和互动、审核治理、运营配置、模板版本、企业微信统一群发任务及历史分享记录、小程序身份入口和数据迁移工具。
 运行与数据切换见 [业务运行手册](docs/runbooks/business.md)。真实平台权限、真机及生产数据切换仍需验收。
-旧 PHP、uni-app、Java 和附带资源保留用于迁移核对，新容器不会运行它们。
+旧 PHP、根目录 Vue 2 `uniapp/`、Java 和附带资源保留用于迁移核对，新容器不会运行它们。
 
 ## 目录
 
 ```text
 backend/         Rust / Axum / SQLx，部署为 api
-frontend/        React / TypeScript / Vite，Caddy 部署为 web
+frontend/        pnpm 工作区，Web 与小程序独立构建
+  apps/web/      React / TypeScript / Vite，Caddy 部署为 web
+  apps/miniapp/  uni-app / Vue 3 / TypeScript，上传微信平台
 api-contract/    共享 DTO 与请求 client，不部署
 docs/adr/        工程决策
 docs/runbooks/   部署、验证与恢复操作
@@ -19,7 +21,7 @@ tools/           冒烟检查与后续迁移工具
 
 后端以 `system` 模块展示完整的 domain、north/local、north/remote、south/port、south/adapter/postgres 分层。
 业务模块按用例、领域与 PostgreSQL 端口实现；审核事务归入 community。
-前端接口调用通过 `@wekeeper/api-contract/*`；后台、社区与企业微信页面按入口懒加载，使用统一主题。
+前端接口调用通过 feature/api 与 `@wekeeper/api-contract/*`；Web 后台、社区与企业微信页面按入口懒加载，小程序使用独立 Bearer transport。小程序配置、构建与迁移范围见 [前端工作区说明](frontend/README.md) 与 [ADR 0006](docs/adr/0006-frontend-clients.md)。
 
 ## Docker 文档导航
 
