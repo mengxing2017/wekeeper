@@ -1,0 +1,23 @@
+{
+  "data": {
+    "type": "sessions",
+    "id": "current",
+    "attributes": {
+      "token": "fixture-only-miniapp-token",
+      "user": {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "username": "campus-member",
+        "display_name": "校园成员",
+        "platform_admin": false,
+        "bound_school_id": "00000000-0000-0000-0000-000000000002",
+        "grants": [
+          {
+            "school_id": "00000000-0000-0000-0000-000000000002",
+            "role": "member"
+          }
+        ],
+        "wecom_authenticated": false
+      }
+    }
+  }
+}
