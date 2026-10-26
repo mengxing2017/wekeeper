@@ -27,6 +27,7 @@ pub fn app_router(application: Application) -> Router {
 .merge(crate::community::north::remote::router())
 .merge(crate::distribution::north::remote::router())
 .merge(crate::distribution::north::broadcast_remote::router())
+.merge(crate::distribution::north::remote::mobile_delivery::router())
 .merge(crate::integrations::north::remote::router())
 .merge(crate::integrations::north::directory_remote::router())
         .merge(crate::integrations::north::assets_remote::router())
