@@ -8,7 +8,9 @@
     "./http": "./src/http/index.ts",
     "./system": "./src/modules/system/index.ts",
     "./health": "./src/modules/health/index.ts",
-    "./business": "./src/modules/business/index.ts"
+    "./business": "./src/modules/business/index.ts",
+    "./mobile-delivery": "./src/modules/mobile-delivery/index.ts",
+    "./device-execution": "./src/modules/device-execution/index.ts"
   },
   "scripts": {
     "build": "tsc --noEmit",
