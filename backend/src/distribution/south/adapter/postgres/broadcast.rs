@@ -44,7 +44,9 @@ impl Repository {
     ) -> Result<Uuid> {
         input.validate()?;
         let mut tx = self.0.begin().await?;
+        super::mobile_delivery::guard(&mut tx).await?;
         auth(&mut tx, a.id, s, input.source_task_id.is_some()).await?;
+        super::mobile_delivery::official_allowed(&mut tx, s).await?;
         let directory = sqlx::query("SELECT corp_id,credential_generation FROM wecom_directory_state WHERE singleton FOR SHARE").fetch_optional(&mut *tx).await?.ok_or(Error::Unavailable)?;
         require(
             directory.get::<String, _>("corp_id") == corp
@@ -164,6 +166,7 @@ impl Repository {
             }
         }
         event(&mut tx, s, task, Some(a.id), "draft.saved", json!({})).await?;
+        super::mobile_delivery::project(&mut tx).await?;
         tx.commit().await?;
         Ok(task)
     }
@@ -279,6 +282,7 @@ impl Repository {
         input: Action,
     ) -> Result<()> {
         let mut tx = self.0.begin().await?;
+        super::mobile_delivery::guard(&mut tx).await?;
         auth(
             &mut tx,
             a.id,
@@ -286,6 +290,9 @@ impl Repository {
             matches!(operation.as_str(), "stop" | "reconcile"),
         )
         .await?;
+        if matches!(operation.as_str(), "confirm" | "remind") {
+            super::mobile_delivery::official_allowed(&mut tx, s).await?;
+        }
         let t =
             sqlx::query("SELECT * FROM broadcast_tasks WHERE school_id=$1 AND id=$2 FOR UPDATE")
                 .bind(s)
@@ -428,6 +435,7 @@ impl Repository {
             json!({}),
         )
         .await?;
+        super::mobile_delivery::project(&mut tx).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -435,6 +443,7 @@ impl Repository {
 impl Store for Repository {
     async fn authorize(&self, actor: Uuid, school: Uuid, admin: bool) -> Result<()> {
         let mut tx = self.0.begin().await?;
+        super::mobile_delivery::guard(&mut tx).await?;
         auth(&mut tx, actor, school, admin).await
     }
     async fn execute(&self, a: &Actor, s: Uuid, command: Command) -> Result<Task> {
@@ -537,6 +546,14 @@ impl Store for Repository {
     }
     async fn claim(&self, w: &Work) -> Result<bool> {
         let mut tx = self.0.begin().await?;
+        super::mobile_delivery::guard(&mut tx).await?;
+        if matches!(w.operation.as_str(), "create" | "remind") {
+            match super::mobile_delivery::official_allowed(&mut tx, w.school_id).await {
+                Ok(()) => {}
+                Err(Error::Policy(_)) => return Ok(false),
+                Err(e) => return Err(e),
+            }
+        }
         // Task lock serializes edits, confirmation, stopping, and all batch claims.
         let t = sqlx::query("SELECT * FROM broadcast_tasks WHERE id=$1 FOR UPDATE")
             .bind(w.task_id)
@@ -544,6 +561,7 @@ impl Store for Repository {
             .await?;
         if w.operation == "read" {
             let n=sqlx::query("UPDATE broadcast_batches SET next_sync_at=now()+interval '5 minutes' WHERE id=$1 AND next_sync_at<=now() AND msgid=$2").bind(w.id).bind(&w.msgid).execute(&mut *tx).await?.rows_affected();
+            super::mobile_delivery::project(&mut tx).await?;
             tx.commit().await?;
             return Ok(n == 1);
         }
@@ -571,6 +589,7 @@ impl Store for Repository {
                 json!({"batch_id":w.id}),
             )
             .await?;
+            super::mobile_delivery::project(&mut tx).await?;
             tx.commit().await?;
             return Ok(n == 1);
         }
@@ -594,11 +613,13 @@ impl Store for Repository {
         )
         .await?;
         let n=sqlx::query("UPDATE broadcast_operations SET state='calling',claimed_at=now() WHERE id=$1 AND state='pending'").bind(op).execute(&mut *tx).await?.rows_affected();
+        super::mobile_delivery::project(&mut tx).await?;
         tx.commit().await?;
         Ok(n == 1)
     }
     async fn finish(&self, w: &Work, outcome: Outcome) -> Result<()> {
         let mut tx = self.0.begin().await?;
+        super::mobile_delivery::guard(&mut tx).await?;
         sqlx::query("SELECT id FROM broadcast_tasks WHERE id=$1 FOR UPDATE")
             .bind(w.task_id)
             .fetch_one(&mut *tx)
@@ -666,15 +687,18 @@ impl Store for Repository {
             json!({"batch_id":w.id,"state":state,"error_code":error}),
         )
         .await?;
+        super::mobile_delivery::project(&mut tx).await?;
         tx.commit().await?;
         Ok(())
     }
     async fn observed(&self, w: &Work, results: Result<Results>) -> Result<()> {
         let mut tx = self.0.begin().await?;
+        super::mobile_delivery::guard(&mut tx).await?;
         // A stale credential-scope read may not publish into a newer directory generation.
         if sqlx::query("SELECT singleton FROM wecom_directory_state WHERE corp_id=$1 AND credential_generation=$2 FOR SHARE").bind(&w.corp_id).bind(w.generation).fetch_optional(&mut *tx).await?.is_none() {
             sqlx::query("UPDATE broadcast_batches SET sync_error='credential_generation_changed' WHERE id=$1").bind(w.id).execute(&mut *tx).await?;
-            tx.commit().await?; return Ok(());
+            super::mobile_delivery::project(&mut tx).await?;
+        tx.commit().await?; return Ok(());
         }
         match results {
             Ok(results) => {
@@ -693,6 +717,7 @@ impl Store for Repository {
                 .await?;
             }
         }
+        super::mobile_delivery::project(&mut tx).await?;
         tx.commit().await?;
         Ok(())
     }

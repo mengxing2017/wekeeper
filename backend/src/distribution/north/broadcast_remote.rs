@@ -123,10 +123,11 @@ async fn capability(
     use crate::distribution::south::port::broadcast::Store;
     let b = a.broadcast();
     b.store.authorize(actor.id, s, false).await?;
+    let school_official = a.mobile_delivery().official_available(s).await?;
     Ok(singleton(
         "broadcast-capabilities",
         "current",
-        json!({"broadcast_available":b.enabled,"management_available":b.management_available,"reason":a.broadcast_unavailable_reason()}),
+        json!({"broadcast_available":b.enabled && school_official,"management_available":b.management_available,"reason":if school_official {a.broadcast_unavailable_reason()} else {Some("mobile_channel_exclusive")}}),
     ))
 }
 #[derive(Deserialize)]
