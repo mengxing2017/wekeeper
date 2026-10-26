@@ -1,0 +1,145 @@
+{
+  "pages": [
+    {
+      "path": "pages/index/index",
+      "style": {
+        "navigationBarTitleText": "校园发现",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/index/hot",
+      "style": {
+        "navigationBarTitleText": "关注动态",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/index/detail",
+      "style": {
+        "navigationBarTitleText": "动态详情"
+      }
+    },
+    {
+      "path": "pages/index/publish",
+      "style": {
+        "navigationBarTitleText": "发布动态"
+      }
+    },
+    {
+      "path": "pages/index/search",
+      "style": {
+        "navigationBarTitleText": "搜索校园",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/index/category",
+      "style": {
+        "navigationBarTitleText": "校园服务"
+      }
+    },
+    {
+      "path": "pages/plugin/index",
+      "style": {
+        "navigationBarTitleText": "选择学校"
+      }
+    },
+    {
+      "path": "pages/plugin/gate",
+      "style": {
+        "navigationBarTitleText": "微信登录"
+      }
+    },
+    {
+      "path": "pages/user/index",
+      "style": {
+        "navigationBarTitleText": "我的校园"
+      }
+    },
+    {
+      "path": "pages/user/message",
+      "style": {
+        "navigationBarTitleText": "消息"
+      }
+    },
+    {
+      "path": "pages/user/attentions",
+      "style": {
+        "navigationBarTitleText": "我的关注"
+      }
+    },
+    {
+      "path": "pages/user/myattentions",
+      "style": {
+        "navigationBarTitleText": "我的关注"
+      }
+    },
+    {
+      "path": "pages/user/tag",
+      "style": {
+        "navigationBarTitleText": "校园标签"
+      }
+    },
+    {
+      "path": "pages/user/login",
+      "style": {
+        "navigationBarTitleText": "微信登录"
+      }
+    },
+    {
+      "path": "pages/user/bind",
+      "style": {
+        "navigationBarTitleText": "微信登录"
+      }
+    },
+    {
+      "path": "pages/user/userInfo",
+      "style": {
+        "navigationBarTitleText": "个人信息"
+      }
+    },
+    {
+      "path": "pages/user/legal",
+      "style": {
+        "navigationBarTitleText": "学校说明"
+      }
+    },
+    {
+      "path": "pages/user/feedback",
+      "style": {
+        "navigationBarTitleText": "意见反馈"
+      }
+    },
+    {
+      "path": "pages/community/edit",
+      "style": {
+        "navigationBarTitleText": "编辑动态"
+      }
+    }
+  ],
+  "globalStyle": {
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "WeKeeper",
+    "navigationBarBackgroundColor": "#ffffff",
+    "backgroundColor": "#f5f7fb"
+  },
+  "tabBar": {
+    "color": "#6b7280",
+    "selectedColor": "#5b8ff9",
+    "list": [
+      {
+        "pagePath": "pages/index/index",
+        "text": "发现"
+      },
+      {
+        "pagePath": "pages/index/publish",
+        "text": "发布"
+      },
+      {
+        "pagePath": "pages/user/index",
+        "text": "我的"
+      }
+    ]
+  }
+}
