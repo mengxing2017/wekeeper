@@ -8,6 +8,7 @@ pub enum Error {
     Forbidden,
     NotFound,
     Conflict,
+    Policy(&'static str),
     Invalid(String),
     Unavailable,
     Upstream(i64),

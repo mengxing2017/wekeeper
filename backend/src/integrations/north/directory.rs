@@ -262,6 +262,7 @@ pub(crate) fn error_code(error: &Error) -> &'static str {
         Error::Unauthorized => "unauthorized",
         Error::Forbidden => "forbidden",
         Error::NotFound => "not_found",
+        Error::Policy(code) => code,
         Error::Conflict => "conflict_or_stale_generation",
         Error::Invalid(_) => "invalid_configuration_or_input",
         Error::Unavailable | Error::Upstream(_) => "upstream_unavailable",

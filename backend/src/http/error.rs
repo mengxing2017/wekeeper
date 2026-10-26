@@ -75,6 +75,16 @@ impl IntoResponse for Error {
                 "conflict",
                 "数据已变化或操作重复，请刷新后重试".into(),
             ),
+            Self::Policy("device_request_limit") => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "device_request_limit",
+                "设备请求过于频繁，请稍后重试".into(),
+            ),
+            Self::Policy(code) => (
+                StatusCode::CONFLICT,
+                code,
+                "手机执行约束未满足，请检查任务和核对状态".into(),
+            ),
             Self::Invalid(s) => (StatusCode::UNPROCESSABLE_ENTITY, "validation", s),
             Self::Unavailable | Self::Upstream(_) => (
                 StatusCode::SERVICE_UNAVAILABLE,
