@@ -10,10 +10,15 @@
     "./health": "./src/modules/health/index.ts",
     "./business": "./src/modules/business/index.ts",
     "./mobile-delivery": "./src/modules/mobile-delivery/index.ts",
-    "./device-execution": "./src/modules/device-execution/index.ts"
+    "./device-execution": "./src/modules/device-execution/index.ts",
+    "./client": "./src/http/client.ts",
+    "./identity": "./src/modules/identity/index.ts",
+    "./schools": "./src/modules/schools/index.ts",
+    "./community": "./src/modules/community/index.ts",
+    "./media": "./src/modules/media/index.ts"
   },
   "scripts": {
-    "build": "tsc --noEmit",
+    "build": "tsc --noEmit && tsc -p tsconfig.platform.json",
     "test": "vitest run"
   },
   "devDependencies": {
