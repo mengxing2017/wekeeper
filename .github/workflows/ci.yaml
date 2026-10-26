@@ -1,4 +1,4 @@
-name: Rust and React
+name: Rust and frontend clients
 
 on:
   pull_request:
