@@ -1,0 +1,121 @@
+import { useRef, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { Alert, Button, Card, Checkbox, Input, Space, Tag } from 'antd'
+import { Editor } from '../../admin/workspace/editor'
+import { Field } from '../../../shared/field'
+import { PaginationControls } from '../../../shared/pagination-controls'
+import { api, type Preview, type ItemInput } from './api'
+
+const key = () => crypto.randomUUID()
+const clients = [{ value: 'wechat', label: '微信' }, { value: 'wecom', label: '企业微信' }]
+const identityFields = [{ name: 'client_kind', title: '客户端', options: clients }, { name: 'identity_namespace', title: '身份命名空间' }, { name: 'external_key', title: '已核验的稳定身份标识' }, { name: 'identity_evidence_ref', title: '身份核验依据' }]
+const states: Record<string, string> = { draft: '草稿', confirmed: '已确认', completed: '已完成', stopped: '已停止', queued: '排队中', claimed: '已领取', prepared: '已准备', permit_issued: '已发放单次资格', ui_observed_sent: '界面观察到已发送（非送达证明）', unknown: '结果不确定，必须人工核对', manually_sent: '人工确认已发送', verified_not_sent: '人工核验未发送', cancelled: '已取消' }
+
+function useActions(scope: string) {
+  const cache = useQueryClient(), lock = useRef(false)
+  const [busy, setBusy] = useState(false), [error, setError] = useState('')
+  async function run(action: () => Promise<unknown>) {
+    if (lock.current) return
+    lock.current = true; setBusy(true); setError('')
+    try { await action(); await cache.invalidateQueries({ queryKey: ['mobile', scope] }) }
+    catch (e) { setError((e as Error).message) }
+    finally { lock.current = false; setBusy(false) }
+  }
+  return { busy, run, error }
+}
+
+export function ExecutionDevices() {
+  const [page, setPage] = useState(1), [accountPage, setAccountPage] = useState(1), [code, setCode] = useState('')
+  const devices = useQuery({ queryKey: ['mobile', 'platform', 'devices', page], queryFn: () => api.devices(page) })
+  const accounts = useQuery({ queryKey: ['mobile', 'platform', 'accounts', accountPage], queryFn: () => api.accounts(accountPage) })
+  const cache = useQueryClient(), actions = useActions('platform')
+  const refresh = async () => { await cache.invalidateQueries({ queryKey: ['mobile', 'platform'] }) }
+  return <section><p>登记手机执行设备与真实发送账号。手机执行程序需另行部署；本页面不会直接操作手机。</p>
+    {[devices.error, accounts.error].map((e, i) => e && <Alert key={i} type="error" title={e.message} />)}
+    {actions.error && <Alert type="error" title={actions.error} />}
+    <Button onClick={() => void refresh()}>刷新设备与账号</Button>
+    {code && <Alert type="warning" title="一次性配对码（请在手机端输入，不会再次显示）" description={<><pre>{code}</pre><Button onClick={() => setCode('')}>关闭配对码</Button></>} />}
+    <Card title="登记手机"><Editor fields={[{ name: 'name', title: '设备名称' }]} onSave={async v => { await api.createDevice({ name: v.name }, key()); await refresh() }} /></Card>
+    {devices.data?.items.map(d => <Card key={d.id} title={d.name} extra={<Tag>{d.enabled ? '已启用' : '已停用'}</Tag>}>
+      <p>设备 ID：{d.id} · 最近在线：{d.last_seen_at ?? '尚未连接'}</p>
+      <Space wrap><Button disabled={actions.busy} onClick={() => void actions.run(async () => { const result = await api.enrollment(d.id, { expected_revision: d.revision }, key()); setCode(result.code ? `${result.code}\n有效期至 ${result.expires_at}` : '配对码无法重放，请重新生成') })}>生成配对码</Button></Space>
+      <Editor key={`state-${d.revision}`} fields={[{ name: 'enabled', title: '设备状态', value: String(d.enabled), options: [{ value: 'true', label: '启用' }, { value: 'false', label: '停用' }] }, { name: 'reason', title: '变更原因' }]} onSave={async v => { await api.updateDevice(d.id, { expected_revision: d.revision, enabled: v.enabled === 'true', reason: v.reason }, key()); await refresh() }} />
+      <Editor key={`bind-${d.revision}`} submit="绑定发送账号" fields={[{ name: 'sender_account_id', title: '发送账号 ID' }, { name: 'identity_evidence_ref', title: '手机登录身份核验依据' }]} onSave={async v => { await api.bindDevice(d.id, { expected_revision: d.revision, sender_account_id: v.sender_account_id, identity_evidence_ref: v.identity_evidence_ref }, key()); await refresh() }} />
+      <Editor key={`revoke-${d.revision}`} submit="撤销设备凭据" fields={[{ name: 'reason', title: '撤销原因（将使现有凭据失效）' }]} onSave={async v => { await api.revoke(d.id, { expected_revision: d.revision, reason: v.reason }, key()); await refresh() }} />
+    </Card>)}
+    <PaginationControls page={page} more={devices.data?.page?.has_more} change={setPage} subject="设备" />
+    <Card title="登记真实发送账号"><Editor fields={[...identityFields, { name: 'responsible_actor_id', title: '责任人用户 ID（需有目标学校管理员授权）' }]} onSave={async v => { await api.createAccount({ client_kind: v.client_kind as 'wechat' | 'wecom', identity_namespace: v.identity_namespace, external_key: v.external_key, identity_evidence_ref: v.identity_evidence_ref, responsible_actor_id: v.responsible_actor_id }, key()); await refresh() }} /></Card>
+    {accounts.data?.items.map(a => <Card key={a.id} title={a.external_key}><p>发送账号 ID：{a.id} · 责任人：{a.responsible_actor_id} · {a.enabled ? '启用' : '停用'}</p><Editor key={a.revision} fields={[{ name: 'daily_limit', title: '滚动 24 小时限额（0 暂停，最高 50）', type: 'number', value: a.daily_limit }, { name: 'reason', title: '限额变更原因' }]} onSave={async v => { await api.updateAccountPolicy(a.id, { expected_revision: a.revision, daily_limit: Number(v.daily_limit), reason: v.reason }, key()); await refresh() }} /></Card>)}
+    <PaginationControls page={accountPage} more={accounts.data?.page?.has_more} change={setAccountPage} subject="发送账号" />
+  </section>
+}
+
+export default function MobileDelivery({ school, role }: { school: string; role?: string }) {
+  const admin = role === 'admin', authorized = admin || role === 'operator'
+  const [page, setPage] = useState(1), [groupPage, setGroupPage] = useState(1), [selected, setSelected] = useState('')
+  const capability = useQuery({ queryKey: ['mobile', school, 'capability'], queryFn: () => api.capabilities(school), enabled: authorized })
+  const tasks = useQuery({ queryKey: ['mobile', school, 'tasks', page], queryFn: () => api.tasks(school, page), enabled: authorized })
+  const groups = useQuery({ queryKey: ['mobile', school, 'groups', groupPage], queryFn: () => api.groups(school, groupPage), enabled: authorized })
+  const cache = useQueryClient()
+  const refresh = async () => { await cache.invalidateQueries({ queryKey: ['mobile', school] }) }
+  if (!authorized) return <Alert type="warning" title="需要当前学校的运营或管理员授权；平台管理员身份不代替学校授权。" />
+  const settings = capability.data?.settings
+  return <section><Alert type="info" title="手机执行：先保存草稿，再人工核对预览并确认" description="账号默认 24 小时 30 条、最高 50 条；同群所有账号合计默认 10 条、最高 30 条。同账号间隔至少 30 分钟，相同消息跨群至少 10 分钟；不确定结果不会自动重发。" />
+    {!capability.data?.claim_enabled && <Alert type="warning" title="手机自动领取尚不可用" description={capability.data?.reason ?? '正在读取服务端执行开关与学校配置…'} />}
+    {[capability.error, tasks.error, groups.error].map((e, i) => e && <Alert key={i} type="error" title={e.message} />)}
+    <Button onClick={() => void refresh()}>刷新手机任务与配置</Button>
+    {admin && settings && <Card title="学校手机执行配置"><Editor key={settings.revision} fields={[
+      { name: 'enabled', title: '学校执行开关', value: String(settings.enabled), options: [{ value: 'false', label: '关闭' }, { value: 'true', label: '启用（仍受服务端总开关限制）' }] },
+      { name: 'history_reviewed', title: '官方通道历史核对', value: String(settings.history_reviewed), options: [{ value: 'false', label: '尚未完成' }, { value: 'true', label: '已人工核对，避免重复发送' }] },
+      { name: 'approved_client_version', title: '已批准客户端版本', value: settings.approved_client_version }, { name: 'approved_script_version', title: '已批准执行程序版本', value: settings.approved_script_version }, { name: 'approved_baseline_version', title: '已批准界面基线版本', value: settings.approved_baseline_version }, { name: 'evidence_ref', title: '配置审核依据', value: settings.evidence_ref },
+    ]} onSave={async v => { await api.updateSettings(school, { expected_revision: settings.revision, enabled: v.enabled === 'true', history_reviewed: v.history_reviewed === 'true', approved_client_version: v.approved_client_version, approved_script_version: v.approved_script_version, approved_baseline_version: v.approved_baseline_version, evidence_ref: v.evidence_ref }, key()); await refresh() }} /></Card>}
+    {admin && <Card title="登记目标群"><Editor fields={[{ name: 'name', title: '群名称' }, ...identityFields, { name: 'wecom_group_id', title: '已有企业微信客户群 ID（普通微信群留空）', optional: true }]} onSave={async v => { await api.createGroup(school, { name: v.name, client_kind: v.client_kind as 'wechat' | 'wecom', identity_namespace: v.identity_namespace, external_key: v.external_key, identity_evidence_ref: v.identity_evidence_ref, wecom_group_id: v.wecom_group_id || null }, key()); await refresh() }} /></Card>}
+    {groups.data?.items.map(g => <Card key={g.id} title={g.name}><p>目标群 ID：{g.id} · 每 24 小时限额 {g.daily_limit}</p>
+      {admin && <><Editor key={`bind-${g.revision}`} submit="授权发送账号进入此群" fields={[{ name: 'sender_account_id', title: '发送账号 ID（平台设备与发送账号页面可查）' }, { name: 'reason', title: '授权依据' }]} onSave={async v => { await api.bindGroup(school, g.id, { sender_account_id: v.sender_account_id, mapping_revision: g.revision, reason: v.reason }, key()); await refresh() }} />
+      <Editor key={`policy-${g.revision}`} fields={[{ name: 'daily_limit', title: '同群所有账号合计限额（0 暂停，最高 30）', type: 'number', value: g.daily_limit }, { name: 'reason', title: '限额变更原因' }]} onSave={async v => { await api.updateGroupPolicy(school, g.id, { expected_revision: g.revision, daily_limit: Number(v.daily_limit), reason: v.reason }, key()); await refresh() }} /></>}
+    </Card>)}
+    <PaginationControls page={groupPage} more={groups.data?.page?.has_more} change={setGroupPage} subject="目标群" />
+    {capability.data?.create && <DraftComposer school={school} saved={async id => { setSelected(id); await refresh() }} />}
+    <h2>手机发送任务</h2>
+    {tasks.isPending && <p role="status">正在加载任务…</p>}{tasks.data?.items.length === 0 && <p>暂无手机发送任务</p>}
+    {tasks.data?.items.map(t => <Card key={t.id} title={t.activity_id} extra={<Tag>{states[t.state]}</Tag>}><Button onClick={() => setSelected(t.id)}>查看手机任务 {t.id.slice(-6)}</Button></Card>)}
+    <PaginationControls page={page} more={tasks.data?.page?.has_more} change={setPage} subject="手机任务" />
+    {selected && <TaskDetail key={selected} school={school} id={selected} admin={admin} canConfirm={capability.data?.confirm ?? false} />}
+  </section>
+}
+
+function DraftComposer({ school, saved }: { school: string; saved: (id: string) => Promise<void> }) {
+  const [items, setItems] = useState<ItemInput[]>([])
+  return <Card title="新建手机发送草稿"><p>每群分别填写内容。先添加目标，保存草稿后必须人工确认才可执行。</p>
+    <Editor submit="添加目标到草稿" fields={[{ name: 'group_id', title: '目标群 ID（上方群列表可查）' }, { name: 'sender_account_id', title: '已授权发送账号 ID' }, { name: 'source', title: '内容来源', value: 'text', options: [{ value: 'text', label: '直接文本' }, { value: 'posts', label: '社区帖子与已发布模板' }] }, { name: 'text', title: '该群专属消息正文（文本模式）', type: 'textarea', optional: true }, { name: 'template_version_id', title: '已发布模板版本 ID（帖子模式）', optional: true }, { name: 'post_ids', title: '已审核帖子 ID（逗号分隔，帖子模式）', optional: true }]} onSave={async v => { if (items.some(i => i.group_id === v.group_id)) throw new Error('同一任务不能重复添加同一群'); if (v.source === 'text' && !v.text.trim()) throw new Error('请填写该群正文'); const postIds = v.post_ids.split(',').map(id => id.trim()).filter(Boolean); if (v.source === 'posts' && (!v.template_version_id || !postIds.length)) throw new Error('请选择模板版本和帖子'); setItems([...items, { group_id: v.group_id, sender_account_id: v.sender_account_id, source: v.source === 'posts' ? { kind: 'posts', template_version_id: v.template_version_id, post_ids: postIds } : { kind: 'text', text_content: v.text } }]) }} />
+    {items.map((i, index) => <p key={i.group_id}>{i.group_id} · {i.source.kind === 'text' ? i.source.text_content : `社区帖子 ${i.source.post_ids.join(', ')}`} <Button onClick={() => setItems(items.filter((_, n) => n !== index))}>移除此目标</Button></p>)}
+    <Editor submit="保存手机任务草稿" fields={[{ name: 'activity_id', title: '活动标识' }]} onSave={async v => { if (!items.length) throw new Error('请至少添加一个目标群'); const task = await api.createTask(school, { activity_id: v.activity_id, items }, key()); setItems([]); await saved(task.id) }} />
+  </Card>
+}
+
+function TaskDetail({ school, id, admin, canConfirm }: { school: string; id: string; admin: boolean; canConfirm: boolean }) {
+  const [page, setPage] = useState(1), [eventPage, setEventPage] = useState(1), [preview, setPreview] = useState<Preview>(), [review, setReview] = useState(false), [scope, setScope] = useState(false), [difference, setDifference] = useState(false), [evidence, setEvidence] = useState('')
+  const task = useQuery({ queryKey: ['mobile', school, id], queryFn: () => api.task(school, id), refetchInterval: 15000 })
+  const items = useQuery({ queryKey: ['mobile', school, id, 'items', page], queryFn: () => api.items(school, id, page), refetchInterval: 15000 })
+  const events = useQuery({ queryKey: ['mobile', school, id, 'events', eventPage], queryFn: () => api.events(school, id, eventPage) })
+  const actions = useActions(school), cache = useQueryClient()
+  const refresh = async () => { await cache.invalidateQueries({ queryKey: ['mobile', school] }) }
+  const t = task.data
+  return <Card title={`手机任务详情 ${id}`}><p>任务状态：{t ? states[t.state] : '正在加载'}</p>
+    {[task.error, items.error, events.error].map((e, i) => e && <Alert key={i} type="error" title={e.message} />)}{actions.error && <Alert type="error" title={actions.error} />}
+    {t?.state === 'draft' && <Button disabled={actions.busy} onClick={() => void actions.run(async () => { setPreview(undefined); setReview(false); setScope(false); setDifference(false); setPreview(await api.preview(school, id, { expected_revision: t.revision }, key())) })}>生成冻结内容预览</Button>}
+    {preview && t?.state === 'draft' && <section><h3>逐群核对冻结内容</h3>{preview.items.map(i => <Card key={i.id} title={i.group_id}><pre className="text-content">{i.content}</pre>{i.reason && <Alert type="warning" title={i.reason} description={i.next_eligible_at ? `最早可执行时间：${i.next_eligible_at}` : undefined} />}</Card>)}
+      <Checkbox checked={review} onChange={e => setReview(e.target.checked)}>已人工审核各群内容</Checkbox><Checkbox checked={scope} onChange={e => setScope(e.target.checked)}>已核对目标群、授权和发送范围</Checkbox>
+      {preview.requires_substantive_difference_review && <Checkbox checked={difference} onChange={e => setDifference(e.target.checked)}>已核对同校不同群内容的实质差异</Checkbox>}
+      <Field label="人工确认依据"><Input value={evidence} onChange={e => setEvidence(e.target.value)} /></Field>
+      <Button type="primary" loading={actions.busy} disabled={!canConfirm || (!admin && items.data?.items.some(i => i.source.kind === 'text')) || !review || !scope || !evidence.trim() || (preview.requires_substantive_difference_review && !difference) || preview.expected_revision !== t.revision} onClick={() => void actions.run(async () => { await api.confirm(school, id, { expected_revision: preview.expected_revision, preview_digest: preview.preview_digest, content_review: review, scope_acceptance: scope, substantive_difference_reviewed: difference, evidence_ref: evidence }, key()); setPreview(undefined) })}>人工确认并进入执行队列</Button>
+      {!admin && <p>直接文本草稿须由当前学校管理员确认。</p>}
+    </section>}
+    {admin && t && !['stopped', 'completed'].includes(t.state) && <Editor key={t.revision} submit="停止后续执行" fields={[{ name: 'reason', title: '停止原因' }]} onSave={async v => { await api.stop(school, id, { expected_revision: t.revision, reason: v.reason }, key()); setPreview(undefined); await refresh() }} />}
+    <h3>逐群执行记录</h3>{items.data?.items.map(i => <Card key={i.id} title={i.group_id} extra={<Tag>{states[i.state]}</Tag>}><pre className="text-content">{i.content}</pre><p>账号：{i.sender_account_id}</p>
+      {admin && i.state === 'unknown' && <Editor key={i.revision} submit="提交人工核对（不会自动重发）" fields={[{ name: 'decision', title: '核对结论', options: [{ value: 'manually_sent', label: '人工确认已发送' }, { value: 'verified_not_sent', label: '已核验未发送' }] }, { name: 'reason', title: '核对说明' }, { name: 'evidence_ref', title: '核对证据' }]} onSave={async v => { await api.reconcile(school, i.id, { expected_revision: i.revision, decision: v.decision as 'manually_sent' | 'verified_not_sent', reason: v.reason, evidence_ref: v.evidence_ref }, key()); await refresh() }} />}
+    </Card>)}
+    <PaginationControls page={page} more={items.data?.page?.has_more} change={setPage} subject="执行记录" />
+    <h3>操作事件</h3>{events.data?.items.map(e => <p key={e.id}>{e.created_at} · {e.action}</p>)}<PaginationControls page={eventPage} more={events.data?.page?.has_more} change={setEventPage} subject="操作事件" />
+  </Card>
+}
