@@ -1072,6 +1072,60 @@ async fn complete_business_flow_and_security_boundaries() {
         .session(adminid, "miniapp", false)
         .await
         .unwrap();
+    // Native miniapp clients use Bearer sessions without browser Origin/CSRF.
+    for (credential, cookie, expected) in [
+        (mini_token.as_str(), false, 200),
+        (admin_token.as_str(), false, 401),
+        (mini_token.as_str(), true, 401),
+    ] {
+        let mut request = Request::builder().uri("/api/v1/auth/session");
+        request = if cookie {
+            request.header("cookie", format!("wekeeper_session={credential}"))
+        } else {
+            request.header("authorization", format!("Bearer {credential}"))
+        };
+        let response = app
+            .clone()
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status().as_u16(), expected);
+    }
+    let image_bytes = b"\x89PNG\r\n\x1a\nminiapp-raw-bytes";
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("{root}/media"))
+                .header("authorization", format!("Bearer {mini_token}"))
+                .header("content-type", "application/octet-stream")
+                .body(Body::from(image_bytes.as_slice()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let document: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 8192).await.unwrap()).unwrap();
+    let media_path = document["data"]["attributes"]["url"].as_str().unwrap();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(media_path)
+                .header("authorization", format!("Bearer {mini_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["content-type"], "image/png");
+    assert_eq!(
+        to_bytes(response.into_body(), 8192).await.unwrap().as_ref(),
+        image_bytes
+    );
     let response = app
         .clone()
         .oneshot(
