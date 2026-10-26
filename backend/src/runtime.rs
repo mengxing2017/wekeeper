@@ -120,9 +120,20 @@ async fn serve_inner(
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         }
     });
+    let mobile = application.mobile_delivery();
+    let mobile_worker = tokio::spawn(async move {
+        loop {
+            if mobile.recover().await.is_err() {
+                tracing::warn!("mobile delivery recovery failed; inspect persisted state");
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
+    });
     let result = axum::serve(listener, http::app_router(application))
         .with_graceful_shutdown(shutdown_signal())
         .await;
+    mobile_worker.abort();
+    let _ = mobile_worker.await;
     broadcast_worker.abort();
     let _ = broadcast_worker.await;
     assets_worker.abort();
