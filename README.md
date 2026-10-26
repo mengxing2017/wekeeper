@@ -336,3 +336,7 @@ devbox run -- make dev-embedded
 本次新增 `backend/migrations/202610220001_broadcast_tasks.sql`，启动自动 forward-only 升级，保留旧数据；不要求重置已有数据库。真实企业权限及终端行为仍需部署验收。
 
 直接文本由本校 operator/admin 保存草稿，仅 admin 可确认提交；社区内容沿用原权限。新增迁移 `202610220002_broadcast_text.sql` 保留已有任务与正文哈希。升级须停止旧 API/worker 并配套部署新版前后端，不能在文本任务出现后混跑旧 worker。
+
+### 服务端手机执行接口
+
+已提供独立设备身份、逐群草稿/人工确认、领取/准备/单次资格/回报接口及 TypeScript HTTP client，不包含手机执行代码。默认关闭 `WEKEEPER_MOBILE_EXECUTION_ENABLED`；逐校启用与核对操作见 [手机执行运行手册](docs/runbooks/mobile-delivery.md) 和 [ADR 0005](docs/adr/0005-mobile-delivery.md)。
