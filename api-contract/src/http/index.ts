@@ -1,13 +1,14 @@
 /** Shared JSON:API transport, resource decoding and error handling. */
 export interface ApiFailure {
-  errors: Array<{ status?: string; code?: string; title?: string; detail?: string }>
+  errors: Array<{ status?: string; code?: string; title?: string; detail?: string; meta?: Record<string, unknown> }>
 }
 
-function failureDetails(value: unknown): { code: string; message: string } {
+function failureDetails(value: unknown): { code: string; message: string; meta?: Record<string, unknown> } {
   if (typeof value === 'object' && value !== null && 'errors' in value && Array.isArray(value.errors)) {
     const error: unknown = value.errors[0]
     if (typeof error === 'object' && error !== null) {
       return {
+        meta: 'meta' in error && typeof error.meta === 'object' && error.meta !== null ? error.meta as Record<string, unknown> : undefined,
         code: 'code' in error && typeof error.code === 'string' ? error.code : 'http_error',
         message: 'detail' in error && typeof error.detail === 'string' ? error.detail
           : 'title' in error && typeof error.title === 'string' ? error.title : '服务暂时不可用',
@@ -18,7 +19,7 @@ function failureDetails(value: unknown): { code: string; message: string } {
 }
 
 export class ApiError extends Error {
-  constructor(public readonly status: number, public readonly code: string, message: string) {
+  constructor(public readonly status: number, public readonly code: string, message: string, public readonly meta?: Record<string, unknown>) {
     super(message)
     this.name = 'ApiError'
   }
@@ -43,8 +44,8 @@ export async function requestJson<T>(path: string, method = 'GET', body?: unknow
   if (!response.ok) {
     let failure: unknown
     try { failure = await response.json() } catch { /* gateway response */ }
-    const { code, message } = failureDetails(failure)
-    throw new ApiError(response.status, code, message)
+    const { code, message, meta } = failureDetails(failure)
+    throw new ApiError(response.status, code, message, meta)
   }
   if (path.startsWith('/api/') && response.headers.get('Content-Type')?.split(';')[0] !== 'application/vnd.api+json') return invalidDocument()
   try { return await response.json() as T } catch { return invalidDocument() }
@@ -98,6 +99,21 @@ export function resourceType(path: string): string {
   if (parts[2] === 'platform' && parts[3] === 'wecom-assets' && parts[4] === 'owner-scope-decisions') return 'wecom-owner-scope-decisions'
   if (parts[2] === 'platform' && parts[3] === 'wecom-assets' && parts[4] === 'sync-runs') return 'wecom-asset-sync-runs'
   if (parts[2] === 'schools' && parts[4] === 'groups' && parts[5] === 'from-directory') return 'wecom-group-bindings'
+  if (parts[2] === 'platform' && parts[3] === 'execution-devices') {
+    if (parts[5] === 'enrollments') return 'device-enrollments'
+    if (parts[5] === 'account-bindings') return 'device-account-bindings'
+    return 'execution-devices'
+  }
+  if (parts[2] === 'platform' && parts[3] === 'sending-accounts') return 'sending-accounts'
+  if (parts[2] === 'schools' && parts[4] === 'delivery-groups') return 'delivery-groups'
+  if (parts[2] === 'schools' && parts[4] === 'mobile-delivery-settings') return 'mobile-delivery-settings'
+  if (parts[2] === 'schools' && parts[4] === 'mobile-delivery-tasks') {
+    if (parts[6] === 'previews') return 'mobile-delivery-previews'
+    if (parts[6] === 'items') return 'mobile-delivery-items'
+    if (parts[6] === 'events') return 'mobile-delivery-events'
+    return 'mobile-delivery-tasks'
+  }
+  if (parts[2] === 'schools' && parts[4] === 'mobile-delivery-items') return parts[6] === 'resend-drafts' ? 'mobile-delivery-tasks' : 'mobile-delivery-items'
   if (parts[2] === 'auth') return 'sessions'
   if (parts[2] === 'platform' && parts[3] === 'wecom-directory' && parts[4] === 'credential-rotations') return 'wecom-credential-rotations'
   if (parts[2] === 'accounts' && parts[4] === 'wecom-binding') return 'wecom-bindings'

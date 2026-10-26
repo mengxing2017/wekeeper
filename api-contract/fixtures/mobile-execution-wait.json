@@ -1,0 +1,9 @@
+{
+  "data": null,
+  "meta": {
+    "server_time": "2026-10-24T04:00:00Z",
+    "retry_after_seconds": 30,
+    "next_eligible_at": null,
+    "reason": "unknown_requires_review"
+  }
+}
