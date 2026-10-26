@@ -93,3 +93,5 @@ pub trait Store: Clone + Send + Sync + 'static {
 }
 
 pub mod broadcast;
+
+pub mod mobile_delivery;
