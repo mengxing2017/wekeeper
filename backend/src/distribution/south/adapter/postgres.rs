@@ -9,6 +9,8 @@ pub struct Repository(pub PgPool);
 impl Repository {
     pub async fn claim(&self, a: &Actor, s: Uuid, id: Uuid) -> Result<()> {
         let mut tx = self.0.begin().await?;
+        mobile_delivery::guard(&mut tx).await?;
+        mobile_delivery::official_allowed(&mut tx, s).await?;
         sqlx::query("SELECT a.id FROM accounts a JOIN wecom_members m ON m.id=a.wecom_member_id WHERE a.id=$1 AND a.active AND a.wecom_binding_revision=$2 AND m.verification='verified' AND m.status=1 FOR SHARE OF a,m").bind(a.id).bind(a.wecom_binding_revision).fetch_optional(&mut *tx).await?.ok_or(Error::Forbidden)?;
 
         sqlx::query("SELECT g.id FROM delivery_attempts a JOIN delivery_drafts d ON d.id=a.draft_id JOIN wecom_groups g ON g.id=d.group_id WHERE a.school_id=$1 AND a.id=$2 AND a.actor_id=$3 FOR SHARE OF g").bind(s).bind(id).bind(a.id).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
@@ -27,6 +29,7 @@ impl Repository {
         if n != 1 {
             return Err(Error::Conflict);
         }
+        mobile_delivery::project(&mut tx).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -41,8 +44,10 @@ impl Repository {
     }
     pub async fn publish(&self, a: &Actor, s: Uuid, id: Uuid, revision: i64) -> Result<Value> {
         let mut tx = self.0.begin().await?;
+        mobile_delivery::guard(&mut tx).await?;
         let item=sqlx::query_scalar("UPDATE template_versions SET published=true,revision=revision+1 WHERE school_id=$1 AND id=$2 AND revision=$3 AND NOT published RETURNING to_jsonb(template_versions)").bind(s).bind(id).bind(revision).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
         crate::audit::record(&mut tx, a, s, "template.publish", id, json!({})).await?;
+        mobile_delivery::project(&mut tx).await?;
         tx.commit().await?;
         Ok(item)
     }
@@ -87,6 +92,7 @@ impl Repository {
         origin: &str,
     ) -> Result<Value> {
         let mut tx = self.0.begin().await?;
+        mobile_delivery::guard(&mut tx).await?;
         let name: String =
             sqlx::query_scalar("SELECT name FROM schools WHERE id=$1 AND active FOR SHARE")
                 .bind(s)
@@ -136,6 +142,7 @@ impl Repository {
                 .await?;
         }
         crate::audit::record(&mut tx, a, s, "draft.create", id, json!({})).await?;
+        mobile_delivery::project(&mut tx).await?;
         tx.commit().await?;
         Ok(item)
     }
@@ -155,6 +162,8 @@ impl Repository {
         reason: &str,
     ) -> Result<Value> {
         let mut tx = self.0.begin().await?;
+        mobile_delivery::guard(&mut tx).await?;
+        mobile_delivery::official_allowed(&mut tx, s).await?;
         sqlx::query("SELECT a.id FROM accounts a JOIN wecom_members m ON m.id=a.wecom_member_id WHERE a.id=$1 AND a.active AND a.wecom_binding_revision=$2 AND m.verification='verified' AND m.status=1 FOR SHARE OF a,m").bind(a.id).bind(a.wecom_binding_revision).fetch_optional(&mut *tx).await?.ok_or(Error::Forbidden)?;
         // A group lock serializes overlapping content across different drafts as well.
         sqlx::query("SELECT g.id FROM wecom_groups g JOIN delivery_drafts d ON d.group_id=g.id WHERE d.school_id=$1 AND d.id=$2 FOR UPDATE OF g").bind(s).bind(draft).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
@@ -216,6 +225,7 @@ impl Repository {
             json!({"draft_id":draft}),
         )
         .await?;
+        mobile_delivery::project(&mut tx).await?;
         tx.commit().await?;
         Ok(item)
     }
@@ -225,6 +235,7 @@ impl Repository {
     }
     pub async fn result(&self, a: &Actor, s: Uuid, id: Uuid, v: Value) -> Result<Value> {
         let mut tx = self.0.begin().await?;
+        mobile_delivery::guard(&mut tx).await?;
         let old:Value=sqlx::query_scalar("SELECT to_jsonb(a) FROM delivery_attempts a WHERE school_id=$1 AND id=$2 AND actor_id=$3 FOR UPDATE").bind(s).bind(id).bind(a.id).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
         if !old["client_result"].is_null() {
             require(old["client_result"] == v, "已有不同的客户端结果")?;
@@ -249,13 +260,16 @@ impl Repository {
             json!({"state":state}),
         )
         .await?;
+        mobile_delivery::project(&mut tx).await?;
         tx.commit().await?;
         Ok(item)
     }
     pub async fn reconcile(&self, a: &Actor, s: Uuid, id: Uuid, v: Value) -> Result<Value> {
         let mut tx = self.0.begin().await?;
+        mobile_delivery::guard(&mut tx).await?;
         let item=sqlx::query_scalar("UPDATE delivery_attempts SET reconciliation=$3,reconciliation_note=$4,reconciled_by=$5,reconciled_at=now() WHERE school_id=$1 AND id=$2 AND (state<>'prepared' OR created_at<now()-interval '2 minutes') RETURNING to_jsonb(delivery_attempts)").bind(s).bind(id).bind(v["decision"].as_str()).bind(v["reason"].as_str()).bind(a.id).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
         crate::audit::record(&mut tx, a, s, "attempt.reconcile", id, v).await?;
+        mobile_delivery::project(&mut tx).await?;
         tx.commit().await?;
         Ok(item)
     }
@@ -330,3 +344,5 @@ impl crate::distribution::south::port::Store for Repository {
 }
 
 pub mod broadcast;
+
+pub mod mobile_delivery;
