@@ -517,3 +517,62 @@ async fn broadcast_rust_serialization_matches_shared_fixtures() {
         assert_eq!(actual, serde_json::from_str::<Value>(fixture).unwrap());
     }
 }
+
+#[tokio::test]
+async fn mobile_permission_serialization_matches_shared_fixture() {
+    use axum::response::IntoResponse;
+    use wekeeper_api::distribution::domain::mobile_delivery::SendPermit;
+    let permit = SendPermit {
+        id: "11111111-1111-4111-8111-111111111111".parse().unwrap(),
+        claim_id: "22222222-2222-4222-8222-222222222222".parse().unwrap(),
+        invocation_id: "33333333-3333-4333-8333-333333333333".parse().unwrap(),
+        fence: 4,
+        snapshot_digest: "snapshot-sha256".into(),
+        permit_token: Some("fixture-only-secret".into()),
+        not_before: "2026-10-24T04:00:00Z".parse().unwrap(),
+        execute_before: "2026-10-24T04:01:00Z".parse().unwrap(),
+        server_time: "2026-10-24T04:00:00Z".parse().unwrap(),
+    };
+    let response =
+        wekeeper_api::http::jsonapi::resource("mobile-send-permits", permit).into_response();
+    let actual: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/mobile-send-permit.json"
+    ))
+    .unwrap();
+    assert_eq!(actual, fixture);
+    let wait: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/mobile-execution-wait.json"
+    ))
+    .unwrap();
+    let response = wekeeper_api::http::jsonapi::completed()
+        .meta(wait["meta"].clone())
+        .into_response();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&to_bytes(response.into_body(), 4096).await.unwrap())
+            .unwrap(),
+        wait
+    );
+}
+
+#[tokio::test]
+async fn mobile_device_routes_require_dedicated_credentials() {
+    for auth in [None, Some("Bearer miniapp-token")] {
+        let mut request = Request::builder()
+            .uri("/api/v1/device-execution/session")
+            .header("Cookie", "wekeeper_session=browser-token");
+        if let Some(auth) = auth {
+            request = request.header("Authorization", auth);
+        }
+        let response = app()
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            response.headers()["content-type"],
+            "application/vnd.api+json"
+        );
+    }
+}
