@@ -1,10 +1,10 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { SessionGate } from './index'
-import { identity } from './api'
+import { SessionGate } from '../../identity'
+import { identity } from '../../identity/api'
 
-vi.mock('./api', () => ({ identity: { session: vi.fn(), login: vi.fn() }, workspace: {} }))
+vi.mock('../../identity/api', () => ({ identity: { session: vi.fn(), login: vi.fn() }, workspace: {} }))
 afterEach(cleanup)
 it('validates login fields and submits the entered credentials through the existing client', async () => {
   vi.mocked(identity.session).mockRejectedValue(new Error('未登录'))

@@ -6,7 +6,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import Community from './index'
 import { workspace } from './api'
 
-vi.mock('../admin/workspace', () => ({
+vi.mock('../school-context/api', async () => ({ schoolsApi: (await import('./api')).workspace }))
+vi.mock('../identity', () => ({
   SessionGate: ({ children }: { children: (user: unknown) => ReactNode }) => children({ id: 'u', display_name: '用户', bound_school_id: 's' }),
   label: (value: unknown) => String(value ?? ''),
 }))

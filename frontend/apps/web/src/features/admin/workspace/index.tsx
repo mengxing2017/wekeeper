@@ -1,13 +1,12 @@
 import { formatDate } from '../../../shared/format-date'
 import { PaginationControls } from '../../../shared/pagination-controls'
-import { Field } from '../../../shared/field'
 import { useDialogs } from '../../../shared/use-dialogs'
 import { Disclosure } from '../../../shared/disclosure'
 import { useSearchParams } from 'react-router-dom';
 import { AppShell, navigation, schoolRoleLabel } from '../../../app/shell';
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Button, Card, Form, Input, Select, Space, Tag , Empty } from 'antd';
+import { Alert, Button, Card, Input, Select, Space, Tag , Empty } from 'antd';
 import MobileDelivery, { ExecutionDevices } from '../../operations/mobile-delivery'
 import BroadcastTasks from '../../operations/broadcast-tasks'
 import { Directory } from './directory';
@@ -15,49 +14,18 @@ import { Assets, GroupPicker } from './assets';
 import { Members } from './members';
 import { Editor } from './editor';
 import { Accounts, Schools } from './platform';
-import { identity, workspace, type Row, type Json, type Resource, type School, type User } from './api';
-export const label = (v: Json | undefined) => v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v);
+import { workspace, type Row, type Json, type Resource, type School, type User } from './api';
+export { label } from '../../../shared/label'
+import { label } from '../../../shared/label'
+import { SessionGate } from '../../identity'
+import { useSchools } from '../../school-context'
+export { SessionGate } from '../../identity'
 const states: Record<string, string> = { member: '普通成员', operator: '运营', admin: '学校管理员', revoked: '已撤销学校授权', pending: '待审核', approved: '已通过', rejected: '已拒绝', visible: '展示中', hidden: '已隐藏', deleted: '已删除', prepared: '等待客户端结果', client_reported_success: '客户端报告成功', client_reported_failure: '客户端报告失败', unknown: '结果不确定', cancelled: '已取消', operator_confirmed: '人工确认已发送', operator_rejected: '人工确认未发送', open: '待处理', resolved: '已处理', dismissed: '已驳回' };
 export const stateLabel = (v: Json | undefined) => states[label(v)] ?? label(v);
-export function SessionGate({ children, wecom = false, showSessionBar = true }: {
-    children: (user: User, logout: () => Promise<void>) => ReactNode;
-    showSessionBar?: boolean;
-    wecom?: boolean;
-}) {
-    const cache = useQueryClient();
-    const q = useQuery({ queryKey: ['session'], queryFn: identity.session, retry: false });
-    const [error, setError] = useState('');
-    const [busy, setBusy] = useState(false);
-    async function login(values: { username: string; password: string }) { setBusy(true); try {
-        const s = await identity.login(values.username, values.password);
-        await cache.cancelQueries();
-        cache.clear();
-        cache.setQueryData(['session'], s);
-    }
-    catch (e) {
-        setError((e as Error).message);
-    }
-    finally {
-        setBusy(false);
-    } }
-    async function logout() {
-        setError('');
-        try { await identity.logout(); await cache.cancelQueries(); cache.clear(); }
-        catch (e) { setError((e as Error).message); }
-    }
-    if (q.isPending) return <div className="loading" role="status">正在确认登录状态…</div>;
-    if (!q.data) return <div className="auth-page"><section className="auth-panel">
-        <div className="auth-brand"><span className="brand-mark">W</span> WeKeeper</div><div><h1>登录工作空间</h1><p>校园社区 · 内容运营 · 企业群发</p></div>
-        {error && <Alert type="error" title={error} showIcon/>}<Form layout="vertical" onFinish={login} disabled={busy} className="business-form"><Field name="username" required label={<>账号</>}><Input name="username" placeholder="请输入账号" autoComplete="username" maxLength={100}/></Field><Field name="password" required label={<>密码</>}><Input.Password name="password" placeholder="请输入密码" autoComplete="current-password" maxLength={128}/></Field><Button type="primary" htmlType="submit" block loading={busy} disabled={busy}>{busy ? '正在登录…' : '登录'}</Button></Form>{wecom && <a href="/api/v1/wecom/oauth/start">使用企业微信身份登录</a>}
-        <p className="auth-caption">使用管理员分配的账号进入工作空间</p>
-    </section></div>;
-    return <>{showSessionBar && <div className="session-bar"><span>{q.data.user.display_name}</span><Button onClick={logout}>退出登录</Button></div>}{error && <Alert type="error" showIcon  className="session-error" title={<>{error}</>} />}{children(q.data.user, logout)}</>;
-}
-
 export function Workspace() { return <SessionGate showSessionBar={false}>{(user, logout) => <Admin user={user} logout={logout}/>}</SessionGate>; }
 function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
     const cache = useQueryClient();
-    const q = useQuery({ queryKey: ['schools'], queryFn: workspace.schools });
+    const q = useSchools();
     const [params, setParams] = useSearchParams();
     const selected = params.get('school') ?? '';
     const visibleSchools = q.data?.filter(s => user.platform_admin || s.active);

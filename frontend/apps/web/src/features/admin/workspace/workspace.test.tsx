@@ -5,6 +5,8 @@ import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Workspace } from './index'
 import { identity, workspace } from './api'
+vi.mock('../../school-context/api', async () => ({ schoolsApi: (await import('./api')).workspace }))
+vi.mock('../../identity/api', async () => ({ identity: (await import('./api')).identity }))
 vi.mock('./api', () => ({ identity: { session: vi.fn(), accounts: vi.fn(), create: vi.fn(), update: vi.fn(), reset: vi.fn(), logout: vi.fn() }, workspace: { schools: vi.fn(), list: vi.fn(), createSchool: vi.fn(), updateSchool: vi.fn(), mutate: vi.fn() } }))
 class TestResizeObserver { observe() {} unobserve() {} disconnect() {} }
 vi.stubGlobal('ResizeObserver', TestResizeObserver)

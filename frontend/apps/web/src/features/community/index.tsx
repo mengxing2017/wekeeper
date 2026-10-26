@@ -6,7 +6,9 @@ import { Alert, Button, Form, Input, Select, Upload, ConfigProvider , Card  } fr
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { SessionGate, label } from '../admin/workspace';
+import { SessionGate } from '../identity'
+import { useSchools, useSchoolDirectory } from '../school-context'
+import { label } from '../../shared/label'
 import { identity, workspace, type User, type Post } from './api';
 export default function Community() { return <main className="community-shell"><header><Link to="/community">WeKeeper 社区</Link> · <Link to="/admin">运营后台</Link></header><SessionGate>{user => <Content user={user}/>}</SessionGate></main>; }
 function Content({ user }: {
@@ -16,8 +18,8 @@ function Content({ user }: {
     const [commentForm] = Form.useForm();
     const params = useParams();
     const cache = useQueryClient();
-    const schools = useQuery({ queryKey: ['schools'], queryFn: workspace.schools });
-    const directory = useQuery({ queryKey: ['directory'], queryFn: workspace.directory });
+    const schools = useSchools();
+    const directory = useSchoolDirectory();
     const [selected, setSelected] = useState('');
     const school = schools.data?.find(v => v.id === (params.school || selected || user.bound_school_id || schools.data[0]?.id));
     const s = school?.id ?? '';
