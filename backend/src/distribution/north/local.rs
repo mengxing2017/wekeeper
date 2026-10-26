@@ -150,3 +150,5 @@ impl<R: Store> Service<R> {
             .await
     }
 }
+
+pub mod mobile_delivery;
