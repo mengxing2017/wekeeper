@@ -8,10 +8,14 @@
 !api-contract/
 !api-contract/**
 backend/target/
-frontend/node_modules/
-frontend/dist/
+frontend/**/node_modules/
+frontend/**/dist/
 api-contract/node_modules/
 **/.env
 **/.env.*
 **/*.log
 **/.DS_Store
+
+# The miniapp is a separate client artifact, never built in the web image.
+frontend/apps/miniapp/src/
+frontend/apps/miniapp/tests/
