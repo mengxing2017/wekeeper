@@ -11,6 +11,8 @@ export const navigation: NavigationItem[] = [
   { key: 'groups', label: '客户群', description: '维护学校对应的企业微信客户群。', group: '企业微信' },
   { key: 'templates', label: '消息模板', description: '管理模板正文、版本与发布状态。', group: '企业微信' },
   { key: 'broadcast-tasks', label: '群发任务', description: '统一创建客户群任务，查看成员执行和各群结果。', group: '企业微信' },
+  { key: 'mobile-delivery', label: '手机发送任务', description: '配置手机执行、目标群并人工确认发送任务。', group: '企业微信' },
+  { key: 'execution-devices', label: '手机设备与发送账号', description: '登记手机、配对执行程序并维护真实发送账号。', group: '平台管理' },
   { key: 'members', label: '学校成员', description: '查看本校成员及角色，学校授权由平台管理员维护。', group: '系统管理' },
   { key: 'audit', label: '操作审计', description: '追踪学校内的关键操作与变更记录。', group: '系统管理' },
   { key: 'settings', label: '学校设置', description: '设置学校信息、审核方式与主题颜色。', group: '系统管理' },

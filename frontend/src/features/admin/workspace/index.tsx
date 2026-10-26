@@ -8,6 +8,7 @@ import { AppShell, navigation, schoolRoleLabel } from '../../../app/shell';
 import { useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Card, Form, Input, Select, Space, Tag , Empty } from 'antd';
+import MobileDelivery, { ExecutionDevices } from '../../operations/mobile-delivery'
 import BroadcastTasks from '../../operations/broadcast-tasks'
 import { Directory } from './directory';
 import { Assets, GroupPicker } from './assets';
@@ -73,14 +74,14 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
     return <AppShell active={tab} onNavigate={navigate} username={user.display_name} platformAdmin={user.platform_admin} allowedKeys={allowedKeys} schoolRole={role} onLogout={logout}>
       {q.error && <Alert type="error" title={q.error.message} showIcon/>}
       {!platformView && <div className="scope-toolbar"><div><span className="field-caption">当前学校</span><Select aria-label="当前学校" className="school-select" loading={q.isPending} value={school?.id} options={visibleSchools?.map(s => ({ value: s.id, label: s.name }))} placeholder="选择学校" onChange={async (s) => { await cache.cancelQueries({ queryKey: ['business'] }); cache.removeQueries({ queryKey: ['business'] }); setParams(previous => { const next = new URLSearchParams(previous); next.set('school', s); return next; }); }}/></div><span className="scope-note">{school ? '所有业务操作均限定在当前学校' : '选择学校后开始管理业务'}</span>{school && <span>当前权限：{user.platform_admin ? '平台管理员' : schoolRoleLabel(role)}</span>}</div>}
-      {tab === 'wecom-assets' && user.platform_admin ? <Assets/> : tab === 'wecom-directory' && user.platform_admin ? <Directory/>
+      {tab === 'execution-devices' && user.platform_admin ? <ExecutionDevices/> : tab === 'wecom-assets' && user.platform_admin ? <Assets/> : tab === 'wecom-directory' && user.platform_admin ? <Directory/>
         : tab === 'schools' && user.platform_admin ? <Schools schools={q.data ?? []} loading={q.isPending} refresh={refresh} enter={enterSchool}/>
         : (tab === 'accounts' || tab === 'administrators') && user.platform_admin ? <Accounts key={tab} administrators={tab === 'administrators'} user={user} schools={q.data ?? []}/>
         : tab === 'platform-resources' && user.platform_admin ? <Card title="平台默认展示配置"><GlobalResources /></Card>
         : q.isPending ? <Empty className="empty-state" description={<>正在加载学校…</>} />
         : !school ? <Empty className="empty-state" description={<><h2>尚未选择学校</h2><p>{user.platform_admin ? '请在「学校管理」中创建学校，或选择已有学校。' : '请联系管理员为账号分配学校权限。'}</p>{user.platform_admin && <Button type="primary" onClick={() => navigate('schools')}>创建学校</Button>}</>} />
         : !tab ? <Alert type="info" title="当前账号没有该学校的后台管理权限，请联系平台管理员。"/>
-        : <div className="business-panel">{tab === 'broadcast-tasks' ? <BroadcastTasks key={school.id} school={school.id} admin={role === 'admin'} platformAdmin={user.platform_admin}/> : tab === 'members' ? <Members key={school.id} school={school} platformAdmin={user.platform_admin} refresh={refresh}/> : tab === 'settings' ? <Card title={`${school.name} · 学校设置`}><Settings key={school.id} school={school} refresh={refresh}/></Card> : <Panel platformAdmin={user.platform_admin} key={`${school.id}:${tab}`} schoolAdmin={user.platform_admin || role === 'admin'} school={school} resource={tab as Resource} refresh={refresh}/>}</div>}
+        : <div className="business-panel">{tab === 'mobile-delivery' ? <MobileDelivery key={school.id} school={school.id} role={role}/> : tab === 'broadcast-tasks' ? <BroadcastTasks key={school.id} school={school.id} admin={role === 'admin'} platformAdmin={user.platform_admin}/> : tab === 'members' ? <Members key={school.id} school={school} platformAdmin={user.platform_admin} refresh={refresh}/> : tab === 'settings' ? <Card title={`${school.name} · 学校设置`}><Settings key={school.id} school={school} refresh={refresh}/></Card> : <Panel platformAdmin={user.platform_admin} key={`${school.id}:${tab}`} schoolAdmin={user.platform_admin || role === 'admin'} school={school} resource={tab as Resource} refresh={refresh}/>}</div>}
     </AppShell>;
 }
 function Settings({ school, refresh }: {
