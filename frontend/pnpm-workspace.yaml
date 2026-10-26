@@ -1,3 +1,7 @@
-# The contract is a sibling file dependency, not another deployed application.
+packages:
+  - 'apps/*'
+  - 'packages/*'
 allowBuilds:
   esbuild: true
+  core-js: false
+  core-js-pure: false
