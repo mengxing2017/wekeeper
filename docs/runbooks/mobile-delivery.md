@@ -1,0 +1,97 @@
+# 手机执行接口运行手册
+
+本手册对应 migration `202610240001_mobile_execution.sql`。接口仅提供结构化业务任务；没有手机安装、脚本、UI 定位或自动登录代码。联调 client：`@wekeeper/api-contract/mobile-delivery` 和 `@wekeeper/api-contract/device-execution`。
+
+## 上线顺序
+
+1. 保持 `WEKEEPER_MOBILE_EXECUTION_ENABLED=false`，部署新后端并自动应用 migration。不新增部署服务。
+2. 平台管理员登记实际发送账号及负责运营人员。负责人员必须是目标学校 admin。一个真实账号只登记一次；不能把换机、昵称变化当成新账号。
+3. 学校 admin 登记规范群身份和核验依据。wecom 群必须传现有 wecom_group_id，identity_namespace=CorpID，external_key=ChatID；wechat 群传 null，使用人工核验的稳定内部标识。群名不用于身份合并。
+4. 学校 admin 登记群与 sender 绑定；平台管理员登记设备，再绑定 sender。新设备禁用，不能自动发送。
+5. 平台管理员创建一次性 enrollment：10 分钟有效。外部执行器凭 device_id/code/client_instance_id/protocol_version=1 领取 30 天专用 token。明文只当次返回；随后平台管理员启用设备。绑定、配对、启用依次提升设备 revision，请始终使用最新值。
+6. 核对官方群发/旧分享在途与 unknown，补齐全部历史群映射。学校 admin PATCH mobile-delivery-settings：expected_revision 初次为 0，history_reviewed=true，并填写验收过的 client/script/baseline 精确版本及 evidence_ref。仅设备自报版本不能通过白名单。
+7. HTTP 模拟及外部执行器独立验收后再设置总开关 true。开关不依赖腾讯发送 Secret。启用学校的新官方创建、提醒和旧分享 prepare 将返回 409 mobile_channel_exclusive。
+
+## HTTP 约定
+
+统一 `/api/v1`，Content-Type/Accept 为 `application/vnd.api+json`。写请求为：
+
+```json
+{"data":{"type":"mobile-delivery-tasks","attributes":{"activity_id":"school-notice-20261024","items":[{"group_id":"规范群 UUID","sender_account_id":"真实账号 UUID","source":{"kind":"text","text_content":"该群专属、经审核的正文"}}]}}}
+```
+
+所有 POST/PATCH 必须带 1–128 字符 Idempotency-Key。同主体、操作、资源、key 异参返回 409；网络重试保留原 key，后续新业务操作使用新 key。不要把密钥放在 URL。
+
+浏览器管理沿用 Cookie、Origin、X-CSRF-Token。设备仅接受 `Authorization: Bearer wk_device_...`，Cookie/miniapp token 不能替代；设备 token 不能访问后台业务接口。设备 client 固定 HTTPS origin、credentials=omit、redirect=error，不自动重试请求。设备有效凭据每分钟最多 120 请求；同设备配对尝试每 10 分钟最多 20 次，超出 429 device_request_limit。
+
+列表 `page[number]`/`page[size]` 默认 1/30、最大 100，meta.page.has_more。无任务是 200 data:null，meta 包含 reason/retry_after_seconds/next_eligible_at；unknown 的 next_eligible_at 为 null。
+
+### 管理资源与写入 type
+
+| 路径（省略 /api/v1） | 方法 | JSON:API type |
+| --- | --- | --- |
+| `/platform/execution-devices[/{id}]` | GET/POST；单项 GET/PATCH | execution-devices |
+| `/platform/execution-devices/{id}/enrollments` | POST | device-enrollments |
+| `/platform/execution-devices/{id}/credential-revocations` | POST | execution-devices |
+| `/platform/execution-devices/{id}/account-bindings` | POST | device-account-bindings |
+| `/platform/sending-accounts` | GET/POST | sending-accounts |
+| `/platform/sending-accounts/{id}/delivery-policy` | GET/PATCH | sending-accounts |
+| `/schools/{s}/delivery-groups` | GET/POST | delivery-groups |
+| `/schools/{s}/delivery-groups/{id}/sender-bindings` | POST | delivery-groups |
+| `/schools/{s}/delivery-groups/{id}/delivery-policy` | GET/PATCH | delivery-groups |
+| `/schools/{s}/mobile-delivery-capabilities` | GET | mobile-delivery-capabilities |
+| `/schools/{s}/mobile-delivery-settings` | GET/PATCH | mobile-delivery-settings |
+| `/schools/{s}/mobile-delivery-tasks[/{id}]` | GET/POST；单项 GET/PATCH | mobile-delivery-tasks |
+| `/schools/{s}/mobile-delivery-tasks/{id}/previews` | POST | mobile-delivery-previews |
+| `/schools/{s}/mobile-delivery-tasks/{id}/confirmations`、`/stops` | POST | mobile-delivery-tasks |
+| `/schools/{s}/mobile-delivery-tasks/{id}/items`、`/events` | GET | mobile-delivery-items / mobile-delivery-events |
+| `/schools/{s}/mobile-delivery-items/{id}/reconciliations` | POST | mobile-delivery-items |
+| `/schools/{s}/mobile-delivery-items/{id}/resend-drafts` | POST | mobile-delivery-tasks |
+
+精确输入字段与响应类型见 contract 的 mobile-delivery 模块；不发送 operation 字段。未知字段拒绝。草稿正文支持 text 和 posts（template_version_id、post_ids），每任务最多 100 群、每群 1–4000 UTF-8 字节，不自动改写/拆分。
+
+### 人工确认与执行闭环
+
+1. 创建 draft，取得 revision。POST previews(expected_revision)，核对逐项正文、限制和 preview_digest；preview 不占发送额度。
+2. POST confirmations(expected_revision,preview_digest,content_review=true,scope_acceptance=true,substantive_difference_reviewed=true,evidence_ref)。文本要求学校 admin，帖子要求 operator/admin。不可用“摘要不重复”代替实质差异人工审核。
+3. 设备 GET session 获取 binding.revision。POST claims(binding_revision) 自动选择一个已确认项，不能自行指定学校/群。
+4. POST claims/{id}/preparations，传 fence、snapshot_digest、观察到的规范账号/群 UUID、精确版本、checks_passed。返回 preparation id。prepared 不代表已发送。
+5. POST permits(fence,snapshot_digest,preparation_id)，首次成功获得 invocation_id 和 permit_token，60 秒窗口内仅可本地消费一次。执行前 GET claim，必须 may_execute=true；禁止离线发送。
+6. POST results，带 invocation_id/permit_token/event_id、身份/正文摘要、evidence_ref、本地状态和点击时间。仅支持 ui_observed_sent/not_observed/safety_blocked；ui_observed_sent 仅在窗口内、身份摘要匹配且 local_state=sent_bubble_observed 时记录 UI 观察，其余为 unknown。不代表送达/已读。
+7. permit 前 abort 可释放准备；permit 后 abort/超时/失联保持 unknown 和额度。所有结果回报保存自己的原 Idempotency-Key，回报丢失只用原 key 重试。
+
+设备路径均在 `/device-execution` 下：enrollments/credential-rotations（device-credentials），session（device-execution-sessions），heartbeats（device-heartbeats），claims 与单项/renewals（mobile-execution-claims），preparations（mobile-execution-preparations），permits（mobile-send-permits），results/aborts（mobile-delivery-items）。精确 wire 字段见 device-execution contract。心跳建议 30 秒，准备 lease 120 秒；renewals 不延长 permit。
+
+## 异常恢复
+
+- **permit 响应丢失**：原 key 重试不返回 token，返回原 invocation 摘要并转 unknown。GET claim 核对状态，不能申请第二资格。server 不保存明文 secret，也不能补发新 token。
+- **配对/轮换响应丢失**：原 key 只返回无 secret 摘要。平台管理员新建配对，撤销旧凭据。不要反复复用消费过的 code。
+- **未知结果**：学校 admin 收集证据，原 execute_before 结束后 POST reconciliations。manually_sent 保留历史成功去重；verified_not_sent 释放对应 hold，但不复活旧 item；重新发送调用 resend-drafts 并重新人工确认。
+- **撤权/重绑/停止**：阻止新资格，已授予项转 unknown，不能保证撤回远端已点击消息。换机绑定同一个发送账号，自动关闭旧设备准备/资格，历史额度不变。
+- **关闭总开关**：只关闭新 claim/permit；保留回报、查询、核对。关闭学校开关还会关闭该校活动 claim。已占用的额度/unknown 不清空。
+- **切回官方**：处置手机 unknown/pending；关联运营账号的最近 24 小时手机成功窗口也阻止新官方调用，避免切通道绕过额度。
+
+稳定 409 code：revision_conflict、device_revoked、binding_changed、quota_exhausted、cooldown_active、duplicate_delivery、official_delivery_pending、school_content_conflict、unknown_requires_review、permit_expired、protocol_unsupported、mobile_channel_exclusive。额度等待不是 429；503 为总开关关闭或依赖不可用。资源查询不返回 token_hash、配对码历史、截图或 UI 树。
+
+## 检查与回退
+
+```bash
+make check-web
+devbox run -- make check-backend
+devbox run -- make test-business
+```
+
+test-business 创建一次性 PG17，仅向测试进程注入 WEKEEPER_TEST_DATABASE_URL，退出关闭并删除。也可显式提供隔离 WEKEEPER_TEST_DATABASE_URL 执行 make test-integration。不要使用生产 URL。
+
+回退先关闭新资格，保留结果/核对接口和新表；先处理在途再切换通道。不回滚 migration，不把不了解共享账本的旧 binary 恢复为可发送状态。真机行为与无注入验收不属于本次服务端测试结果。
+
+## 工作台界面
+
+手机执行已有前端入口（2026-10-26 补齐）：
+
+- 平台管理 → **手机设备与发送账号**：`/admin?view=execution-devices`。登记设备、生成一次性配对码、启停设备、撤销凭据、登记真实账号、设置账号限额及绑定手机。
+- 企业微信 → **手机发送任务**：`/admin?view=mobile-delivery&school=<学校ID>`。查看学校执行开关、版本审批、登记目标群、授权群账号、设置群限额、创建逐群独立内容草稿、生成冻结预览并人工确认、查看执行记录与事件、停止任务和核对 unknown。
+
+手机任务页要求当前学校运营或管理员授权；平台管理员身份不代替学校授权。配置和核对仅学校管理员可操作；直接文本任务须学校管理员确认。服务端总开关默认关闭，页面会显示实际能力及不可用原因，保存草稿不等于执行。配对码只在生成后显示一次，不保存到浏览器存储；手机执行程序仍须单独部署。
+
+初版身份配置使用已核验的稳定标识及用户/账号/群 ID；可从平台账号管理、手机账号列表和目标群卡片复制。社区内容模式填写已发布模板版本 ID 与已审核帖子 ID。服务器负责最终授权、版本、限额、去重和历史通道互斥核验。
