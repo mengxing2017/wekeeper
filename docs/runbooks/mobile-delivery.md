@@ -1,6 +1,6 @@
 # 手机执行接口运行手册
 
-本手册对应 migration `202610240001_mobile_execution.sql`。接口仅提供结构化业务任务；没有手机安装、脚本、UI 定位或自动登录代码。联调 client：`@wekeeper/api-contract/mobile-delivery` 和 `@wekeeper/api-contract/device-execution`。
+本手册对应 migration `202610240001_mobile_execution.sql`。接口仅提供结构化业务任务；Android 执行端为独立 `keeper-otter` 项目，已提供首批控制台、执行内核和本地演示适配器，尚未支持真实微信/企业微信或完成真机验收；不包含自动登录。联调 client：`@wekeeper/api-contract/mobile-delivery` 和 `@wekeeper/api-contract/device-execution`。
 
 ## 上线顺序
 
@@ -57,7 +57,7 @@
 3. 设备 GET session 获取 binding.revision。POST claims(binding_revision) 自动选择一个已确认项，不能自行指定学校/群。
 4. POST claims/{id}/preparations，传 fence、snapshot_digest、观察到的规范账号/群 UUID、精确版本、checks_passed。返回 preparation id。prepared 不代表已发送。
 5. POST permits(fence,snapshot_digest,preparation_id)，首次成功获得 invocation_id 和 permit_token，60 秒窗口内仅可本地消费一次。执行前 GET claim，必须 may_execute=true；禁止离线发送。
-6. POST results，带 invocation_id/permit_token/event_id、身份/正文摘要、evidence_ref、本地状态和点击时间。仅支持 ui_observed_sent/not_observed/safety_blocked；ui_observed_sent 仅在窗口内、身份摘要匹配且 local_state=sent_bubble_observed 时记录 UI 观察，其余为 unknown。不代表送达/已读。
+6. POST results，带 invocation_id/permit_token/event_id、身份/正文摘要、evidence_ref、本地状态和点击时间。仅支持 ui_observed_sent/not_observed/safety_blocked；ui_observed_sent 仅在窗口内、身份摘要匹配且 local_state=sent_bubble_observed 时记录 UI 观察，其余为 unknown。不代表送达/已读。`reported_clicked_at` 可为 null，表示没有可信点击时间；null 无论 result 字符串为何均保守 unknown，不退额或恢复旧资格。
 7. permit 前 abort 可释放准备；permit 后 abort/超时/失联保持 unknown 和额度。所有结果回报保存自己的原 Idempotency-Key，回报丢失只用原 key 重试。
 
 设备路径均在 `/device-execution` 下：enrollments/credential-rotations（device-credentials），session（device-execution-sessions），heartbeats（device-heartbeats），claims 与单项/renewals（mobile-execution-claims），preparations（mobile-execution-preparations），permits（mobile-send-permits），results/aborts（mobile-delivery-items）。精确 wire 字段见 device-execution contract。心跳建议 30 秒，准备 lease 120 秒；renewals 不延长 permit。
