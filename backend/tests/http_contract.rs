@@ -576,3 +576,27 @@ async fn mobile_device_routes_require_dedicated_credentials() {
         );
     }
 }
+
+#[test]
+fn mobile_not_clicked_result_preserves_null_timestamp() {
+    use wekeeper_api::distribution::domain::mobile_delivery::Command;
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/mobile-execution-not-clicked.json"
+    ))
+    .unwrap();
+    let mut input = fixture["data"]["attributes"].clone();
+    input["operation"] = serde_json::json!("result");
+    let command: Command = serde_json::from_value(input.clone()).unwrap();
+    match &command {
+        Command::Result {
+            reported_clicked_at,
+            result,
+            ..
+        } => {
+            assert!(reported_clicked_at.is_none());
+            assert_eq!(result, "not_observed");
+        }
+        _ => panic!("expected result command"),
+    }
+    assert_eq!(serde_json::to_value(command).unwrap(), input);
+}
