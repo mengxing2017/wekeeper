@@ -78,3 +78,16 @@ test-migration:
 test-live:
 	cargo build --locked --manifest-path backend/Cargo.toml --example embedded_postgres
 	python3 tools/check_live.py
+
+.PHONY: docs-install docs docs-build docs-preview
+docs-install:
+	pnpm --dir docs install --frozen-lockfile
+
+docs:
+	pnpm --dir docs dev
+
+docs-build:
+	pnpm --dir docs build
+
+docs-preview:
+	pnpm --dir docs preview
