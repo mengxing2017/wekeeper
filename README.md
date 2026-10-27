@@ -6,6 +6,15 @@
 运行与数据切换见 [业务运行手册](docs/runbooks/business.md)。真实平台权限、真机及生产数据切换仍需验收。
 旧 PHP、根目录 Vue 2 `uniapp/`、Java 和附带资源保留用于迁移核对，新容器不会运行它们。
 
+## 文档站
+
+```bash
+make docs-install
+make docs
+```
+
+浏览 <http://127.0.0.1:22596/>。独立安装只需 Node 22 与 pnpm 11.22.0；`make docs-build` 构建静态站，`make docs-preview` 在 <http://127.0.0.1:22597/> 预览。入口为 [docs/index.md](docs/index.md)，启动说明见 [开发文档](docs/development/index.md#文档站)。文档包独立于 frontend/api-contract，不新增部署服务。
+
 ## 目录
 
 ```text
