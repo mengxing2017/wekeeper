@@ -34,9 +34,12 @@ api-dev:
 	cargo run --locked --manifest-path backend/Cargo.toml
 
 dev-embedded:
+	python3 tools/repair_rustup_linker.py
 	exec cargo run --locked --manifest-path backend/Cargo.toml --example embedded_postgres
 
 test-embedded:
+	python3 tools/test_repair_rustup_linker.py
+	python3 tools/repair_rustup_linker.py
 	cargo build --locked --manifest-path backend/Cargo.toml --example embedded_postgres
 	python3 tools/check_embedded.py
 
