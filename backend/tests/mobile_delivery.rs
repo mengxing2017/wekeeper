@@ -883,3 +883,83 @@ async fn two_accounts_preparing_same_group_still_get_only_one_permit() {
         1
     );
 }
+
+#[tokio::test]
+#[ignore]
+async fn absent_click_timestamp_cannot_create_success_or_release_unknown_hold() {
+    for reported_result in ["not_observed", "ui_observed_sent"] {
+        let f = setup().await;
+        let (claim, preparation) = f.prepared("点击前停止，结果保守核对").await;
+        let scope = Scope {
+            school: None,
+            id: Some(uuid(&claim, "id")),
+        };
+        let permit = f
+            .repo
+            .execute(
+                f.principal.clone(),
+                scope.clone(),
+                "permit-null-click",
+                Fixture::permit_input(&claim, &preparation),
+                true,
+                "https://example.test",
+            )
+            .await
+            .unwrap();
+        let input = json!({
+            "operation": "result", "invocation_id": permit["invocation_id"],
+            "permit_token": permit["permit_token"], "event_id": Uuid::new_v4(),
+            "result": reported_result, "evidence_ref": "otter-local:test/no-click",
+            "observed_account_id": f.sender, "observed_group_id": f.group,
+            "content_digest": claim["content_digest"], "local_state": "sent_bubble_observed",
+            "reported_clicked_at": null
+        });
+        let first = f
+            .repo
+            .execute(
+                f.principal.clone(),
+                scope.clone(),
+                "null-click-result",
+                command(input.clone()),
+                true,
+                "https://example.test",
+            )
+            .await
+            .unwrap();
+        let replay = f
+            .repo
+            .execute(
+                f.principal.clone(),
+                scope,
+                "null-click-result",
+                command(input),
+                true,
+                "https://example.test",
+            )
+            .await
+            .unwrap();
+        assert_eq!(first, replay);
+        assert_eq!(first["state"], "unknown");
+        let states: Vec<String> =
+            sqlx::query_scalar("SELECT state FROM delivery_usage WHERE source_channel='mobile'")
+                .fetch_all(&f.pool)
+                .await
+                .unwrap();
+        assert_eq!(states, vec!["unknown"]);
+        let next = f
+            .repo
+            .execute(
+                f.principal.clone(),
+                Scope {
+                    school: None,
+                    id: Some(uuid(&claim, "id")),
+                },
+                "cannot-repermit-null-click",
+                Fixture::permit_input(&claim, &preparation),
+                true,
+                "https://example.test",
+            )
+            .await;
+        assert!(next.is_err());
+    }
+}
