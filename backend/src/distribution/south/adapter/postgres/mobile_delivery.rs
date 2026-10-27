@@ -1108,9 +1108,9 @@ impl Repository {
                 let sent = result == "ui_observed_sent"
                     && permit["state"] == "issued"
                     && now <= before
-                    && reported_clicked_at >= start
-                    && reported_clicked_at <= now
-                    && reported_clicked_at <= before
+                    && reported_clicked_at.is_some_and(|clicked| {
+                        clicked >= start && clicked <= now && clicked <= before
+                    })
                     && observed_account_id == uid(&i, "sender_account_id")?
                     && observed_group_id == uid(&i, "group_id")?
                     && i["content_digest"] == content_digest

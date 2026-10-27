@@ -227,7 +227,7 @@ pub enum Command {
         observed_group_id: Uuid,
         content_digest: String,
         local_state: String,
-        reported_clicked_at: chrono::DateTime<chrono::Utc>,
+        reported_clicked_at: Option<chrono::DateTime<chrono::Utc>>,
     },
     Abort {
         fence: i64,
