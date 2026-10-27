@@ -26,4 +26,4 @@
 
 `make check-web` 包含 contract（含无 DOM 检查）、双客户端类型/lint/测试/构建及边界检查。小程序登录响应使用同一 fixture 在 Rust 实际响应序列化与 TS client 测试中校验。数据库业务测试额外验证 Bearer/Cookie 会话不混用，以及小程序原始字节图片上传下载。
 
-真实微信 code、域名证书、媒体真机表现、微信审核与生产灰度独立验收。运行方式见 [frontend README](../../frontend/README.md)。
+真实微信 code、域名证书、媒体真机表现、微信审核与生产灰度独立验收。运行方式见 [Web 与小程序工作区](../development/frontend.md)。
