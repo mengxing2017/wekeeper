@@ -1,0 +1,15 @@
+{
+  "name": "wekeeper-docs",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.22.0",
+  "scripts": {
+    "dev": "vitepress dev . --host 127.0.0.1 --port 22596 --strictPort",
+    "build": "vitepress build .",
+    "preview": "vitepress preview . --host 127.0.0.1 --port 22597 --strictPort"
+  },
+  "devDependencies": {
+    "vitepress": "1.5.0",
+    "vue": "3.5.41"
+  }
+}
