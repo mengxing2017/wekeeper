@@ -42,3 +42,6 @@ report/
 # Python migration tools
 **/__pycache__/
 *.pyc
+
+# VitePress documentation cache (dist/node_modules already ignored)
+/docs/.vitepress/cache/
