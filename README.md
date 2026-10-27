@@ -84,6 +84,8 @@ pnpm --dir api-contract build
 devbox run -- make dev-embedded
 ```
 
+Devbox 初始化与嵌入式 Make 入口会自动修复项目本地 Rust 链接器的旧绝对路径，支持移动项目目录后继续使用已有工具链。如果旧终端仍出现 `linking with cc failed`，且后续错误指向旧目录的 `gcc-ld-unwrapped/ld.lld`，可先执行 `python3 tools/repair_rustup_linker.py`，再重新启动。
+
 也可使用 `devbox run dev-embedded`，或执行：
 
 ```bash
