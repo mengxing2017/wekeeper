@@ -4,6 +4,7 @@ import { mobileDeliveryApi } from '../src/modules/mobile-delivery'
 import { ApiError, setCsrf } from '../src/http'
 import permit from '../fixtures/mobile-send-permit.json'
 import wait from '../fixtures/mobile-execution-wait.json'
+import notClicked from '../fixtures/mobile-execution-not-clicked.json'
 afterEach(() => { vi.unstubAllGlobals(); setCsrf('') })
 const response = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { 'Content-Type': 'application/vnd.api+json' } })
 test('device transport uses fixed HTTPS, no cookie, CSRF, redirect or automatic retry', async () => {
@@ -40,4 +41,13 @@ test('management aliases use existing browser CSRF transport and explicit JSON:A
   expect(fetcher.mock.calls[0][1]?.headers).toMatchObject({ 'X-CSRF-Token': 'csrf' })
   expect(() => mobileDeliveryApi.preview('school', 'task', { expected_revision: 1 }, '')).toThrow()
   expect(new ApiError(409, 'test', 'test', { reason: 'test' }).meta).toEqual({ reason: 'test' })
+})
+
+test('not-clicked result keeps a null click timestamp and its stable event key', async () => {
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response({ data: { type: 'mobile-delivery-items', id: 'item', attributes: { state: 'unknown' } } }))
+  const client = createDeviceExecutionClient({ baseUrl: 'https://example.test', token: 'device-only', fetch: fetcher })
+  await client.result('claim', { ...notClicked.data.attributes, result: 'not_observed', local_state: 'not_observed' }, 'stable-result-key')
+  expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body))).toEqual(notClicked)
+  expect(fetcher.mock.calls[0][1]?.headers).toMatchObject({ 'Idempotency-Key': 'stable-result-key' })
+  expect(fetcher).toHaveBeenCalledTimes(1)
 })

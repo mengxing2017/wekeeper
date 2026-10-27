@@ -1,0 +1,17 @@
+{
+  "data": {
+    "type": "mobile-delivery-items",
+    "attributes": {
+      "invocation_id": "33333333-3333-4333-8333-333333333333",
+      "permit_token": "fixture-only-secret",
+      "event_id": "44444444-4444-4444-8444-444444444444",
+      "result": "not_observed",
+      "evidence_ref": "otter-local:fixture/not-clicked",
+      "observed_account_id": "55555555-5555-4555-8555-555555555555",
+      "observed_group_id": "66666666-6666-4666-8666-666666666666",
+      "content_digest": "fixture-content-sha256",
+      "local_state": "not_observed",
+      "reported_clicked_at": null
+    }
+  }
+}
