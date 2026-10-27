@@ -11,7 +11,8 @@ export interface PreparationInput extends Fence { snapshot_digest: string; obser
 export interface Preparation { id: UUID; claim_id: UUID; fence: number; snapshot_digest: string }
 export interface PermitInput extends Fence { snapshot_digest: string; preparation_id: UUID }
 export interface Permit { id: UUID; claim_id: UUID; invocation_id: UUID; fence: number; snapshot_digest: string; permit_token?: string; not_before: string; execute_before: string; server_time: string; state?: string; reason?: string; secret_replay_unavailable?: boolean }
-export interface ResultInput { invocation_id: UUID; permit_token: string; event_id: UUID; result: 'ui_observed_sent' | 'not_observed' | 'safety_blocked'; evidence_ref: string; observed_account_id: UUID; observed_group_id: UUID; content_digest: string; local_state: 'sent_bubble_observed' | 'not_observed' | 'safety_blocked'; reported_clicked_at: string }
+/** Null click time is never success evidence; unknown keeps all existing holds. */
+export interface ResultInput { invocation_id: UUID; permit_token: string; event_id: UUID; result: 'ui_observed_sent' | 'not_observed' | 'safety_blocked'; evidence_ref: string; observed_account_id: UUID; observed_group_id: UUID; content_digest: string; local_state: 'sent_bubble_observed' | 'not_observed' | 'safety_blocked'; reported_clicked_at: string | null }
 export interface HeartbeatInput { binding_revision: number; sender_account_id: UUID; client_version: string; script_version: string; baseline_version: string; permissions_ready: boolean; current_claim_id?: UUID | null }
 export interface DeviceTransportOptions { baseUrl: string; token?: string; fetch?: typeof fetch }
 export function createDeviceExecutionClient(options: DeviceTransportOptions) {
