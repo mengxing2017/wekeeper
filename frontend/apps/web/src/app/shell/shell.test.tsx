@@ -40,3 +40,12 @@ it('opens mobile navigation and closes it with Escape', () => {
   expect(toggle.getAttribute('aria-expanded')).toBe('false')
   expect(document.activeElement).toBe(toggle)
 })
+it('collapses the desktop sidebar while keeping the active page and account accessible', () => {
+  show()
+  fireEvent.click(screen.getByRole('button', { name: '收起侧栏' }))
+  expect(document.querySelector('.workspace-shell')?.classList.contains('is-collapsed')).toBe(true)
+  expect(screen.getByRole('menuitem', { name: '内容审核' }).getAttribute('aria-current')).toBe('page')
+  expect(screen.getByRole('button', { name: '账号菜单' })).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: '展开侧栏' }))
+  expect(document.querySelector('.workspace-shell')?.classList.contains('is-collapsed')).toBe(false)
+})
