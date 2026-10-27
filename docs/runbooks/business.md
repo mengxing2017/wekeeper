@@ -15,11 +15,11 @@ devbox run -- make dev-embedded
 pnpm --dir frontend dev
 ```
 
-浏览器必须使用与 WEKEEPER_PUBLIC_ORIGIN 完全一致的地址，不能混用 localhost 与 127.0.0.1。
+浏览器地址应匹配 WEKEEPER_PUBLIC_ORIGIN；本地 insecure 模式允许同协议同端口的 localhost、127.0.0.1 和 IPv6 loopback，局域网地址或其他端口需显式配置对应 origin。
 嵌入式库每次停止后删除数据；显式设置开发密码时创建 admin，没有硬编码默认密码。
 后台 `/admin`、成员社区 `/community`、企业微信 `/wecom`。
 
-需要本地调试企业通讯录时，在启动后端的同一终端先 export `WEKEEPER_WECOM_CORP_ID` 和 `WEKEEPER_WECOM_SECRET`；`WEKEEPER_WECOM_AGENT_ID` 可留空。嵌入式启动不会自动读取 `.env`，完整命令及本地文件注入方式见 [README：注入企业微信凭据](../../README.md#注入企业微信凭据)。嵌入式入口强制本地登录模式，完整凭据也不会开启 OAuth；服务端群发不依赖本地 origin/登录方式，配置凭据并显式设置 `WEKEEPER_WECOM_BROADCAST_ENABLED=true` 后可调试真实任务。
+需要本地调试企业通讯录时，在启动后端的同一终端先 export `WEKEEPER_WECOM_CORP_ID` 和 `WEKEEPER_WECOM_SECRET`；`WEKEEPER_WECOM_AGENT_ID` 可留空。嵌入式启动不会自动读取 `.env`，完整命令及本地文件注入方式见 [本地开发：企业微信凭据注入](../manual/local-development.md#企业微信凭据注入)。嵌入式入口强制本地登录模式，完整凭据也不会开启 OAuth；服务端群发不依赖本地 origin/登录方式，配置凭据并显式设置 `WEKEEPER_WECOM_BROADCAST_ENABLED=true` 后可调试真实任务。
 
 ## Docker 与首次管理员
 
