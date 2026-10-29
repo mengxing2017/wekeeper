@@ -8,7 +8,7 @@ use crate::{
 };
 use axum::{
     Router,
-    extract::{DefaultBodyLimit, Path, Query, State},
+    extract::{DefaultBodyLimit, OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -681,13 +681,18 @@ async fn resend(
 }
 async fn enroll(
     State(a): State<Application>,
+    OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
     input: Input,
 ) -> Result<Response> {
     let value = a
         .mobile_delivery()
         .execute(
-            Principal::Enrollment,
+            Principal::Enrollment.for_protocol(if uri.path().starts_with("/api/v2/") {
+                2
+            } else {
+                1
+            }),
             Scope {
                 school: None,
                 id: None,
@@ -917,6 +922,258 @@ async fn abort(
         .await?;
     Ok(response("mobile-delivery-items", value, None, false))
 }
+async fn update_account_profile(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    input: Input,
+) -> Result<Response> {
+    let value = a
+        .mobile_delivery()
+        .execute(
+            Principal::Actor(actor.id),
+            Scope {
+                school: None,
+                id: Some(id),
+            },
+            key(&headers),
+            command(input, "sending-accounts", "update_account_profile")?,
+        )
+        .await?;
+    Ok(response("sending-accounts", value, None, false))
+}
+
+async fn review_account_profile(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    input: Input,
+) -> Result<Response> {
+    let value = a
+        .mobile_delivery()
+        .execute(
+            Principal::Actor(actor.id),
+            Scope {
+                school: None,
+                id: Some(id),
+            },
+            key(&headers),
+            command(input, "sending-accounts", "review_account_profile")?,
+        )
+        .await?;
+    Ok(response("sending-accounts", value, None, false))
+}
+
+async fn update_group_profile(
+    State(a): State<Application>,
+    actor: Actor,
+    Path((school, id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    input: Input,
+) -> Result<Response> {
+    let value = a
+        .mobile_delivery()
+        .execute(
+            Principal::Actor(actor.id),
+            Scope {
+                school: Some(school),
+                id: Some(id),
+            },
+            key(&headers),
+            command(input, "delivery-groups", "update_group_profile")?,
+        )
+        .await?;
+    Ok(response("delivery-groups", value, None, false))
+}
+
+async fn review_group_profile(
+    State(a): State<Application>,
+    actor: Actor,
+    Path((school, id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    input: Input,
+) -> Result<Response> {
+    let value = a
+        .mobile_delivery()
+        .execute(
+            Principal::Actor(actor.id),
+            Scope {
+                school: Some(school),
+                id: Some(id),
+            },
+            key(&headers),
+            command(input, "delivery-groups", "review_group_profile")?,
+        )
+        .await?;
+    Ok(response("delivery-groups", value, None, false))
+}
+
+async fn create_strategy(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(school): Path<Uuid>,
+    headers: HeaderMap,
+    input: Input,
+) -> Result<Response> {
+    let value = a
+        .mobile_delivery()
+        .execute(
+            Principal::Actor(actor.id),
+            Scope {
+                school: Some(school),
+                id: None,
+            },
+            key(&headers),
+            command(input, "mobile-delivery-strategies", "create_strategy")?,
+        )
+        .await?;
+    Ok(response("mobile-delivery-strategies", value, None, true))
+}
+
+async fn update_strategy(
+    State(a): State<Application>,
+    actor: Actor,
+    Path((school, id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    input: Input,
+) -> Result<Response> {
+    let value = a
+        .mobile_delivery()
+        .execute(
+            Principal::Actor(actor.id),
+            Scope {
+                school: Some(school),
+                id: Some(id),
+            },
+            key(&headers),
+            command(input, "mobile-delivery-strategies", "update_strategy")?,
+        )
+        .await?;
+    Ok(response("mobile-delivery-strategies", value, None, false))
+}
+
+async fn run_strategy(
+    State(a): State<Application>,
+    actor: Actor,
+    Path((school, id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    input: Input,
+) -> Result<Response> {
+    let value = a
+        .mobile_delivery()
+        .execute(
+            Principal::Actor(actor.id),
+            Scope {
+                school: Some(school),
+                id: Some(id),
+            },
+            key(&headers),
+            command(input, "mobile-delivery-strategy-runs", "run_strategy")?,
+        )
+        .await?;
+    Ok(response("mobile-delivery-strategy-runs", value, None, true))
+}
+
+async fn strategies(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(school): Path<Uuid>,
+    Query(page): Query<Page>,
+) -> Result<Response> {
+    let value = a
+        .mobile_delivery()
+        .query(
+            Principal::Actor(actor.id),
+            Scope {
+                school: Some(school),
+                id: None,
+            },
+            Read::Strategies,
+            page.clone(),
+        )
+        .await?;
+    Ok(response(
+        "mobile-delivery-strategies",
+        value,
+        Some(&page),
+        false,
+    ))
+}
+
+async fn strategy(
+    State(a): State<Application>,
+    actor: Actor,
+    Path((school, id)): Path<(Uuid, Uuid)>,
+    Query(page): Query<Page>,
+) -> Result<Response> {
+    let value = a
+        .mobile_delivery()
+        .query(
+            Principal::Actor(actor.id),
+            Scope {
+                school: Some(school),
+                id: Some(id),
+            },
+            Read::Strategy,
+            page.clone(),
+        )
+        .await?;
+    Ok(response(
+        "mobile-delivery-strategies",
+        value,
+        Some(&page),
+        false,
+    ))
+}
+
+async fn strategy_runs(
+    State(a): State<Application>,
+    actor: Actor,
+    Path((school, id)): Path<(Uuid, Uuid)>,
+    Query(page): Query<Page>,
+) -> Result<Response> {
+    let value = a
+        .mobile_delivery()
+        .query(
+            Principal::Actor(actor.id),
+            Scope {
+                school: Some(school),
+                id: Some(id),
+            },
+            Read::StrategyRuns,
+            page.clone(),
+        )
+        .await?;
+    Ok(response(
+        "mobile-delivery-strategy-runs",
+        value,
+        Some(&page),
+        false,
+    ))
+}
+
+async fn visible_targets(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(school): Path<Uuid>,
+    Query(page): Query<Page>,
+) -> Result<Response> {
+    let value = a
+        .mobile_delivery()
+        .query(
+            Principal::Actor(actor.id),
+            Scope {
+                school: Some(school),
+                id: None,
+            },
+            Read::Targets,
+            page,
+        )
+        .await?;
+    Ok(response("mobile-delivery-targets", value, None, false))
+}
 pub fn router() -> Router<Application> {
     Router::new()
         .route(
@@ -1020,5 +1277,54 @@ pub fn router() -> Router<Application> {
         .route("/api/v1/device-execution/claims/{id}/permits", post(permit))
         .route("/api/v1/device-execution/claims/{id}/results", post(result))
         .route("/api/v1/device-execution/claims/{id}/aborts", post(abort))
+        .route(
+            "/api/v1/schools/{school}/mobile-delivery-targets",
+            get(visible_targets),
+        )
+        .route(
+            "/api/v1/platform/sending-accounts/{id}/visible-profile",
+            axum::routing::patch(update_account_profile),
+        )
+        .route(
+            "/api/v1/platform/sending-accounts/{id}/visible-profile-reviews",
+            post(review_account_profile),
+        )
+        .route(
+            "/api/v1/schools/{school}/delivery-groups/{id}/visible-profile",
+            axum::routing::patch(update_group_profile),
+        )
+        .route(
+            "/api/v1/schools/{school}/delivery-groups/{id}/visible-profile-reviews",
+            post(review_group_profile),
+        )
+        .route(
+            "/api/v1/schools/{school}/mobile-delivery-strategies",
+            get(strategies).post(create_strategy),
+        )
+        .route(
+            "/api/v1/schools/{school}/mobile-delivery-strategies/{id}",
+            get(strategy).patch(update_strategy),
+        )
+        .route(
+            "/api/v1/schools/{school}/mobile-delivery-strategies/{id}/runs",
+            get(strategy_runs).post(run_strategy),
+        )
+        .route("/api/v2/device-execution/enrollments", post(enroll))
+        .route(
+            "/api/v2/device-execution/credential-rotations",
+            post(rotate),
+        )
+        .route("/api/v2/device-execution/session", get(session))
+        .route("/api/v2/device-execution/heartbeats", post(heartbeat))
+        .route("/api/v2/device-execution/claims", post(claim))
+        .route("/api/v2/device-execution/claims/{id}", get(get_claim))
+        .route("/api/v2/device-execution/claims/{id}/renewals", post(renew))
+        .route(
+            "/api/v2/device-execution/claims/{id}/preparations",
+            post(prepare),
+        )
+        .route("/api/v2/device-execution/claims/{id}/permits", post(permit))
+        .route("/api/v2/device-execution/claims/{id}/results", post(result))
+        .route("/api/v2/device-execution/claims/{id}/aborts", post(abort))
         .layer(DefaultBodyLimit::max(512 * 1024))
 }
