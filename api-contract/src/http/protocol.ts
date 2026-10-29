@@ -110,6 +110,8 @@ export function resourceType(path: string): string {
     return 'execution-devices'
   }
   if (parts[2] === 'platform' && parts[3] === 'sending-accounts') return 'sending-accounts'
+  if (parts[2] === 'schools' && parts[4] === 'mobile-delivery-targets') return 'mobile-delivery-targets'
+  if (parts[2] === 'schools' && parts[4] === 'mobile-delivery-strategies') return parts[6] === 'runs' ? 'mobile-delivery-strategy-runs' : 'mobile-delivery-strategies'
   if (parts[2] === 'schools' && parts[4] === 'delivery-groups') return 'delivery-groups'
   if (parts[2] === 'schools' && parts[4] === 'mobile-delivery-settings')
     return 'mobile-delivery-settings'
