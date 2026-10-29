@@ -16,6 +16,17 @@ impl FromRequestParts<Application> for DevicePrincipal {
             .and_then(|h| h.strip_prefix("Bearer "))
             .filter(|t| t.starts_with("wk_device_"))
             .ok_or(Error::Unauthorized)?;
-        Ok(Self(state.mobile_delivery().authenticate(token).await?))
+        let protocol = if parts.uri.path().starts_with("/api/v2/device-execution/") {
+            2
+        } else {
+            1
+        };
+        Ok(Self(
+            state
+                .mobile_delivery()
+                .authenticate(token)
+                .await?
+                .for_protocol(protocol),
+        ))
     }
 }
