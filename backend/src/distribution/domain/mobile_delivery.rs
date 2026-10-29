@@ -5,6 +5,10 @@ use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
 pub const PROTOCOL_VERSION: u32 = 1;
+pub const VISIBLE_PROTOCOL_VERSION: u32 = 2;
+
+mod visible;
+pub use visible::*;
 pub const ACCOUNT_INTERVAL_SECONDS: i64 = 1800;
 pub const CONTENT_INTERVAL_SECONDS: i64 = 600;
 pub const CLAIM_SECONDS: i64 = 120;
@@ -108,10 +112,47 @@ pub enum Command {
     },
     CreateAccount {
         client_kind: String,
-        identity_namespace: String,
-        external_key: String,
+        #[serde(default)]
+        identity_namespace: Option<String>,
+        #[serde(default)]
+        external_key: Option<String>,
         responsible_actor_id: Uuid,
         identity_evidence_ref: String,
+        #[serde(default, skip_serializing_if = "IdentityMode::is_legacy")]
+        identity_mode: IdentityMode,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        visible_profile: Option<AccountProfile>,
+    },
+    UpdateAccountProfile {
+        expected_revision: i64,
+        visible_profile: AccountProfile,
+        reason: String,
+    },
+    ReviewAccountProfile {
+        expected_revision: i64,
+        evidence_ref: String,
+    },
+    UpdateGroupProfile {
+        expected_revision: i64,
+        name: String,
+        visible_profile: GroupProfile,
+        reason: String,
+    },
+    ReviewGroupProfile {
+        expected_revision: i64,
+        evidence_ref: String,
+    },
+    CreateStrategy {
+        #[serde(flatten)]
+        input: StrategyInput,
+    },
+    UpdateStrategy {
+        expected_revision: i64,
+        #[serde(flatten)]
+        input: StrategyInput,
+    },
+    RunStrategy {
+        expected_revision: i64,
     },
     BindDevice {
         expected_revision: i64,
@@ -121,10 +162,16 @@ pub enum Command {
     CreateGroup {
         name: String,
         client_kind: String,
-        identity_namespace: String,
-        external_key: String,
+        #[serde(default)]
+        identity_namespace: Option<String>,
+        #[serde(default)]
+        external_key: Option<String>,
         identity_evidence_ref: String,
         wecom_group_id: Option<Uuid>,
+        #[serde(default, skip_serializing_if = "IdentityMode::is_legacy")]
+        identity_mode: IdentityMode,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        visible_profile: Option<GroupProfile>,
     },
     BindGroup {
         sender_account_id: Uuid,
@@ -211,6 +258,8 @@ pub enum Command {
         script_version: String,
         baseline_version: String,
         checks_passed: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        verification: Option<VisibleVerification>,
     },
     Permit {
         fence: i64,
@@ -228,6 +277,8 @@ pub enum Command {
         content_digest: String,
         local_state: String,
         reported_clicked_at: Option<chrono::DateTime<chrono::Utc>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        verification: Option<VisibleVerification>,
     },
     Abort {
         fence: i64,
@@ -239,6 +290,8 @@ pub enum Principal {
     Actor(Uuid),
     Device { id: Uuid, generation: i64 },
     Enrollment,
+    DeviceV2 { id: Uuid, generation: i64 },
+    EnrollmentV2,
 }
 impl Principal {
     pub fn key(&self) -> String {
@@ -246,6 +299,28 @@ impl Principal {
             Self::Actor(id) => format!("actor:{id}"),
             Self::Device { id, generation } => format!("device:{id}:{generation}"),
             Self::Enrollment => "enrollment".into(),
+            Self::EnrollmentV2 => "enrollment:v2".into(),
+            Self::DeviceV2 { id, generation } => format!("device:{id}:{generation}:v2"),
+        }
+    }
+    pub fn protocol(&self) -> u32 {
+        if matches!(self, Self::DeviceV2 { .. } | Self::EnrollmentV2) {
+            2
+        } else {
+            1
+        }
+    }
+    pub fn for_protocol(self, version: u32) -> Self {
+        match (self, version) {
+            (Self::Device { id, generation } | Self::DeviceV2 { id, generation }, 2) => {
+                Self::DeviceV2 { id, generation }
+            }
+            (Self::Device { id, generation } | Self::DeviceV2 { id, generation }, 1) => {
+                Self::Device { id, generation }
+            }
+            (Self::Enrollment | Self::EnrollmentV2, 2) => Self::EnrollmentV2,
+            (Self::Enrollment | Self::EnrollmentV2, 1) => Self::Enrollment,
+            (p, _) => p,
         }
     }
     pub fn actor(&self) -> Result<Uuid> {
@@ -263,6 +338,10 @@ pub struct Scope {
 }
 #[derive(Clone, Debug)]
 pub enum Query {
+    Targets,
+    Strategies,
+    Strategy,
+    StrategyRuns,
     Devices,
     Device,
     Accounts,
