@@ -51,3 +51,25 @@ test('not-clicked result keeps a null click timestamp and its stable event key',
   expect(fetcher.mock.calls[0][1]?.headers).toMatchObject({ 'Idempotency-Key': 'stable-result-key' })
   expect(fetcher).toHaveBeenCalledTimes(1)
 })
+
+
+test('visible v2 claims keep names, profiles and device target without external identifiers', async () => {
+  const { default: fixture } = await import('../fixtures/mobile-visible-claim-v2.json')
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response(fixture))
+  const client = createDeviceExecutionClient({ baseUrl: 'https://example.test', protocolVersion: 2, fetch: fetcher })
+  const { claim } = await client.claim({ binding_revision: 2 }, 'v2-stable')
+  expect(fetcher.mock.calls[0][0]).toBe('https://example.test/api/v2/device-execution/claims')
+  expect(claim?.group_snapshot).toMatchObject({ name: '机器人测试', identity_mode: 'ui_visible', profile_revision: 3 })
+  expect(claim?.sender_binding).not.toHaveProperty('external_key')
+  expect(claim?.group_snapshot).not.toHaveProperty('identity_namespace')
+  expect(claim?.execution_target).toEqual(fixture.data.attributes.execution_target)
+})
+
+test('strategy run has explicit type, expected revision and stable replay key', async () => {
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response({ data: { type: 'mobile-delivery-strategy-runs', id: 'run', attributes: { task_id: 'draft' } } }))
+  vi.stubGlobal('fetch', fetcher)
+  await mobileDeliveryApi.runStrategy('school', 'strategy', { expected_revision: 7 }, 'fixed-run')
+  expect(fetcher.mock.calls[0][0]).toBe('/api/v1/schools/school/mobile-delivery-strategies/strategy/runs')
+  expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body)).data).toEqual({ type: 'mobile-delivery-strategy-runs', attributes: { expected_revision: 7 } })
+  expect(fetcher.mock.calls[0][1]?.headers).toMatchObject({ 'Idempotency-Key': 'fixed-run' })
+})

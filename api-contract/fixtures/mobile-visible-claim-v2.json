@@ -1,0 +1,69 @@
+{
+  "data": {
+    "type": "mobile-execution-claims",
+    "id": "00000001-1111-4111-8111-111111111111",
+    "attributes": {
+      "claim_id": "00000001-1111-4111-8111-111111111111",
+      "item_id": "00000002-1111-4111-8111-111111111111",
+      "school_id": "00000003-1111-4111-8111-111111111111",
+      "state": "claimed",
+      "item_state": "claimed",
+      "fence": 1,
+      "binding_revision": 2,
+      "lease_until": "2026-10-29T01:02:00Z",
+      "sender_binding": {
+        "id": "00000004-1111-4111-8111-111111111111",
+        "client_kind": "wecom",
+        "identity_mode": "ui_visible",
+        "enabled": true,
+        "visible_profile": {
+          "company_name": "合成测试企业",
+          "account_name": "合成测试账号",
+          "account_detail_text": null
+        },
+        "profile_revision": 1,
+        "verification_state": "reviewed"
+      },
+      "group_snapshot": {
+        "id": "00000005-1111-4111-8111-111111111111",
+        "school_id": "00000003-1111-4111-8111-111111111111",
+        "name": "机器人测试",
+        "client_kind": "wecom",
+        "identity_mode": "ui_visible",
+        "enabled": true,
+        "visible_profile": {
+          "group_type": "external",
+          "owner_name": null
+        },
+        "profile_revision": 3,
+        "verification_state": "reviewed"
+      },
+      "execution_target": {
+        "device_id": "00000006-1111-4111-8111-111111111111",
+        "device_binding_revision": 2,
+        "strategy_id": "00000007-1111-4111-8111-111111111111",
+        "strategy_revision": 1,
+        "run_id": "00000008-1111-4111-8111-111111111111"
+      },
+      "content": "测试",
+      "content_digest": "6aa8f49cc992dfd75a114269ed26de0ad6d4e7d7a70d9c8afb3d7a57a88a73ed",
+      "snapshot_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "requirements": {
+        "protocol_version": 2,
+        "client_version": "synthetic-wecom-1",
+        "script_version": "synthetic-wecom-script-1",
+        "baseline_version": "synthetic-wecom-baseline-1",
+        "no_injection": true,
+        "no_hook": true,
+        "no_private_protocol": true,
+        "no_client_data_modification": true,
+        "local_invocation_consumption_required": true,
+        "no_external_ids": true,
+        "no_resource_ids": true
+      },
+      "permit": null,
+      "server_time": "2026-10-29T01:00:00Z",
+      "may_execute": false
+    }
+  }
+}
