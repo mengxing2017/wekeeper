@@ -963,3 +963,225 @@ async fn absent_click_timestamp_cannot_create_success_or_release_unknown_hold() 
         assert!(next.is_err());
     }
 }
+
+// All tests use a fresh schema in the explicitly isolated test database.
+async fn visible_fixture() -> Fixture {
+    let mut f = setup().await;
+    let a = f.call(None,None,json!({"operation":"create_account","client_kind":"wecom","identity_mode":"ui_visible","visible_profile":{"company_name":"测试企业","account_name":"测试账号"},"responsible_actor_id":f.actor,"identity_evidence_ref":"phone:account"})).await;
+    let g = f.call(Some(f.school),None,json!({"operation":"create_group","client_kind":"wecom","identity_mode":"ui_visible","name":"机器人测试","visible_profile":{"group_type":"external"},"identity_evidence_ref":"phone:group"})).await;
+    assert!(a["external_key"].is_null() && g["identity_namespace"].is_null());
+    f.sender = uuid(&a, "id");
+    f.group = uuid(&g, "id");
+    f.call(None,Some(f.sender),json!({"operation":"review_account_profile","expected_revision":1,"evidence_ref":"phone:review-account"})).await;
+    f.call(Some(f.school),Some(f.group),json!({"operation":"review_group_profile","expected_revision":1,"evidence_ref":"phone:review-group"})).await;
+    f.call(Some(f.school),Some(f.group),json!({"operation":"bind_group","sender_account_id":f.sender,"mapping_revision":2,"reason":"visible profile checked"})).await;
+    let rev: i64 = sqlx::query_scalar("SELECT revision FROM execution_devices WHERE id=$1")
+        .bind(f.device)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    f.call(None,Some(f.device),json!({"operation":"bind_device","expected_revision":rev,"sender_account_id":f.sender,"identity_evidence_ref":"phone:bind"})).await;
+    f.binding_revision =
+        sqlx::query_scalar("SELECT revision FROM device_account_bindings WHERE device_id=$1")
+            .bind(f.device)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    f.principal = f.principal.for_protocol(2);
+    f.device_call(None,json!({"operation":"heartbeat","binding_revision":f.binding_revision,"sender_account_id":f.sender,"client_version":"client1","script_version":"script1","baseline_version":"base1","permissions_ready":true,"current_claim_id":null})).await;
+    f
+}
+async fn visible_run(f: &Fixture) -> (Value, Value) {
+    let strategy=f.call(Some(f.school),None,json!({"operation":"create_strategy","name":"指定群测试","sender_account_id":f.sender,"group_id":f.group,"device_id":f.device,"text_content":"测试","trigger_mode":"manual_once","enabled":true})).await;
+    let scope = Scope {
+        school: Some(f.school),
+        id: Some(uuid(&strategy, "id")),
+    };
+    let input = command(json!({"operation":"run_strategy","expected_revision":1}));
+    let key = Uuid::new_v4().to_string();
+    let run = f
+        .repo
+        .execute(
+            Principal::Actor(f.actor),
+            scope.clone(),
+            &key,
+            input.clone(),
+            true,
+            "https://example.test",
+        )
+        .await
+        .unwrap();
+    let replay = f
+        .repo
+        .execute(
+            Principal::Actor(f.actor),
+            scope.clone(),
+            &key,
+            input,
+            true,
+            "https://example.test",
+        )
+        .await
+        .unwrap();
+    assert_eq!(run, replay);
+    assert!(
+        f.repo
+            .execute(
+                Principal::Actor(f.actor),
+                scope,
+                &key,
+                command(json!({"operation":"run_strategy","expected_revision":2})),
+                true,
+                "https://example.test"
+            )
+            .await
+            .is_err()
+    );
+    let task = f
+        .repo
+        .query(
+            Principal::Actor(f.actor),
+            Scope {
+                school: Some(f.school),
+                id: Some(uuid(&run, "task_id")),
+            },
+            Query::Task,
+            Page::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(task["state"], "draft");
+    (run, task)
+}
+#[tokio::test]
+#[ignore]
+async fn visible_strategy_v2_is_draft_idempotent_and_requires_verification() {
+    let f = visible_fixture().await;
+    let (_, task) = visible_run(&f).await;
+    let wait = f
+        .device_call(
+            None,
+            json!({"operation":"claim","binding_revision":f.binding_revision}),
+        )
+        .await;
+    assert!(wait["claim_id"].is_null());
+    f.confirm(&task).await;
+    let legacy = f
+        .repo
+        .execute(
+            f.principal.clone().for_protocol(1),
+            Scope {
+                school: None,
+                id: None,
+            },
+            "legacy-cannot-claim-ui",
+            command(json!({"operation":"claim","binding_revision":f.binding_revision})),
+            true,
+            "https://example.test",
+        )
+        .await
+        .unwrap();
+    assert!(legacy["claim_id"].is_null());
+    let claim = f
+        .device_call(
+            None,
+            json!({"operation":"claim","binding_revision":f.binding_revision}),
+        )
+        .await;
+    assert_eq!(claim["requirements"]["protocol_version"], 2);
+    assert_eq!(claim["execution_target"]["device_id"], f.device.to_string());
+    assert_eq!(claim["group_snapshot"]["name"], "机器人测试");
+    for key in [
+        "external_key",
+        "identity_namespace",
+        "wecom_group_id",
+        "resource_id",
+    ] {
+        assert!(claim["sender_binding"].get(key).is_none());
+        assert!(claim["group_snapshot"].get(key).is_none());
+    }
+    let scope = Scope {
+        school: None,
+        id: Some(uuid(&claim, "id")),
+    };
+    let mut prepare = json!({"operation":"prepare","fence":claim["fence"],"snapshot_digest":claim["snapshot_digest"],"observed_account_id":f.sender,"observed_group_id":f.group,"client_version":"client1","script_version":"script1","baseline_version":"base1","checks_passed":true});
+    assert!(
+        f.repo
+            .execute(
+                f.principal.clone(),
+                scope.clone(),
+                "missing-verification",
+                command(prepare.clone()),
+                true,
+                "https://example.test"
+            )
+            .await
+            .is_err()
+    );
+    prepare["verification"] = json!({"method":"visible_ui","account_profile_revision":1,"group_profile_revision":1,"evidence_ref":"otter-local:test","checks":["company","account","group_name","group_context"]});
+    let prep = f.device_call(scope.id, prepare).await;
+    let permit = f
+        .device_call(
+            scope.id,
+            serde_json::to_value(Fixture::permit_input(&claim, &prep)).unwrap(),
+        )
+        .await;
+    assert!(permit["invocation_id"].is_string());
+    assert!(
+        f.repo
+            .execute(
+                f.principal.clone(),
+                scope.clone(),
+                "no-second-permit",
+                Fixture::permit_input(&claim, &prep),
+                true,
+                "https://example.test"
+            )
+            .await
+            .is_err()
+    );
+    let unknown=f.device_call(scope.id,json!({"operation":"result","invocation_id":permit["invocation_id"],"permit_token":permit["permit_token"],"event_id":Uuid::new_v4(),"result":"not_observed","evidence_ref":"otter-local:test","observed_account_id":f.sender,"observed_group_id":f.group,"content_digest":claim["content_digest"],"local_state":"not_observed","reported_clicked_at":null})).await;
+    assert_eq!(unknown["state"], "unknown");
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_delivery_strategy_runs")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        1
+    );
+}
+#[tokio::test]
+#[ignore]
+async fn visible_profile_change_invalidates_frozen_run_without_rewriting_it() {
+    let f = visible_fixture().await;
+    let (run, task) = visible_run(&f).await;
+    f.confirm(&task).await;
+    let before: Value =
+        sqlx::query_scalar("SELECT snapshot FROM mobile_delivery_items WHERE task_id=$1")
+            .bind(uuid(&run, "task_id"))
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    f.call(Some(f.school),Some(f.group),json!({"operation":"update_group_profile","expected_revision":3,"name":"机器人测试(2)","visible_profile":{"group_type":"external"},"reason":"real name changed; parentheses preserved"})).await;
+    let after: Value =
+        sqlx::query_scalar("SELECT snapshot FROM mobile_delivery_items WHERE task_id=$1")
+            .bind(uuid(&run, "task_id"))
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(before, after);
+    let poll = f
+        .device_call(
+            None,
+            json!({"operation":"claim","binding_revision":f.binding_revision}),
+        )
+        .await;
+    assert!(poll["claim_id"].is_null());
+    let review: Value = sqlx::query_scalar("SELECT to_jsonb(g) FROM delivery_groups g WHERE id=$1")
+        .bind(f.group)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(review["name"], "机器人测试(2)");
+    assert_eq!(review["verification_state"], "pending");
+}
