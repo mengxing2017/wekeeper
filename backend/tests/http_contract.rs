@@ -600,3 +600,37 @@ fn mobile_not_clicked_result_preserves_null_timestamp() {
     }
     assert_eq!(serde_json::to_value(command).unwrap(), input);
 }
+
+#[tokio::test]
+async fn v2_device_routes_never_accept_browser_identity() {
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v2/device-execution/session")
+                .header("Cookie", "wekeeper_session=browser-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+#[test]
+fn strategy_commands_are_strict_and_default_to_disabled() {
+    use wekeeper_api::distribution::domain::mobile_delivery::Command;
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/mobile-visible-claim-v2.json"
+    ))
+    .unwrap();
+    let a = &fixture["data"]["attributes"];
+    let mut v = serde_json::json!({"operation":"create_strategy","name":"测试策略","sender_account_id":a["sender_binding"]["id"],"group_id":a["group_snapshot"]["id"],"device_id":a["execution_target"]["device_id"],"text_content":"测试"});
+    let c: Command = serde_json::from_value(v.clone()).unwrap();
+    if let Command::CreateStrategy { input } = c {
+        assert!(!input.enabled);
+        input.validate().unwrap();
+    } else {
+        panic!("strategy expected");
+    }
+    v["resource_id"] = serde_json::json!("unavailable");
+    assert!(serde_json::from_value::<Command>(v).is_err());
+}
