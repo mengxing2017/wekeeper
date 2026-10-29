@@ -7,6 +7,14 @@ import { Field } from '../../../shared/field'
 import { PaginationControls } from '../../../shared/pagination-controls'
 import { api, type Preview, type ItemInput } from './api'
 
+import {
+  VisibleAccountCreate,
+  VisibleAccountReview,
+  VisibleGroupCreate,
+  VisibleGroupReview,
+  VisibleStrategies,
+} from './visible'
+
 const key = () => crypto.randomUUID()
 const clients = [
   { value: 'wechat', label: '微信' },
@@ -263,7 +271,8 @@ export function ExecutionDevices() {
             title="真实发送账号"
             extra={
               <Space>
-                <ActionDrawer title="登记真实发送账号" primary>
+                <VisibleAccountCreate saved={refresh} />
+                <ActionDrawer title="登记旧模式发送账号" primary>
                   <Editor
                     fields={[
                       ...identityFields,
@@ -297,7 +306,13 @@ export function ExecutionDevices() {
               pagination={false}
               scroll={{ x: 700 }}
               columns={[
-                { title: '身份标识', dataIndex: 'external_key' },
+                {
+                  title: '发送账号',
+                  render: (_, a) =>
+                    a.visible_profile
+                      ? `${a.visible_profile.company_name} · ${a.visible_profile.account_name}`
+                      : a.external_key,
+                },
                 { title: '责任人', dataIndex: 'responsible_actor_id', ellipsis: true },
                 {
                   title: '状态',
@@ -335,7 +350,8 @@ export function ExecutionDevices() {
                 title="发送账号管理"
                 onClose={() => setSenderId('')}
               >
-                <Card key={a.id} title={a.external_key}>
+                <Card key={a.id} title={a.visible_profile?.account_name ?? a.external_key}>
+                  <VisibleAccountReview account={a} saved={refresh} />
                   <p>
                     发送账号 ID：{a.id} · 责任人：{a.responsible_actor_id} ·{' '}
                     {a.enabled ? '启用' : '停用'}
@@ -427,17 +443,27 @@ export default function MobileDelivery({ school, role }: { school: string; role?
         items={[
           { key: 'tasks', label: '发送任务' },
           { key: 'groups', label: '目标群' },
+          ...(admin ? [{ key: 'strategies', label: '发送策略' }] : []),
         ]}
       />
-      {listTab === 'groups' ? (
+      {listTab === 'strategies' && admin ? (
+        <VisibleStrategies
+          school={school}
+          openTask={(id) => {
+            setSelected(id)
+            setListTab('tasks')
+          }}
+        />
+      ) : listTab === 'groups' ? (
         <>
           <Card
             className="data-panel"
             title="目标群列表"
             extra={
               <Space>
+                {admin && <VisibleGroupCreate school={school} saved={refresh} />}
                 {admin && (
-                  <ActionDrawer title="登记目标群" primary>
+                  <ActionDrawer title="登记旧模式目标群" primary>
                     <Editor
                       fields={[
                         { name: 'name', title: '群名称' },
@@ -507,6 +533,7 @@ export default function MobileDelivery({ school, role }: { school: string; role?
                 onClose={() => setGroupId('')}
               >
                 <Card key={g.id} title={g.name}>
+                  {admin && <VisibleGroupReview school={school} group={g} saved={refresh} />}
                   <p>
                     目标群 ID：{g.id} · 每 24 小时限额 {g.daily_limit}
                   </p>
@@ -923,7 +950,20 @@ function TaskDetail({
       {items.data?.items.map((i) => (
         <Card key={i.id} title={i.group_id} extra={<Tag>{states[i.state]}</Tag>}>
           <pre className="text-content">{i.content}</pre>
-          <p>账号：{i.sender_account_id}</p>
+          <p>
+            账号：
+            {i.snapshot.sender?.visible_profile
+              ? `${i.snapshot.sender.visible_profile.company_name} · ${i.snapshot.sender.visible_profile.account_name}`
+              : i.sender_account_id}
+          </p>
+          {i.snapshot.group?.name && <p>完整群名：{i.snapshot.group.name}</p>}
+          {i.snapshot.execution_target && (
+            <p>
+              指定手机：{i.snapshot.execution_target.device_id} · 绑定版本：
+              {i.snapshot.execution_target.device_binding_revision} · 策略版本：
+              {i.snapshot.execution_target.strategy_revision}
+            </p>
+          )}
           {admin && i.state === 'unknown' && (
             <Editor
               key={i.revision}
