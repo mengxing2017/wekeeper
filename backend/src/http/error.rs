@@ -75,6 +75,16 @@ impl IntoResponse for Error {
                 "conflict",
                 "数据已变化或操作重复，请刷新后重试".into(),
             ),
+            Self::Policy("pairing_code_invalid") => (
+                StatusCode::UNAUTHORIZED,
+                "pairing_code_invalid",
+                "配对码无效或已过期，请在管理端重新生成".into(),
+            ),
+            Self::Policy("pairing_rate_limited") => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "pairing_rate_limited",
+                "配对尝试过多，请等待 10 分钟后重试".into(),
+            ),
             Self::Policy("device_request_limit") => (
                 StatusCode::TOO_MANY_REQUESTS,
                 "device_request_limit",
@@ -100,6 +110,13 @@ impl IntoResponse for Error {
                 )
             }
         };
-        response(status, code, &message)
+        let mut response = response(status, code, &message);
+        if code == "pairing_rate_limited" {
+            response.headers_mut().insert(
+                axum::http::header::RETRY_AFTER,
+                axum::http::HeaderValue::from_static("600"),
+            );
+        }
+        response
     }
 }
