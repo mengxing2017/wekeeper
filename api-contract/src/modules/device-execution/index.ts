@@ -274,7 +274,7 @@ export function createDeviceExecutionClient(options: DeviceTransportOptions) {
       ),
     enroll: (
       input: {
-        device_id: UUID;
+        device_id?: UUID;
         code: string;
         client_instance_id: string;
         protocol_version: number;
