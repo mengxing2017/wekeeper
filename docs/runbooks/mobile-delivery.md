@@ -22,6 +22,8 @@
 
 所有 POST/PATCH 必须带 1–128 字符 Idempotency-Key。同主体、操作、资源、key 异参返回 409；网络重试保留原 key，后续新业务操作使用新 key。不要把密钥放在 URL。
 
+Web 管理端通过共享 `createIdempotencyKey()` 生成 UUID v4。`crypto.randomUUID()` 仅在安全上下文中提供，局域网 HTTP 地址或部分旧浏览器可能没有此方法；前端会回退到 `crypto.getRandomValues()`，保留安全随机数及 UUID 版本/变体位，不使用时间戳或 `Math.random()` 代替。如果浏览器连安全随机字节 API 也不支持，页面显示明确提示并在发请求前停止。浏览器接口边界见 [Web Crypto 规范](https://w3c.github.io/webcrypto/#crypto-interface)。此兼容处理不改变现有重试 key 保留逻辑，也不改变 Android 执行端固定 HTTPS 源的要求。
+
 浏览器管理沿用 Cookie、Origin、X-CSRF-Token。设备仅接受 `Authorization: Bearer wk_device_...`，Cookie/miniapp token 不能替代；设备 token 不能访问后台业务接口。设备 client 固定 HTTPS origin、credentials=omit、redirect=error，不自动重试请求。设备有效凭据每分钟最多 120 请求；同设备配对尝试每 10 分钟最多 20 次，超出 429 device_request_limit。
 
 列表 `page[number]`/`page[size]` 默认 1/30、最大 100，meta.page.has_more。无任务是 200 data:null，meta 包含 reason/retry_after_seconds/next_eligible_at；unknown 的 next_eligible_at 为 null。
