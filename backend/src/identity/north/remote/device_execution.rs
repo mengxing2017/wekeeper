@@ -16,7 +16,9 @@ impl FromRequestParts<Application> for DevicePrincipal {
             .and_then(|h| h.strip_prefix("Bearer "))
             .filter(|t| t.starts_with("wk_device_"))
             .ok_or(Error::Unauthorized)?;
-        let protocol = if parts.uri.path().starts_with("/api/v2/device-execution/") {
+        let protocol = if parts.uri.path().starts_with("/api/v3/device-execution/") {
+            3
+        } else if parts.uri.path().starts_with("/api/v2/device-execution/") {
             2
         } else {
             1
