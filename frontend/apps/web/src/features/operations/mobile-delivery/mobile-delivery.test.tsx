@@ -1,10 +1,13 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import MobileDelivery from './index'
+import MobileDelivery, { ExecutionDevices } from './index'
 import { api } from './api'
 vi.mock('./api', () => ({
   api: {
+    devices: vi.fn(),
+    accounts: vi.fn(),
+    createDevice: vi.fn(),
     capabilities: vi.fn(),
     tasks: vi.fn(),
     groups: vi.fn(),
@@ -34,6 +37,7 @@ Object.defineProperty(window, 'matchMedia', {
 afterEach(() => {
   cleanup()
   vi.resetAllMocks()
+  vi.unstubAllGlobals()
 })
 function show(role?: string) {
   render(
@@ -44,6 +48,37 @@ function show(role?: string) {
     </QueryClientProvider>,
   )
 }
+it.each([true, false])('registers a phone without randomUUID when secure random bytes are available=%s', async (randomAvailable) => {
+  const crypto = globalThis.crypto
+  vi.stubGlobal('crypto', randomAvailable
+    ? { getRandomValues: crypto.getRandomValues.bind(crypto) }
+    : {})
+  vi.mocked(api.devices).mockResolvedValue({ items: [] })
+  vi.mocked(api.accounts).mockResolvedValue({ items: [] })
+  vi.mocked(api.createDevice).mockResolvedValue({
+    id: 'device', revision: 1, name: '测试手机', enabled: false,
+    credential_generation: 0, client_instance_id: null, last_seen_at: null,
+    created_at: '2026-10-30T00:00:00Z',
+  })
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <ExecutionDevices />
+    </QueryClientProvider>,
+  )
+  fireEvent.click(await screen.findByRole('button', { name: /登记手机/ }))
+  fireEvent.change(await screen.findByRole('textbox', { name: '设备名称' }), { target: { value: '测试手机' } })
+  fireEvent.click(screen.getByRole('button', { name: /保\s*存/ }))
+  if (randomAvailable) {
+    await screen.findByText('已保存')
+    expect(api.createDevice).toHaveBeenCalledExactlyOnceWith(
+      { name: '测试手机' },
+      expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),
+    )
+  } else {
+    await screen.findByText('当前浏览器不支持安全随机数，请升级浏览器或使用 HTTPS 访问。')
+    expect(api.createDevice).not.toHaveBeenCalled()
+  }
+})
 it('requires actual school authorization before requesting business data', () => {
   show()
   expect(screen.getByText(/平台管理员身份不代替学校授权/)).toBeTruthy()
