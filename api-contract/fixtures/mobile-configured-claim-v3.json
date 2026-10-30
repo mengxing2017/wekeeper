@@ -1,0 +1,618 @@
+{
+  "data": {
+    "type": "mobile-execution-claims",
+    "id": "00000001-1111-4111-8111-111111111111",
+    "attributes": {
+      "claim_id": "00000001-1111-4111-8111-111111111111",
+      "item_id": "00000002-1111-4111-8111-111111111111",
+      "school_id": "00000003-1111-4111-8111-111111111111",
+      "state": "claimed",
+      "item_state": "claimed",
+      "fence": 1,
+      "binding_revision": 2,
+      "lease_until": "2026-10-29T01:02:00Z",
+      "sender_binding": {
+        "id": "00000004-1111-4111-8111-111111111111",
+        "client_kind": "wecom",
+        "identity_mode": "ui_visible",
+        "enabled": true,
+        "visible_profile": {
+          "company_name": "合成测试企业",
+          "account_name": "合成测试账号",
+          "account_detail_text": null
+        },
+        "profile_revision": 1,
+        "verification_state": "reviewed"
+      },
+      "group_snapshot": {
+        "id": "00000005-1111-4111-8111-111111111111",
+        "school_id": "00000003-1111-4111-8111-111111111111",
+        "name": "机器人测试",
+        "client_kind": "wecom",
+        "identity_mode": "ui_visible",
+        "enabled": true,
+        "visible_profile": {
+          "group_type": "external",
+          "owner_name": null
+        },
+        "profile_revision": 3,
+        "verification_state": "reviewed"
+      },
+      "execution_target": {
+        "device_id": "00000006-1111-4111-8111-111111111111",
+        "device_binding_revision": 2,
+        "strategy_id": "00000007-1111-4111-8111-111111111111",
+        "strategy_revision": 1,
+        "run_id": "00000008-1111-4111-8111-111111111111"
+      },
+      "content": "测试",
+      "content_digest": "6aa8f49cc992dfd75a114269ed26de0ad6d4e7d7a70d9c8afb3d7a57a88a73ed",
+      "snapshot_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "requirements": {
+        "protocol_version": 3,
+        "client_version": "synthetic",
+        "script_version": "otter-ui/1",
+        "baseline_version": "synthetic-1",
+        "no_injection": true,
+        "no_hook": true,
+        "no_private_protocol": true,
+        "no_client_data_modification": true,
+        "local_invocation_consumption_required": true,
+        "no_external_ids": true,
+        "no_resource_ids": true,
+        "ordered_groups_required": true,
+        "human_pacing_required": true,
+        "configuration_digest": "8a653def2273759a16b42888e416c7fa6036f17f17fb5348510620efc4f97b5e"
+      },
+      "permit": null,
+      "server_time": "2026-10-29T01:00:00Z",
+      "may_execute": false,
+      "configuration": {
+        "id": "00000090-1111-4111-8111-111111111111",
+        "configuration": {
+          "name": "SYNTHETIC ONLY - 非真实企业微信适配",
+          "evidence_ref": "fixture:synthetic-only",
+          "rules": {
+            "schema_version": 1,
+            "engine_version": "otter-ui/1",
+            "required_capabilities": [
+              "non_id_query/1",
+              "bounded_navigation/1",
+              "visible_verification/1",
+              "ordered_groups/1"
+            ],
+            "client": {
+              "package_name": "com.wekeeper.fixture.wecom",
+              "version_name": "synthetic",
+              "version_code": 1
+            },
+            "pages": {
+              "home": {
+                "marker": {
+                  "predicate": {
+                    "text": null,
+                    "description": "page_home",
+                    "class_name": null,
+                    "visible": true,
+                    "enabled": true,
+                    "editable": null,
+                    "clickable": null
+                  },
+                  "parent": null,
+                  "ancestor": null,
+                  "ancestor_depth": 8,
+                  "all_of": [],
+                  "any_of": []
+                },
+                "required": [],
+                "forbidden": []
+              },
+              "account": {
+                "marker": {
+                  "predicate": {
+                    "text": null,
+                    "description": "page_account",
+                    "class_name": null,
+                    "visible": true,
+                    "enabled": true,
+                    "editable": null,
+                    "clickable": null
+                  },
+                  "parent": null,
+                  "ancestor": null,
+                  "ancestor_depth": 8,
+                  "all_of": [],
+                  "any_of": []
+                },
+                "required": [],
+                "forbidden": []
+              },
+              "search": {
+                "marker": {
+                  "predicate": {
+                    "text": null,
+                    "description": "page_search",
+                    "class_name": null,
+                    "visible": true,
+                    "enabled": true,
+                    "editable": null,
+                    "clickable": null
+                  },
+                  "parent": null,
+                  "ancestor": null,
+                  "ancestor_depth": 8,
+                  "all_of": [],
+                  "any_of": []
+                },
+                "required": [],
+                "forbidden": []
+              },
+              "results": {
+                "marker": {
+                  "predicate": {
+                    "text": null,
+                    "description": "page_results",
+                    "class_name": null,
+                    "visible": true,
+                    "enabled": true,
+                    "editable": null,
+                    "clickable": null
+                  },
+                  "parent": null,
+                  "ancestor": null,
+                  "ancestor_depth": 8,
+                  "all_of": [],
+                  "any_of": []
+                },
+                "required": [],
+                "forbidden": []
+              },
+              "chat": {
+                "marker": {
+                  "predicate": {
+                    "text": null,
+                    "description": "page_chat",
+                    "class_name": null,
+                    "visible": true,
+                    "enabled": true,
+                    "editable": null,
+                    "clickable": null
+                  },
+                  "parent": null,
+                  "ancestor": null,
+                  "ancestor_depth": 8,
+                  "all_of": [],
+                  "any_of": []
+                },
+                "required": [],
+                "forbidden": []
+              }
+            },
+            "controls": {
+              "company": {
+                "predicate": {
+                  "text": null,
+                  "description": "company",
+                  "class_name": null,
+                  "visible": true,
+                  "enabled": true,
+                  "editable": null,
+                  "clickable": null
+                },
+                "parent": null,
+                "ancestor": null,
+                "ancestor_depth": 8,
+                "all_of": [],
+                "any_of": []
+              },
+              "account": {
+                "predicate": {
+                  "text": null,
+                  "description": "account",
+                  "class_name": null,
+                  "visible": true,
+                  "enabled": true,
+                  "editable": null,
+                  "clickable": null
+                },
+                "parent": null,
+                "ancestor": null,
+                "ancestor_depth": 8,
+                "all_of": [],
+                "any_of": []
+              },
+              "account_detail": {
+                "predicate": {
+                  "text": null,
+                  "description": "account_detail",
+                  "class_name": null,
+                  "visible": true,
+                  "enabled": true,
+                  "editable": null,
+                  "clickable": null
+                },
+                "parent": null,
+                "ancestor": null,
+                "ancestor_depth": 8,
+                "all_of": [],
+                "any_of": []
+              },
+              "search_input": {
+                "predicate": {
+                  "text": null,
+                  "description": "search_input",
+                  "class_name": null,
+                  "visible": true,
+                  "enabled": true,
+                  "editable": true,
+                  "clickable": null
+                },
+                "parent": null,
+                "ancestor": null,
+                "ancestor_depth": 8,
+                "all_of": [],
+                "any_of": []
+              },
+              "group_tab": {
+                "predicate": {
+                  "text": null,
+                  "description": "group_tab",
+                  "class_name": null,
+                  "visible": true,
+                  "enabled": true,
+                  "editable": null,
+                  "clickable": true
+                },
+                "parent": null,
+                "ancestor": null,
+                "ancestor_depth": 8,
+                "all_of": [],
+                "any_of": []
+              },
+              "result_title": {
+                "predicate": {
+                  "text": null,
+                  "description": "result_title",
+                  "class_name": null,
+                  "visible": true,
+                  "enabled": true,
+                  "editable": null,
+                  "clickable": true
+                },
+                "parent": null,
+                "ancestor": null,
+                "ancestor_depth": 8,
+                "all_of": [],
+                "any_of": []
+              },
+              "results_complete": {
+                "predicate": {
+                  "text": null,
+                  "description": "results_complete",
+                  "class_name": null,
+                  "visible": true,
+                  "enabled": true,
+                  "editable": null,
+                  "clickable": null
+                },
+                "parent": null,
+                "ancestor": null,
+                "ancestor_depth": 8,
+                "all_of": [],
+                "any_of": []
+              },
+              "chat_title": {
+                "predicate": {
+                  "text": null,
+                  "description": "chat_title",
+                  "class_name": null,
+                  "visible": true,
+                  "enabled": true,
+                  "editable": null,
+                  "clickable": null
+                },
+                "parent": null,
+                "ancestor": null,
+                "ancestor_depth": 8,
+                "all_of": [],
+                "any_of": []
+              },
+              "group_type": {
+                "predicate": {
+                  "text": null,
+                  "description": "group_type",
+                  "class_name": null,
+                  "visible": true,
+                  "enabled": true,
+                  "editable": null,
+                  "clickable": null
+                },
+                "parent": null,
+                "ancestor": null,
+                "ancestor_depth": 8,
+                "all_of": [],
+                "any_of": []
+              },
+              "owner": {
+                "predicate": {
+                  "text": null,
+                  "description": "owner",
+                  "class_name": null,
+                  "visible": true,
+                  "enabled": true,
+                  "editable": null,
+                  "clickable": null
+                },
+                "parent": null,
+                "ancestor": null,
+                "ancestor_depth": 8,
+                "all_of": [],
+                "any_of": []
+              },
+              "input": {
+                "predicate": {
+                  "text": null,
+                  "description": "input",
+                  "class_name": null,
+                  "visible": true,
+                  "enabled": true,
+                  "editable": true,
+                  "clickable": null
+                },
+                "parent": null,
+                "ancestor": null,
+                "ancestor_depth": 8,
+                "all_of": [],
+                "any_of": []
+              },
+              "send": {
+                "predicate": {
+                  "text": null,
+                  "description": "send",
+                  "class_name": null,
+                  "visible": true,
+                  "enabled": true,
+                  "editable": null,
+                  "clickable": true
+                },
+                "parent": null,
+                "ancestor": null,
+                "ancestor_depth": 8,
+                "all_of": [],
+                "any_of": []
+              },
+              "message_row": {
+                "predicate": {
+                  "text": null,
+                  "description": "message_row",
+                  "class_name": null,
+                  "visible": true,
+                  "enabled": true,
+                  "editable": null,
+                  "clickable": null
+                },
+                "parent": null,
+                "ancestor": null,
+                "ancestor_depth": 8,
+                "all_of": [],
+                "any_of": []
+              },
+              "message_text": {
+                "predicate": {
+                  "text": null,
+                  "description": "message_text",
+                  "class_name": null,
+                  "visible": true,
+                  "enabled": true,
+                  "editable": null,
+                  "clickable": null
+                },
+                "parent": null,
+                "ancestor": null,
+                "ancestor_depth": 8,
+                "all_of": [],
+                "any_of": []
+              },
+              "outgoing": {
+                "predicate": {
+                  "text": null,
+                  "description": "outgoing",
+                  "class_name": null,
+                  "visible": true,
+                  "enabled": true,
+                  "editable": null,
+                  "clickable": null
+                },
+                "parent": null,
+                "ancestor": null,
+                "ancestor_depth": 8,
+                "all_of": [],
+                "any_of": []
+              },
+              "failed": {
+                "predicate": {
+                  "text": null,
+                  "description": "failed",
+                  "class_name": null,
+                  "visible": true,
+                  "enabled": true,
+                  "editable": null,
+                  "clickable": null
+                },
+                "parent": null,
+                "ancestor": null,
+                "ancestor_depth": 8,
+                "all_of": [],
+                "any_of": []
+              },
+              "pending": {
+                "predicate": {
+                  "text": null,
+                  "description": "pending",
+                  "class_name": null,
+                  "visible": true,
+                  "enabled": true,
+                  "editable": null,
+                  "clickable": null
+                },
+                "parent": null,
+                "ancestor": null,
+                "ancestor_depth": 8,
+                "all_of": [],
+                "any_of": []
+              },
+              "back": {
+                "predicate": {
+                  "text": null,
+                  "description": "back",
+                  "class_name": null,
+                  "visible": true,
+                  "enabled": true,
+                  "editable": null,
+                  "clickable": true
+                },
+                "parent": null,
+                "ancestor": null,
+                "ancestor_depth": 8,
+                "all_of": [],
+                "any_of": []
+              },
+              "open_account": {
+                "predicate": {
+                  "text": null,
+                  "description": "open_account",
+                  "class_name": null,
+                  "visible": true,
+                  "enabled": true,
+                  "editable": null,
+                  "clickable": true
+                },
+                "parent": null,
+                "ancestor": null,
+                "ancestor_depth": 8,
+                "all_of": [],
+                "any_of": []
+              },
+              "open_search": {
+                "predicate": {
+                  "text": null,
+                  "description": "open_search",
+                  "class_name": null,
+                  "visible": true,
+                  "enabled": true,
+                  "editable": null,
+                  "clickable": true
+                },
+                "parent": null,
+                "ancestor": null,
+                "ancestor_depth": 8,
+                "all_of": [],
+                "any_of": []
+              }
+            },
+            "navigation_graph": [
+              {
+                "from": "home",
+                "to": "account",
+                "control": "open_account",
+                "min_delay_ms": 100
+              },
+              {
+                "from": "account",
+                "to": "home",
+                "control": "back",
+                "min_delay_ms": 100
+              },
+              {
+                "from": "home",
+                "to": "search",
+                "control": "open_search",
+                "min_delay_ms": 100
+              },
+              {
+                "from": "search",
+                "to": "home",
+                "control": "back",
+                "min_delay_ms": 100
+              },
+              {
+                "from": "search",
+                "to": "results",
+                "control": "group_tab",
+                "min_delay_ms": 100
+              },
+              {
+                "from": "results",
+                "to": "search",
+                "control": "back",
+                "min_delay_ms": 100
+              },
+              {
+                "from": "results",
+                "to": "chat",
+                "control": "result_title",
+                "min_delay_ms": 100
+              },
+              {
+                "from": "chat",
+                "to": "home",
+                "control": "back",
+                "min_delay_ms": 100
+              }
+            ],
+            "landmarks": {
+              "entry": "home",
+              "account": "account",
+              "search": "search",
+              "results": "results",
+              "chat": "chat"
+            },
+            "group_type_labels": {
+              "external": "外部群",
+              "internal": "内部群"
+            },
+            "member_count_suffix": "ascii"
+          },
+          "policy": {
+            "account_cooldown_ms": 30000,
+            "content_cooldown_ms": 10000,
+            "default_group_interval_ms": 60000,
+            "minimum_group_interval_ms": 30000,
+            "session_max_duration_ms": 600000,
+            "quota_window_ms": 86400000,
+            "account_limit": 20,
+            "group_limit": 10,
+            "max_targets": 20,
+            "input_codepoint_delay_ms": 100,
+            "input_settle_ms": 200,
+            "page_timeout_ms": 5000,
+            "observation_timeout_ms": 3000,
+            "poll_interval_ms": 100,
+            "max_navigation_steps": 20,
+            "minimum_manual_samples": 3
+          },
+          "baseline": {
+            "version": "synthetic-1",
+            "samples": 3,
+            "human_group_min_interval_ms": 30000,
+            "navigation_min_ms": 100,
+            "input_codepoint_min_ms": 80,
+            "input_settle_min_ms": 200,
+            "observation_min_ms": 200,
+            "evidence_ref": "fixture:synthetic-manual-samples"
+          }
+        },
+        "content_digest": "8a653def2273759a16b42888e416c7fa6036f17f17fb5348510620efc4f97b5e",
+        "revoked": false,
+        "active": true
+      },
+      "execution_revision": 1,
+      "sequence": {
+        "run_id": "00000008-1111-4111-8111-111111111111",
+        "position": 1,
+        "total": 2,
+        "group_interval_ms": 60000
+      }
+    }
+  }
+}
