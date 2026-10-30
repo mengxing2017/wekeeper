@@ -61,6 +61,22 @@ test("device transport uses fixed HTTPS, no cookie, CSRF, redirect or automatic 
   ])
     expect(() => createDeviceExecutionClient({ baseUrl })).toThrow();
 });
+test("short-code enrollment does not require a device ID or browser credentials", async () => {
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response({
+    data: { type: "device-credentials", id: "device", attributes: {
+      device_token: "test-token", credential_generation: 1, protocol_version: 3,
+      expires_at: "2026-10-30T00:00:00Z",
+    } },
+  }));
+  const client = createDeviceExecutionClient({ baseUrl: "https://example.test", protocolVersion: 3, fetch: fetcher });
+  const result = await client.enroll({ code: "00123456", client_instance_id: "phone", protocol_version: 3 }, "pair-key");
+  expect(result.id).toBe("device");
+  const [, init] = fetcher.mock.calls[0];
+  expect(init).toMatchObject({ credentials: "omit", redirect: "error" });
+  expect(JSON.parse(String(init?.body)).data.attributes).toEqual({ code: "00123456", client_instance_id: "phone", protocol_version: 3 });
+  expect(init?.headers).not.toHaveProperty("Authorization");
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
 test("normal no-task wait preserves null and its reason", async () => {
   const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response(wait));
   const client = createDeviceExecutionClient({
