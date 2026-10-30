@@ -3,7 +3,7 @@ import { ConfigurationWorkbench } from './configuration'
 import { ActionDrawer } from '../../../shared/action-drawer'
 import { useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Alert, Button, Card, Checkbox, Drawer, Table, Input, Space, Tabs, Tag } from 'antd'
+import { Alert, Button, Card, Checkbox, Drawer, Table, Input, Space, Tabs, Tag, Typography } from 'antd'
 import { Editor } from '../../admin/workspace/editor'
 import { Field } from '../../../shared/field'
 import { PaginationControls } from '../../../shared/pagination-controls'
@@ -70,7 +70,7 @@ export function ExecutionDevices() {
   const [listTab, setListTab] = useState('devices')
   const [page, setPage] = useState(1),
     [accountPage, setAccountPage] = useState(1),
-    [code, setCode] = useState(''),
+    [pairing, setPairing] = useState<{ code: string; expiresAt: string; name: string } | null>(null),
     [deviceId, setDeviceId] = useState(''),
     [senderId, setSenderId] = useState('')
   const devices = useQuery({
@@ -92,14 +92,17 @@ export function ExecutionDevices() {
         (e, i) => e && <Alert key={i} type="error" title={e.message} />,
       )}
       {actions.error && <Alert type="error" title={actions.error} />}
-      {code && (
+      {pairing && (
         <Alert
           type="warning"
-          title="一次性配对码（请在手机端输入，不会再次显示）"
+          title={`${pairing.name} · 一次性配对码`}
           description={
             <>
-              <pre>{code}</pre>
-              <Button onClick={() => setCode('')}>关闭配对码</Button>
+              <p><Typography.Text strong copyable={{ text: pairing.code }}>
+                {pairing.code.slice(0, 4)} {pairing.code.slice(4)}
+              </Typography.Text></p>
+              <p>在 Otter 输入这 8 位数字即可，无需输入设备 ID。有效期至 {new Date(pairing.expiresAt).toLocaleString()}，使用一次或重新生成后失效。</p>
+              <Button onClick={() => setPairing(null)}>关闭配对码</Button>
             </>
           }
         />
@@ -193,11 +196,11 @@ export function ExecutionDevices() {
                             { expected_revision: d.revision },
                             key(),
                           )
-                          setCode(
-                            result.code
-                              ? `${result.code}\n有效期至 ${result.expires_at}`
-                              : '配对码无法重放，请重新生成',
-                          )
+                          if (!result.code) {
+                            setPairing(null)
+                            throw new Error('配对码无法重放，请重新生成')
+                          }
+                          setPairing({ code: result.code, expiresAt: result.expires_at, name: d.name })
                         })
                       }
                     >
