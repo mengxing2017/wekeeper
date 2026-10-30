@@ -11,6 +11,7 @@ use uuid::Uuid;
 pub struct Repository(pub PgPool);
 type Tx<'a> = Transaction<'a, Postgres>;
 mod configured;
+mod pairing;
 mod visible;
 pub async fn guard(tx: &mut Tx<'_>) -> Result<()> {
     sqlx::query("SELECT pg_advisory_xact_lock(78234610241)")
@@ -691,10 +692,7 @@ impl Repository {
                     expected_revision,
                 )?;
                 sqlx::query("UPDATE device_enrollments SET consumed_at=clock_timestamp() WHERE device_id=$1 AND consumed_at IS NULL").bind(d).execute(&mut **tx).await?;
-                let code = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
-                let enroll = Uuid::now_v7();
-                let expires:chrono::DateTime<chrono::Utc>=sqlx::query_scalar("INSERT INTO device_enrollments(id,device_id,code_hash,expires_at) VALUES($1,$2,$3,clock_timestamp()+interval '10 minutes') RETURNING expires_at").bind(enroll).bind(d).bind(hash(&code)).fetch_one(&mut **tx).await?;
-                Ok(json!({"id":enroll,"device_id":d,"code":code,"expires_at":expires}))
+                pairing::issue(tx, d).await
             }
             Command::Revoke {
                 expected_revision,
@@ -1145,7 +1143,8 @@ impl Repository {
                 if protocol_version != p.protocol() {
                     return Err(Error::Policy("protocol_unsupported"));
                 }
-                sqlx::query("UPDATE device_enrollments SET consumed_at=clock_timestamp() WHERE device_id=$1 AND code_hash=$2 AND consumed_at IS NULL AND expires_at>clock_timestamp() RETURNING id").bind(device_id).bind(hash(&code)).fetch_optional(&mut **tx).await?.ok_or(Error::Unauthorized)?;
+                let device_id = device_id.ok_or(Error::Policy("pairing_code_invalid"))?;
+                sqlx::query("UPDATE device_enrollments SET consumed_at=clock_timestamp() WHERE device_id=$1 AND code_hash=$2 AND consumed_at IS NULL AND expires_at>clock_timestamp() RETURNING id").bind(device_id).bind(hash(&code)).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("pairing_code_invalid"))?;
                 sqlx::query("UPDATE execution_devices SET client_instance_id=$2,execution_protocol_version=$3,supported_protocol_versions=CASE WHEN $3=3 THEN ARRAY[1,2,3] WHEN $3=2 THEN ARRAY[1,2] ELSE ARRAY[1] END WHERE id=$1")
                     .bind(device_id)
                     .bind(text(&client_instance_id, 1, 200)?)
@@ -1492,14 +1491,21 @@ impl Store for Repository {
         p: Principal,
         s: Scope,
         key: &str,
-        c: Command,
+        mut c: Command,
         enabled: bool,
         origin: &str,
     ) -> Result<Value> {
-        if let Command::Enroll { device_id, .. } = &c {
+        if matches!(c, Command::Enroll { .. }) {
+            pairing::prepare(&self.0, &mut c).await?;
+        }
+        if let Command::Enroll {
+            device_id: Some(device_id),
+            ..
+        } = &c
+        {
             let attempts:Option<i32>=sqlx::query_scalar("INSERT INTO device_pairing_windows(device_id,requests,reset_at) SELECT id,1,clock_timestamp()+interval '10 minutes' FROM execution_devices WHERE id=$1 ON CONFLICT(device_id) DO UPDATE SET requests=CASE WHEN device_pairing_windows.reset_at<=clock_timestamp() THEN 1 ELSE device_pairing_windows.requests+1 END,reset_at=CASE WHEN device_pairing_windows.reset_at<=clock_timestamp() THEN clock_timestamp()+interval '10 minutes' ELSE device_pairing_windows.reset_at END RETURNING requests").bind(device_id).fetch_optional(&self.0).await?;
             if attempts.is_none() {
-                return Err(Error::Unauthorized);
+                return Err(Error::Policy("pairing_code_invalid"));
             }
             if attempts.is_some_and(|n| n > 20) {
                 return Err(Error::Policy("device_request_limit"));
@@ -1555,7 +1561,11 @@ impl Store for Repository {
             .to_owned();
         let operation = format!("{operation}:{:?}:{:?}", s.school, s.id);
         let request_hash = hash(&value.to_string());
-        let principal = if let Command::Enroll { device_id, .. } = &c {
+        let principal = if let Command::Enroll {
+            device_id: Some(device_id),
+            ..
+        } = &c
+        {
             if p.protocol() == 1 {
                 format!("enrollment:{device_id}")
             } else {
