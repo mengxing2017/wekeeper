@@ -12,7 +12,7 @@
 
 Web 使用 Cookie/Origin/CSRF，小程序和设备使用各自独立 Bearer；不能混用凭据。只有 feature `api/index.ts` 引用 `@wekeeper/api-contract/*`，不在 shared 定义 DTO/client 或绕过 client 请求。变更公开接口同步 Rust、contract、fixture 和两端测试。
 
-源码入口使用仓库相对路径说明，不依赖浏览器访问本机文件：`api-contract/src/`、`backend/`、`frontend/apps/`、`tools/`。具体手机 wire 路径见 [手机执行接口手册](../runbooks/mobile-delivery.md)。
+源码入口使用仓库相对路径说明，不依赖浏览器访问本机文件：`api-contract/src/`、`backend/`、`frontend/apps/`、`tools/`。具体手机 wire 路径见 [手机执行接口手册](../runbooks/mobile-delivery.md)；v3 发布、顺序控制和修订见 [企业微信规则与多群执行](../runbooks/configured-mobile-delivery.md)。
 
 ## ADR 索引
 
