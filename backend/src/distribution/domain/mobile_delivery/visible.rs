@@ -60,13 +60,30 @@ pub fn label(s: &str) -> Result<String> {
 pub struct StrategyInput {
     pub name: String,
     pub sender_account_id: Uuid,
-    pub group_id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_id: Option<Uuid>,
+    #[serde(default = "single_group")]
+    pub delivery_mode: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub targets: Vec<StrategyTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inter_group_interval_seconds: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub configuration_release_id: Option<Uuid>,
     pub device_id: Uuid,
     pub text_content: String,
     #[serde(default)]
     pub enabled: bool,
     #[serde(default = "manual_once")]
     pub trigger_mode: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StrategyTarget {
+    pub group_id: Uuid,
+}
+fn single_group() -> String {
+    "single_group".into()
 }
 fn manual_once() -> String {
     "manual_once".into()
@@ -75,7 +92,45 @@ impl StrategyInput {
     pub fn validate(&self) -> Result<()> {
         label(&self.name)?;
         normalize(&self.text_content)?;
-        require(self.trigger_mode == "manual_once", "仅支持手动执行一次")
+        require(self.trigger_mode == "manual_once", "仅支持手动执行一次")?;
+        require(
+            ["single_group", "ordered_groups"].contains(&self.delivery_mode.as_str()),
+            "策略模式无效",
+        )?;
+        if self.delivery_mode == "ordered_groups" {
+            require(
+                self.group_id.is_none()
+                    && self.targets.len() >= 2
+                    && self.targets.len() <= 4096
+                    && self.configuration_release_id.is_some(),
+                "顺序策略需要多个目标和已发布规则，不能同时提交单群字段",
+            )?;
+        } else {
+            require(
+                self.group_id.is_some() && self.targets.is_empty(),
+                "单群策略只接受 group_id",
+            )?;
+        }
+        let groups = self.groups();
+        require(
+            groups
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                == groups.len(),
+            "目标群不可重复",
+        )?;
+        require(
+            self.inter_group_interval_seconds
+                .is_none_or(|v| (0..=31_536_000).contains(&v)),
+            "群间等待无效",
+        )
+    }
+    pub fn groups(&self) -> Vec<Uuid> {
+        self.group_id
+            .into_iter()
+            .chain(self.targets.iter().map(|t| t.group_id))
+            .collect()
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
