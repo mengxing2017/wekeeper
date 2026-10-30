@@ -5,6 +5,7 @@ import { VisibleStrategies } from './visible'
 import { api } from './api'
 vi.mock('./api', () => ({
   api: {
+    schoolConfigurationReleases: vi.fn().mockResolvedValue({ items: [] }),
     strategies: vi.fn(),
     targets: vi.fn(),
     groups: vi.fn(),
