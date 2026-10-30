@@ -1,3 +1,4 @@
+import { createIdempotencyKey as key } from '../../../shared/idempotency-key'
 import { ConfigurationWorkbench } from './configuration'
 import { ActionDrawer } from '../../../shared/action-drawer'
 import { useRef, useState } from 'react'
@@ -16,7 +17,6 @@ import {
   VisibleStrategies,
 } from './visible'
 
-const key = () => crypto.randomUUID()
 const clients = [
   { value: 'wechat', label: '微信' },
   { value: 'wecom', label: '企业微信' },

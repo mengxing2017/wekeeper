@@ -1,3 +1,4 @@
+import { createIdempotencyKey } from '../../../shared/idempotency-key'
 import { useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -584,7 +585,7 @@ function Detail({
     const signature = JSON.stringify([operation, input])
     let key = keys.current.get(signature)
     if (!key) {
-      key = crypto.randomUUID()
+      key = createIdempotencyKey()
       keys.current.set(signature, key)
     }
     const updated = await broadcast.action(school, id, operation, key, input)

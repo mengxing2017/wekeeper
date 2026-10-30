@@ -1,3 +1,4 @@
+import { createIdempotencyKey as key } from '../../../shared/idempotency-key'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Card, Input, Select, Space, Table } from 'antd'
@@ -9,7 +10,6 @@ import {
   type ExecutionConfiguration,
   type ConfigurationRelease,
 } from './api'
-const key = () => crypto.randomUUID()
 /** Expert-only editor. Rules are immutable data; publishing never launches a client or sends. */
 export function ConfigurationWorkbench() {
   const [page, setPage] = useState(1),

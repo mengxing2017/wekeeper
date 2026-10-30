@@ -1,3 +1,4 @@
+import { createIdempotencyKey as key } from '../../../shared/idempotency-key'
 import { useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Card, Space, Table, Tag, Select, InputNumber } from 'antd'
@@ -13,7 +14,6 @@ import {
   type ConfigurationRelease,
   type RunRevisionPreview,
 } from './api'
-const key = () => crypto.randomUUID()
 const evidence = { name: 'evidence_ref', title: '人工核对依据' }
 const accountFields = [
   { name: 'company_name', title: '企业微信中可见企业名称' },
