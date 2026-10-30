@@ -8,7 +8,7 @@
 2. 平台管理员登记实际发送账号及负责运营人员。负责人员必须是目标学校 admin。一个真实账号只登记一次；不能把换机、昵称变化当成新账号。
 3. 学校 admin 登记规范群身份和核验依据。wecom 群必须传现有 wecom_group_id，identity_namespace=CorpID，external_key=ChatID；wechat 群传 null，使用人工核验的稳定内部标识。群名不用于身份合并。
 4. 学校 admin 登记群与 sender 绑定；平台管理员登记设备，再绑定 sender。新设备禁用，不能自动发送。
-5. 平台管理员创建一次性 enrollment：10 分钟有效。外部执行器凭 device_id/code/client_instance_id/protocol_version=1 领取 30 天专用 token。明文只当次返回；随后平台管理员启用设备。绑定、配对、启用依次提升设备 revision，请始终使用最新值。
+5. 平台管理员创建一次性 enrollment：显示 8 位数字配对码，10 分钟有效。Otter 只需填写 HTTPS 服务器地址和配对码，服务端自动匹配设备 UUID；无需人工输入设备 ID。执行器发送 code/client_instance_id/protocol_version 领取 30 天专用 token，v1/v2/v3 使用各自协议入口。明文只当次返回；随后平台管理员启用设备。绑定、配对、启用依次提升设备 revision，请始终使用最新值。
 6. 核对官方群发/旧分享在途与 unknown，补齐全部历史群映射。学校 admin PATCH mobile-delivery-settings：expected_revision 初次为 0，history_reviewed=true，并填写验收过的 client/script/baseline 精确版本及 evidence_ref。仅设备自报版本不能通过白名单。
 7. HTTP 模拟及外部执行器独立验收后再设置总开关 true。开关不依赖腾讯发送 Secret。启用学校的新官方创建、提醒和旧分享 prepare 将返回 409 mobile_channel_exclusive。
 
@@ -26,7 +26,26 @@ Web 管理端通过共享 `createIdempotencyKey()` 调用第三方 `nanoid/non-s
 
 `nanoid` 已声明为 Web 的运行依赖并写入 `frontend/pnpm-lock.yaml`。Dockerfile 的冻结依赖安装及 `pnpm build:web` 会将其打入 `/srv/assets` 中的 JS，不需要在容器运行时安装 Node 或访问 CDN。发布时需重新构建、发布 Web 镜像并重建对应容器；仅重启旧镜像不会更新前端代码。
 
-浏览器管理沿用 Cookie、Origin、X-CSRF-Token。设备仅接受 `Authorization: Bearer wk_device_...`，Cookie/miniapp token 不能替代；设备 token 不能访问后台业务接口。设备 client 固定 HTTPS origin、credentials=omit、redirect=error，不自动重试请求。设备有效凭据每分钟最多 120 请求；同设备配对尝试每 10 分钟最多 20 次，超出 429 device_request_limit。
+浏览器管理沿用 Cookie、Origin、X-CSRF-Token。设备仅接受 `Authorization: Bearer wk_device_...`，Cookie/miniapp token 不能替代；设备 token 不能访问后台业务接口。设备 client 固定 HTTPS origin、credentials=omit、redirect=error，不自动重试请求。设备有效凭据每分钟最多 120 请求，超出 429 device_request_limit。配对另受下文的共享尝试预算约束。
+
+### 短码配对
+
+在「手机设备与发送账号」登记并选择设备，点击「生成配对码」。页面显示如 `0012 3456` 的数字并支持复制；Otter 使用数字键盘，接受连续 8 位数字，也接受中间空格或短横线，保留前导零。设备 UUID 保留作内部关联和运维查看，不是用户需要填写的字段。
+
+执行器请求示例（企业微信使用 v3，演示客户端使用 v1）：
+
+```json
+{"data":{"type":"device-credentials","attributes":{"code":"00123456","client_instance_id":"客户端自动生成的实例标识","protocol_version":3}}}
+```
+
+`POST /api/v3/device-execution/enrollments` 仍带 Idempotency-Key；成功响应的资源 `id` 是服务端匹配的设备 UUID，原生端随凭据保存，token 不进入 WebView。`device_id` 改为可选，供旧执行器兼容和有未决执行时自动固定原设备。错误设备约束不消费配对码，不能将原未决任务迁移到其他设备或服务器。
+
+- 配对码由后端加密随机数生成，采用拒绝采样得到 8 位数字。数据库只保存摘要，并以唯一约束及重试避免撞码；历史码也不复用。前端用于幂等键的 `nanoid/non-secure` 不用于配对码。
+- 10 分钟有效，事务内原子消费一次；重新生成立即废止该设备所有旧码。并发兑换只有一次成功，凭据仅首次返回；同一请求的幂等重放只返回无 token 摘要，响应丢失应重新生成配对码。
+- 所有协议和 API 副本共享数据库限次：每 10 分钟全站最多 100 次，每个客户端实例最多 5 次，每个配对码最多 5 次。成功、错误、格式不合法的兑换尝试都计数；计数独立提交，失败事务不能回滚计数。实例标识可伪造，因此全站预算同时限制轮换实例和换码猜测。配对入口达到全站预算时，合法配对同样需等待窗口恢复。
+- 无效、不存在、已使用、过期或设备不匹配的码统一返回 `401 pairing_code_invalid`，不暴露码属于哪台设备。限次返回 `429 pairing_rate_limited`、`Retry-After: 600`。原有按设备每 10 分钟 20 次预算继续保留。
+
+部署顺序：先部署含 migration `202610300001_short_device_pairing.sql` 的 API，再更新 Web 镜像和 Otter APK。旧的「设备 ID + 64 字符配对码」请求在原有效期内仍可用；更新后的 Otter 只展示短码入口，已配对设备不要求重新配对。请用新生成的 8 位码验证，不要将历史长码截断使用。
 
 列表 `page[number]`/`page[size]` 默认 1/30、最大 100，meta.page.has_more。无任务是 200 data:null，meta 包含 reason/retry_after_seconds/next_eligible_at；unknown 的 next_eligible_at 为 null。
 
