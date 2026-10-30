@@ -199,28 +199,40 @@ pub(super) async fn review(
     sqlx::query(&format!("UPDATE {table} SET verification_state='reviewed',identity_evidence_ref=$2,revision=revision+1 WHERE id=$1")).bind(id(s)?).bind(text(&evidence,1,500)?).execute(&mut **tx).await?;
     object(tx, table, id(s)?).await
 }
-async fn strategy_target(tx: &mut Tx<'_>, s: Uuid, input: &StrategyInput) -> Result<Value> {
+pub(super) async fn strategy_target(
+    tx: &mut Tx<'_>,
+    s: Uuid,
+    input: &StrategyInput,
+) -> Result<Value> {
     input.validate()?;
-    let i = ItemInput {
-        group_id: input.group_id,
-        sender_account_id: input.sender_account_id,
-        source: ContentSource::Text {
-            text_content: input.text_content.clone(),
-        },
-    };
-    let snap = snapshot(tx, s, &i, "").await?;
-    require(
-        snap["group"]["identity_mode"] == "ui_visible"
-            && snap["sender"]["identity_mode"] == "ui_visible",
-        "策略需要界面模式账号与群",
-    )?;
+    for group in input.groups() {
+        let i = ItemInput {
+            group_id: group,
+            sender_account_id: input.sender_account_id,
+            source: ContentSource::Text {
+                text_content: input.text_content.clone(),
+            },
+        };
+        let snap = snapshot(tx, s, &i, "").await?;
+        require(
+            snap["group"]["identity_mode"] == "ui_visible"
+                && snap["sender"]["identity_mode"] == "ui_visible",
+            "策略需要界面模式账号与群",
+        )?;
+    }
     let b = binding(tx, input.device_id).await?;
     if b["sender_account_id"] != input.sender_account_id.to_string() {
         return Err(Error::Policy("device_binding_changed"));
     }
     let d = object(tx, "execution_devices", input.device_id).await?;
     require(d["enabled"] == true, "设备尚未启用")?;
-    if d["execution_protocol_version"] != 2 {
+    if d["execution_protocol_version"]
+        != if input.configuration_release_id.is_some() {
+            3
+        } else {
+            2
+        }
+    {
         return Err(Error::Policy("unsupported_execution_protocol"));
     }
     Ok(b)
@@ -247,9 +259,16 @@ pub(super) async fn strategy(
         Uuid::now_v7()
     };
     if rev.is_some() {
-        sqlx::query("UPDATE mobile_delivery_strategies SET name=$2,sender_account_id=$3,group_id=$4,device_id=$5,text_content=$6,enabled=$7,revision=revision+1,updated_at=clock_timestamp() WHERE id=$1").bind(id).bind(label(&input.name)?).bind(input.sender_account_id).bind(input.group_id).bind(input.device_id).bind(normalize(&input.text_content)?).bind(input.enabled).execute(&mut **tx).await?;
+        sqlx::query("UPDATE mobile_delivery_strategies SET name=$2,sender_account_id=$3,group_id=$4,device_id=$5,text_content=$6,enabled=$7,delivery_mode=$8,targets=$9,inter_group_interval_seconds=$10,configuration_release_id=$11,revision=revision+1,updated_at=clock_timestamp() WHERE id=$1").bind(id).bind(label(&input.name)?).bind(input.sender_account_id).bind(input.group_id).bind(input.device_id).bind(normalize(&input.text_content)?).bind(input.enabled).bind(&input.delivery_mode).bind(json!(input.targets)).bind(input.inter_group_interval_seconds).bind(input.configuration_release_id).execute(&mut **tx).await?;
     } else {
-        sqlx::query("INSERT INTO mobile_delivery_strategies(id,school_id,name,sender_account_id,group_id,device_id,text_content,enabled,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)").bind(id).bind(school(s)?).bind(label(&input.name)?).bind(input.sender_account_id).bind(input.group_id).bind(input.device_id).bind(normalize(&input.text_content)?).bind(input.enabled).bind(p.actor()?).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO mobile_delivery_strategies(id,school_id,name,sender_account_id,group_id,device_id,text_content,enabled,created_by,delivery_mode,targets,inter_group_interval_seconds,configuration_release_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)").bind(id).bind(school(s)?).bind(label(&input.name)?).bind(input.sender_account_id).bind(input.group_id).bind(input.device_id).bind(normalize(&input.text_content)?).bind(input.enabled).bind(p.actor()?).bind(&input.delivery_mode).bind(json!(input.targets)).bind(input.inter_group_interval_seconds).bind(input.configuration_release_id).execute(&mut **tx).await?;
+    }
+    sqlx::query("DELETE FROM mobile_delivery_strategy_targets WHERE strategy_id=$1")
+        .bind(id)
+        .execute(&mut **tx)
+        .await?;
+    for (position, group) in input.groups().iter().enumerate() {
+        sqlx::query("INSERT INTO mobile_delivery_strategy_targets(strategy_id,school_id,position,group_id) VALUES($1,$2,$3,$4)").bind(id).bind(school(s)?).bind((position+1)as i32).bind(group).execute(&mut **tx).await?;
     }
     object(tx, "mobile_delivery_strategies", id).await
 }
@@ -267,13 +286,25 @@ pub(super) async fn run(
     let input: StrategyInput = StrategyInput {
         name: strv(&strategy, "name")?.into(),
         sender_account_id: uid(&strategy, "sender_account_id")?,
-        group_id: uid(&strategy, "group_id")?,
+        group_id: strategy["group_id"]
+            .as_str()
+            .and_then(|s| Uuid::parse_str(s).ok()),
+        delivery_mode: strv(&strategy, "delivery_mode")?.into(),
+        targets: serde_json::from_value(strategy["targets"].clone())
+            .map_err(|_| Error::Conflict)?,
+        inter_group_interval_seconds: strategy["inter_group_interval_seconds"].as_i64(),
+        configuration_release_id: strategy["configuration_release_id"]
+            .as_str()
+            .and_then(|s| Uuid::parse_str(s).ok()),
         device_id: uid(&strategy, "device_id")?,
         text_content: strv(&strategy, "text_content")?.into(),
         enabled: true,
         trigger_mode: "manual_once".into(),
     };
     let b = strategy_target(tx, school(s)?, &input).await?;
+    if input.configuration_release_id.is_some() {
+        return configured::run(tx, p, s, strategy, input, b, origin).await;
+    }
     let set = settings(tx, school(s)?).await?;
     for field in [
         "approved_client_version",
@@ -294,7 +325,7 @@ pub(super) async fn run(
             expected_revision: None,
             activity_id: format!("strategy-run:{run}"),
             items: vec![ItemInput {
-                group_id: input.group_id,
+                group_id: input.group_id.ok_or(Error::Conflict)?,
                 sender_account_id: input.sender_account_id,
                 source: ContentSource::Text {
                     text_content: input.text_content,
@@ -331,7 +362,8 @@ pub(super) async fn validate_execution(
             Err(Error::Policy("unsupported_execution_protocol"))
         };
     }
-    if protocol != 2 {
+    if ![2, 3].contains(&protocol) || i["snapshot"]["requirements"]["protocol_version"] != protocol
+    {
         return Err(Error::Policy("unsupported_execution_protocol"));
     }
     let t = &i["snapshot"]["execution_target"];
@@ -340,7 +372,7 @@ pub(super) async fn validate_execution(
         return Err(Error::Policy("device_binding_changed"));
     }
     let device_row = object(tx, "execution_devices", d).await?;
-    if device_row["enabled"] != true || device_row["execution_protocol_version"] != 2 {
+    if device_row["enabled"] != true || device_row["execution_protocol_version"] != protocol {
         return Err(Error::Policy("unsupported_execution_protocol"));
     }
     let b = binding(tx, d).await?;
@@ -376,6 +408,9 @@ pub(super) async fn validate_execution(
         if live != i["snapshot"][snap] {
             return Err(Error::Policy("binding_changed"));
         }
+    }
+    if protocol == 3 {
+        return configured::validate_configuration(tx, i).await;
     }
     let set = settings(tx, uid(i, "school_id")?).await?;
     if requirements(&set, 2) != i["snapshot"]["requirements"] {
