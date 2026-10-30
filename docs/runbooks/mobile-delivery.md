@@ -1,6 +1,6 @@
 # 手机执行接口运行手册
 
-本手册对应 migration `202610240001_mobile_execution.sql`。接口仅提供结构化业务任务；Android 执行端为独立 `keeper-otter` 项目，已提供首批控制台、执行内核和本地演示适配器，尚未支持真实微信/企业微信或完成真机验收；不包含自动登录。联调 client：`@wekeeper/api-contract/mobile-delivery` 和 `@wekeeper/api-contract/device-execution`。
+本手册说明 migration `202610240001_mobile_execution.sql` 引入的通用执行约定和旧 v1 外部身份流程。企业微信可见身份、后台规则及 v3 多群执行见 [规则配置与多群顺序执行](configured-mobile-delivery.md)，不按下文 v1 的外部 ID 登记或固定版本审批流程接入。Android 执行端为独立 `keeper-otter` 项目，已编码 demo 及企业微信 v3 通用引擎；真实规则、APK 和真机发送尚未验收，不包含自动登录。联调 client：`@wekeeper/api-contract/mobile-delivery` 和 `@wekeeper/api-contract/device-execution`。
 
 ## 上线顺序
 
@@ -14,7 +14,7 @@
 
 ## HTTP 约定
 
-统一 `/api/v1`，Content-Type/Accept 为 `application/vnd.api+json`。写请求为：
+管理与旧设备流程使用 `/api/v1`，企业微信新设备执行使用 `/api/v3/device-execution`；历史请求保持原版本。Content-Type/Accept 为 `application/vnd.api+json`。普通逐群独立内容草稿的写请求为：
 
 ```json
 {"data":{"type":"mobile-delivery-tasks","attributes":{"activity_id":"school-notice-20261024","items":[{"group_id":"规范群 UUID","sender_account_id":"真实账号 UUID","source":{"kind":"text","text_content":"该群专属、经审核的正文"}}]}}}
@@ -94,4 +94,4 @@ test-business 创建一次性 PG17，仅向测试进程注入 WEKEEPER_TEST_DATA
 
 手机任务页要求当前学校运营或管理员授权；平台管理员身份不代替学校授权。配置和核对仅学校管理员可操作；直接文本任务须学校管理员确认。服务端总开关默认关闭，页面会显示实际能力及不可用原因，保存草稿不等于执行。配对码只在生成后显示一次，不保存到浏览器存储；手机执行程序仍须单独部署。
 
-初版身份配置使用已核验的稳定标识及用户/账号/群 ID；可从平台账号管理、手机账号列表和目标群卡片复制。社区内容模式填写已发布模板版本 ID 与已审核帖子 ID。服务器负责最终授权、版本、限额、去重和历史通道互斥核验。
+旧 v1 身份配置使用已核验的稳定标识及用户/账号/群 ID；可从平台账号管理、手机账号列表和目标群卡片复制。企业微信 v3 使用可见资料核验和发布配置，外部业务/控件 ID 不可用；策略与逐群进度操作见 [多群执行手册](configured-mobile-delivery.md)。社区内容模式填写已发布模板版本 ID 与已审核帖子 ID。服务器负责最终授权、版本、限额、去重和历史通道互斥核验。
