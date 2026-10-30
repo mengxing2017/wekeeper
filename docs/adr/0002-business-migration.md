@@ -45,7 +45,7 @@ HTTP 创建使用独立无重试/无重定向 adapter；每批持久化单次调
 去重跨新群发和旧人工分享快照；并发确认按目标群锁串行。再次发送须 admin、来源和原因，未核对 unknown 及未停止的旧任务阻塞重发。
 提醒/停止也使用幂等操作记录，停止不能撤回已发送消息。创建时停止覆盖迟到 msgid。API 内 worker 用数据库协调，不增加部署应用。
 旧分享菜单与 SDK 发送页面已移除，/wecom 提示迁移；旧草稿/尝试保留历史读取和人工核对，不转换为官方成功。旧发送写接口拒绝；迁移兼容期允许已领取操作回报结果。
-仅新增 forward-only migration，不改已应用 SQL。详见 docs/runbooks/wecom.md 和 report/28 实施方案。
+仅新增 forward-only migration，不改已应用 SQL。配置、旧通道退场、unknown、回退和验收见 [企业微信统一群发运行手册](../runbooks/wecom.md)。
 
 ## 媒体与兼容
 
