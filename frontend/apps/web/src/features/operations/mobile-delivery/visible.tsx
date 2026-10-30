@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Alert, Button, Card, Space, Table, Tag } from 'antd'
+import { Alert, Button, Card, Space, Table, Tag, Select, InputNumber } from 'antd'
 import { ActionDrawer } from '../../../shared/action-drawer'
 import { PaginationControls } from '../../../shared/pagination-controls'
 import { Editor } from '../../admin/workspace/editor'
@@ -10,6 +10,8 @@ import {
   type DeliveryGroup,
   type DeliveryStrategy,
   type StrategyInput,
+  type ConfigurationRelease,
+  type RunRevisionPreview,
 } from './api'
 const key = () => crypto.randomUUID()
 const evidence = { name: 'evidence_ref', title: '人工核对依据' }
@@ -206,6 +208,239 @@ export function VisibleGroupReview({
     </Card>
   )
 }
+function StrategyEditor({
+  fields,
+  strategy,
+  groups,
+  releases,
+  onSave,
+}: {
+  fields: Parameters<typeof Editor>[0]['fields']
+  strategy?: DeliveryStrategy
+  groups: DeliveryGroup[]
+  releases: ConfigurationRelease[]
+  onSave: (v: Record<string, string>, extra: Partial<StrategyInput>) => Promise<void>
+}) {
+  const [mode, setMode] = useState(strategy?.delivery_mode ?? 'single_group')
+  const [targets, setTargets] = useState<string[]>(strategy?.targets?.map((t) => t.group_id) ?? [])
+  const [release, setRelease] = useState(strategy?.configuration_release_id ?? undefined)
+  const [interval, setInterval] = useState<number | null>(
+    strategy?.inter_group_interval_seconds ?? null,
+  )
+  return (
+    <Space orientation="vertical" className="full-width">
+      <label>
+        发送模式{' '}
+        <Select
+          value={mode}
+          onChange={setMode}
+          options={[
+            { value: 'single_group', label: '单群' },
+            { value: 'ordered_groups', label: '多群顺序发送' },
+          ]}
+        />
+      </label>
+      <label>
+        已发布的规则与政策{' '}
+        <Select
+          allowClear
+          style={{ minWidth: 300 }}
+          value={release}
+          onChange={setRelease}
+          options={releases
+            .filter(
+              (r) =>
+                r.active &&
+                !r.revoked &&
+                (!strategy || !r.device_id || r.device_id === strategy.device_id),
+            )
+            .map((r) => ({
+              value: r.id,
+              label: `${r.name} · ${r.client?.version_name} · ${r.id}`,
+            }))}
+        />
+      </label>
+      <label>
+        群间等待（秒，留空使用发布政策默认值）{' '}
+        <InputNumber min={0} value={interval} onChange={setInterval} />
+      </label>
+      {mode === 'ordered_groups' && (
+        <>
+          <Select<string>
+            aria-label="添加目标群"
+            placeholder="依次添加已核对的群"
+            value={undefined}
+            style={{ minWidth: 300 }}
+            options={groups
+              .filter((g) => !targets.includes(g.id))
+              .map((g) => ({ value: g.id, label: g.name }))}
+            onChange={(id) => setTargets([...targets, id])}
+          />
+          {targets.map((id, index) => (
+            <Space key={id}>
+              <span>
+                {index + 1}. {groups.find((g) => g.id === id)?.name ?? id}
+              </span>
+              <Button
+                disabled={!index}
+                onClick={() => {
+                  const copy = [...targets]
+                  ;[copy[index - 1], copy[index]] = [copy[index]!, copy[index - 1]!]
+                  setTargets(copy)
+                }}
+              >
+                上移
+              </Button>
+              <Button
+                disabled={index === targets.length - 1}
+                onClick={() => {
+                  const copy = [...targets]
+                  ;[copy[index + 1], copy[index]] = [copy[index]!, copy[index + 1]!]
+                  setTargets(copy)
+                }}
+              >
+                下移
+              </Button>
+              <Button onClick={() => setTargets(targets.filter((t) => t !== id))}>移除</Button>
+            </Space>
+          ))}
+        </>
+      )}
+      <Editor
+        fields={fields.filter((f) => mode === 'single_group' || f.name !== 'group_id')}
+        onSave={async (v) => {
+          if (mode === 'ordered_groups' && (!release || targets.length < 2))
+            throw new Error('多群模式需选择发布配置及至少两个不同群')
+          await onSave(v, {
+            delivery_mode: mode,
+            group_id: mode === 'single_group' ? v.group_id : null,
+            targets: mode === 'ordered_groups' ? targets.map((group_id) => ({ group_id })) : [],
+            configuration_release_id: release ?? null,
+            inter_group_interval_seconds: interval,
+          })
+        }}
+      />
+    </Space>
+  )
+}
+function RunDetails({
+  school,
+  id,
+  releases,
+}: {
+  school: string
+  id: string
+  releases: ConfigurationRelease[]
+}) {
+  const [target, setTarget] = useState<string>(),
+    [preview, setPreview] = useState<RunRevisionPreview>(),
+    [evidence, setEvidence] = useState(''),
+    [error, setError] = useState(''),
+    [busy, setBusy] = useState(false)
+  const progress = useQuery({
+    queryKey: ['mobile', school, 'progress', id],
+    queryFn: () => api.runProgress(school, id),
+    refetchInterval: 15000,
+  })
+  const action = async (fn: () => Promise<unknown>) => {
+    if (busy) return
+    setBusy(true)
+    setError('')
+    try {
+      await fn()
+      await progress.refetch()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+  const p = progress.data
+  return (
+    <Card title="顺序执行进度">
+      {(error || progress.error) && <Alert type="error" title={error || progress.error?.message} />}
+      {p && (
+        <>
+          <p>
+            当前第 {p.current_position} 项 / {p.items.length} 项 · 执行修订 {p.execution_revision} ·{' '}
+            {p.items.every((i) => ['ui_observed_sent', 'manually_sent'].includes(i.state))
+              ? '全部群已确认发送'
+              : '尚未全部成功'}
+          </p>
+          <p>
+            等待至：{p.next_eligible_at ?? '无'} · 暂停原因：{p.pause_reason ?? '无'} · 群间隔：
+            {p.inter_group_interval_ms / 1000} 秒
+          </p>
+          <Table
+            rowKey="id"
+            pagination={false}
+            dataSource={p.items}
+            columns={[
+              { title: '顺序', dataIndex: 'position' },
+              { title: '群', render: (_, i) => i.snapshot.group?.name ?? i.group_id },
+              { title: '状态', dataIndex: 'state' },
+            ]}
+          />
+          <p>
+            修订只作用于尚未领取、未发许可的剩余项；已发送项和历史快照保留。请先暂停手机，再预览并确认修订。
+          </p>
+          <Select
+            aria-label="替换配置"
+            placeholder="选择已发布的规则版本"
+            value={target}
+            style={{ minWidth: 300 }}
+            onChange={(v) => {
+              setTarget(v)
+              setPreview(undefined)
+            }}
+            options={releases
+              .filter((r) => r.active && !r.revoked)
+              .map((r) => ({ value: r.id, label: `${r.name} · ${r.id}` }))}
+          />
+          <Button
+            disabled={!target || busy}
+            onClick={() =>
+              void action(async () =>
+                setPreview(await api.previewRunRevision(school, id, target!, key())),
+              )
+            }
+          >
+            预览剩余项修订
+          </Button>
+          {preview && (
+            <>
+              <pre>
+                当前进度版本：{preview.revision}
+                新配置：{preview.new_release.id}
+                预览摘要：{preview.preview_digest}
+              </pre>
+              <Editor
+                fields={[{ name: 'evidence_ref', title: '人工核对与恢复依据', value: evidence }]}
+                submit="确认修订并允许后续领取"
+                onSave={async (v) => {
+                  setEvidence(v.evidence_ref)
+                  await api.reviseRun(
+                    school,
+                    id,
+                    {
+                      expected_revision: preview.revision,
+                      configuration_release_id: target!,
+                      preview_digest: preview.preview_digest,
+                      evidence_ref: v.evidence_ref,
+                    },
+                    key(),
+                  )
+                  setPreview(undefined)
+                  await progress.refetch()
+                }}
+              />
+            </>
+          )}
+        </>
+      )}
+    </Card>
+  )
+}
 export function VisibleStrategies({
   school,
   openTask,
@@ -218,6 +453,8 @@ export function VisibleStrategies({
     [groupPage, setGroupPage] = useState(1),
     [runPage, setRunPage] = useState(1),
     [selected, setSelected] = useState<DeliveryStrategy>(),
+    [runId, setRunId] = useState<string>(),
+    [releasePage, setReleasePage] = useState(1),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false)
   const lock = useRef(false),
@@ -239,6 +476,10 @@ export function VisibleStrategies({
     queryKey: ['mobile', school, 'runs', selected?.id, runPage],
     queryFn: () => api.strategyRuns(school, selected!.id, runPage),
     enabled: !!selected,
+  })
+  const releases = useQuery({
+    queryKey: ['mobile', school, 'releases', releasePage],
+    queryFn: () => api.schoolConfigurationReleases(school, releasePage, 100),
   })
   const refresh = async () => {
     await cache.invalidateQueries({ queryKey: ['mobile', school] })
@@ -262,17 +503,17 @@ export function VisibleStrategies({
     },
     {
       name: 'device_id',
-      title: '绑定手机（v2，须与选择账号一致）',
+      title: '绑定手机（须与选择账号、发布范围一致）',
       value: s?.device_id,
       options:
         targets.data?.devices
-          .filter((d) => d.enabled && d.execution_protocol_version === 2)
+          .filter((d) => d.enabled && (d.execution_protocol_version ?? 1) >= 2)
           .map((d) => ({ value: d.id, label: `${d.name} · 绑定版本 ${d.binding_revision}` })) ?? [],
     },
     {
       name: 'group_id',
       title: '已核对的目标群',
-      value: s?.group_id,
+      value: s?.group_id ?? undefined,
       options:
         groups.data?.items
           .filter(
@@ -334,10 +575,19 @@ export function VisibleStrategies({
       title="指定群发送策略"
       extra={
         <ActionDrawer title="新建发送策略">
-          <Editor
+          <StrategyEditor
             fields={fields()}
-            onSave={async (v) => {
-              await api.createStrategy(school, input(v), key())
+            groups={
+              groups.data?.items.filter(
+                (g) =>
+                  g.enabled &&
+                  g.identity_mode === 'ui_visible' &&
+                  g.verification_state === 'reviewed',
+              ) ?? []
+            }
+            releases={releases.data?.items ?? []}
+            onSave={async (v, extra) => {
+              await api.createStrategy(school, { ...input(v), ...extra }, key())
               await refresh()
             }}
           />
@@ -370,6 +620,15 @@ export function VisibleStrategies({
           下一页群
         </Button>
       </Space>
+      <PaginationControls
+        page={releasePage}
+        more={releases.data?.page?.has_more}
+        change={setReleasePage}
+        subject="发布配置"
+      />
+      {runId && (
+        <RunDetails key={runId} school={school} id={runId} releases={releases.data?.items ?? []} />
+      )}
       <Table
         rowKey="id"
         pagination={false}
@@ -411,6 +670,10 @@ export function VisibleStrategies({
                           name: s.name,
                           sender_account_id: s.sender_account_id,
                           group_id: s.group_id,
+                          delivery_mode: s.delivery_mode,
+                          targets: s.targets,
+                          configuration_release_id: s.configuration_release_id,
+                          inter_group_interval_seconds: s.inter_group_interval_seconds,
                           device_id: s.device_id,
                           text_content: s.text_content,
                         },
@@ -445,14 +708,24 @@ export function VisibleStrategies({
           title={`策略配置 · ${selected.name}`}
           extra={<Button onClick={() => setSelected(undefined)}>关闭配置</Button>}
         >
-          <Editor
+          <StrategyEditor
             key={`${selected.id}-${selected.revision}`}
+            strategy={selected}
+            groups={
+              groups.data?.items.filter(
+                (g) =>
+                  g.enabled &&
+                  g.identity_mode === 'ui_visible' &&
+                  g.verification_state === 'reviewed',
+              ) ?? []
+            }
+            releases={releases.data?.items ?? []}
             fields={fields(selected)}
-            onSave={async (v) => {
+            onSave={async (v, extra) => {
               const updated = await api.updateStrategy(
                 school,
                 selected.id,
-                { ...input(v), expected_revision: selected.revision },
+                { ...input(v), ...extra, expected_revision: selected.revision },
                 key(),
               )
               setSelected(updated)
@@ -464,6 +737,7 @@ export function VisibleStrategies({
             <p key={r.id}>
               策略版本 {r.strategy_revision} · {r.task_state} ·{' '}
               <Button onClick={() => openTask(r.task_id)}>查看本次任务</Button>
+              <Button onClick={() => setRunId(r.id)}>逐群进度与配置修订</Button>
             </p>
           ))}
           <PaginationControls
