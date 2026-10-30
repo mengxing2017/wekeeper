@@ -8,6 +8,7 @@
 | [业务运行、迁移与验收](../runbooks/business.md) | 学校、账号、内容审核、旧数据迁移和业务闭环 |
 | [企业微信接入](../runbooks/wecom.md) | 目录和群发权限、人工确认、unknown、真实平台验收 |
 | [手机执行接口](../runbooks/mobile-delivery.md) | 配对、设备凭据、版本审批、permit、结果和通道切换 |
+| [企业微信规则与多群执行](../runbooks/configured-mobile-delivery.md) | v3 配置发布、可见身份、顺序等待、剩余项修订和验收边界 |
 | [基础阶段验证记录](../runbooks/foundation-validation.md) | 2026-10-20 骨架检查及当时的环境限制，不是当前全部业务的验收结论 |
 
 ## 常用检查

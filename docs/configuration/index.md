@@ -13,8 +13,11 @@
 | `frontend/apps/miniapp/src/manifest.json` | 小程序 AppID 与平台构建配置 |
 | `devbox.json` | Rust/Node/pnpm 开发工具环境 |
 | `docs/package.json` / `.vitepress/config.ts` | 文档脚本、页面导航与本地搜索 |
+| 平台「规则与政策中心」 | 企业微信 v3 不可变页面规则、时间政策、人工基准及学校/设备发布范围 |
 
 具体默认值和完整部署命令见 [Docker 配置手册](../runbooks/docker.md)，不要用不同文档中的示例覆盖已有生产配置。
+
+企业微信 v3 的客户端规则、冷却、额度、群间等待和会话时长存入数据库并按版本发布，不通过修改 APK 常量配置。创建、只读验证、发布、撤销及剩余项修订见 [规则配置与多群执行](../runbooks/configured-mobile-delivery.md)。
 
 ## 变量分组
 
