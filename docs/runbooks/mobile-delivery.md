@@ -22,7 +22,9 @@
 
 所有 POST/PATCH 必须带 1–128 字符 Idempotency-Key。同主体、操作、资源、key 异参返回 409；网络重试保留原 key，后续新业务操作使用新 key。不要把密钥放在 URL。
 
-Web 管理端通过共享 `createIdempotencyKey()` 生成 UUID v4。`crypto.randomUUID()` 仅在安全上下文中提供，局域网 HTTP 地址或部分旧浏览器可能没有此方法；前端会回退到 `crypto.getRandomValues()`，保留安全随机数及 UUID 版本/变体位，不使用时间戳或 `Math.random()` 代替。如果浏览器连安全随机字节 API 也不支持，页面显示明确提示并在发请求前停止。浏览器接口边界见 [Web Crypto 规范](https://w3c.github.io/webcrypto/#crypto-interface)。此兼容处理不改变现有重试 key 保留逻辑，也不改变 Android 执行端固定 HTTPS 源的要求。
+Web 管理端通过共享 `createIdempotencyKey()` 调用第三方 `nanoid/non-secure` 生成 32 字符幂等键（`A-Za-z0-9_-`），不再生成 UUID，也不依赖浏览器 `crypto`、`randomUUID()` 或 `getRandomValues()`；局域网 HTTP 或没有 Web Crypto 的浏览器仍可登记手机。后端接收 1–128 字符的 key，不要求 UUID 格式。该实现使用伪随机数，仅用于请求去重，不能用于密码、配对码、访问令牌等凭据；实现说明见 [Nano ID 非加密入口](https://github.com/ai/nanoid#non-secure)。网络重试仍保留原 key，后续新操作生成新 key；Android 执行端固定 HTTPS 源的要求不变。
+
+`nanoid` 已声明为 Web 的运行依赖并写入 `frontend/pnpm-lock.yaml`。Dockerfile 的冻结依赖安装及 `pnpm build:web` 会将其打入 `/srv/assets` 中的 JS，不需要在容器运行时安装 Node 或访问 CDN。发布时需重新构建、发布 Web 镜像并重建对应容器；仅重启旧镜像不会更新前端代码。
 
 浏览器管理沿用 Cookie、Origin、X-CSRF-Token。设备仅接受 `Authorization: Bearer wk_device_...`，Cookie/miniapp token 不能替代；设备 token 不能访问后台业务接口。设备 client 固定 HTTPS origin、credentials=omit、redirect=error，不自动重试请求。设备有效凭据每分钟最多 120 请求；同设备配对尝试每 10 分钟最多 20 次，超出 429 device_request_limit。
 
