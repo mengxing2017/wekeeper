@@ -48,11 +48,8 @@ function show(role?: string) {
     </QueryClientProvider>,
   )
 }
-it.each([true, false])('registers a phone without randomUUID when secure random bytes are available=%s', async (randomAvailable) => {
-  const crypto = globalThis.crypto
-  vi.stubGlobal('crypto', randomAvailable
-    ? { getRandomValues: crypto.getRandomValues.bind(crypto) }
-    : {})
+it.each([undefined, {}])('registers a phone without Web Crypto (%s)', async (crypto) => {
+  vi.stubGlobal('crypto', crypto)
   vi.mocked(api.devices).mockResolvedValue({ items: [] })
   vi.mocked(api.accounts).mockResolvedValue({ items: [] })
   vi.mocked(api.createDevice).mockResolvedValue({
@@ -68,16 +65,11 @@ it.each([true, false])('registers a phone without randomUUID when secure random 
   fireEvent.click(await screen.findByRole('button', { name: /登记手机/ }))
   fireEvent.change(await screen.findByRole('textbox', { name: '设备名称' }), { target: { value: '测试手机' } })
   fireEvent.click(screen.getByRole('button', { name: /保\s*存/ }))
-  if (randomAvailable) {
-    await screen.findByText('已保存')
-    expect(api.createDevice).toHaveBeenCalledExactlyOnceWith(
-      { name: '测试手机' },
-      expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),
-    )
-  } else {
-    await screen.findByText('当前浏览器不支持安全随机数，请升级浏览器或使用 HTTPS 访问。')
-    expect(api.createDevice).not.toHaveBeenCalled()
-  }
+  await screen.findByText('已保存')
+  expect(api.createDevice).toHaveBeenCalledExactlyOnceWith(
+    { name: '测试手机' },
+    expect.stringMatching(/^[A-Za-z0-9_-]{32}$/),
+  )
 })
 it('requires actual school authorization before requesting business data', () => {
   show()
