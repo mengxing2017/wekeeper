@@ -10,6 +10,7 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct Repository(pub PgPool);
 type Tx<'a> = Transaction<'a, Postgres>;
+mod configured;
 mod visible;
 pub async fn guard(tx: &mut Tx<'_>) -> Result<()> {
     sqlx::query("SELECT pg_advisory_xact_lock(78234610241)")
@@ -62,9 +63,9 @@ fn strv<'a>(v: &'a Value, key: &str) -> Result<&'a str> {
 }
 async fn device(tx: &mut Tx<'_>, p: &Principal) -> Result<(Uuid, i64)> {
     let (id, generation) = match p {
-        Principal::Device { id, generation } | Principal::DeviceV2 { id, generation } => {
-            (id, generation)
-        }
+        Principal::Device { id, generation }
+        | Principal::DeviceV2 { id, generation }
+        | Principal::DeviceV3 { id, generation } => (id, generation),
         _ => return Err(Error::Unauthorized),
     };
     sqlx::query("SELECT d.id FROM execution_devices d WHERE d.id=$1 AND d.enabled AND d.credential_generation=$2 AND EXISTS(SELECT 1 FROM device_credentials c WHERE c.device_id=d.id AND c.generation=$2 AND c.revoked_at IS NULL AND c.expires_at>clock_timestamp()) FOR SHARE OF d").bind(id).bind(generation).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("device_revoked"))?;
@@ -219,9 +220,22 @@ async fn validate_snapshot(tx: &mut Tx<'_>, i: &Value, origin: &str) -> Result<(
     };
     let mut current = snapshot(tx, uid(i, "school_id")?, &input, origin).await?;
     if i["snapshot"]["group"]["identity_mode"] == "ui_visible" {
-        visible::validate_execution(tx, i, None, 2).await?;
+        visible::validate_execution(
+            tx,
+            i,
+            None,
+            i["snapshot"]["requirements"]["protocol_version"]
+                .as_u64()
+                .unwrap_or(2) as u32,
+        )
+        .await?;
         current["execution_target"] = i["snapshot"]["execution_target"].clone();
         current["requirements"] = i["snapshot"]["requirements"].clone();
+        if configured::is_configured(i) {
+            for k in ["configuration", "execution_revision", "sequence"] {
+                current[k] = i["snapshot"][k].clone();
+            }
+        }
     }
     // Policy changes are evaluated independently and must not invalidate identity snapshots.
     let mut old = i["snapshot"].clone();
@@ -352,6 +366,20 @@ async fn restrictions(tx: &mut Tx<'_>, i: &Value) -> Result<()> {
     let s = uid(i, "school_id")?;
     let item = uid(i, "id")?;
     let digest = strv(i, "content_digest")?;
+    let policy = if configured::is_configured(i) {
+        json!(configured::config(i)?.policy)
+    } else {
+        sqlx::query_scalar::<_, Value>(
+            "SELECT to_jsonb(p) FROM delivery_execution_defaults p WHERE id",
+        )
+        .fetch_one(&mut **tx)
+        .await?
+    };
+    let scope_run: Option<Uuid> = if configured::is_configured(i) {
+        Some(uid(&i["snapshot"]["execution_target"], "run_id")?)
+    } else {
+        None
+    };
     let account_limit: i32 =
         sqlx::query_scalar("SELECT daily_limit FROM sending_accounts WHERE id=$1")
             .bind(account)
@@ -366,7 +394,7 @@ async fn restrictions(tx: &mut Tx<'_>, i: &Value) -> Result<()> {
     if duplicate {
         return Err(Error::Policy("duplicate_delivery"));
     }
-    let allocation:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM delivery_dedup_reservations WHERE active AND item_id<>$1 AND content_digest=$2 AND ((school_id=$3 AND group_id<>$4) OR group_id=$4)) OR EXISTS(SELECT 1 FROM delivery_usage WHERE school_id=$3 AND group_id<>$4 AND content_digest=$2 AND state<>'not_sent')").bind(item).bind(digest).bind(s).bind(group).fetch_one(&mut **tx).await?;
+    let allocation:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM delivery_dedup_reservations r WHERE r.active AND r.item_id<>$1 AND r.content_digest=$2 AND ((r.school_id=$3 AND r.group_id<>$4) OR r.group_id=$4) AND NOT (r.group_id<>$4 AND $5::uuid IS NOT NULL AND EXISTS(SELECT 1 FROM mobile_delivery_run_items m WHERE m.item_id=r.item_id AND m.run_id=$5))) OR EXISTS(SELECT 1 FROM delivery_usage u WHERE u.school_id=$3 AND u.group_id<>$4 AND u.content_digest=$2 AND u.state<>'not_sent' AND NOT ($5::uuid IS NOT NULL AND u.source_channel='mobile' AND u.state='sent' AND EXISTS(SELECT 1 FROM mobile_delivery_run_items m WHERE m.item_id=u.source_id AND m.run_id=$5)))").bind(item).bind(digest).bind(s).bind(group).bind(scope_run).fetch_one(&mut **tx).await?;
     if allocation {
         return Err(Error::Policy("school_content_conflict"));
     }
@@ -379,17 +407,23 @@ async fn restrictions(tx: &mut Tx<'_>, i: &Value) -> Result<()> {
         }
     }
     // Unknown/pending are never aged out. Known sends use observation time, not the device clock.
-    let counts=sqlx::query("SELECT count(*) FILTER(WHERE (sender_account_id=$1 OR (sender_account_id IS NULL AND responsible_actor_id=(SELECT responsible_actor_id FROM sending_accounts WHERE id=$1)))) AS a,count(*) FILTER(WHERE group_id=$2) AS g FROM delivery_usage WHERE state IN ('pending','unknown') OR (state='sent' AND observed_at>clock_timestamp()-interval '24 hours')").bind(account).bind(group).fetch_one(&mut **tx).await?;
-    if counts.get::<i64, _>("a") >= i64::from(account_limit)
-        || counts.get::<i64, _>("g") >= i64::from(group_limit)
-    {
+    let counts=sqlx::query("SELECT count(*) FILTER(WHERE (sender_account_id=$1 OR (sender_account_id IS NULL AND responsible_actor_id=(SELECT responsible_actor_id FROM sending_accounts WHERE id=$1)))) AS a,count(*) FILTER(WHERE group_id=$2) AS g FROM delivery_usage WHERE state IN ('pending','unknown') OR (state='sent' AND observed_at>clock_timestamp()-$3*interval '1 millisecond')").bind(account).bind(group).bind(policy["quota_window_ms"].as_i64().ok_or(Error::Conflict)?).fetch_one(&mut **tx).await?;
+    let account_limit = policy["account_limit"]
+        .as_i64()
+        .unwrap_or(i64::from(account_limit))
+        .min(i64::from(account_limit));
+    let group_limit = policy["group_limit"]
+        .as_i64()
+        .unwrap_or(i64::from(group_limit))
+        .min(i64::from(group_limit));
+    if counts.get::<i64, _>("a") >= account_limit || counts.get::<i64, _>("g") >= group_limit {
         return Err(Error::Policy("quota_exhausted"));
     }
     let unknown:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM delivery_usage WHERE state IN ('pending','unknown') AND ((sender_account_id=$1 OR (sender_account_id IS NULL AND responsible_actor_id=(SELECT responsible_actor_id FROM sending_accounts WHERE id=$1))) OR group_id=$2 OR content_digest=$3))").bind(account).bind(group).bind(digest).fetch_one(&mut **tx).await?;
     if unknown {
         return Err(Error::Policy("unknown_requires_review"));
     }
-    let cooldown:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM delivery_usage WHERE state='sent' AND (((sender_account_id=$1 OR (sender_account_id IS NULL AND responsible_actor_id=(SELECT responsible_actor_id FROM sending_accounts WHERE id=$1))) AND observed_at>clock_timestamp()-interval '30 minutes') OR (content_digest=$2 AND observed_at>clock_timestamp()-interval '10 minutes')))").bind(account).bind(digest).fetch_one(&mut **tx).await?;
+    let cooldown:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM delivery_usage WHERE state='sent' AND (((sender_account_id=$1 OR (sender_account_id IS NULL AND responsible_actor_id=(SELECT responsible_actor_id FROM sending_accounts WHERE id=$1))) AND observed_at>clock_timestamp()-$3*interval '1 millisecond') OR (content_digest=$2 AND observed_at>clock_timestamp()-$4*interval '1 millisecond')))").bind(account).bind(digest).bind(policy["account_cooldown_ms"].as_i64().ok_or(Error::Conflict)?).bind(policy["content_cooldown_ms"].as_i64().ok_or(Error::Conflict)?).fetch_one(&mut **tx).await?;
     if cooldown {
         return Err(Error::Policy("cooldown_active"));
     }
@@ -415,12 +449,12 @@ async fn preview(tx: &mut Tx<'_>, task: Uuid, origin: &str) -> Result<Value> {
             Err(Error::Invalid(_)) => Some("source_invalid"),
             Err(e) => return Err(e),
         };
-        checks.push(json!({"id":i["id"],"group_id":i["group_id"],"content":i["content"],"snapshot_digest":i["snapshot_digest"],"reason":reason,"next_eligible_at":null}));
+        checks.push(json!({"id":i["id"],"group_id":i["group_id"],"group_name":i["snapshot"]["group"]["name"],"content":i["content"],"snapshot_digest":i["snapshot_digest"],"reason":reason,"next_eligible_at":null,"configured":configured::is_configured(&i),"sequence":i["snapshot"]["sequence"],"configuration":i["snapshot"]["configuration"]}));
     }
     let task = object(tx, "mobile_delivery_tasks", task).await?;
     let digest = hash(&json!({"revision":task["revision"],"items":checks}).to_string());
     Ok(
-        json!({"id":task["id"],"expected_revision":task["revision"],"preview_digest":digest,"items":checks,"requires_substantive_difference_review":true}),
+        json!({"id":task["id"],"expected_revision":task["revision"],"preview_digest":digest,"items":checks,"requires_substantive_difference_review":!checks.iter().any(|i|i["configured"]==true),"requires_shared_text_scope_acceptance":checks.iter().any(|i|i["configured"]==true)}),
     )
 }
 async fn claim_object(tx: &mut Tx<'_>, p: &Principal, id: Uuid) -> Result<(Value, Value)> {
@@ -438,21 +472,29 @@ async fn claim_object(tx: &mut Tx<'_>, p: &Principal, id: Uuid) -> Result<(Value
 async fn claim_response(tx: &mut Tx<'_>, c: &Value, i: &Value) -> Result<Value> {
     let set = settings(tx, uid(i, "school_id")?).await?;
     let mut may_execute:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_send_permits p JOIN mobile_delivery_items i ON i.id=p.item_id JOIN mobile_delivery_tasks t ON t.id=i.task_id JOIN mobile_delivery_settings s ON s.school_id=i.school_id WHERE p.claim_id=$1 AND p.state='issued' AND p.execute_before>clock_timestamp() AND i.state='permit_issued' AND t.state='confirmed' AND s.enabled AND s.history_reviewed AND EXISTS(SELECT 1 FROM mobile_execution_claims c WHERE c.id=p.claim_id AND c.preparation_settings_revision=s.revision) AND EXISTS(SELECT 1 FROM accounts a JOIN school_memberships m ON m.account_id=a.id JOIN schools sc ON sc.id=m.school_id WHERE a.id=t.confirmed_by AND a.active AND sc.active AND m.school_id=i.school_id AND (m.role='admin' OR (i.source->>'kind'='posts' AND m.role='operator'))) AND EXISTS(SELECT 1 FROM sending_accounts a JOIN accounts u ON u.id=a.responsible_actor_id JOIN school_memberships m ON m.account_id=u.id WHERE a.id=i.sender_account_id AND a.enabled AND u.active AND m.school_id=i.school_id AND m.role='admin') AND EXISTS(SELECT 1 FROM delivery_groups g WHERE g.id=i.group_id AND g.enabled) AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(i.snapshot->'posts') sp LEFT JOIN posts post ON post.id=(sp->>'id')::uuid WHERE post.id IS NULL OR post.audit_status<>'approved' OR post.visibility<>'visible' OR post.revision<>(sp->>'revision')::bigint))").bind(uid(c,"id")?).fetch_one(&mut **tx).await? && std::env::var("WEKEEPER_MOBILE_EXECUTION_ENABLED").is_ok_and(|v|v=="true");
-    if c["protocol_version"] == 2
-        && visible::validate_execution(tx, i, Some(uid(c, "device_id")?), 2)
-            .await
-            .is_err()
+    if c["protocol_version"].as_u64().unwrap_or(1) >= 2
+        && visible::validate_execution(
+            tx,
+            i,
+            Some(uid(c, "device_id")?),
+            c["protocol_version"].as_u64().unwrap_or(1) as u32,
+        )
+        .await
+        .is_err()
     {
         may_execute = false;
     }
-    let req = if c["protocol_version"] == 2 {
+    if configured::is_configured(i) && configured::validate(tx, i).await.is_err() {
+        may_execute = false;
+    }
+    let req = if c["protocol_version"].as_u64().unwrap_or(1) >= 2 {
         c["requirements_snapshot"].clone()
     } else {
         visible::requirements(&set, 1)
     };
     let permit:Option<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',id,'invocation_id',invocation_id,'state',state,'execute_before',execute_before) FROM mobile_send_permits WHERE claim_id=$1").bind(uid(c,"id")?).fetch_optional(&mut **tx).await?;
     Ok(
-        json!({"id":c["id"],"claim_id":c["id"],"item_id":i["id"],"school_id":i["school_id"],"state":c["state"],"item_state":i["state"],"fence":c["fence"],"binding_revision":c["binding_revision"],"lease_until":c["lease_until"],"group_snapshot":i["snapshot"]["group"],"sender_binding":i["snapshot"]["sender"],"content":i["content"],"content_digest":i["content_digest"],"snapshot_digest":i["snapshot_digest"],"permit":permit,"may_execute":may_execute,"execution_target":i["snapshot"]["execution_target"],"requirements":req,"server_time":db_now(tx).await?}),
+        json!({"id":c["id"],"claim_id":c["id"],"item_id":i["id"],"school_id":i["school_id"],"state":c["state"],"item_state":i["state"],"fence":c["fence"],"binding_revision":c["binding_revision"],"lease_until":c["lease_until"],"group_snapshot":i["snapshot"]["group"],"sender_binding":i["snapshot"]["sender"],"content":i["content"],"content_digest":i["content_digest"],"snapshot_digest":i["snapshot_digest"],"permit":permit,"may_execute":may_execute,"execution_target":i["snapshot"]["execution_target"],"requirements":req,"configuration":i["snapshot"]["configuration"],"sequence":i["snapshot"]["sequence"],"execution_revision":i["snapshot"]["execution_revision"],"server_time":db_now(tx).await?}),
     )
 }
 async fn db_now(tx: &mut Tx<'_>) -> Result<chrono::DateTime<chrono::Utc>> {
@@ -481,6 +523,9 @@ async fn ready_claim(
         return Err(Error::Policy("permit_expired"));
     }
     visible::validate_execution(tx, &i, Some(uid(&c, "device_id")?), p.protocol()).await?;
+    if configured::is_configured(&i) {
+        configured::validate(tx, &i).await?;
+    }
     let b = binding(tx, uid(&c, "device_id")?).await?;
     if b["revision"] != c["binding_revision"] || b["sender_account_id"] != i["sender_account_id"] {
         return Err(Error::Policy("binding_changed"));
@@ -513,6 +558,67 @@ impl Repository {
         origin: &str,
     ) -> Result<Value> {
         match c {
+            Command::CreateConfiguration { input } => configured::create(tx, p, *input).await,
+            Command::PublishConfiguration {
+                expected_revision,
+                school_id,
+                device_id,
+                evidence_ref,
+            } => {
+                configured::publish(
+                    tx,
+                    p,
+                    s,
+                    expected_revision,
+                    school_id,
+                    device_id,
+                    &evidence_ref,
+                )
+                .await
+            }
+            Command::RevokeConfigurationRelease {
+                expected_revision,
+                reason,
+            } => configured::revoke(tx, p, s, expected_revision, &reason).await,
+            Command::ResolveConfiguration {
+                package_name,
+                version_name,
+                version_code,
+                engine_version,
+                capabilities,
+            } => {
+                configured::resolve(
+                    tx,
+                    p,
+                    &package_name,
+                    &version_name,
+                    version_code,
+                    &engine_version,
+                    &capabilities,
+                )
+                .await
+            }
+            Command::PreviewRunRevision {
+                configuration_release_id,
+            } => configured::revision_preview(tx, p, s, Some(configuration_release_id)).await,
+            Command::ReviseRun {
+                expected_revision,
+                configuration_release_id,
+                preview_digest,
+                evidence_ref,
+            } => {
+                configured::revise(
+                    tx,
+                    p,
+                    s,
+                    expected_revision,
+                    configuration_release_id,
+                    &preview_digest,
+                    &evidence_ref,
+                )
+                .await
+            }
+
             Command::UpdateAccountProfile {
                 expected_revision,
                 visible_profile,
@@ -762,9 +868,13 @@ impl Repository {
                 reason,
             } => {
                 platform(tx, p).await?;
-                policy(daily_limit, true)?;
                 text(&reason, 1, 1000)?;
                 let a = object(tx, "sending_accounts", id(s)?).await?;
+                if a["identity_mode"] == "ui_visible" {
+                    require(daily_limit >= 0, "额度不得为负数")?;
+                } else {
+                    policy(daily_limit, true)?;
+                }
                 revision(&a, expected_revision)?;
                 sqlx::query(
                     "UPDATE sending_accounts SET daily_limit=$2,revision=revision+1 WHERE id=$1",
@@ -781,7 +891,12 @@ impl Repository {
                 reason,
             } => {
                 school_auth(tx, p.actor()?, school(s)?, true).await?;
-                policy(daily_limit, false)?;
+                let group = scoped_object(tx, s, "delivery_groups").await?;
+                if group["identity_mode"] == "ui_visible" {
+                    require(daily_limit >= 0, "额度不得为负数")?;
+                } else {
+                    policy(daily_limit, false)?;
+                }
                 text(&reason, 1, 1000)?;
                 revision(
                     &scoped_object(tx, s, "delivery_groups").await?,
@@ -839,6 +954,7 @@ impl Repository {
                 content_review,
                 scope_acceptance,
                 substantive_difference_reviewed,
+                shared_text_scope_acceptance,
                 evidence_ref,
             } => {
                 let task = scoped_object(tx, s, "mobile_delivery_tasks").await?;
@@ -846,11 +962,16 @@ impl Repository {
                 let text = list.iter().any(|i| i["source"]["kind"] == "text");
                 school_auth(tx, p.actor()?, school(s)?, text).await?;
                 revision(&task, expected_revision)?;
+                let shared = list.iter().any(configured::is_configured);
                 require(
                     task["state"] == "draft"
                         && content_review
                         && scope_acceptance
-                        && substantive_difference_reviewed,
+                        && if shared {
+                            shared_text_scope_acceptance == Some(true)
+                        } else {
+                            substantive_difference_reviewed
+                        },
                     "需要逐群人工确认内容、范围和实质差异",
                 )?;
                 let check = preview(tx, id(s)?, origin).await?;
@@ -874,6 +995,7 @@ impl Repository {
                     sqlx::query("INSERT INTO delivery_dedup_reservations(item_id,school_id,group_id,content_digest) VALUES($1,$2,$3,$4)").bind(uid(&i,"id")?).bind(school(s)?).bind(uid(&i,"group_id")?).bind(strv(&i,"content_digest")?).execute(&mut **tx).await?;
                 }
                 sqlx::query("UPDATE mobile_delivery_tasks SET state='confirmed',confirmed_by=$2,revision=revision+1,review_evidence_ref=$3 WHERE id=$1").bind(id(s)?).bind(p.actor()?).bind(crate::business::text(&evidence_ref,1,500)?).execute(&mut **tx).await?;
+                sqlx::query("UPDATE mobile_delivery_run_progress p SET confirmed_at=clock_timestamp() FROM mobile_delivery_strategy_runs r WHERE r.id=p.id AND r.task_id=$1").bind(id(s)?).execute(&mut **tx).await?;
                 object(tx, "mobile_delivery_tasks", id(s)?).await
             }
             Command::Stop {
@@ -940,7 +1062,17 @@ impl Repository {
                     .await?;
                 }
                 sqlx::query("INSERT INTO mobile_delivery_events(id,school_id,task_id,actor_id,action,detail) VALUES($1,$2,$3,$4,'reconciliation',$5)").bind(Uuid::now_v7()).bind(school(s)?).bind(uid(&i,"task_id")?).bind(p.actor()?).bind(json!({"item_id":id(s)?,"decision":decision,"reason":reason,"evidence_ref":evidence_ref})).execute(&mut **tx).await?;
-                object(tx, "mobile_delivery_items", id(s)?).await
+                let updated = object(tx, "mobile_delivery_items", id(s)?).await?;
+                configured::advance(tx, &updated, decision == "manually_sent").await?;
+                if configured::is_configured(&updated) && decision == "manually_sent" {
+                    sqlx::query("UPDATE mobile_delivery_run_progress SET pause_reason='manual_resume_required',revision=revision+1 WHERE id=$1").bind(uid(&updated["snapshot"]["execution_target"],"run_id")?).execute(&mut **tx).await?;
+                }
+                if configured::is_configured(&updated) && decision == "verified_not_sent" {
+                    sqlx::query("UPDATE mobile_delivery_tasks SET state='stopped',revision=revision+1 WHERE id=$1").bind(uid(&i,"task_id")?).execute(&mut **tx).await?;
+                    sqlx::query("UPDATE mobile_delivery_items SET state='cancelled',revision=revision+1 WHERE task_id=$1 AND state='queued'").bind(uid(&i,"task_id")?).execute(&mut **tx).await?;
+                    sqlx::query("UPDATE delivery_dedup_reservations r SET active=false FROM mobile_delivery_items i WHERE r.item_id=i.id AND i.task_id=$1 AND i.state='cancelled'").bind(uid(&i,"task_id")?).execute(&mut **tx).await?;
+                }
+                Ok(updated)
             }
             Command::Resend {
                 expected_revision,
@@ -953,6 +1085,10 @@ impl Repository {
                 require(
                     i["state"] == "verified_not_sent",
                     "仅核实未发送可建立重发草稿",
+                )?;
+                require(
+                    !configured::is_configured(&i),
+                    "顺序执行不能重发整个策略，请处理当前项或继续剩余进度",
                 )?;
                 let t = object(tx, "mobile_delivery_tasks", uid(&i, "task_id")?).await?;
                 if i["snapshot"]["group"]["identity_mode"] == "ui_visible" {
@@ -1000,14 +1136,17 @@ impl Repository {
                 protocol_version,
             } => {
                 require(
-                    matches!(p, Principal::Enrollment | Principal::EnrollmentV2),
+                    matches!(
+                        p,
+                        Principal::Enrollment | Principal::EnrollmentV2 | Principal::EnrollmentV3
+                    ),
                     "配对主体无效",
                 )?;
                 if protocol_version != p.protocol() {
                     return Err(Error::Policy("protocol_unsupported"));
                 }
                 sqlx::query("UPDATE device_enrollments SET consumed_at=clock_timestamp() WHERE device_id=$1 AND code_hash=$2 AND consumed_at IS NULL AND expires_at>clock_timestamp() RETURNING id").bind(device_id).bind(hash(&code)).fetch_optional(&mut **tx).await?.ok_or(Error::Unauthorized)?;
-                sqlx::query("UPDATE execution_devices SET client_instance_id=$2,execution_protocol_version=$3 WHERE id=$1")
+                sqlx::query("UPDATE execution_devices SET client_instance_id=$2,execution_protocol_version=$3,supported_protocol_versions=CASE WHEN $3=3 THEN ARRAY[1,2,3] WHEN $3=2 THEN ARRAY[1,2] ELSE ARRAY[1] END WHERE id=$1")
                     .bind(device_id)
                     .bind(text(&client_instance_id, 1, 200)?)
                     .bind(p.protocol() as i32)
@@ -1042,7 +1181,7 @@ impl Repository {
                     claim_object(tx, p, c).await?;
                 }
                 sqlx::query(
-                    "UPDATE execution_devices SET last_seen_at=clock_timestamp(),execution_protocol_version=$2 WHERE id=$1",
+                    "UPDATE execution_devices SET last_seen_at=clock_timestamp(),execution_protocol_version=$2,supported_protocol_versions=CASE WHEN $2=3 THEN ARRAY[1,2,3] WHEN $2=2 THEN ARRAY[1,2] ELSE ARRAY[1] END WHERE id=$1",
                 )
                 .bind(d)
                 .bind(p.protocol() as i32)
@@ -1063,7 +1202,10 @@ impl Repository {
                 }
                 if let Some(c)=sqlx::query_scalar::<_,Value>("SELECT to_jsonb(c) FROM mobile_execution_claims c WHERE device_id=$1 AND state IN ('claimed','prepared','permit_issued')").bind(d).fetch_optional(&mut **tx).await? {let i=object(tx,"mobile_delivery_items",uid(&c,"item_id")?).await?;if c["protocol_version"].as_u64().unwrap_or(1) != u64::from(p.protocol()) { return Err(Error::Policy("unsupported_execution_protocol")); } return claim_response(tx,&c,&i).await}
                 project(tx).await?;
-                let candidates:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(i) FROM (SELECT DISTINCT ON (i.group_id) i.* FROM mobile_delivery_items i JOIN mobile_delivery_tasks t ON t.id=i.task_id JOIN mobile_delivery_settings s ON s.school_id=i.school_id WHERE i.sender_account_id=$1 AND i.state='queued' AND t.state='confirmed' AND s.enabled AND s.history_reviewed ORDER BY i.group_id,i.created_at,i.id) i LEFT JOIN delivery_scheduler_cursors c ON c.school_id=i.school_id ORDER BY i.school_id,CASE WHEN i.group_id>c.last_group_id OR c.last_group_id IS NULL THEN 0 ELSE 1 END,i.group_id LIMIT 100").bind(uid(&b,"sender_account_id")?).fetch_all(&mut **tx).await?;
+                let candidates:Vec<Value>=match configured::candidate(tx,d,uid(&b,"sender_account_id")?,p.protocol()).await? {
+                    Some(Ok(i))=>vec![i],Some(Err(wait))=>return Ok(wait),
+None => sqlx::query_scalar("SELECT to_jsonb(i) FROM (SELECT DISTINCT ON (i.group_id) i.* FROM mobile_delivery_items i JOIN mobile_delivery_tasks t ON t.id=i.task_id JOIN mobile_delivery_settings s ON s.school_id=i.school_id WHERE i.sender_account_id=$1 AND i.state='queued' AND t.state='confirmed' AND s.enabled AND s.history_reviewed ORDER BY i.group_id,i.created_at,i.id) i LEFT JOIN delivery_scheduler_cursors c ON c.school_id=i.school_id ORDER BY i.school_id,CASE WHEN i.group_id>c.last_group_id OR c.last_group_id IS NULL THEN 0 ELSE 1 END,i.group_id LIMIT 100").bind(uid(&b,"sender_account_id")?).fetch_all(&mut **tx).await?,
+                };
                 let mut reason = "no_ready_task";
                 for i in candidates {
                     // Persist skipped scan position too: >100 blocked groups must not starve later groups.
@@ -1153,10 +1295,15 @@ impl Repository {
                     "准备检查与冻结身份不匹配",
                 )?;
                 let set = active_school(tx, uid(&i, "school_id")?).await?;
-                if set["approved_client_version"] != client_version
-                    || set["approved_script_version"] != script_version
-                    || set["approved_baseline_version"] != baseline_version
-                {
+                if if p.protocol() == 3 {
+                    i["snapshot"]["requirements"]["client_version"] != client_version
+                        || i["snapshot"]["requirements"]["script_version"] != script_version
+                        || i["snapshot"]["requirements"]["baseline_version"] != baseline_version
+                } else {
+                    set["approved_client_version"] != client_version
+                        || set["approved_script_version"] != script_version
+                        || set["approved_baseline_version"] != baseline_version
+                } {
                     return Err(Error::Policy("protocol_unsupported"));
                 }
                 let prep = Uuid::now_v7();
@@ -1228,7 +1375,7 @@ impl Repository {
                     visible::verification(&i, verification.as_ref(), p.protocol())?;
                 }
                 let event_digest=hash(&json!({"invocation_id":invocation_id,"permit_token_hash":hash(&permit_token),"result":result,"evidence_ref":evidence_ref,"observed_account_id":observed_account_id,"observed_group_id":observed_group_id,"content_digest":content_digest,"local_state":local_state,"reported_clicked_at":reported_clicked_at}).to_string());
-                let event_digest = if p.protocol() == 2 {
+                let event_digest = if p.protocol() >= 2 {
                     hash(&json!({"v1_digest":event_digest,"verification":verification}).to_string())
                 } else {
                     event_digest
@@ -1238,7 +1385,16 @@ impl Repository {
                     if old["event_digest"] != event_digest {
                         return Err(Error::Policy("revision_conflict"));
                     }
-                    return Ok(i);
+                    let mut ack = i.clone();
+                    if configured::is_configured(&i) {
+                        ack["run_progress"] = object(
+                            tx,
+                            "mobile_delivery_run_progress",
+                            uid(&i["snapshot"]["execution_target"], "run_id")?,
+                        )
+                        .await?;
+                    }
+                    return Ok(ack);
                 }
                 let permit:Value=sqlx::query_scalar("SELECT to_jsonb(p) FROM mobile_send_permits p WHERE claim_id=$1 AND invocation_id=$2 AND token_hash=$3").bind(id(s)?).bind(invocation_id).bind(hash(&permit_token)).fetch_optional(&mut **tx).await?.ok_or(Error::Forbidden)?;
                 require(
@@ -1281,7 +1437,18 @@ impl Repository {
                 sqlx::query("UPDATE mobile_delivery_items SET state=$2,observed_at=clock_timestamp(),revision=revision+1 WHERE id=$1").bind(uid(&i,"id")?).bind(state).execute(&mut **tx).await?;
                 sqlx::query("UPDATE delivery_usage SET state=$2,observed_at=clock_timestamp(),evidence_kind='ui' WHERE source_channel='mobile' AND source_id=$1").bind(uid(&i,"id")?).bind(if sent{"sent"}else{"unknown"}).execute(&mut **tx).await?;
                 sqlx::query("INSERT INTO mobile_delivery_events(id,school_id,task_id,device_id,action,detail) VALUES($1,$2,$3,$4,'device_result',$5)").bind(Uuid::now_v7()).bind(uid(&i,"school_id")?).bind(uid(&i,"task_id")?).bind(uid(&c,"device_id")?).bind(json!({"event_id":event_id,"event_digest":event_digest,"invocation_id":invocation_id,"item_id":i["id"],"result":state,"evidence_ref":evidence_ref,"reported_clicked_at":reported_clicked_at,"verification":verification})).execute(&mut **tx).await?;
-                object(tx, "mobile_delivery_items", uid(&i, "id")?).await
+                let updated = object(tx, "mobile_delivery_items", uid(&i, "id")?).await?;
+                configured::advance(tx, &updated, sent).await?;
+                let mut ack = updated;
+                if configured::is_configured(&i) {
+                    ack["run_progress"] = object(
+                        tx,
+                        "mobile_delivery_run_progress",
+                        uid(&i["snapshot"]["execution_target"], "run_id")?,
+                    )
+                    .await?;
+                }
+                Ok(ack)
             }
             Command::Abort { fence, reason } => {
                 text(&reason, 1, 1000)?;
@@ -1369,13 +1536,13 @@ impl Store for Repository {
                     platform(&mut tx, &p).await?;
                 }
             }
-            Principal::Device { .. } | Principal::DeviceV2 { .. } => {
+            Principal::Device { .. } | Principal::DeviceV2 { .. } | Principal::DeviceV3 { .. } => {
                 device(&mut tx, &p).await?;
                 if let Some(id) = s.id {
                     claim_object(&mut tx, &p, id).await?;
                 }
             }
-            Principal::Enrollment | Principal::EnrollmentV2 => {
+            Principal::Enrollment | Principal::EnrollmentV2 | Principal::EnrollmentV3 => {
                 if !matches!(c, Command::Enroll { .. }) {
                     return Err(Error::Unauthorized);
                 }
@@ -1392,7 +1559,7 @@ impl Store for Repository {
             if p.protocol() == 1 {
                 format!("enrollment:{device_id}")
             } else {
-                format!("enrollment:{device_id}:v2")
+                format!("enrollment:{device_id}:v{}", p.protocol())
             }
         } else {
             p.key()
@@ -1421,8 +1588,8 @@ impl Store for Repository {
             return Ok(response);
         }
         let mut response = Self::apply(&mut tx, &p, &s, c, enabled, origin).await?;
-        if p.protocol() == 2 && response.get("device_token").is_some() {
-            response["protocol_version"] = json!(2);
+        if p.protocol() >= 2 && response.get("device_token").is_some() {
+            response["protocol_version"] = json!(p.protocol());
         }
         let mut stored = response.clone();
         if let Some(obj) = stored.as_object_mut() {
@@ -1440,8 +1607,10 @@ impl Store for Repository {
             Some(uid(&response, "id")?)
         } else if action == "reconcile" {
             Some(uid(&response, "task_id")?)
-        } else if matches!(p, Principal::Device { .. } | Principal::DeviceV2 { .. })
-            && s.id.is_some()
+        } else if matches!(
+            p,
+            Principal::Device { .. } | Principal::DeviceV2 { .. } | Principal::DeviceV3 { .. }
+        ) && s.id.is_some()
         {
             let (_, item) = claim_object(&mut tx, &p, id(&s)?).await?;
             Some(uid(&item, "task_id")?)
@@ -1495,12 +1664,33 @@ impl Store for Repository {
                     platform(&mut tx, &p).await?;
                 }
             }
-            Principal::Device { .. } | Principal::DeviceV2 { .. } => {
+            Principal::Device { .. } | Principal::DeviceV2 { .. } | Principal::DeviceV3 { .. } => {
                 device(&mut tx, &p).await?;
             }
             _ => return Err(Error::Unauthorized),
         }
         let result = match q {
+            Query::Configurations => {
+                platform(&mut tx, &p).await?;
+                json!(sqlx::query_scalar::<_,Value>("SELECT to_jsonb(v) FROM client_rule_bundle_versions v ORDER BY created_at DESC,id DESC LIMIT $1 OFFSET $2").bind(limit).bind(offset).fetch_all(&mut *tx).await?)
+            }
+            Query::Configuration => {
+                platform(&mut tx, &p).await?;
+                object(&mut tx, "client_rule_bundle_versions", id(&s)?).await?
+            }
+            Query::ConfigurationReleases => {
+                if let Some(school) = s.school {
+                    school_auth(&mut tx, p.actor()?, school, true).await?;
+                } else {
+                    platform(&mut tx, &p).await?;
+                }
+                json!(sqlx::query_scalar::<_,Value>("SELECT to_jsonb(r)||jsonb_build_object('name',v.name,'client',v.configuration->'rules'->'client','content_digest',v.content_digest) FROM client_rule_releases r JOIN client_rule_bundle_versions v ON v.id=r.configuration_id WHERE ($1::uuid IS NULL OR r.school_id=$1) ORDER BY r.created_at DESC,r.id DESC LIMIT $2 OFFSET $3").bind(s.school).bind(limit).bind(offset).fetch_all(&mut *tx).await?)
+            }
+            Query::ConfigurationDownload => configured::download(&mut tx, &p, &s).await?,
+            Query::RunProgress => configured::progress(&mut tx, &p, &s).await?,
+            Query::RunRevisionPreview => {
+                configured::revision_preview(&mut tx, &p, &s, None).await?
+            }
             Query::Targets | Query::Strategies | Query::Strategy | Query::StrategyRuns => {
                 visible::query(&mut tx, &p, &s, q, limit, offset).await?
             }
@@ -1575,7 +1765,8 @@ impl Store for Repository {
                     None
                 };
                 let quotas:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('group_id',g.id,'daily_limit',g.daily_limit,'used',(SELECT count(*) FROM delivery_usage u WHERE u.group_id=g.id AND (u.state IN ('pending','unknown') OR (u.state='sent' AND u.observed_at>clock_timestamp()-interval '24 hours'))),'unknown',(SELECT count(*) FROM delivery_usage u WHERE u.group_id=g.id AND u.state IN ('pending','unknown'))) FROM delivery_groups g WHERE school_id=$1 ORDER BY id LIMIT 100").bind(school(&s)?).fetch_all(&mut *tx).await?;
-                json!({"id":school(&s)?,"create":true,"confirm":true,"claim_enabled":reason.is_none(),"reason":reason,"quota_summary":quotas,"quota_summary_limit":100,"settings":setting,"minimum_protocol_version":PROTOCOL_VERSION,"account_default_limit":30,"account_max_limit":50,"group_default_limit":10,"group_max_limit":30})
+                let visible:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM delivery_groups WHERE school_id=$1 AND identity_mode='ui_visible')").bind(school(&s)?).fetch_one(&mut *tx).await?;
+                json!({"id":school(&s)?,"create":true,"confirm":true,"claim_enabled":reason.is_none(),"reason":reason,"quota_summary":quotas,"quota_summary_limit":100,"settings":setting,"minimum_protocol_version":PROTOCOL_VERSION,"account_default_limit":30,"account_max_limit":if visible{i32::MAX}else{50},"group_default_limit":10,"group_max_limit":if visible{i32::MAX}else{30}})
             }
             Query::Items | Query::Events => {
                 p.actor()?;
@@ -1594,7 +1785,8 @@ impl Store for Repository {
                     Err(Error::Policy("binding_changed")) => None,
                     Err(e) => return Err(e),
                 };
-                json!({"id":d,"credential_generation":g,"binding":binding,"server_time":db_now(&mut tx).await?,"minimum_protocol_version":p.protocol(),"supported_protocol_versions":[1,2]})
+                let configuration_clients:Vec<Value>=sqlx::query_scalar("SELECT DISTINCT v.configuration->'rules'->'client' FROM client_rule_releases r JOIN client_rule_bundle_versions v ON v.id=r.configuration_id JOIN device_account_bindings b ON b.device_id=$1 JOIN sending_accounts a ON a.id=b.sender_account_id JOIN school_memberships m ON m.account_id=a.responsible_actor_id AND m.school_id=r.school_id AND m.role='admin' WHERE NOT r.revoked AND (r.active OR EXISTS(SELECT 1 FROM mobile_delivery_run_progress p JOIN mobile_delivery_strategy_runs sr ON sr.id=p.id JOIN mobile_delivery_tasks t ON t.id=sr.task_id WHERE p.configuration_release_id=r.id AND sr.device_id=$1 AND t.state='confirmed')) AND (r.device_id IS NULL OR r.device_id=$1)").bind(d).fetch_all(&mut *tx).await?;
+                json!({"configuration_clients":configuration_clients,"id":d,"credential_generation":g,"binding":binding,"server_time":db_now(&mut tx).await?,"minimum_protocol_version":p.protocol(),"supported_protocol_versions":[1,2,3]})
             }
             Query::Claim => {
                 let (c, i) = claim_object(&mut tx, &p, id(&s)?).await?;
