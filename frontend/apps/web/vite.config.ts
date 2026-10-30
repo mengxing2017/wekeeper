@@ -15,8 +15,9 @@ export default defineConfig({
   test: {
     // Ant Design form interactions can exceed the default 5s under parallel test load.
     testTimeout: 20000,
-    // Bound JSDOM/Ant Design workers to avoid CPU contention in CI.
-    maxWorkers: 2,
+    // Run JSDOM/Ant Design suites serially: concurrent form-heavy files exceed
+    // the existing timeout on constrained CI hosts even when isolated checks pass.
+    maxWorkers: 1,
     setupFiles: ['./src/test/setup.ts'],
     environment: 'jsdom',
     clearMocks: true,
