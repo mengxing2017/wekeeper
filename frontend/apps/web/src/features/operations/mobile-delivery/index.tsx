@@ -1,3 +1,4 @@
+import { ConfigurationWorkbench } from './configuration'
 import { ActionDrawer } from '../../../shared/action-drawer'
 import { useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -29,7 +30,7 @@ const identityFields = [
 const states: Record<string, string> = {
   draft: '草稿',
   confirmed: '已确认',
-  completed: '已完成',
+  completed: '处理结束（请逐项核对结果）',
   stopped: '已停止',
   queued: '排队中',
   claimed: '已领取',
@@ -110,9 +111,12 @@ export function ExecutionDevices() {
         items={[
           { key: 'devices', label: '手机设备' },
           { key: 'accounts', label: '发送账号' },
+          { key: 'rules', label: '规则与政策中心' },
         ]}
       />
-      {listTab === 'devices' ? (
+      {listTab === 'rules' ? (
+        <ConfigurationWorkbench />
+      ) : listTab === 'devices' ? (
         <>
           <Card
             className="data-panel"
@@ -361,7 +365,10 @@ export function ExecutionDevices() {
                     fields={[
                       {
                         name: 'daily_limit',
-                        title: '滚动 24 小时限额（0 暂停，最高 50）',
+                        title:
+                          a.identity_mode === 'ui_visible'
+                            ? '账号独立限额（0 暂停，与发布政策取较小值）'
+                            : '滚动 24 小时限额（0 暂停，最高 50）',
                         type: 'number',
                         value: a.daily_limit,
                       },
@@ -568,7 +575,10 @@ export default function MobileDelivery({ school, role }: { school: string; role?
                         fields={[
                           {
                             name: 'daily_limit',
-                            title: '同群所有账号合计限额（0 暂停，最高 30）',
+                            title:
+                              g.identity_mode === 'ui_visible'
+                                ? '同群所有账号合计限额（0 暂停，与发布政策取较小值）'
+                                : '同群所有账号合计限额（0 暂停，最高 30）',
                             type: 'number',
                             value: g.daily_limit,
                           },
@@ -823,6 +833,7 @@ function TaskDetail({
     [review, setReview] = useState(false),
     [scope, setScope] = useState(false),
     [difference, setDifference] = useState(false),
+    [shared, setShared] = useState(false),
     [evidence, setEvidence] = useState('')
   const task = useQuery({
     queryKey: ['mobile', school, id],
@@ -860,6 +871,7 @@ function TaskDetail({
               setReview(false)
               setScope(false)
               setDifference(false)
+              setShared(false)
               setPreview(await api.preview(school, id, { expected_revision: t.revision }, key()))
             })
           }
@@ -871,7 +883,21 @@ function TaskDetail({
         <section>
           <h3>逐群核对冻结内容</h3>
           {preview.items.map((i) => (
-            <Card key={i.id} title={i.group_id}>
+            <Card key={i.id} title={i.group_name ?? i.group_id}>
+              <p>
+                {i.sequence ? `第 ${i.sequence.position}/${i.sequence.total} 群` : null} · 配置{' '}
+                {i.configuration?.id ?? '旧协议'}
+              </p>
+              {i.configuration?.configuration && (
+                <p>
+                  群间等待{' '}
+                  {(i.sequence?.group_interval_ms ??
+                    i.configuration.configuration.policy.default_group_interval_ms) / 1000}{' '}
+                  秒 · 人工最低间隔{' '}
+                  {i.configuration.configuration.baseline.human_group_min_interval_ms / 1000} 秒 ·
+                  基准版本 {i.configuration.configuration.baseline.version}
+                </p>
+              )}
               <pre className="text-content">{i.content}</pre>
               {i.reason && (
                 <Alert
@@ -895,6 +921,11 @@ function TaskDetail({
               已核对同校不同群内容的实质差异
             </Checkbox>
           )}
+          {preview.requires_shared_text_scope_acceptance && (
+            <Checkbox checked={shared} onChange={(e) => setShared(e.target.checked)}>
+              已确认本次有序目标可接收相同正文，并核对群顺序、配置及人工基准
+            </Checkbox>
+          )}
           <Field label="人工确认依据">
             <Input value={evidence} onChange={(e) => setEvidence(e.target.value)} />
           </Field>
@@ -908,6 +939,7 @@ function TaskDetail({
               !scope ||
               !evidence.trim() ||
               (preview.requires_substantive_difference_review && !difference) ||
+              (preview.requires_shared_text_scope_acceptance && !shared) ||
               preview.expected_revision !== t.revision
             }
             onClick={() =>
@@ -921,6 +953,9 @@ function TaskDetail({
                     content_review: review,
                     scope_acceptance: scope,
                     substantive_difference_reviewed: difference,
+                    ...(preview.requires_shared_text_scope_acceptance
+                      ? { shared_text_scope_acceptance: shared }
+                      : {}),
                     evidence_ref: evidence,
                   },
                   key(),
@@ -948,7 +983,11 @@ function TaskDetail({
       )}
       <h3>逐群执行记录</h3>
       {items.data?.items.map((i) => (
-        <Card key={i.id} title={i.group_id} extra={<Tag>{states[i.state]}</Tag>}>
+        <Card
+          key={i.id}
+          title={i.snapshot.group?.name ?? i.group_id}
+          extra={<Tag>{states[i.state]}</Tag>}
+        >
           <pre className="text-content">{i.content}</pre>
           <p>
             账号：
