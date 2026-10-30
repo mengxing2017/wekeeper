@@ -688,7 +688,9 @@ async fn enroll(
     let value = a
         .mobile_delivery()
         .execute(
-            Principal::Enrollment.for_protocol(if uri.path().starts_with("/api/v2/") {
+            Principal::Enrollment.for_protocol(if uri.path().starts_with("/api/v3/") {
+                3
+            } else if uri.path().starts_with("/api/v2/") {
                 2
             } else {
                 1
@@ -1174,8 +1176,317 @@ async fn visible_targets(
         .await?;
     Ok(response("mobile-delivery-targets", value, None, false))
 }
+async fn configurations(
+    State(a): State<Application>,
+    actor: Actor,
+    Query(page): Query<Page>,
+) -> Result<Response> {
+    let v = a
+        .mobile_delivery()
+        .query(
+            Principal::Actor(actor.id),
+            Scope {
+                school: None,
+                id: None,
+            },
+            Read::Configurations,
+            page.clone(),
+        )
+        .await?;
+    Ok(response("execution-configurations", v, Some(&page), false))
+}
+async fn create_configuration(
+    State(a): State<Application>,
+    actor: Actor,
+    headers: HeaderMap,
+    input: Input,
+) -> Result<Response> {
+    let v = a
+        .mobile_delivery()
+        .execute(
+            Principal::Actor(actor.id),
+            Scope {
+                school: None,
+                id: None,
+            },
+            key(&headers),
+            command(input, "execution-configurations", "create_configuration")?,
+        )
+        .await?;
+    Ok(response("execution-configurations", v, None, true))
+}
+async fn configuration(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(id): Path<Uuid>,
+    Query(page): Query<Page>,
+) -> Result<Response> {
+    let v = a
+        .mobile_delivery()
+        .query(
+            Principal::Actor(actor.id),
+            Scope {
+                school: None,
+                id: Some(id),
+            },
+            Read::Configuration,
+            page,
+        )
+        .await?;
+    Ok(response("execution-configurations", v, None, false))
+}
+async fn publish_configuration(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    input: Input,
+) -> Result<Response> {
+    let v = a
+        .mobile_delivery()
+        .execute(
+            Principal::Actor(actor.id),
+            Scope {
+                school: None,
+                id: Some(id),
+            },
+            key(&headers),
+            command(input, "configuration-releases", "publish_configuration")?,
+        )
+        .await?;
+    Ok(response("configuration-releases", v, None, true))
+}
+async fn releases(
+    State(a): State<Application>,
+    actor: Actor,
+    Query(page): Query<Page>,
+) -> Result<Response> {
+    let v = a
+        .mobile_delivery()
+        .query(
+            Principal::Actor(actor.id),
+            Scope {
+                school: None,
+                id: None,
+            },
+            Read::ConfigurationReleases,
+            page.clone(),
+        )
+        .await?;
+    Ok(response("configuration-releases", v, Some(&page), false))
+}
+async fn school_releases(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(school): Path<Uuid>,
+    Query(page): Query<Page>,
+) -> Result<Response> {
+    let v = a
+        .mobile_delivery()
+        .query(
+            Principal::Actor(actor.id),
+            Scope {
+                school: Some(school),
+                id: None,
+            },
+            Read::ConfigurationReleases,
+            page.clone(),
+        )
+        .await?;
+    Ok(response("configuration-releases", v, Some(&page), false))
+}
+async fn revoke_release(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    input: Input,
+) -> Result<Response> {
+    let v = a
+        .mobile_delivery()
+        .execute(
+            Principal::Actor(actor.id),
+            Scope {
+                school: None,
+                id: Some(id),
+            },
+            key(&headers),
+            command(
+                input,
+                "configuration-releases",
+                "revoke_configuration_release",
+            )?,
+        )
+        .await?;
+    Ok(response("configuration-releases", v, None, false))
+}
+async fn resolve_configuration(
+    State(a): State<Application>,
+    DevicePrincipal(p): DevicePrincipal,
+    headers: HeaderMap,
+    input: Input,
+) -> Result<Response> {
+    let v = a
+        .mobile_delivery()
+        .execute(
+            p,
+            Scope {
+                school: None,
+                id: None,
+            },
+            key(&headers),
+            command(input, "configuration-releases", "resolve_configuration")?,
+        )
+        .await?;
+    Ok(response("configuration-releases", v, None, false))
+}
+async fn download_configuration(
+    State(a): State<Application>,
+    DevicePrincipal(p): DevicePrincipal,
+    Path(id): Path<Uuid>,
+    Query(page): Query<Page>,
+) -> Result<Response> {
+    let v = a
+        .mobile_delivery()
+        .query(
+            p,
+            Scope {
+                school: None,
+                id: Some(id),
+            },
+            Read::ConfigurationDownload,
+            page,
+        )
+        .await?;
+    Ok(response("configuration-releases", v, None, false))
+}
+async fn run_progress(
+    State(a): State<Application>,
+    actor: Actor,
+    Path((school, id)): Path<(Uuid, Uuid)>,
+    Query(page): Query<Page>,
+) -> Result<Response> {
+    let v = a
+        .mobile_delivery()
+        .query(
+            Principal::Actor(actor.id),
+            Scope {
+                school: Some(school),
+                id: Some(id),
+            },
+            Read::RunProgress,
+            page,
+        )
+        .await?;
+    Ok(response("mobile-delivery-run-progress", v, None, false))
+}
+async fn revision_preview(
+    State(a): State<Application>,
+    actor: Actor,
+    Path((school, id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    input: Input,
+) -> Result<Response> {
+    let v = a
+        .mobile_delivery()
+        .execute(
+            Principal::Actor(actor.id),
+            Scope {
+                school: Some(school),
+                id: Some(id),
+            },
+            key(&headers),
+            command(
+                input,
+                "mobile-delivery-run-progress",
+                "preview_run_revision",
+            )?,
+        )
+        .await?;
+    Ok(response("mobile-delivery-run-progress", v, None, false))
+}
+async fn revise_run(
+    State(a): State<Application>,
+    actor: Actor,
+    Path((school, id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    input: Input,
+) -> Result<Response> {
+    let v = a
+        .mobile_delivery()
+        .execute(
+            Principal::Actor(actor.id),
+            Scope {
+                school: Some(school),
+                id: Some(id),
+            },
+            key(&headers),
+            command(input, "mobile-delivery-run-progress", "revise_run")?,
+        )
+        .await?;
+    Ok(response("mobile-delivery-run-progress", v, None, false))
+}
+
 pub fn router() -> Router<Application> {
     Router::new()
+        .route(
+            "/api/v1/platform/execution-configurations",
+            get(configurations).post(create_configuration),
+        )
+        .route(
+            "/api/v1/platform/execution-configurations/{id}",
+            get(configuration),
+        )
+        .route(
+            "/api/v1/platform/execution-configurations/{id}/releases",
+            post(publish_configuration),
+        )
+        .route("/api/v1/platform/configuration-releases", get(releases))
+        .route(
+            "/api/v1/platform/configuration-releases/{id}/revocations",
+            post(revoke_release),
+        )
+        .route(
+            "/api/v1/schools/{school}/configuration-releases",
+            get(school_releases),
+        )
+        .route(
+            "/api/v1/schools/{school}/mobile-delivery-runs/{id}",
+            get(run_progress),
+        )
+        .route(
+            "/api/v1/schools/{school}/mobile-delivery-runs/{id}/revision-previews",
+            post(revision_preview),
+        )
+        .route(
+            "/api/v1/schools/{school}/mobile-delivery-runs/{id}/execution-revisions",
+            post(revise_run),
+        )
+        .route(
+            "/api/v3/device-execution/configuration-resolutions",
+            post(resolve_configuration),
+        )
+        .route(
+            "/api/v3/device-execution/configuration-releases/{id}",
+            get(download_configuration),
+        )
+        .route("/api/v3/device-execution/enrollments", post(enroll))
+        .route(
+            "/api/v3/device-execution/credential-rotations",
+            post(rotate),
+        )
+        .route("/api/v3/device-execution/session", get(session))
+        .route("/api/v3/device-execution/heartbeats", post(heartbeat))
+        .route("/api/v3/device-execution/claims", post(claim))
+        .route("/api/v3/device-execution/claims/{id}", get(get_claim))
+        .route("/api/v3/device-execution/claims/{id}/renewals", post(renew))
+        .route(
+            "/api/v3/device-execution/claims/{id}/preparations",
+            post(prepare),
+        )
+        .route("/api/v3/device-execution/claims/{id}/permits", post(permit))
+        .route("/api/v3/device-execution/claims/{id}/results", post(result))
+        .route("/api/v3/device-execution/claims/{id}/aborts", post(abort))
         .route(
             "/api/v1/platform/execution-devices",
             get(devices).post(create_device),
