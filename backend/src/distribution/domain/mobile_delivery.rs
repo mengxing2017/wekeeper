@@ -9,6 +9,8 @@ pub const VISIBLE_PROTOCOL_VERSION: u32 = 2;
 
 mod visible;
 pub use visible::*;
+mod configuration;
+pub use configuration::*;
 pub const ACCOUNT_INTERVAL_SECONDS: i64 = 1800;
 pub const CONTENT_INTERVAL_SECONDS: i64 = 600;
 pub const CLAIM_SECONDS: i64 = 120;
@@ -154,6 +156,35 @@ pub enum Command {
     RunStrategy {
         expected_revision: i64,
     },
+    CreateConfiguration {
+        input: Box<ConfigurationInput>,
+    },
+    PublishConfiguration {
+        expected_revision: i64,
+        school_id: Uuid,
+        device_id: Option<Uuid>,
+        evidence_ref: String,
+    },
+    RevokeConfigurationRelease {
+        expected_revision: i64,
+        reason: String,
+    },
+    ResolveConfiguration {
+        package_name: String,
+        version_name: String,
+        version_code: i64,
+        engine_version: String,
+        capabilities: Vec<String>,
+    },
+    PreviewRunRevision {
+        configuration_release_id: Uuid,
+    },
+    ReviseRun {
+        expected_revision: i64,
+        configuration_release_id: Uuid,
+        preview_digest: String,
+        evidence_ref: String,
+    },
     BindDevice {
         expected_revision: i64,
         sender_account_id: Uuid,
@@ -210,6 +241,8 @@ pub enum Command {
         content_review: bool,
         scope_acceptance: bool,
         substantive_difference_reviewed: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        shared_text_scope_acceptance: Option<bool>,
         evidence_ref: String,
     },
     Stop {
@@ -292,6 +325,8 @@ pub enum Principal {
     Enrollment,
     DeviceV2 { id: Uuid, generation: i64 },
     EnrollmentV2,
+    DeviceV3 { id: Uuid, generation: i64 },
+    EnrollmentV3,
 }
 impl Principal {
     pub fn key(&self) -> String {
@@ -300,29 +335,38 @@ impl Principal {
             Self::Device { id, generation } => format!("device:{id}:{generation}"),
             Self::Enrollment => "enrollment".into(),
             Self::EnrollmentV2 => "enrollment:v2".into(),
+            Self::EnrollmentV3 => "enrollment:v3".into(),
+            Self::DeviceV3 { id, generation } => format!("device:{id}:{generation}:v3"),
             Self::DeviceV2 { id, generation } => format!("device:{id}:{generation}:v2"),
         }
     }
     pub fn protocol(&self) -> u32 {
-        if matches!(self, Self::DeviceV2 { .. } | Self::EnrollmentV2) {
+        if matches!(self, Self::DeviceV3 { .. } | Self::EnrollmentV3) {
+            3
+        } else if matches!(self, Self::DeviceV2 { .. } | Self::EnrollmentV2) {
             2
         } else {
             1
         }
     }
     pub fn for_protocol(self, version: u32) -> Self {
-        match (self, version) {
-            (Self::Device { id, generation } | Self::DeviceV2 { id, generation }, 2) => {
-                Self::DeviceV2 { id, generation }
-            }
-            (Self::Device { id, generation } | Self::DeviceV2 { id, generation }, 1) => {
-                Self::Device { id, generation }
-            }
-            (Self::Enrollment | Self::EnrollmentV2, 2) => Self::EnrollmentV2,
-            (Self::Enrollment | Self::EnrollmentV2, 1) => Self::Enrollment,
-            (p, _) => p,
+        match self {
+            Self::Device { id, generation }
+            | Self::DeviceV2 { id, generation }
+            | Self::DeviceV3 { id, generation } => match version {
+                3 => Self::DeviceV3 { id, generation },
+                2 => Self::DeviceV2 { id, generation },
+                _ => Self::Device { id, generation },
+            },
+            Self::Enrollment | Self::EnrollmentV2 | Self::EnrollmentV3 => match version {
+                3 => Self::EnrollmentV3,
+                2 => Self::EnrollmentV2,
+                _ => Self::Enrollment,
+            },
+            p => p,
         }
     }
+
     pub fn actor(&self) -> Result<Uuid> {
         if let Self::Actor(id) = self {
             Ok(*id)
@@ -338,6 +382,12 @@ pub struct Scope {
 }
 #[derive(Clone, Debug)]
 pub enum Query {
+    Configurations,
+    Configuration,
+    ConfigurationReleases,
+    ConfigurationDownload,
+    RunProgress,
+    RunRevisionPreview,
     Targets,
     Strategies,
     Strategy,
