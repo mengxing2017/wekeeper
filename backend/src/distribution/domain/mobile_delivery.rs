@@ -260,7 +260,8 @@ pub enum Command {
         reason: String,
     },
     Enroll {
-        device_id: Uuid,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        device_id: Option<Uuid>,
         code: String,
         client_instance_id: String,
         protocol_version: u32,
