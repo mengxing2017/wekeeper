@@ -1268,3 +1268,243 @@ async fn configured_order_is_transactional_and_waits_after_authoritative_ack() {
     assert_eq!(next["sequence"]["position"], 2);
     assert_eq!(next["group_snapshot"]["id"], second.to_string());
 }
+
+async fn short_code(f: &Fixture) -> String {
+    let revision: i64 = sqlx::query_scalar("SELECT revision FROM execution_devices WHERE id=$1")
+        .bind(f.device)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    f.call(
+        None,
+        Some(f.device),
+        json!({"operation":"enrollment","expected_revision":revision}),
+    )
+    .await["code"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+async fn pair_code(
+    f: &Fixture,
+    code: &str,
+    instance: &str,
+    key: &str,
+    version: u32,
+    device: Option<Uuid>,
+) -> Result<Value, Error> {
+    let mut input = json!({"operation":"enroll","code":code,"client_instance_id":instance,"protocol_version":version});
+    if let Some(device) = device {
+        input["device_id"] = json!(device);
+    }
+    f.repo
+        .execute(
+            Principal::Enrollment.for_protocol(version),
+            Scope {
+                school: None,
+                id: None,
+            },
+            key,
+            command(input),
+            true,
+            "https://example.test",
+        )
+        .await
+}
+
+#[test]
+fn enrollment_contract_accepts_code_only_and_keeps_optional_device_constraint() {
+    let input = json!({"operation":"enroll","code":"00123456","client_instance_id":"phone","protocol_version":3});
+    assert_eq!(serde_json::to_value(command(input.clone())).unwrap(), input);
+    let mut legacy = input;
+    legacy["device_id"] = json!(Uuid::new_v4());
+    assert_eq!(
+        serde_json::to_value(command(legacy.clone())).unwrap(),
+        legacy
+    );
+}
+
+#[test]
+fn pairing_errors_use_uniform_unauthorized_and_backoff_responses() {
+    use axum::{http::StatusCode, response::IntoResponse};
+    assert_eq!(
+        Error::Policy("pairing_code_invalid")
+            .into_response()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let response = Error::Policy("pairing_rate_limited").into_response();
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(response.headers()["retry-after"], "600");
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn short_pairing_codes_are_unique_expiring_one_time_and_resolve_device() {
+    let f = setup().await;
+    let old = short_code(&f).await;
+    let current = short_code(&f).await;
+    assert_eq!(current.len(), 8);
+    assert!(current.bytes().all(|b| b.is_ascii_digit()));
+    assert_ne!(old, current);
+    assert!(matches!(
+        pair_code(&f, &old, "old", "old", 3, None).await,
+        Err(Error::Policy("pairing_code_invalid"))
+    ));
+    let other = f
+        .call(
+            None,
+            None,
+            json!({"operation":"create_device","name":"Other phone"}),
+        )
+        .await;
+    assert!(matches!(
+        pair_code(
+            &f,
+            &current,
+            "wrong-device",
+            "wrong-device",
+            3,
+            Some(uuid(&other, "id"))
+        )
+        .await,
+        Err(Error::Policy("pairing_code_invalid"))
+    ));
+    let grouped = format!("{} {}", &current[..4], &current[4..]);
+    let (a, b) = tokio::join!(
+        pair_code(&f, &grouped, "new-phone", "pair-a", 3, None),
+        pair_code(&f, &grouped, "new-phone", "pair-b", 3, None)
+    );
+    assert_ne!(a.is_ok(), b.is_ok());
+    let (credential, replay_key) = if let Ok(value) = a {
+        (value, "pair-a")
+    } else {
+        (b.unwrap(), "pair-b")
+    };
+    assert_eq!(credential["id"], f.device.to_string());
+    assert_eq!(credential["protocol_version"], 3);
+    assert!(credential["device_token"].is_string());
+    let replay = pair_code(&f, &grouped, "new-phone", replay_key, 3, None)
+        .await
+        .unwrap();
+    assert_eq!(replay["secret_replay_unavailable"], true);
+    assert!(replay.get("device_token").is_none());
+    assert!(matches!(
+        pair_code(&f, &current, "new-phone", "consumed", 3, None).await,
+        Err(Error::Policy("pairing_code_invalid"))
+    ));
+    let expired = short_code(&f).await;
+    sqlx::query("UPDATE device_enrollments SET expires_at=clock_timestamp()-interval '1 second' WHERE device_id=$1")
+        .bind(f.device).execute(&f.pool).await.unwrap();
+    assert!(matches!(
+        pair_code(&f, &expired, "expired", "expired", 1, None).await,
+        Err(Error::Policy("pairing_code_invalid"))
+    ));
+    // A pre-upgrade long code and ID still work until their original expiry.
+    let legacy = "a".repeat(64);
+    sqlx::query("UPDATE device_enrollments SET code_hash=$2,expires_at=clock_timestamp()+interval '1 minute' WHERE device_id=$1 AND consumed_at IS NULL")
+        .bind(f.device).bind(wekeeper_api::business::hash(&legacy)).execute(&f.pool).await.unwrap();
+    assert!(
+        pair_code(&f, &legacy, "legacy-phone", "legacy", 1, Some(f.device))
+            .await
+            .is_ok()
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn pairing_failed_guesses_commit_budgets_across_codes_instances_and_protocols() {
+    let f = setup().await;
+    for n in 0..5 {
+        assert!(matches!(
+            pair_code(
+                &f,
+                &format!("bad-{n}"),
+                "guesser",
+                &format!("key-{n}"),
+                1,
+                None
+            )
+            .await,
+            Err(Error::Policy("pairing_code_invalid"))
+        ));
+    }
+    assert!(matches!(
+        pair_code(&f, "12345678", "guesser", "limited", 3, None).await,
+        Err(Error::Policy("pairing_rate_limited"))
+    ));
+    let code = short_code(&f).await;
+    // Rotate instance IDs and protocol versions while deliberately supplying a
+    // different device. Failed transactions must not roll back code counters.
+    for n in 0..5 {
+        assert!(matches!(
+            pair_code(
+                &f,
+                &code,
+                &format!("guess-{n}"),
+                "guess",
+                1 + n % 3,
+                Some(Uuid::new_v4())
+            )
+            .await,
+            Err(Error::Policy("pairing_code_invalid"))
+        ));
+    }
+    assert!(matches!(
+        pair_code(&f, &code, "fresh-instance", "blocked-code", 3, None).await,
+        Err(Error::Policy("pairing_rate_limited"))
+    ));
+    sqlx::query(
+        "UPDATE device_pairing_attempt_windows SET reset_at=clock_timestamp()-interval '1 second'",
+    )
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    assert!(
+        pair_code(&f, &code, "fresh-instance", "after-window", 3, None)
+            .await
+            .is_ok()
+    );
+    sqlx::query("UPDATE device_pairing_attempt_windows SET requests=100 WHERE scope='global'")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    assert!(matches!(
+        pair_code(&f, "87654321", "another-instance", "global", 2, None).await,
+        Err(Error::Policy("pairing_rate_limited"))
+    ));
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn pairing_preserves_leading_zeroes_and_only_stores_code_hashes() {
+    let f = setup().await;
+    let generated = short_code(&f).await;
+    let code_hash = wekeeper_api::business::hash("00123456");
+    sqlx::query("UPDATE device_enrollments SET code_hash=$2 WHERE code_hash=$1")
+        .bind(wekeeper_api::business::hash(&generated))
+        .bind(&code_hash)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let credential = pair_code(&f, "0012-3456", "leading-zero", "zero", 2, None)
+        .await
+        .unwrap();
+    assert_eq!(credential["id"], f.device.to_string());
+    let stored: Value =
+        sqlx::query_scalar("SELECT to_jsonb(e) FROM device_enrollments e WHERE code_hash=$1")
+            .bind(code_hash)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert!(!stored.to_string().contains("00123456"));
+    let operation: Value = sqlx::query_scalar(
+        "SELECT response FROM mobile_delivery_operations WHERE idempotency_key='zero'",
+    )
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(operation["secret_replay_unavailable"], true);
+    assert!(operation.get("device_token").is_none());
+}
