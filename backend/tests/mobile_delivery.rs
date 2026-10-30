@@ -1185,3 +1185,86 @@ async fn visible_profile_change_invalidates_frozen_run_without_rewriting_it() {
     assert_eq!(review["name"], "机器人测试(2)");
     assert_eq!(review["verification_state"], "pending");
 }
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn configured_order_is_transactional_and_waits_after_authoritative_ack() {
+    let mut f = visible_fixture().await;
+    f.principal = f.principal.for_protocol(3);
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/mobile-configuration-v3.json"
+    ))
+    .unwrap();
+    let config = f
+        .call(
+            None,
+            None,
+            json!({"operation":"create_configuration","input":fixture["configuration"]}),
+        )
+        .await;
+    let release=f.call(None,Some(uuid(&config,"id")),json!({"operation":"publish_configuration","expected_revision":1,"school_id":f.school,"device_id":f.device,"evidence_ref":"synthetic:publish"})).await;
+    let resolved=f.device_call(None,json!({"operation":"resolve_configuration","package_name":"com.wekeeper.fixture.wecom","version_name":"synthetic","version_code":1,"engine_version":"otter-ui/1","capabilities":ENGINE_CAPABILITIES})).await;
+    assert_eq!(resolved["id"], release["id"]);
+    let group=f.call(Some(f.school),None,json!({"operation":"create_group","client_kind":"wecom","identity_mode":"ui_visible","name":"第二个测试群","visible_profile":{"group_type":"external"},"identity_evidence_ref":"synthetic:group"})).await;
+    let second = uuid(&group, "id");
+    f.call(Some(f.school),Some(second),json!({"operation":"review_group_profile","expected_revision":1,"evidence_ref":"synthetic:review"})).await;
+    f.call(Some(f.school),Some(second),json!({"operation":"bind_group","sender_account_id":f.sender,"mapping_revision":2,"reason":"synthetic:binding"})).await;
+    let strategy=f.call(Some(f.school),None,json!({"operation":"create_strategy","name":"有序双群","sender_account_id":f.sender,"device_id":f.device,"delivery_mode":"ordered_groups","targets":[{"group_id":f.group},{"group_id":second}],"configuration_release_id":release["id"],"text_content":"测试顺序","trigger_mode":"manual_once","enabled":true})).await;
+    let run = f
+        .call(
+            Some(f.school),
+            Some(uuid(&strategy, "id")),
+            json!({"operation":"run_strategy","expected_revision":1}),
+        )
+        .await;
+    let task = uuid(&run, "task_id");
+    let preview = f
+        .call(
+            Some(f.school),
+            Some(task),
+            json!({"operation":"preview","expected_revision":1}),
+        )
+        .await;
+    assert_eq!(preview["items"].as_array().unwrap().len(), 2);
+    assert_eq!(preview["requires_shared_text_scope_acceptance"], true);
+    f.call(Some(f.school),Some(task),json!({"operation":"confirm","expected_revision":1,"preview_digest":preview["preview_digest"],"content_review":true,"scope_acceptance":true,"shared_text_scope_acceptance":true,"substantive_difference_reviewed":false,"evidence_ref":"synthetic:confirmed-same-text"})).await;
+    let claim = f
+        .device_call(
+            None,
+            json!({"operation":"claim","binding_revision":f.binding_revision}),
+        )
+        .await;
+    assert_eq!(claim["sequence"]["position"], 1);
+    assert_eq!(claim["group_snapshot"]["id"], f.group.to_string());
+    let prep=f.device_call(Some(uuid(&claim,"id")),json!({"operation":"prepare","fence":claim["fence"],"snapshot_digest":claim["snapshot_digest"],"observed_account_id":f.sender,"observed_group_id":f.group,"client_version":"synthetic","script_version":"otter-ui/1","baseline_version":"synthetic-1","checks_passed":true,"verification":{"method":"visible_ui","account_profile_revision":1,"group_profile_revision":1,"evidence_ref":"synthetic:visible","checks":["company","account","group_name","group_context"]}})).await;
+    let permit = f
+        .device_call(
+            Some(uuid(&claim, "id")),
+            serde_json::to_value(Fixture::permit_input(&claim, &prep)).unwrap(),
+        )
+        .await;
+    let event = json!({"operation":"result","invocation_id":permit["invocation_id"],"permit_token":permit["permit_token"],"event_id":Uuid::new_v4(),"result":"ui_observed_sent","evidence_ref":"synthetic:observed","observed_account_id":f.sender,"observed_group_id":f.group,"content_digest":claim["content_digest"],"local_state":"sent_bubble_observed","reported_clicked_at":permit["server_time"],"verification":{"method":"visible_ui","account_profile_revision":1,"group_profile_revision":1,"evidence_ref":"synthetic:visible","checks":["company","account","group_name","group_context"]}});
+    let ack = f.device_call(Some(uuid(&claim, "id")), event.clone()).await;
+    assert_eq!(ack["state"], "ui_observed_sent");
+    assert_eq!(ack["run_progress"]["current_position"], 2);
+    let replay = f.device_call(Some(uuid(&claim, "id")), event).await;
+    assert_eq!(replay["run_progress"]["current_position"], 2);
+    let wait = f
+        .device_call(
+            None,
+            json!({"operation":"claim","binding_revision":f.binding_revision}),
+        )
+        .await;
+    assert_eq!(wait["reason"], "group_interval_active");
+    assert!(wait["claim_id"].is_null());
+    sqlx::query("UPDATE mobile_delivery_run_progress SET next_eligible_at=clock_timestamp()-interval '1 second' WHERE id=$1").bind(uuid(&run,"id")).execute(&f.pool).await.unwrap();
+    sqlx::query("UPDATE delivery_usage SET observed_at=clock_timestamp()-interval '2 minutes' WHERE source_id=$1").bind(uuid(&claim,"item_id")).execute(&f.pool).await.unwrap();
+    let next = f
+        .device_call(
+            None,
+            json!({"operation":"claim","binding_revision":f.binding_revision}),
+        )
+        .await;
+    assert_eq!(next["sequence"]["position"], 2);
+    assert_eq!(next["group_snapshot"]["id"], second.to_string());
+}
