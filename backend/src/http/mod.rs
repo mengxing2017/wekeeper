@@ -40,7 +40,16 @@ pub fn app_router(application: Application) -> Router {
         .layer(PropagateRequestIdLayer::new(request_id.clone()))
         .layer(
             TraceLayer::new_for_http()
-                .make_span_with(|request: &axum::http::Request<axum::body::Body>| tracing::info_span!("http",method=%request.method(),request_id=?request.headers().get("x-request-id"))),
+                .make_span_with(|request: &axum::http::Request<axum::body::Body>| {
+                    // Static stages only: never log query strings, request bodies or credentials.
+                    let path = request.uri().path();
+                    let stage = if (1..=5).any(|v| path.starts_with(&format!("/api/v{v}/device-execution/"))) {
+                        if path.ends_with("/enrollments") { "device_pairing" }
+                        else if path.ends_with("/session") { "device_connection" }
+                        else { "device_operation" }
+                    } else { "business_request" };
+                    tracing::info_span!("http",method=%request.method(),stage,request_id=?request.headers().get("x-request-id"))
+                }),
         )
         .layer(SetRequestIdLayer::new(request_id, MakeRequestUuid))
 }
