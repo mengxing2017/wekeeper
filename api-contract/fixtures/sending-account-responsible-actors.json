@@ -1,0 +1,14 @@
+{
+  "data": [{
+    "type": "sending-account-responsible-actors",
+    "id": "00000000-0000-4000-8000-000000000001",
+    "attributes": {
+      "username": "zhangsan",
+      "display_name": "张三",
+      "active": true,
+      "eligible": true,
+      "schools": [{ "id": "00000000-0000-4000-8000-000000000002", "name": "A 学校" }]
+    }
+  }],
+  "meta": { "page": { "number": 1, "size": 30, "has_more": false } }
+}
