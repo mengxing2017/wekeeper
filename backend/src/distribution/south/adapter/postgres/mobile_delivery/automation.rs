@@ -6,6 +6,101 @@ async fn scoped_device(tx: &mut Tx<'_>, s: Uuid, d: Uuid) -> Result<Value> {
     sqlx::query_scalar("SELECT to_jsonb(d)||jsonb_build_object('sender_account_id',b.sender_account_id,'binding_revision',b.revision) FROM execution_devices d JOIN device_account_bindings b ON b.device_id=d.id JOIN sending_accounts a ON a.id=b.sender_account_id JOIN school_memberships m ON m.account_id=a.responsible_actor_id AND m.school_id=$1 AND m.role='admin' WHERE d.id=$2")
         .bind(s).bind(d).fetch_optional(&mut **tx).await?.ok_or(Error::NotFound)
 }
+async fn authorization_context(tx: &mut Tx<'_>, p: &Principal) -> Result<Value> {
+    require(p.protocol() == 4, "授权要求 v4")?;
+    let (d, _) = device(tx, p).await?;
+    let b = binding(tx, d).await?;
+    let account = object(tx, "sending_accounts", uid(&b, "sender_account_id")?).await?;
+    let actor = uid(&account, "responsible_actor_id")?;
+    let schools:Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('school_id',s.id,'name',s.name) FROM schools s JOIN school_memberships m ON m.school_id=s.id JOIN accounts a ON a.id=m.account_id WHERE m.account_id=$1 AND m.role='admin' AND s.active AND a.active ORDER BY s.id LIMIT 100").bind(actor).fetch_all(&mut **tx).await?;
+    let dev = object(tx, "execution_devices", d).await?;
+    let authorization_revision:i64=sqlx::query_scalar("SELECT COALESCE(max(local_revision),0) FROM device_execution_authorizations WHERE device_id=$1").bind(d).fetch_one(&mut **tx).await?;
+    let environment_generation: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(max(generation),0) FROM device_environment_snapshots WHERE device_id=$1",
+    )
+    .bind(d)
+    .fetch_one(&mut **tx)
+    .await?;
+    let mut scopes = Vec::new();
+    let mut summaries = Vec::new();
+    for school in schools {
+        let sid = uid(&school, "school_id")?;
+        let apps:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('binding_id',b.id,'app_key',a.app_key,'instance_ref',b.instance_ref,'label',a.name) FROM device_app_bindings b JOIN automation_apps a ON a.id=b.app_id WHERE b.school_id=$1 AND b.device_id=$2 AND b.sender_account_id=$3 AND b.account_binding_revision=$4 AND a.enabled AND a.app_key='wecom' ORDER BY b.id").bind(sid).bind(d).bind(uid(&b,"sender_account_id")?).bind(b["revision"].as_i64().ok_or(Error::Conflict)?).fetch_all(&mut **tx).await?;
+        scopes.push(json!({"school_id":sid,"applications":apps.iter().map(|a|json!({"binding_id":a["binding_id"],"app_key":a["app_key"],"instance_ref":a["instance_ref"]})).collect::<Vec<_>>()}));
+        summaries.push(json!({"school_id":sid,"name":school["name"],"applications":apps}));
+    }
+    require(!scopes.is_empty(), "账号尚无有效单位管理员范围")?;
+    Ok(
+        json!({"id":d,"authorization_revision":authorization_revision,"environment_generation":environment_generation,"extension":AUTHORIZATION_EXTENSION,"device_id":d,"device_name":dev["name"],"account_name":account["visible_profile"]["account_name"].as_str().unwrap_or("已绑定业务账号"),"responsible_actor_id":actor,"schools":summaries,"scope":{"device_id":d,"sender_account_id":b["sender_account_id"],"schools":scopes,"purpose":"company_business/1","data_policy":"minimal_visible_results/1","object_scope":"approved_school_groups/1"}}),
+    )
+}
+async fn active_authorization(tx: &mut Tx<'_>, d: Uuid) -> Result<ExecutionAuthorizationReceipt> {
+    let row:Option<Value>=sqlx::query_scalar("SELECT body FROM device_execution_authorizations WHERE device_id=$1 ORDER BY local_revision DESC LIMIT 1").bind(d).fetch_optional(&mut **tx).await?;
+    let r: ExecutionAuthorizationReceipt =
+        serde_json::from_value(row.ok_or(Error::Policy("execution_authorization_required"))?)
+            .map_err(|_| Error::Conflict)?;
+    require(r.state == "effective", "执行授权已撤销")?;
+    Ok(r)
+}
+// Selection may skip untouched tasks outside consent, but pending/unknown work still owns the account.
+pub(super) async fn authorized_application_ids(
+    tx: &mut Tx<'_>,
+    d: Uuid,
+    account: Uuid,
+) -> Result<Vec<String>> {
+    let receipt = active_authorization(tx, d).await?;
+    require(
+        receipt.scope.device_id == d && receipt.scope.sender_account_id == account,
+        "authorization_scope_required",
+    )?;
+    Ok(receipt
+        .scope
+        .schools
+        .iter()
+        .flat_map(|s| s.applications.iter().map(|a| a.binding_id.to_string()))
+        .collect())
+}
+pub(super) async fn authorization_gate(tx: &mut Tx<'_>, device: Uuid, protocol: u32) -> Result<()> {
+    let state:Option<String>=sqlx::query_scalar("SELECT body->>'state' FROM device_execution_authorizations WHERE device_id=$1 ORDER BY local_revision DESC LIMIT 1").bind(device).fetch_optional(&mut **tx).await?;
+    if let Some(state) = state {
+        require(
+            state == "effective" && protocol == 4,
+            "execution_authorization_required",
+        )?;
+    } else {
+        require(protocol < 4, "execution_authorization_required")?;
+    }
+    Ok(())
+}
+async fn authorized(
+    tx: &mut Tx<'_>,
+    d: Uuid,
+    school: Uuid,
+    app: Option<&Value>,
+    maintenance: bool,
+) -> Result<ExecutionAuthorizationReceipt> {
+    let r = active_authorization(tx, d).await?;
+    let b = binding(tx, d).await?;
+    let account = object(tx, "sending_accounts", uid(&b, "sender_account_id")?).await?;
+    school_auth(tx, uid(&account, "responsible_actor_id")?, school, true).await?;
+    let a = app
+        .map(|a| -> Result<AuthorizedApplication> {
+            Ok(AuthorizedApplication {
+                binding_id: uid(a, "id")?,
+                app_key: "wecom".into(),
+                instance_ref: strv(a, "instance_ref")?.into(),
+            })
+        })
+        .transpose()?;
+    require(
+        r.scope.device_id == d
+            && r.scope.sender_account_id == uid(&b, "sender_account_id")?
+            && r.scope.covers(school, a.as_ref())
+            && (!maintenance || r.maintenance),
+        "authorization_scope_required",
+    )?;
+    Ok(r)
+}
 async fn latest_environment(tx: &mut Tx<'_>, d: Uuid) -> Result<Value> {
     sqlx::query_scalar("SELECT to_jsonb(e) FROM device_environment_snapshots e JOIN execution_devices d ON d.id=e.device_id WHERE e.device_id=$1 AND e.credential_generation=d.credential_generation AND e.received_at>clock_timestamp()-interval '10 minutes' ORDER BY e.generation DESC LIMIT 1")
         .bind(d).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("automation_environment_required"))
@@ -39,13 +134,18 @@ async fn app_binding(tx: &mut Tx<'_>, s: Uuid, bid: Uuid) -> Result<Value> {
     }
     Ok(b)
 }
-async fn no_device_operation(tx: &mut Tx<'_>, d: Uuid, except: Option<Uuid>) -> Result<()> {
-    let busy:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_execution_claims WHERE device_id=$1 AND state IN ('claimed','prepared','permit_issued')) OR EXISTS(SELECT 1 FROM device_validation_jobs WHERE device_id=$1 AND state IN ('queued','offered','accepted','running') AND expires_at>clock_timestamp() AND ($2::uuid IS NULL OR id<>$2)) OR EXISTS(SELECT 1 FROM delivery_usage u JOIN device_account_bindings b ON b.sender_account_id=u.sender_account_id WHERE b.device_id=$1 AND u.state IN ('pending','unknown'))")
-        .bind(d).bind(except).fetch_one(&mut **tx).await?;
+async fn no_device_operation(
+    tx: &mut Tx<'_>,
+    d: Uuid,
+    except: Option<Uuid>,
+    include_queued: bool,
+) -> Result<()> {
+    let busy:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_execution_claims WHERE device_id=$1 AND state IN ('claimed','prepared','permit_issued')) OR EXISTS(SELECT 1 FROM device_validation_jobs WHERE device_id=$1 AND (state IN ('accepted','running') OR ($3 AND state IN ('queued','offered'))) AND expires_at>clock_timestamp() AND ($2::uuid IS NULL OR id<>$2)) OR EXISTS(SELECT 1 FROM delivery_usage u JOIN device_account_bindings b ON b.sender_account_id=u.sender_account_id WHERE b.device_id=$1 AND u.state IN ('pending','unknown'))")
+        .bind(d).bind(except).bind(include_queued).fetch_one(&mut **tx).await?;
     require(!busy, "手机正在执行、等待验证或有待核对结果，请先处理")
 }
 pub(super) async fn validation_gate(tx: &mut Tx<'_>, d: Uuid) -> Result<()> {
-    let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM device_validation_jobs WHERE device_id=$1 AND state IN ('queued','offered','accepted','running') AND expires_at>clock_timestamp())").bind(d).fetch_one(&mut **tx).await?;
+    let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM device_validation_jobs WHERE device_id=$1 AND state IN ('accepted','running') AND expires_at>clock_timestamp())").bind(d).fetch_one(&mut **tx).await?;
     require(!active, "手机正在等待或执行验证")
 }
 fn kind(v: &Value) -> Result<ValidationKind> {
@@ -247,6 +347,102 @@ pub(super) async fn apply(
 ) -> Result<Value> {
     sqlx::query("UPDATE device_validation_jobs SET state='expired',revision=revision+1 WHERE expires_at<=clock_timestamp() AND state IN ('queued','offered','accepted','running')").execute(&mut **tx).await?;
     match c {
+        AutomationCommand::RecordAuthorization { receipt } => {
+            require(p.protocol() == 4, "授权要求 v4")?;
+            let (d, _) = device(tx, p).await?;
+            receipt.validate()?;
+            require(
+                receipt.scope.device_id == d
+                    && receipt.scope.origin == origin.trim_end_matches('/'),
+                "授权来源或设备不一致",
+            )?;
+            let previous:Option<Value>=sqlx::query_scalar("SELECT body FROM device_execution_authorizations WHERE device_id=$1 ORDER BY local_revision DESC LIMIT 1").bind(d).fetch_optional(&mut **tx).await?;
+            if let Some(old) = previous {
+                let rev = old["revision"].as_i64().ok_or(Error::Conflict)?;
+                if receipt.revision == rev {
+                    require(json!(*receipt) == old, "授权版本内容变化")?;
+                    return Ok(json!({"id":receipt.authorization_id,"revision":rev}));
+                }
+                require(receipt.revision > rev, "授权版本过旧，禁止恢复已撤销授权")?;
+            }
+            if receipt.state == "effective" {
+                let context = authorization_context(tx, p).await?;
+                require(
+                    receipt.scope.sender_account_id == uid(&context["scope"], "sender_account_id")?,
+                    "授权账号已变化",
+                )?;
+                let current: Vec<AuthorizedSchool> =
+                    serde_json::from_value(context["scope"]["schools"].clone())
+                        .map_err(|_| Error::Conflict)?;
+                for scope in &receipt.scope.schools {
+                    let found = current
+                        .iter()
+                        .find(|c| c.school_id == scope.school_id)
+                        .ok_or(Error::Policy("authorization_scope_required"))?;
+                    require(
+                        scope
+                            .applications
+                            .iter()
+                            .all(|a| found.applications.contains(a)),
+                        "授权应用已变化",
+                    )?;
+                }
+            }
+            sqlx::query("INSERT INTO device_execution_authorizations(device_id,local_revision,authorization_id,body) VALUES($1,$2,$3,$4)").bind(d).bind(receipt.revision).bind(receipt.authorization_id).bind(json!(*receipt)).execute(&mut **tx).await?;
+            Ok(json!({"id":receipt.authorization_id,"revision":receipt.revision}))
+        }
+        AutomationCommand::RejectValidation {
+            expected_revision,
+            generation,
+        } => {
+            let j = valid_job(tx, p, id(s)?).await?;
+            revision(&j, expected_revision)?;
+            require(
+                j["generation"] == generation.to_string()
+                    && matches!(j["state"].as_str(), Some("queued" | "offered")),
+                "验证已终结或代次变化",
+            )?;
+            sqlx::query("UPDATE device_validation_jobs SET state='declined',decision_source='local_decline',revision=revision+1 WHERE id=$1").bind(id(s)?).execute(&mut **tx).await?;
+            object(tx, "device_validation_jobs", id(s)?).await
+        }
+        AutomationCommand::AcceptStandingValidation {
+            expected_revision,
+            generation,
+            authorization_id,
+        } => {
+            let j = valid_job(tx, p, id(s)?).await?;
+            revision(&j, expected_revision)?;
+            job_current(tx, &j).await?;
+            require(
+                j["generation"] == generation.to_string()
+                    && matches!(j["state"].as_str(), Some("queued" | "offered")),
+                "验证代次变化或已接受",
+            )?;
+            let b = if j["app_binding_id"].is_null() {
+                None
+            } else {
+                Some(app_binding(tx, uid(&j, "school_id")?, uid(&j, "app_binding_id")?).await?)
+            };
+            let maintenance = matches!(
+                kind(&j)?,
+                ValidationKind::InspectRoles | ValidationKind::MeasureManual
+            );
+            if maintenance {
+                platform(tx, &Principal::Actor(uid(&j, "created_by")?)).await?;
+            }
+            let r = authorized(
+                tx,
+                uid(&j, "device_id")?,
+                uid(&j, "school_id")?,
+                b.as_ref(),
+                maintenance,
+            )
+            .await?;
+            require(r.authorization_id == authorization_id, "执行授权已变化")?;
+            no_device_operation(tx, uid(&j, "device_id")?, Some(id(s)?), true).await?;
+            sqlx::query("UPDATE device_validation_jobs SET state='accepted',accepted_at=clock_timestamp(),authorization_id=$2,decision_source='standing_authorization',revision=revision+1 WHERE id=$1").bind(id(s)?).bind(authorization_id).execute(&mut **tx).await?;
+            object(tx, "device_validation_jobs", id(s)?).await
+        }
         AutomationCommand::ReportEnvironment { report: r } => {
             require(p.protocol() == 4, "环境上报要求 v4")?;
             let (d, g) = device(tx, p).await?;
@@ -301,7 +497,7 @@ pub(super) async fn apply(
                     && account["verification_state"] == "reviewed",
                 "请先绑定已核对的企业微信账号",
             )?;
-            no_device_operation(tx, d, None).await?;
+            no_device_operation(tx, d, None, true).await?;
             let old:Option<Value>=sqlx::query_scalar("SELECT to_jsonb(b) FROM device_app_bindings b WHERE school_id=$1 AND device_id=$2 AND app_id=$3").bind(school).bind(d).bind(app_id).fetch_optional(&mut **tx).await?;
             let bid = if let Some(old) = old {
                 revision(&old, expected_revision)?;
@@ -330,7 +526,7 @@ pub(super) async fn apply(
                         .is_some_and(|v| v.contains(&json!(4))),
                 "等待支持 v4 的新版手机端",
             )?;
-            no_device_operation(tx, d, None).await?;
+            no_device_operation(tx, d, None, true).await?;
             let navigating:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM automation_readiness_tickets t JOIN mobile_delivery_items i ON i.id=t.item_id WHERE t.device_id=$1 AND t.expires_at>clock_timestamp() AND i.state='queued')").bind(d).fetch_one(&mut **tx).await?;
             require(!navigating, "手机正在准备应用，请停止准备或等待票据到期")?;
             if matches!(
@@ -425,8 +621,24 @@ pub(super) async fn apply(
                     && matches!(j["state"].as_str(), Some("queued" | "offered")),
                 "验证代次无效或已接受",
             )?;
-            no_device_operation(tx, uid(&j, "device_id")?, Some(id(s)?)).await?;
-            sqlx::query("UPDATE device_validation_jobs SET state='accepted',accepted_at=clock_timestamp(),revision=revision+1 WHERE id=$1").bind(id(s)?).execute(&mut **tx).await?;
+            no_device_operation(tx, uid(&j, "device_id")?, Some(id(s)?), true).await?;
+            let b = if j["app_binding_id"].is_null() {
+                None
+            } else {
+                Some(app_binding(tx, uid(&j, "school_id")?, uid(&j, "app_binding_id")?).await?)
+            };
+            authorized(
+                tx,
+                uid(&j, "device_id")?,
+                uid(&j, "school_id")?,
+                b.as_ref(),
+                matches!(
+                    kind(&j)?,
+                    ValidationKind::InspectRoles | ValidationKind::MeasureManual
+                ),
+            )
+            .await?;
+            sqlx::query("UPDATE device_validation_jobs SET state='accepted',accepted_at=clock_timestamp(),decision_source='local_action',revision=revision+1 WHERE id=$1").bind(id(s)?).execute(&mut **tx).await?;
             object(tx, "device_validation_jobs", id(s)?).await
         }
         AutomationCommand::ReportValidation { event: e } => {
@@ -644,6 +856,11 @@ pub(super) async fn apply(
                 "准备阶段无效",
             )?;
             let t = object(tx, "automation_readiness_tickets", id(s)?).await?;
+            let authorization = active_authorization(tx, d).await?;
+            require(
+                t["authorization_id"] == authorization.authorization_id.to_string(),
+                "执行授权已变化",
+            )?;
             require(
                 t["device_id"] == d.to_string()
                     && t["credential_generation"] == g
@@ -669,6 +886,11 @@ pub(super) async fn apply(
             let (d, g) = device(tx, p).await?;
             require(p.protocol() == 4, "准备要求 v4")?;
             let t = object(tx, "automation_readiness_tickets", id(s)?).await?;
+            let authorization = active_authorization(tx, d).await?;
+            require(
+                t["authorization_id"] == authorization.authorization_id.to_string(),
+                "执行授权已变化",
+            )?;
             require(
                 t["device_id"] == d.to_string()
                     && t["credential_generation"] == g
@@ -867,9 +1089,11 @@ pub(super) async fn validate_manifest(tx: &mut Tx<'_>, i: &Value) -> Result<()> 
 pub(super) async fn require_readiness(tx: &mut Tx<'_>, i: &Value) -> Result<()> {
     let d = uid(&i["snapshot"]["execution_target"], "device_id")?;
     validation_gate(tx, d).await?;
+    let binding = &i["snapshot"]["automation_manifest"]["body"]["resolution"]["binding"];
+    let authorization = authorized(tx, d, uid(i, "school_id")?, Some(binding), false).await?;
     let environment = latest_environment(tx, d).await?;
-    let ready:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM automation_readiness_tickets t JOIN execution_devices d ON d.id=t.device_id WHERE t.device_id=$1 AND t.item_id=$2 AND t.manifest_id=$3 AND t.environment_id=$4 AND t.credential_generation=d.credential_generation AND t.ready AND t.expires_at>clock_timestamp())")
-        .bind(d).bind(uid(i,"id")?).bind(uid(&i["snapshot"]["automation_manifest"],"id")?).bind(uid(&environment,"id")?).fetch_one(&mut **tx).await?;
+    let ready:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM automation_readiness_tickets t JOIN execution_devices d ON d.id=t.device_id WHERE t.device_id=$1 AND t.item_id=$2 AND t.manifest_id=$3 AND t.environment_id=$4 AND t.credential_generation=d.credential_generation AND t.authorization_id=$5 AND t.ready AND t.expires_at>clock_timestamp())")
+        .bind(d).bind(uid(i,"id")?).bind(uid(&i["snapshot"]["automation_manifest"],"id")?).bind(uid(&environment,"id")?).bind(authorization.authorization_id).fetch_one(&mut **tx).await?;
     if ready {
         Ok(())
     } else {
@@ -887,7 +1111,7 @@ async fn prepare_execution(
         return Err(Error::Unavailable);
     }
     let (d, g) = device(tx, p).await?;
-    no_device_operation(tx, d, None).await?;
+    no_device_operation(tx, d, None, false).await?;
     let b = binding(tx, d).await?;
     let candidate = configured::candidate(tx, d, uid(&b, "sender_account_id")?, 4).await?;
     let i = match candidate {
@@ -897,6 +1121,8 @@ async fn prepare_execution(
             return Ok(json!({"waiting":true,"reason":"no_ready_task","retry_after_seconds":30}));
         }
     };
+    let app = &i["snapshot"]["automation_manifest"]["body"]["resolution"]["binding"];
+    let authorization = authorized(tx, d, uid(&i, "school_id")?, Some(app), false).await?;
     validate_manifest(tx, &i).await?;
     validate_snapshot(tx, &i, origin).await?;
     restrictions(tx, &i).await?;
@@ -908,8 +1134,8 @@ async fn prepare_execution(
     }
     let environment = latest_environment(tx, d).await?;
     let tid = Uuid::now_v7();
-    sqlx::query("INSERT INTO automation_readiness_tickets(id,device_id,item_id,manifest_id,environment_id,credential_generation,generation) VALUES($1,$2,$3,$4,$5,$6,$7)")
-        .bind(tid).bind(d).bind(uid(&i,"id")?).bind(uid(m,"id")?).bind(uid(&environment,"id")?).bind(g).bind(Uuid::now_v7()).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO automation_readiness_tickets(id,device_id,item_id,manifest_id,environment_id,credential_generation,generation,authorization_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)")
+        .bind(tid).bind(d).bind(uid(&i,"id")?).bind(uid(m,"id")?).bind(uid(&environment,"id")?).bind(g).bind(Uuid::now_v7()).bind(authorization.authorization_id).execute(&mut **tx).await?;
     let mut out = object(tx, "automation_readiness_tickets", tid).await?;
     out["manifest"] = m.clone();
     Ok(out)
@@ -923,6 +1149,7 @@ pub(super) async fn query(
     offset: i64,
 ) -> Result<Value> {
     match q {
+        AutomationQuery::AuthorizationContext => authorization_context(tx,p).await,
         AutomationQuery::Apps => {
             p.actor()?;
             let rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(a)||jsonb_build_object('capabilities',COALESCE((SELECT jsonb_agg(to_jsonb(c) ORDER BY c.id) FROM automation_capabilities c WHERE c.app_id=a.id),'[]'::jsonb)) FROM automation_apps a ORDER BY a.id").fetch_all(&mut **tx).await?; Ok(json!(rows))
@@ -964,7 +1191,7 @@ pub(super) async fn query(
         AutomationQuery::ValidationJobs => {
             require(p.protocol()==4,"验证要求 v4")?; let (d,g)=device(tx,p).await?;
             let mut jobs:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(j) FROM device_validation_jobs j WHERE device_id=$1 AND credential_generation=$2 AND state IN ('queued','offered','accepted','running') AND expires_at>clock_timestamp() ORDER BY created_at,id LIMIT 1").bind(d).bind(g).fetch_all(&mut **tx).await?;
-            for j in &mut jobs { school_auth(tx,uid(j,"created_by")?,uid(j,"school_id")?,true).await?; let ids:Vec<Uuid>=serde_json::from_value(j["component_ids"].clone()).map_err(|_|Error::Conflict)?; j["components"]=json!(components(tx,&ids).await?);
+            for j in &mut jobs { school_auth(tx,uid(j,"created_by")?,uid(j,"school_id")?,true).await?; if matches!(kind(j)?,ValidationKind::InspectRoles|ValidationKind::MeasureManual){platform(tx,&Principal::Actor(uid(j,"created_by")?)).await?;} let ids:Vec<Uuid>=serde_json::from_value(j["component_ids"].clone()).map_err(|_|Error::Conflict)?; j["components"]=json!(components(tx,&ids).await?);
                 if !j["app_binding_id"].is_null() {
                     let b=app_binding(tx,uid(j,"school_id")?,uid(j,"app_binding_id")?).await?;
                     let e=object(tx,"device_environment_snapshots",uid(j,"environment_id")?).await?;
