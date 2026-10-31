@@ -1,5 +1,6 @@
 import { createIdempotencyKey as key } from '../../../shared/idempotency-key'
 import { AccountRegistrationForm, ResponsibleActorDisplay } from './account-registration'
+import { DispatchWorkspace } from './dispatch'
 import { ApplicationSetup } from './setup'
 import { BusinessWizard } from './flows'
 import { AutomationRuns } from './runs'
@@ -339,7 +340,15 @@ export function ExecutionDevices() {
                       : a.external_key,
                 },
                 { title: '责任人', render: (_, a) => <ResponsibleActorDisplay account={a} /> },
-                { title: '资料核对', render: (_, a) => a.identity_mode === 'ui_visible' ? <Tag>{a.verification_state === 'reviewed' ? '已人工核对' : '待人工核对'}</Tag> : '旧模式' },
+                {
+                  title: '资料核对',
+                  render: (_, a) =>
+                    a.identity_mode === 'ui_visible' ? (
+                      <Tag>{a.verification_state === 'reviewed' ? '已人工核对' : '待人工核对'}</Tag>
+                    ) : (
+                      '旧模式'
+                    ),
+                },
                 {
                   title: '状态',
                   render: (_, a) => (
@@ -379,8 +388,8 @@ export function ExecutionDevices() {
                 <Card key={a.id} title={a.visible_profile?.account_name ?? a.external_key}>
                   <VisibleAccountReview account={a} saved={refresh} />
                   <p>
-                    责任人：<ResponsibleActorDisplay account={a} /> ·{' '}
-                    {a.enabled ? '启用' : '停用'}
+                    责任人：
+                    <ResponsibleActorDisplay account={a} /> · {a.enabled ? '启用' : '停用'}
                   </p>
                   <Editor
                     key={a.revision}
@@ -474,17 +483,32 @@ export default function MobileDelivery({ school, role }: { school: string; role?
           { key: 'groups', label: '目标群' },
           ...(admin
             ? [
-                { key: 'applications', label: '手机与应用' },
+                { key: 'applications', label: '执行设备与账号' },
                 { key: 'flows', label: '业务流程' },
-                { key: 'runs', label: '执行记录' },
+                { key: 'runs', label: '执行批次' },
+                { key: 'legacy-applications', label: '历史 v4 应用' },
+                { key: 'legacy-flows', label: '历史 v4 流程' },
+                { key: 'legacy-runs', label: '历史 v4 执行' },
                 { key: 'strategies', label: '历史发送策略' },
               ]
             : []),
         ]}
       />
-      {listTab === 'applications' && admin ? (
+      {admin && ['applications', 'flows', 'runs'].includes(listTab) ? (
+        <DispatchWorkspace
+          key={`${school}-${listTab}`}
+          school={school}
+          view={
+            listTab === 'applications' ? 'devices' : listTab === 'flows' ? 'compose' : 'batches'
+          }
+          openTask={(id) => {
+            setSelected(id)
+            setListTab('tasks')
+          }}
+        />
+      ) : listTab === 'legacy-applications' && admin ? (
         <ApplicationSetup school={school} />
-      ) : listTab === 'flows' && admin ? (
+      ) : listTab === 'legacy-flows' && admin ? (
         <BusinessWizard
           school={school}
           openTask={(id) => {
@@ -492,7 +516,7 @@ export default function MobileDelivery({ school, role }: { school: string; role?
             setListTab('tasks')
           }}
         />
-      ) : listTab === 'runs' && admin ? (
+      ) : listTab === 'legacy-runs' && admin ? (
         <AutomationRuns
           school={school}
           openTask={(id) => {
