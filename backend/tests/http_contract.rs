@@ -16,6 +16,71 @@ fn app() -> axum::Router {
 }
 
 #[tokio::test]
+async fn responsible_actor_contract_matches_shared_fixture_and_requires_identity() {
+    use axum::response::IntoResponse;
+    use wekeeper_api::{
+        business::Page,
+        distribution::domain::mobile_delivery::{ResponsibleActor, ResponsibleSchool},
+    };
+    let actor = ResponsibleActor {
+        id: "00000000-0000-4000-8000-000000000001".parse().unwrap(),
+        username: "zhangsan".into(),
+        display_name: "张三".into(),
+        active: true,
+        eligible: true,
+        schools: vec![ResponsibleSchool {
+            id: "00000000-0000-4000-8000-000000000002".parse().unwrap(),
+            name: "A 学校".into(),
+        }],
+    };
+    let response = wekeeper_api::http::jsonapi::collection(
+        "sending-account-responsible-actors",
+        vec![serde_json::to_value(actor).unwrap()],
+        &Page::default(),
+    )
+    .into_response();
+    let actual: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+    let expected: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/sending-account-responsible-actors.json"
+    ))
+    .unwrap();
+    assert_eq!(actual, expected);
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/platform/sending-account-responsible-actors")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[test]
+fn account_profile_review_projection_has_a_shared_serialization_contract() {
+    use wekeeper_api::distribution::domain::mobile_delivery::AccountProfileReview;
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/sending-account-profile-review.json"
+    ))
+    .unwrap();
+    let review = AccountProfileReview {
+        actor_id: "00000000-0000-4000-8000-000000000001".parse().unwrap(),
+        actor_name: "张三".into(),
+        actor_username: "zhangsan".into(),
+        reviewed_at: "2026-10-31T02:00:00Z".parse().unwrap(),
+        profile_revision: Some(2),
+        evidence_ref: "本次现场核对企业和账号页面".into(),
+    };
+    assert_eq!(serde_json::to_value(review).unwrap(), fixture);
+    let mut historical = fixture;
+    historical["profile_revision"] = Value::Null;
+    let review: AccountProfileReview = serde_json::from_value(historical.clone()).unwrap();
+    assert_eq!(serde_json::to_value(review).unwrap(), historical);
+}
+
+#[tokio::test]
 async fn public_contract_matches_shared_fixture() {
     let response = app()
         .oneshot(
