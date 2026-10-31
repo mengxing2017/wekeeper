@@ -1,3 +1,10 @@
+import type {
+  EnvironmentReport,
+  DeviceEnvironment,
+  ValidationJob,
+  ValidationEvent,
+  CapabilityResolution,
+} from "../mobile-delivery/automation";
 /** HTTP protocol only. This package never clicks, injects, executes scripts or retries a click. */
 import { ApiError, decodeData, type ResourceDocument } from "../../http";
 import type {
@@ -8,6 +15,25 @@ import type {
   UUID,
   VisibleVerification,
 } from "../mobile-delivery";
+export type PreparationStage =
+  | "checking_environment"
+  | "returning_to_launcher"
+  | "matching_launcher"
+  | "searching_application"
+  | "browsing_all_applications"
+  | "opening_application"
+  | "verifying_application";
+export interface ReadinessTicket {
+  stage: PreparationStage | "ready";
+  id: UUID;
+  generation: UUID;
+  environment_id: UUID;
+  item_id: UUID;
+  manifest_id: UUID;
+  ready: boolean;
+  expires_at: string;
+  manifest?: { id: UUID; content_digest: string; body: unknown };
+}
 export interface Credential {
   id: UUID;
   device_token?: string;
@@ -50,6 +76,7 @@ export interface ExecutionTarget {
   run_id: UUID;
 }
 export interface Claim {
+  automation_manifest?: { id: UUID; content_digest: string; body: unknown };
   configuration?: ConfigurationRelease | null;
   sequence?: {
     run_id: UUID;
@@ -162,7 +189,7 @@ export interface DeviceTransportOptions {
   baseUrl: string;
   token?: string;
   fetch?: typeof fetch;
-  protocolVersion?: 1 | 2 | 3;
+  protocolVersion?: 1 | 2 | 3 | 4;
 }
 export function createDeviceExecutionClient(options: DeviceTransportOptions) {
   const base = new URL(options.baseUrl);
@@ -177,13 +204,14 @@ export function createDeviceExecutionClient(options: DeviceTransportOptions) {
     throw new Error("Device baseUrl must be a fixed HTTPS origin");
   const transport = options.fetch ?? fetch;
   const protocol = options.protocolVersion ?? 1;
-  if (protocol !== 1 && protocol !== 2 && protocol !== 3)
+  if (protocol !== 1 && protocol !== 2 && protocol !== 3 && protocol !== 4)
     throw new Error("Unsupported device protocol");
   async function wire<T>(
     path: string,
     type: string,
     attributes?: unknown,
     key?: string,
+    collection = false,
   ): Promise<{ value: T | null; meta?: ResourceDocument["meta"] }> {
     if (attributes !== undefined && (!key?.trim() || key.length > 128))
       throw new Error("A stable Idempotency-Key is required");
@@ -228,8 +256,10 @@ export function createDeviceExecutionClient(options: DeviceTransportOptions) {
       response.headers.get("Content-Type")?.split(";")[0] !==
         "application/vnd.api+json" ||
       !("data" in doc) ||
-      Array.isArray(doc.data) ||
-      (doc.data !== null && doc.data.type !== type)
+      (collection
+        ? !Array.isArray(doc.data) || doc.data.some((r) => r.type !== type)
+        : Array.isArray(doc.data) ||
+          (doc.data !== null && doc.data.type !== type))
     )
       throw new ApiError(
         response.status,
@@ -249,8 +279,100 @@ export function createDeviceExecutionClient(options: DeviceTransportOptions) {
       throw new ApiError(200, "invalid_document", "Expected resource");
     return r.value;
   }
+  function v4() {
+    if (protocol !== 4)
+      throw new Error("This operation requires device protocol v4");
+  }
   const claimPath = (id: UUID) => `claims/${encodeURIComponent(id)}`;
   return {
+    reportEnvironment: (report: EnvironmentReport, key: string) => {
+      v4();
+      return one<DeviceEnvironment>(
+        "environment-snapshots",
+        "device-environments",
+        { report },
+        key,
+      );
+    },
+    resolveApplication: (id: UUID) => {
+      v4();
+      return one<CapabilityResolution>(
+        `app-binding-resolutions/${encodeURIComponent(id)}`,
+        "app-binding-resolutions",
+      );
+    },
+    validationJobs: async () => {
+      v4();
+      const result = await wire<ValidationJob[]>(
+        "validation-jobs",
+        "device-validations",
+        undefined,
+        undefined,
+        true,
+      );
+      return result.value ?? [];
+    },
+    acceptValidation: (
+      id: UUID,
+      input: { expected_revision: number; generation: UUID },
+      key: string,
+    ) => {
+      v4();
+      return one<ValidationJob>(
+        `validation-jobs/${encodeURIComponent(id)}/acceptances`,
+        "device-validations",
+        input,
+        key,
+      );
+    },
+    validationEvent: (id: UUID, event: ValidationEvent, key: string) => {
+      v4();
+      return one<ValidationJob>(
+        `validation-jobs/${encodeURIComponent(id)}/events`,
+        "device-validations",
+        { event },
+        key,
+      );
+    },
+    executionReadiness: async (key: string) => {
+      v4();
+      const r = await wire<ReadinessTicket>(
+        "execution-readiness",
+        "execution-readiness",
+        {},
+        key,
+      );
+      return {
+        ticket: r.value,
+        wait: r.value === null ? (r.meta as unknown as Wait) : undefined,
+      };
+    },
+    preparationEvent: (
+      ticket: ReadinessTicket,
+      stage: PreparationStage,
+      key: string,
+    ) => {
+      v4();
+      return one<ReadinessTicket>(
+        `execution-readiness/${encodeURIComponent(ticket.id)}/events`,
+        "execution-readiness",
+        { generation: ticket.generation, stage },
+        key,
+      );
+    },
+    applicationReady: (ticket: ReadinessTicket, key: string) => {
+      v4();
+      return one<ReadinessTicket>(
+        `execution-readiness/${encodeURIComponent(ticket.id)}/completions`,
+        "execution-readiness",
+        {
+          generation: ticket.generation,
+          environment_id: ticket.environment_id,
+          manifest_digest: ticket.manifest!.content_digest,
+        },
+        key,
+      );
+    },
     resolveConfiguration: (
       input: {
         package_name: string;
