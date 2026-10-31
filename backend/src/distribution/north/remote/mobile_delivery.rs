@@ -16,6 +16,7 @@ use axum::{
 use serde_json::{Value, json};
 use uuid::Uuid;
 mod automation;
+mod dispatch;
 fn command(input: Input, kind: &str, operation: &str) -> Result<Command> {
     let mut v = input.decode::<Value>(kind)?;
     let obj = v
@@ -713,7 +714,9 @@ async fn enroll(
     let value = a
         .mobile_delivery()
         .execute(
-            Principal::Enrollment.for_protocol(if uri.path().starts_with("/api/v4/") {
+            Principal::Enrollment.for_protocol(if uri.path().starts_with("/api/v5/") {
+                5
+            } else if uri.path().starts_with("/api/v4/") {
                 4
             } else if uri.path().starts_with("/api/v3/") {
                 3
@@ -1457,6 +1460,7 @@ async fn revise_run(
 pub fn router() -> Router<Application> {
     Router::new()
         .merge(automation::router())
+        .merge(dispatch::router())
         .route(
             "/api/v1/platform/execution-configurations",
             get(configurations).post(create_configuration),
@@ -1498,6 +1502,18 @@ pub fn router() -> Router<Application> {
             "/api/v3/device-execution/configuration-releases/{id}",
             get(download_configuration),
         )
+        .route("/api/v5/device-execution/enrollments", post(enroll))
+        .route(
+            "/api/v5/device-execution/credential-rotations",
+            post(rotate),
+        )
+        .route("/api/v5/device-execution/session", get(session))
+        .route("/api/v5/device-execution/claims", post(claim))
+        .route("/api/v5/device-execution/claims/{id}", get(get_claim))
+        .route("/api/v5/device-execution/claims/{id}/renewals", post(renew))
+        .route("/api/v5/device-execution/claims/{id}/permits", post(permit))
+        .route("/api/v5/device-execution/claims/{id}/results", post(result))
+        .route("/api/v5/device-execution/claims/{id}/aborts", post(abort))
         .route("/api/v4/device-execution/enrollments", post(enroll))
         .route(
             "/api/v4/device-execution/credential-rotations",
