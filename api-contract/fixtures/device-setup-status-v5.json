@@ -1,0 +1,11 @@
+{
+  "id": "22222222-2222-4222-8222-222222222222",
+  "protocol_version": 5,
+  "checked_at": "2026-10-31T00:00:00Z",
+  "device_name": "已配对手机",
+  "account_name": null,
+  "sender_account_id": null,
+  "binding_revision": null,
+  "scope_source": "responsible_actor_school_admin",
+  "schools": []
+}

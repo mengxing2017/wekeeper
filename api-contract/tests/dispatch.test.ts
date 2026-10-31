@@ -138,3 +138,36 @@ test("shared plan fixtures have canonical hashes and no mandatory installed envi
   expect(plan.body).not.toHaveProperty("environment_id");
   expect(plan.body).not.toHaveProperty("app_binding_id");
 });
+
+test("setup status uses dedicated device credentials before any grant", async () => {
+  const fixture = (await import("../fixtures/device-setup-status-v5.json"))
+    .default;
+  const { id, ...attributes } = fixture;
+  const fetcher = vi
+    .fn<typeof fetch>()
+    .mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: { type: "device-setup-status", id, attributes },
+        }),
+        { headers: { "Content-Type": "application/vnd.api+json" } },
+      ),
+    );
+  const client = createDeviceExecutionClient({
+    baseUrl: "https://keeper.test",
+    protocolVersion: 5,
+    token: "device-test",
+    fetch: fetcher,
+  });
+  expect(await client.setupStatus()).toEqual(fixture);
+  expect(fetcher.mock.calls[0][0]).toBe(
+    "https://keeper.test/api/v5/device-execution/setup-status",
+  );
+  expect(fetcher.mock.calls[0][1]).toMatchObject({
+    credentials: "omit",
+    redirect: "error",
+  });
+  expect(fetcher.mock.calls[0][1]?.headers).toMatchObject({
+    Authorization: "Bearer device-test",
+  });
+});
