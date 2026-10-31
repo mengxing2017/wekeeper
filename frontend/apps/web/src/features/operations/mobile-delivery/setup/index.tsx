@@ -5,12 +5,13 @@ import { api } from '../api'
 import { createIdempotencyKey as key } from '../../../../shared/idempotency-key'
 import { PaginationControls } from '../../../../shared/pagination-controls'
 export const validationStates: Record<string, string> = {
-  queued: '等待手机接受',
-  offered: '等待手机接受',
+  queued: '等待手机授权或自动调度',
+  offered: '等待手机授权或自动调度',
   accepted: '手机已接受',
   running: '手机检查中',
   succeeded: '验证完成',
   failed: '验证失败，请查看手机',
+  declined: '已在手机拒绝（未接受）',
   interrupted: '已中断，请重新发起',
   cancelled: '已取消（手机收到后停止）',
   expired: '已过期，请重新发起',
@@ -215,7 +216,7 @@ export function ApplicationSetup({ school }: { school: string }) {
             >
               请手机重新检测
             </Button>
-            {job.data && <p role="status">{validationStates[job.data.state]}</p>}
+            {job.data && <><p role="status">{validationStates[job.data.state]}</p>{job.data.decision_source && <p>处理依据：{job.data.decision_source === 'standing_authorization' ? '依据先前持续授权自动接受' : job.data.decision_source === 'local_decline' ? '手机本地拒绝，未接受' : '历史本机接受'}</p>}</>}
             <Space>
               <Button onClick={() => setStep(0)}>上一步</Button>
               <Button
@@ -265,8 +266,8 @@ export function ApplicationSetup({ school }: { school: string }) {
           <Space orientation="vertical">
             <Alert
               type="info"
-              title="手机需要明确接受测试"
-              description="测试仅通过桌面搜索或全部应用列表打开并核验企业微信，不搜索群、不输入消息、不发送。尚无适配时联系维护人员完成试用。"
+              title="手机先授权一次，范围内自动接受"
+              description="请在手机核对单位、账号和应用后授权一次。已有授权需覆盖此应用；测试仅通过桌面搜索或全部应用列表打开并核验企业微信，不搜索群、不输入消息、不发送。尚无适配时联系维护人员完成试用。"
             />
             <Button
               type="primary"
