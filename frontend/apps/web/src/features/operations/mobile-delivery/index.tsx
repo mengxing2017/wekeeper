@@ -1,3 +1,4 @@
+import { ControlStatus, useControlFreshness } from './control-status'
 import { DeviceControlPanel } from './device-control'
 import { DeviceAccountBinding } from './device-account-binding'
 import { createIdempotencyKey as key } from '../../../shared/idempotency-key'
@@ -98,7 +99,10 @@ export function ExecutionDevices() {
   const devices = useQuery({
     queryKey: ['mobile', 'platform', 'devices', page],
     queryFn: () => api.devices(page),
+    refetchInterval: listTab === 'devices' ? 5000 : false,
+    refetchOnWindowFocus: 'always',
   })
+  const devicesFresh = useControlFreshness(devices.dataUpdatedAt, devices.isError)
   const accounts = useQuery({
     queryKey: ['mobile', 'platform', 'accounts', accountPage],
     queryFn: () => api.accounts(accountPage),
@@ -176,14 +180,15 @@ export function ExecutionDevices() {
                 { title: '设备名称', dataIndex: 'name' },
                 { title: '设备 ID', dataIndex: 'id', ellipsis: true },
                 {
-                  title: '状态',
+                  title: '启用状态',
                   render: (_, d) => (
                     <Tag color={d.enabled ? 'success' : 'default'}>
                       {d.enabled ? '已启用' : '已停用'}
                     </Tag>
                   ),
                 },
-                { title: '最近在线', render: (_, d) => d.last_seen_at ?? '尚未连接' },
+                { title: '控制连接', render: (_, d) => <ControlStatus state={d.control?.state} fresh={devicesFresh} /> },
+                { title: '最近控制心跳', render: (_, d) => d.control?.last_control_heartbeat_at ?? '尚未收到心跳' },
                 {
                   title: '操作',
                   render: (_, d) => (
@@ -211,7 +216,7 @@ export function ExecutionDevices() {
                   extra={<Tag>{d.enabled ? '已启用' : '已停用'}</Tag>}
                 >
                   <p>
-                    设备 ID：{d.id} · 最近在线：{d.last_seen_at ?? '尚未连接'}
+                    设备 ID：{d.id} · 最近业务接触：{d.last_seen_at ?? '尚未连接'}
                   </p>
                   <Space wrap>
                     <Button
