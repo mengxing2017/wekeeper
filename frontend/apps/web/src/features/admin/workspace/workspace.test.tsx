@@ -11,8 +11,6 @@ vi.mock('./api', () => ({ identity: { session: vi.fn(), accounts: vi.fn(), creat
 class TestResizeObserver { observe() {} unobserve() {} disconnect() {} }
 vi.stubGlobal('ResizeObserver', TestResizeObserver)
 configure({ asyncUtilTimeout: 5000 })
-const originalComputedStyle = window.getComputedStyle;
-window.getComputedStyle = element => originalComputedStyle(element);
 afterEach(() => { cleanup(); vi.resetAllMocks() })
 Object.defineProperty(window, 'matchMedia', { writable: true, value: (query: string) => ({ matches: false, media: query, onchange: null, addListener: vi.fn(), removeListener: vi.fn(), addEventListener: vi.fn(), removeEventListener: vi.fn(), dispatchEvent: vi.fn() }) })
 it('restores the selected school and business page from its URL', async () => {
@@ -22,10 +20,12 @@ it('restores the selected school and business page from its URL', async () => {
   vi.mocked(identity.accounts).mockResolvedValue([])
   const client = new QueryClient({defaultOptions:{queries:{retry:false}}})
   render(<QueryClientProvider client={client}><MemoryRouter initialEntries={['/admin?school=school&view=groups']}><Workspace/></MemoryRouter></QueryClientProvider>)
-  expect(await screen.findByRole('heading', { name: '客户群', level: 1 })).toBeTruthy()
+  const groupsTitle = await screen.findByText('客户群', { selector: 'h1' })
+  expect(within(groupsTitle.parentElement!).getByRole('heading', { name: '客户群', level: 1 })).toBe(groupsTitle)
   await waitFor(() => expect(workspace.list).toHaveBeenCalledWith('school','groups',expect.any(String),expect.any(AbortSignal)))
-  fireEvent.click(screen.getByRole('menuitem', { name: '学校管理' }))
-  expect(await screen.findByRole('heading', { name: '学校管理', level: 1 })).toBeTruthy()
+  fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: '学校管理' }))
+  const schoolsTitle = await screen.findByText('学校管理', { selector: 'h1' })
+  expect(within(schoolsTitle.parentElement!).getByRole('heading', { name: '学校管理', level: 1 })).toBe(schoolsTitle)
   expect(screen.queryByLabelText('当前学校')).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: '新建学校' }))
   expect(await screen.findByLabelText('学校名称')).toBeTruthy()
@@ -67,7 +67,7 @@ it('separates ordinary accounts and administrators by privilege, not display nam
   expect(screen.queryByLabelText('当前学校')).toBeNull()
   expect(screen.queryByText('平台维护者')).toBeNull()
   expect(screen.queryByRole('button', {name:'新建学校'})).toBeNull()
-  fireEvent.click(screen.getByRole('menuitem', {name:'本地管理员管理'}))
+  fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', {name:'本地管理员管理'}))
   expect(await screen.findByText('平台维护者')).toBeTruthy()
   expect(screen.queryByText('ordinary')).toBeNull()
   expect(screen.queryByRole('button', {name:'新建账号'})).toBeNull()

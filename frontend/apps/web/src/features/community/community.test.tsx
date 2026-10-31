@@ -36,7 +36,10 @@ it('uploads through the contract and submits managed form values with image URLs
   fireEvent.change(document.querySelector('input[type=file]')!, { target: { files: [file] } })
   await waitFor(() => expect(workspace.upload).toHaveBeenCalledWith('s', expect.objectContaining({ name: 'photo.png' })))
   await screen.findByAltText('上传预览')
-  fireEvent.click(screen.getByRole('button', { name: '提交审核' }))
+  // The preview can render before upload invalidation releases the busy state.
+  const submit = await screen.findByRole('button', { name: '提交审核' })
+  await waitFor(() => expect(submit).toHaveProperty('disabled', false))
+  fireEvent.click(submit)
   await waitFor(() => expect(workspace.mutate).toHaveBeenCalledWith('s', 'posts', expect.objectContaining({
     title: '校园通知', content: '通知正文', tags: ['校园', '通知'], images: ['/image.png'],
   }), 'POST'))

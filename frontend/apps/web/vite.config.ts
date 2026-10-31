@@ -18,6 +18,7 @@ export default defineConfig({
     // Run JSDOM/Ant Design suites serially: concurrent form-heavy files exceed
     // the existing timeout on constrained CI hosts even when isolated checks pass.
     maxWorkers: 1,
+    fileParallelism: false,
     setupFiles: ['./src/test/setup.ts'],
     environment: 'jsdom',
     clearMocks: true,

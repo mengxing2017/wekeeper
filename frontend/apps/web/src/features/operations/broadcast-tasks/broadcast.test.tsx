@@ -1,5 +1,5 @@
 import {afterEach,expect,it,vi} from 'vitest'
-import {configure,cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react'
+import {configure,cleanup,fireEvent,render,screen,waitFor,within} from '@testing-library/react'
 import {QueryClient,QueryClientProvider} from '@tanstack/react-query'
 import BroadcastTasks,{targetLabel} from './index'
 import {broadcast,workspace,type BroadcastTask,type BroadcastTarget} from './api'
@@ -27,7 +27,10 @@ it('double click claims once; retry after a lost response retains its idempotenc
  let reject:(e:Error)=>void=()=>{}
  vi.mocked(broadcast.action).mockImplementationOnce(()=>new Promise((_,r)=>{reject=r})).mockResolvedValue(task)
  show();fireEvent.click(await screen.findByRole('button',{name:'查看任务 123456'}))
- const button=await screen.findByRole('button',{name:'确认创建企业微信群发任务'})
+ // Wait for the task payload before scanning the drawer's accessible controls.
+ const detail=within(await screen.findByRole('dialog'))
+ await detail.findByText('冻结通知')
+ const button=detail.getByRole('button',{name:'确认创建企业微信群发任务'})
  fireEvent.click(button);fireEvent.click(button)
  await waitFor(()=>expect(broadcast.action).toHaveBeenCalledTimes(1))
  reject(new Error('网络中断，请核对'))
@@ -45,7 +48,7 @@ it('previews direct text with no posts or templates, and saves only selected gro
  })
  vi.mocked(broadcast.save).mockRejectedValue(new Error('保存失败，请重试'))
  fireEvent.click(await screen.findByRole('button',{name:'新建群发任务'}))
- const editor=await screen.findByRole('textbox',{name:'群发正文'})
+ const editor=await screen.findByLabelText('群发正文')
  fireEvent.change(editor,{target:{value:'测试😀\n第二行'}})
  expect(screen.getByLabelText('正文预览').textContent).toBe('测试😀\n第二行')
  expect(workspace.list).not.toHaveBeenCalledWith(expect.anything(),'posts',expect.anything())
@@ -63,7 +66,10 @@ it('previews direct text with no posts or templates, and saves only selected gro
 it('operator can inspect text draft but cannot confirm it',async()=>{
  show(false,{...task,content_source:'text',template_version_id:null,post_ids:[]})
  fireEvent.click(await screen.findByRole('button',{name:'查看任务 123456'}))
- const button=await screen.findByRole('button',{name:'确认创建企业微信群发任务'})
+ // Wait for the task payload before scanning the drawer's accessible controls.
+ const detail=within(await screen.findByRole('dialog'))
+ await detail.findByText('冻结通知')
+ const button=detail.getByRole('button',{name:'确认创建企业微信群发任务'})
  expect((button as HTMLButtonElement).disabled).toBe(true)
  fireEvent.click(button)
  expect(broadcast.action).not.toHaveBeenCalled()
@@ -71,7 +77,7 @@ it('operator can inspect text draft but cannot confirm it',async()=>{
 })
 it('empty target directory still permits text preview but prevents saving',async()=>{
  show();fireEvent.click(await screen.findByRole('button',{name:'新建群发任务'}))
- fireEvent.change(await screen.findByRole('textbox',{name:'群发正文'}),{target:{value:'通知'}})
+ fireEvent.change(await screen.findByLabelText('群发正文'),{target:{value:'通知'}})
  await screen.findByText('暂无可用客户群。可先填写并预览正文，配置本校客户群后才能保存任务。')
  expect(screen.getByLabelText('正文预览').textContent).toBe('通知')
  expect((screen.getByRole('button',{name:'保存并预览'}) as HTMLButtonElement).disabled).toBe(true)
@@ -80,7 +86,10 @@ it('empty target directory still permits text preview but prevents saving',async
 it('explains the actual deployment block next to the disabled submission action',async()=>{
  show(true,task,'企业微信群发开关未开启。')
  fireEvent.click(await screen.findByRole('button',{name:'查看任务 123456'}))
- const button=await screen.findByRole('button',{name:'确认创建企业微信群发任务'})
+ // Wait for the task payload before scanning the drawer's accessible controls.
+ const detail=within(await screen.findByRole('dialog'))
+ await detail.findByText('冻结通知')
+ const button=detail.getByRole('button',{name:'确认创建企业微信群发任务'})
  expect((button as HTMLButtonElement).disabled).toBe(true)
  expect(screen.getAllByText('企业微信群发开关未开启。').length).toBe(2)
  expect(broadcast.action).not.toHaveBeenCalled()
