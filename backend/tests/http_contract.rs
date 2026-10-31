@@ -639,7 +639,29 @@ async fn mobile_device_routes_require_dedicated_credentials() {
             response.headers()["content-type"],
             "application/vnd.api+json"
         );
+        assert!(response.headers().contains_key("x-request-id"));
+        let body: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 8192).await.unwrap()).unwrap();
+        assert_eq!(body["errors"][0]["code"], "unauthorized");
+        assert_eq!(
+            body["errors"][0]["detail"],
+            "设备身份认证未通过，请管理员核对设备启用状态和凭据"
+        );
     }
+}
+
+#[tokio::test]
+async fn revision_conflicts_explain_refresh_without_task_review_instructions() {
+    use axum::response::IntoResponse;
+    let response = wekeeper_api::business::Error::Policy("revision_conflict").into_response();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 8192).await.unwrap()).unwrap();
+    assert_eq!(body["errors"][0]["code"], "revision_conflict");
+    assert_eq!(
+        body["errors"][0]["detail"],
+        "记录已更新，请刷新后核对并重新提交"
+    );
 }
 
 #[test]
