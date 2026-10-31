@@ -34,7 +34,8 @@ export default defineConfig({
         { text: '业务、迁移与验收', link: '/runbooks/business' },
         { text: '企业微信接入', link: '/runbooks/wecom' },
         { text: '手机执行接口', link: '/runbooks/mobile-delivery' },
-        { text: '企业微信规则与多群执行', link: '/runbooks/configured-mobile-delivery' },
+        { text: '多应用业务配置', link: '/runbooks/automation-workflows' },
+        { text: '历史企业微信规则与多群执行', link: '/runbooks/configured-mobile-delivery' },
         { text: '基础阶段验证记录', link: '/runbooks/foundation-validation' },
       ] },
       { text: '工程决策与参考', items: [
