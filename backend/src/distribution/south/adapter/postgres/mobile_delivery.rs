@@ -496,6 +496,16 @@ async fn claim_response(tx: &mut Tx<'_>, c: &Value, i: &Value) -> Result<Value> 
     if configured::is_configured(i) && configured::validate(tx, i).await.is_err() {
         may_execute = false;
     }
+    if automation::authorization_gate(
+        tx,
+        uid(c, "device_id")?,
+        c["protocol_version"].as_u64().unwrap_or(1) as u32,
+    )
+    .await
+    .is_err()
+    {
+        may_execute = false;
+    }
     let req = if c["protocol_version"].as_u64().unwrap_or(1) >= 2 {
         c["requirements_snapshot"].clone()
     } else {
@@ -1677,6 +1687,16 @@ impl Store for Repository {
             }
             tx.commit().await?;
             return Ok(response);
+        }
+        if matches!(
+            c,
+            Command::Claim { .. }
+                | Command::Prepare { .. }
+                | Command::Permit { .. }
+                | Command::Renew { .. }
+        ) {
+            let (device, _) = device(&mut tx, &p).await?;
+            automation::authorization_gate(&mut tx, device, p.protocol()).await?;
         }
         let mut response = Self::apply(&mut tx, &p, &s, c, enabled, origin).await?;
         if p.protocol() >= 2 && response.get("device_token").is_some() {

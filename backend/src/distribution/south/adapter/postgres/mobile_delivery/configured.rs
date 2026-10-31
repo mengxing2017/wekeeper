@@ -311,7 +311,12 @@ pub(super) async fn candidate(
     account: Uuid,
     protocol: u32,
 ) -> Result<Option<std::result::Result<Value, Value>>> {
-    let row:Option<Value>=sqlx::query_scalar("SELECT to_jsonb(p)||jsonb_build_object('device_id',r.device_id,'school_id',r.school_id,'task_id',r.task_id,'automation_manifest_id',r.automation_manifest_id) FROM mobile_delivery_run_progress p JOIN mobile_delivery_strategy_runs r ON r.id=p.id JOIN mobile_delivery_tasks t ON t.id=r.task_id WHERE (t.state='confirmed' OR EXISTS(SELECT 1 FROM mobile_delivery_run_items m JOIN delivery_usage u ON u.source_channel='mobile' AND u.source_id=m.item_id WHERE m.run_id=r.id AND u.state IN ('pending','unknown'))) AND (r.device_id=$1 OR r.strategy_snapshot->>'sender_account_id'=$2) AND EXISTS(SELECT 1 FROM mobile_delivery_run_items m WHERE m.run_id=r.id AND m.position>=p.current_position) ORDER BY p.confirmed_at NULLS LAST,r.id LIMIT 1").bind(d).bind(account.to_string()).fetch_optional(&mut **tx).await?;
+    let application_ids = if protocol == 4 {
+        automation::authorized_application_ids(tx, d, account).await?
+    } else {
+        Vec::new()
+    };
+    let row:Option<Value>=sqlx::query_scalar("SELECT to_jsonb(p)||jsonb_build_object('device_id',r.device_id,'school_id',r.school_id,'task_id',r.task_id,'automation_manifest_id',r.automation_manifest_id) FROM mobile_delivery_run_progress p JOIN mobile_delivery_strategy_runs r ON r.id=p.id JOIN mobile_delivery_tasks t ON t.id=r.task_id WHERE (t.state='confirmed' OR EXISTS(SELECT 1 FROM mobile_delivery_run_items m JOIN delivery_usage u ON u.source_channel='mobile' AND u.source_id=m.item_id WHERE m.run_id=r.id AND u.state IN ('pending','unknown'))) AND (r.device_id=$1 OR r.strategy_snapshot->>'sender_account_id'=$2) AND EXISTS(SELECT 1 FROM mobile_delivery_run_items m WHERE m.run_id=r.id AND m.position>=p.current_position) AND ($3::int<>4 OR r.device_id<>$1 OR r.automation_manifest_id IS NULL OR p.current_position>1 OR EXISTS(SELECT 1 FROM mobile_delivery_run_items started JOIN mobile_execution_claims c ON c.item_id=started.item_id WHERE started.run_id=r.id) OR EXISTS(SELECT 1 FROM mobile_delivery_run_items m JOIN delivery_usage u ON u.source_channel='mobile' AND u.source_id=m.item_id WHERE m.run_id=r.id AND u.state IN ('pending','unknown')) OR EXISTS(SELECT 1 FROM automation_execution_manifests am WHERE am.id=r.automation_manifest_id AND am.body#>>'{resolution,binding,id}'=ANY($4::text[]))) ORDER BY p.confirmed_at NULLS LAST,r.id LIMIT 1").bind(d).bind(account.to_string()).bind(protocol as i32).bind(&application_ids).fetch_optional(&mut **tx).await?;
     let Some(row) = row else { return Ok(None) };
     let reason = if row["device_id"] != d.to_string() {
         Some("ordered_run_owns_account")
