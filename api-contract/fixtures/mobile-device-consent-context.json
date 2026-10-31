@@ -1,0 +1,29 @@
+{
+  "data": {
+    "type": "mobile-device-consent-contexts",
+    "id": "00000000-0000-0000-0000-000000000001",
+    "attributes": {
+      "protocol_version": 6,
+      "scopes": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "school_name": "示例学校",
+          "scope": {
+            "schema": "business_device_scope/3",
+            "platform_source": "wekeeper",
+            "device_id": "00000000-0000-0000-0000-000000000001",
+            "school_id": "00000000-0000-0000-0000-000000000002",
+            "grant_id": "00000000-0000-0000-0000-000000000003",
+            "grant_revision": 1,
+            "purpose": "通知",
+            "app_key": "wecom",
+            "capability": "group_text"
+          },
+          "scope_digest": "323c0f33480f23ab27f58f67d0f579e616bca0bfad81ed785bcb77e61aeecbe6",
+          "consent": null,
+          "accepted": false
+        }
+      ]
+    }
+  }
+}
