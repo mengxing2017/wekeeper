@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { selectOption } from '../../../test/select-option'
 import { DeviceAccountBinding } from './device-account-binding'
 import { api, type Device, type SendingAccount } from './api'
 vi.mock('./api', () => ({ api: { bindDevice: vi.fn() } }))
@@ -9,8 +10,8 @@ afterEach(() => { cleanup(); vi.resetAllMocks() })
 const device: Device = { id: 'phone', name: '手机', revision: 2, enabled: true, credential_generation: 1, client_instance_id: null, last_seen_at: null, created_at: '' }
 const account: SendingAccount = { id: 'sender', revision: 1, client_kind: 'wecom', identity_namespace: null, external_key: null, visible_profile: { company_name: '学校', account_name: '张老师' }, responsible_actor_id: 'admin', identity_evidence_ref: '登记说明', verified_at: '', enabled: true, daily_limit: 30, device_binding_eligibility: { eligible: true, reason: null } }
 async function select() {
-  fireEvent.mouseDown(screen.getByRole('combobox', { name: '发送账号' }))
-  fireEvent.click(await screen.findByText('学校 · 张老师'))
+  await selectOption(screen.getByRole('combobox', { name: '发送账号' }), '学校 · 张老师')
+  await waitFor(() => expect(screen.getByRole('button', { name: '绑定发送账号' }).hasAttribute('disabled')).toBe(false))
 }
 it('requires explicit phone identity confirmation but permits an empty note', async () => {
   const refresh = vi.fn().mockResolvedValue(undefined)
