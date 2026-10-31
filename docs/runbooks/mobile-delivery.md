@@ -1,5 +1,7 @@
 # 手机执行接口运行手册
 
+新的管理员入口及 v4 服务端接入见 [多应用业务配置与安卓应用准备](automation-workflows.md)。本轮仅更新 WeKeeper；当前 keeper-otter 未接入 v4，需等待手机端实施与真实环境验证。以下保留旧协议的运行和恢复说明。
+
 本手册说明 migration `202610240001_mobile_execution.sql` 引入的通用执行约定和旧 v1 外部身份流程。企业微信可见身份、后台规则及 v3 多群执行见 [规则配置与多群顺序执行](configured-mobile-delivery.md)，不按下文 v1 的外部 ID 登记或固定版本审批流程接入。Android 执行端为独立 `keeper-otter` 项目，已编码 demo 及企业微信 v3 通用引擎；真实规则、APK 和真机发送尚未验收，不包含自动登录。联调 client：`@wekeeper/api-contract/mobile-delivery` 和 `@wekeeper/api-contract/device-execution`。
 
 ## 上线顺序
