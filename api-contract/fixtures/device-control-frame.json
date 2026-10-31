@@ -1,0 +1,14 @@
+{
+  "id": "00000000-0000-4000-8000-000000000001",
+  "connection_id": "00000000-0000-4000-8000-000000000002",
+  "epoch": 2,
+  "protocol_version": 1,
+  "heartbeat_id": null,
+  "heartbeat_interval_seconds": 20,
+  "offline_after_seconds": 65,
+  "server_time": "2026-10-31T00:00:00Z",
+  "desired_paused": true,
+  "desired_revision": 3,
+  "commands": [],
+  "credential_expires_at": "2026-11-30T00:00:00Z"
+}
