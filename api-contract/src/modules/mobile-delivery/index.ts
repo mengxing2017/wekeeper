@@ -548,6 +548,7 @@ export const mobileDeliveryApi = {
     ),
   devices: (page?: number, size?: number) => list<Device>(devices, page, size),
   device: (id: UUID) => requestResource<Device>(`${devices}/${segment(id)}`),
+  /** New registrations are enabled; existing disabled/revoked devices are not re-enabled. */
   createDevice: (input: { name: string }, key: string) =>
     write<Device>(devices, "POST", input, key),
   updateDevice: (
