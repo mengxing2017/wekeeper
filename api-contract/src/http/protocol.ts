@@ -127,12 +127,43 @@ export function resourceType(path: string): string {
     if (parts[5] === "account-bindings") return "device-account-bindings";
     return "execution-devices";
   }
+  if (parts[2] === "platform" && parts[3] === "automation-pacing-profiles")
+    return "automation-pacing-profiles";
+  if (
+    parts[2] === "schools" &&
+    [
+      "automation-flow-releases",
+      "automation-device-groups",
+      "automation-execution-assignments",
+      "automation-dispatch-settings",
+    ].includes(parts[4])
+  )
+    return parts[4];
+  if (parts[2] === "platform" && parts[3] === "automation-flows")
+    return parts[5] === "releases"
+      ? "automation-flow-releases"
+      : "automation-flows";
+  if (parts[2] === "platform" && parts[3] === "automation-flow-releases")
+    return "automation-flow-releases";
+  if (parts[2] === "schools" && parts[4] === "automation-dispatch-previews")
+    return parts[6] === "confirmations"
+      ? "automation-dispatch-batches"
+      : "automation-dispatch-previews";
+  if (parts[2] === "schools" && parts[4] === "automation-dispatch-batches")
+    return "automation-dispatch-batches";
+  if (parts[2] === "schools" && parts[4] === "automation-flow-validations")
+    return "automation-flow-validations";
   if (parts[2] === "platform" && parts[3] === "automation-adaptations")
-    return parts[4] === "components" && parts[6] !== "releases" ? "automation-components" : "automation-releases";
+    return parts[4] === "components" && parts[6] !== "releases"
+      ? "automation-components"
+      : "automation-releases";
   if (parts[2] === "schools") {
     if (parts[4] === "device-app-bindings") return "device-app-bindings";
     if (parts[4] === "automation-validations") return "automation-validations";
-    if (parts[4] === "automation-business-previews") return parts[6] === "confirmations" ? "automation-business-confirmations" : "automation-business-previews";
+    if (parts[4] === "automation-business-previews")
+      return parts[6] === "confirmations"
+        ? "automation-business-confirmations"
+        : "automation-business-previews";
   }
   if (parts[2] === "platform" && parts[3] === "execution-configurations")
     return parts[5] === "releases"
