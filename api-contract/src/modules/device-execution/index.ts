@@ -1,4 +1,6 @@
 import type {
+  ExecutionAuthorizationReceipt,
+  ExecutionAuthorizationContext,
   EnvironmentReport,
   DeviceEnvironment,
   ValidationJob,
@@ -24,6 +26,7 @@ export type PreparationStage =
   | "opening_application"
   | "verifying_application";
 export interface ReadinessTicket {
+  authorization_id?: UUID | null;
   stage: PreparationStage | "ready";
   id: UUID;
   generation: UUID;
@@ -312,6 +315,10 @@ export function createDeviceExecutionClient(options: DeviceTransportOptions) {
       );
       return result.value ?? [];
     },
+    authorizationContext: () => { v4(); return one<ExecutionAuthorizationContext>("execution-authorization-context","execution-authorizations"); },
+    authorizationReceipt: (receipt: ExecutionAuthorizationReceipt,key:string) => { v4(); return one<{id: UUID;revision:number}>("execution-authorizations","execution-authorizations",{receipt},key); },
+    acceptStandingValidation: (id:UUID,input:{expected_revision:number;generation:UUID;authorization_id:UUID},key:string) => { v4(); return one<ValidationJob>(`validation-jobs/${encodeURIComponent(id)}/standing-acceptances`,"device-validations",input,key); },
+    rejectValidation: (id:UUID,input:{expected_revision:number;generation:UUID},key:string) => { v4(); return one<ValidationJob>(`validation-jobs/${encodeURIComponent(id)}/rejections`,"device-validations",input,key); },
     acceptValidation: (
       id: UUID,
       input: { expected_revision: number; generation: UUID },
