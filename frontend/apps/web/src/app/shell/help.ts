@@ -16,7 +16,8 @@ export const pageHelp: Record<string, string> = {
   administrators: 'platform-admin/accounts-and-schools',
   'wecom-assets': 'platform-admin/directory-and-assets',
   'wecom-directory': 'platform-admin/directory-and-assets',
-  'execution-devices': 'platform-admin/devices-and-accounts',
+  'execution-devices': 'operator/execution-resources',
+  'execution-accounts': 'operator/execution-resources#sending-accounts',
   'platform-resources': 'platform-admin/audit-and-resources',
 }
 export const helpHref = (active: string) =>

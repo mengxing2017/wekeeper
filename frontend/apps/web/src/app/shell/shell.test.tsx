@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+import { visibleNavigationKeys } from '../navigation'
 import { AppShell, navigation } from './index'
 import { helpHref, pageHelp } from './help'
 
@@ -34,6 +35,7 @@ function show(platformAdmin = false) {
         onNavigate={onNavigate}
         username="测试运营"
         platformAdmin={platformAdmin}
+        allowedKeys={visibleNavigationKeys(platformAdmin, 'operator')}
         onLogout={onLogout}
       >
         <p>学校内容</p>
@@ -52,12 +54,13 @@ it('shows role-appropriate navigation and routes business selections', () => {
   expect(onNavigate).toHaveBeenCalledWith('broadcast-tasks')
   fireEvent.click(screen.getByRole('menuitem', { name: '手机发送任务' }))
   expect(onNavigate).toHaveBeenCalledWith('mobile-delivery')
-  expect(screen.queryByRole('menuitem', { name: '手机设备与发送账号' })).toBeNull()
+  expect(screen.getByRole('menuitem', { name: '手机设备' })).toBeTruthy()
+  expect(screen.getByRole('menuitem', { name: '发送账号' })).toBeTruthy()
 })
 it('provides platform management and logout for an administrator', async () => {
   const { onLogout } = show(true)
   expect(screen.getByRole('menuitem', { name: '学校管理' })).toBeTruthy()
-  expect(screen.getByRole('menuitem', { name: '手机设备与发送账号' })).toBeTruthy()
+  expect(screen.getByRole('menuitem', { name: '手机设备' })).toBeTruthy()
   fireEvent.click(screen.getByRole('button', { name: '账号菜单' }))
   fireEvent.click(await screen.findByRole('menuitem', { name: '退出登录' }))
   expect(onLogout).toHaveBeenCalledTimes(1)

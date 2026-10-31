@@ -144,9 +144,11 @@ a:focus-visible {
   border-inline-end: 0;
 }
 .app-navigation .ant-menu-item-group-title {
-  font-size: 12px;
+  font-size: 14px;
+  font-weight: 700;
+  border-top: 1px solid #e8edf3;
   padding: 16px 16px 4px;
-  color: var(--color-text-muted);
+  color: var(--color-text);
 }
 .app-navigation .ant-menu-item {
   width: auto;

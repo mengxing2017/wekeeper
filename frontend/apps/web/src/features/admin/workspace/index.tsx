@@ -1,10 +1,12 @@
+import { navigation, visibleNavigationKeys, resolveNavigation } from '../../../app/navigation'
+import { SchoolExecutionResources } from '../../operations/mobile-delivery/school-resources'
 import { ListPanel } from '../../../shared/list-panel'
 import { formatDate } from '../../../shared/format-date'
 import { PaginationControls } from '../../../shared/pagination-controls'
 import { useDialogs } from '../../../shared/use-dialogs'
 import { Disclosure } from '../../../shared/disclosure'
 import { useSearchParams } from 'react-router-dom'
-import { AppShell, navigation, schoolRoleLabel } from '../../../app/shell'
+import { AppShell, schoolRoleLabel } from '../../../app/shell'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -71,29 +73,22 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
   const visibleSchools = q.data?.filter((s) => user.platform_admin || s.active)
   const school = visibleSchools?.find((s) => s.id === (selected || visibleSchools[0]?.id))
   const role = school?.active ? user.grants.find((g) => g.school_id === school.id)?.role : undefined
-  const allowedKeys = navigation
-    .filter(
-      (n) =>
-        user.platform_admin ||
-        (n.group !== '平台管理' &&
-          (['members', 'settings'].includes(n.key)
-            ? role === 'admin'
-            : role === 'admin' || role === 'operator')),
-    )
-    .map((n) => n.key)
-  const oldTab = params.get('view') ?? 'posts'
-  const requestedTab = ['delivery-drafts', 'delivery-attempts'].includes(oldTab)
-    ? 'broadcast-tasks'
-    : oldTab
-  const tab = allowedKeys.includes(requestedTab) ? requestedTab : (allowedKeys[0] ?? '')
+  const allowedKeys = visibleNavigationKeys(user.platform_admin, role)
+  const requestedTab = resolveNavigation(params.get('view') ?? allowedKeys[0] ?? '', params.get('subview'))
+  const knownPage = navigation.find(n => n.key === requestedTab)
+  const tab = requestedTab
+  const denied = !allowedKeys.includes(tab)
+  const resourcePage = ['execution-devices', 'execution-accounts'].includes(tab)
+  const globalScope = knownPage?.scope === 'global' || (knownPage?.scope === 'selectable' && user.platform_admin && params.get('scope') !== 'school')
+  const setSubview = (view: string) => setParams(previous => { const next = new URLSearchParams(previous); next.set('subview', view); return next })
   const navigate = (key: string) =>
     setParams((previous) => {
       const next = new URLSearchParams(previous)
       next.set('view', key)
+      next.delete('subview')
       return next
     })
   const enterSchool = (id: string, view: string) => setParams({ school: id, view })
-  const platformView = navigation.find((n) => n.key === tab)?.group === '平台管理'
   const refresh = async () => {
     await cache.invalidateQueries({ queryKey: ['schools'] })
     await cache.invalidateQueries({ queryKey: ['business'] })
@@ -107,8 +102,9 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
       allowedKeys={allowedKeys}
       schoolRole={role}
       pageExtra={
-        !platformView && (
-          <div className="scope-toolbar">
+        <div className="scope-toolbar">
+          {resourcePage && user.platform_admin && <Select aria-label="资源数据范围" value={globalScope ? 'global' : 'school'} options={[{ value: 'school', label: '当前学校使用资源' }, { value: 'global', label: '全平台资源维护' }]} onChange={scope => setParams(previous => { const next = new URLSearchParams(previous); next.set('scope', scope); next.delete('subview'); return next })} />}
+          {globalScope ? <Tag>范围：全平台</Tag> : <>
             <div>
               <span className="field-caption">当前学校</span>
               <Select
@@ -119,8 +115,9 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
                 options={visibleSchools?.map((s) => ({ value: s.id, label: s.name }))}
                 placeholder="选择学校"
                 onChange={async (s) => {
-                  await cache.cancelQueries({ queryKey: ['business'] })
+                  await Promise.all([cache.cancelQueries({ queryKey: ['business'] }), cache.cancelQueries({ queryKey: ['mobile'] })])
                   cache.removeQueries({ queryKey: ['business'] })
+                  cache.removeQueries({ queryKey: ['mobile'] })
                   setParams((previous) => {
                     const next = new URLSearchParams(previous)
                     next.set('school', s)
@@ -129,14 +126,17 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
                 }}
               />
             </div>
-          </div>
-        )
+          </>}
+        </div>
       }
       onLogout={logout}
     >
       {q.error && <Alert type="error" title={q.error.message} showIcon />}
-      {tab === 'execution-devices' && user.platform_admin ? (
-        <ExecutionDevices />
+      {!tab ? (q.isPending ? <Empty className="empty-state" description="正在加载学校…" /> : <Alert type="info" title="当前账号没有该学校的后台管理权限，请联系平台管理员。" />)
+      : !knownPage ? <Alert type="warning" title="页面不存在或已迁移" description={<Button onClick={() => navigate(allowedKeys[0] ?? 'posts')}>返回可用功能</Button>} />
+      : denied ? <Alert type="warning" title="当前账号没有此功能的访问权限" description={<>请核对当前学校与角色，或从导航选择已授权功能。<Button onClick={() => navigate(allowedKeys[0] ?? 'posts')}>返回可用功能</Button></>} />
+      : resourcePage && globalScope && user.platform_admin ? (
+        <ExecutionDevices key={tab} view={tab === 'execution-accounts' ? 'accounts' : params.get('subview') === 'rules' ? 'rules' : 'devices'} onViewChange={setSubview} />
       ) : tab === 'wecom-assets' && user.platform_admin ? (
         <Assets />
       ) : tab === 'wecom-directory' && user.platform_admin ? (
@@ -178,12 +178,10 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
             </>
           }
         />
-      ) : !tab ? (
-        <Alert type="info" title="当前账号没有该学校的后台管理权限，请联系平台管理员。" />
       ) : (
-        <div className="business-panel">
-          {tab === 'mobile-delivery' ? (
-            <MobileDelivery key={school.id} school={school.id} role={role} />
+        <div className="business-panel" key={`${school.id}-${tab}`}>
+          {resourcePage ? (role === 'admin' || role === 'operator' ? <SchoolExecutionResources key={`${school.id}-${tab}`} school={school.id} accounts={tab === 'execution-accounts'} admin={role === 'admin'} /> : <Alert type="warning" title="查看学校执行资源需要本校运营或管理员授权" />) : tab === 'mobile-delivery' ? (
+            <MobileDelivery key={school.id} school={school.id} role={role} subview={params.get('subview') ?? undefined} onSubviewChange={setSubview} />
           ) : tab === 'broadcast-tasks' ? (
             <BroadcastTasks
               key={school.id}

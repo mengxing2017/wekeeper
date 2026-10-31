@@ -199,7 +199,12 @@ export function DispatchWorkspace({
       {error && <Alert type="error" title={error} />}
       {view === 'devices' && (
         <>
-          <Card title="执行设备与账号">
+          <Card title="本校执行配置">
+            <Space wrap>
+              <a href={`/admin?school=${encodeURIComponent(school)}&view=execution-devices&scope=school`}>查看设备</a>
+              <a href={`/admin?school=${encodeURIComponent(school)}&view=execution-accounts&scope=school`}>查看发送账号</a>
+            </Space>
+            <p>此处配置本校使用关系，不重复登记设备。没有可选资源时，请联系维护人员完成配对、账号核验及学校授权。</p>
             <Table
               rowKey="id"
               pagination={false}

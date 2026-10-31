@@ -209,3 +209,16 @@ it.each([false, true])(
     )
   },
 )
+
+it('rejects a school configuration subview for an operator without silently changing pages', async () => {
+  setupReview(false)
+  vi.mocked(api.tasks).mockResolvedValue({ items: [] })
+  vi.mocked(api.groups).mockResolvedValue({ items: [] })
+  const onSubviewChange = vi.fn()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <MobileDelivery school="school" role="operator" subview="applications" onSubviewChange={onSubviewChange} />
+  </QueryClientProvider>)
+  expect(screen.getByText('当前子页面不存在或无权访问')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: '返回发送任务' }))
+  expect(onSubviewChange).toHaveBeenCalledWith('tasks')
+})

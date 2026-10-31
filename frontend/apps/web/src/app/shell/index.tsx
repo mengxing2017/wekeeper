@@ -1,165 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Avatar, Breadcrumb, Button, Dropdown, Menu } from 'antd'
-import {
-  AlertOutlined,
-  ApartmentOutlined,
-  AppstoreOutlined,
-  AuditOutlined,
-  BankOutlined,
-  ClusterOutlined,
-  CommentOutlined,
-  FileSearchOutlined,
-  FilterOutlined,
-  MenuFoldOutlined,
-  MenuUnfoldOutlined,
-  MessageOutlined,
-  MobileOutlined,
-  SafetyCertificateOutlined,
-  SendOutlined,
-  SettingOutlined,
-  SnippetsOutlined,
-  TeamOutlined,
-  UserOutlined,
-  UsergroupAddOutlined,
-} from '@ant-design/icons'
+import { MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons'
+import { navigation, navigationDomains } from '../navigation'
+export { navigation } from '../navigation'
 import { Link } from 'react-router-dom'
 import { helpHref } from './help'
-
-export interface NavigationItem {
-  key: string
-  label: string
-  description: string
-  group: string
-  icon: ReactNode
-}
-export const navigation: NavigationItem[] = [
-  {
-    key: 'posts',
-    icon: <FileSearchOutlined />,
-    label: '内容审核',
-    description: '查看校园内容，完成审核与展示管理。',
-    group: '内容运营',
-  },
-  {
-    key: 'comments',
-    icon: <CommentOutlined />,
-    label: '评论审核',
-    description: '审核评论与回复，维护社区交流秩序。',
-    group: '内容运营',
-  },
-  {
-    key: 'cases',
-    icon: <AlertOutlined />,
-    label: '举报与反馈',
-    description: '处理用户举报与反馈，保留处置记录。',
-    group: '内容运营',
-  },
-  {
-    key: 'resources',
-    icon: <FilterOutlined />,
-    label: '展示与屏蔽词',
-    description: '管理校园展示资源、服务入口与内容规则。',
-    group: '内容运营',
-  },
-  {
-    key: 'groups',
-    icon: <TeamOutlined />,
-    label: '客户群',
-    description: '维护学校对应的企业微信客户群。',
-    group: '企业微信',
-  },
-  {
-    key: 'templates',
-    icon: <SnippetsOutlined />,
-    label: '消息模板',
-    description: '管理模板正文、版本与发布状态。',
-    group: '企业微信',
-  },
-  {
-    key: 'broadcast-tasks',
-    icon: <SendOutlined />,
-    label: '群发任务',
-    description: '统一创建客户群任务，查看成员执行和各群结果。',
-    group: '企业微信',
-  },
-  {
-    key: 'mobile-delivery',
-    icon: <MessageOutlined />,
-    label: '手机发送任务',
-    description: '配置手机执行、目标群并人工确认发送任务。',
-    group: '企业微信',
-  },
-  {
-    key: 'execution-devices',
-    icon: <MobileOutlined />,
-    label: '手机设备与发送账号',
-    description: '登记手机、配对执行程序并维护真实发送账号。',
-    group: '平台管理',
-  },
-  {
-    key: 'members',
-    icon: <UsergroupAddOutlined />,
-    label: '学校成员',
-    description: '查看本校成员及角色，学校授权由平台管理员维护。',
-    group: '系统管理',
-  },
-  {
-    key: 'audit',
-    icon: <AuditOutlined />,
-    label: '操作审计',
-    description: '追踪学校内的关键操作与变更记录。',
-    group: '系统管理',
-  },
-  {
-    key: 'settings',
-    icon: <SettingOutlined />,
-    label: '学校设置',
-    description: '设置学校信息、审核方式与主题颜色。',
-    group: '系统管理',
-  },
-  {
-    key: 'schools',
-    icon: <BankOutlined />,
-    label: '学校管理',
-    description: '查看学校列表，创建学校并进入学校配置或成员管理。',
-    group: '平台管理',
-  },
-  {
-    key: 'wecom-assets',
-    icon: <ClusterOutlined />,
-    label: '客户群管理',
-    description: '客户群目录、运营成员统计与同步任务。',
-    group: '平台管理',
-  },
-  {
-    key: 'wecom-directory',
-    icon: <ApartmentOutlined />,
-    label: '企业通讯录',
-    description: '同步应用可见成员与部门，查看同步状态。',
-    group: '平台管理',
-  },
-  {
-    key: 'accounts',
-    icon: <UserOutlined />,
-    label: '账号管理',
-    description: '管理全平台普通账号、登录状态与企业微信身份映射。',
-    group: '平台管理',
-  },
-  {
-    key: 'administrators',
-    icon: <SafetyCertificateOutlined />,
-    label: '本地管理员管理',
-    description: '查看平台管理员身份与状态，管理登录密码。',
-    group: '平台管理',
-  },
-  {
-    key: 'platform-resources',
-    icon: <AppstoreOutlined />,
-    label: '平台展示配置',
-    description: '维护跨学校共用的默认资源与屏蔽词。',
-    group: '平台管理',
-  },
-]
 
 export const schoolRoleLabel = (role?: string) =>
   ({ member: '普通成员', operator: '运营', admin: '学校管理员', revoked: '已撤销学校授权' })[
@@ -182,7 +27,7 @@ export function AppShell({
   onNavigate: (key: string) => void
   username: string
   platformAdmin: boolean
-  allowedKeys?: string[]
+  allowedKeys: string[]
   schoolRole?: string
   onLogout: () => Promise<void>
   pageExtra?: ReactNode
@@ -193,7 +38,7 @@ export function AppShell({
   const toggle = useRef<HTMLButtonElement>(null)
   const sidebar = useRef<HTMLElement>(null)
   const current = navigation.find((item) => item.key === active) ?? {
-    group: '学校工作区',
+    domain: 'business',
     label: '学校工作区',
     description: '选择学校后使用已授权的管理功能。',
   }
@@ -276,7 +121,7 @@ export function AppShell({
           onClick={() => setOpen(!open)}
           icon={<MenuUnfoldOutlined />}
         />
-        <span>{current.group}</span>
+        <span>{navigationDomains.find(d => d.key === current.domain)?.label}</span>
       </div>
       {open && (
         <Button
@@ -294,21 +139,16 @@ export function AppShell({
             mode="inline"
             inlineCollapsed={collapsed && !open}
             selectedKeys={[active]}
-            items={[
-              '内容运营',
-              '企业微信',
-              '系统管理',
-              ...(platformAdmin ? ['平台管理'] : []),
-            ].flatMap((group) => {
+            items={navigationDomains.flatMap(({ key: domain, label: domainLabel }) => {
               const items = navigation.filter(
-                (item) => item.group === group && (!allowedKeys || allowedKeys.includes(item.key)),
+                (item) => item.domain === domain && allowedKeys.includes(item.key),
               )
               return items.length
                 ? [
                     {
                       type: 'group' as const,
-                      key: group,
-                      label: collapsed && !open ? null : group,
+                      key: domain,
+                      label: collapsed && !open ? null : domainLabel,
                       children: items.map((item) => ({
                         key: item.key,
                         label: item.label,
@@ -343,7 +183,7 @@ export function AppShell({
           <div className="page-header">
             <Breadcrumb
               className="breadcrumb"
-              items={[{ title: '运营工作台' }, { title: current.group }, { title: current.label }]}
+              items={[{ title: '运营工作台' }, { title: navigationDomains.find(d => d.key === current.domain)?.label }, { title: current.label }]}
             />
             <header className="page-heading">
               <div>

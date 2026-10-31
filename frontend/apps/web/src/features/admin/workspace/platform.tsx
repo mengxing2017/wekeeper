@@ -247,7 +247,7 @@ export function Accounts({
   }
   return (
     <ListPanel
-      title={administrators ? '本地管理员列表' : '账号列表'}
+      title={administrators ? '平台管理员列表' : '登录账号列表'}
       actions={
         !administrators && (
           <Button

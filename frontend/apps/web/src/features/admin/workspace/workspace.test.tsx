@@ -66,20 +66,26 @@ it('separates ordinary accounts and administrators by privilege, not display nam
   expect(await screen.findByText('ordinary')).toBeTruthy()
   expect(screen.queryByLabelText('当前学校')).toBeNull()
   expect(screen.queryByText('平台维护者')).toBeNull()
-  expect(screen.queryByRole('button', {name:'新建学校'})).toBeNull()
-  fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', {name:'本地管理员管理'}))
-  expect(await screen.findByText('平台维护者')).toBeTruthy()
+  expect(screen.queryByText('新建学校', { exact: true })).toBeNull()
+  fireEvent.click(within(screen.getByRole('menu')).getByText('平台管理员', { exact: true }))
+  const adminRow = (await screen.findByText('平台维护者')).closest('tr')!
+  expect(adminRow).toBeTruthy()
   expect(screen.queryByText('ordinary')).toBeNull()
-  expect(screen.queryByRole('button', {name:'新建账号'})).toBeNull()
-  expect(screen.queryByRole('button', {name:'编辑账号'})).toBeNull()
-  fireEvent.click(screen.getByRole('button', {name:'重置密码'}))
+  expect(screen.queryByText('新建账号', { exact: true })).toBeNull()
+  expect(within(adminRow).queryByRole('button', {name:'编辑账号'})).toBeNull()
+})
+
+it('requires a new session after resetting the current platform administrator password', async () => {
+  showManagement('administrators')
+  const adminRow = (await screen.findByText('平台维护者')).closest('tr')!
+  fireEvent.click(within(adminRow).getByRole('button', {name:'重置密码'}))
   expect(await screen.findByText(/这是当前登录账号/)).toBeTruthy()
   fireEvent.change(screen.getByLabelText('新密码（至少12个字符）'), {target:{value:'changed-password'}})
   vi.mocked(identity.reset).mockResolvedValue(undefined as never)
   vi.mocked(identity.session).mockRejectedValue(new Error('expired'))
-  fireEvent.click(screen.getByRole('button', {name:'确认重置密码'}))
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', {name:'确认重置密码'}))
   await waitFor(() => expect(identity.reset).toHaveBeenCalledWith('u','changed-password'))
-  expect(await screen.findByRole('heading', {name:'登录工作空间'})).toBeTruthy()
+  expect(await screen.findByText('登录工作空间', {selector:'h1'})).toBeTruthy()
 })
 
 it('searches and paginates schools, and opens settings for the selected row', async () => {
@@ -120,9 +126,9 @@ it.each(['member','operator'] as const)('blocks school settings and member admin
   await screen.findByLabelText('当前学校')
   await waitFor(() => expect(workspace.schools).toHaveBeenCalled())
   expect(screen.queryByRole('menuitem', {name:'学校设置'})).toBeNull()
-  expect(screen.queryByRole('menuitem', {name:'学校成员'})).toBeNull()
+  expect(screen.queryByRole('menuitem', {name:'学校成员与权限'})).toBeNull()
   expect(screen.queryByLabelText('学校名称')).toBeNull()
-  expect(screen.queryByRole('menuitem', {name:'账号管理'})).toBeNull()
+  expect(screen.queryByRole('menuitem', {name:'登录账号管理'})).toBeNull()
 })
 
 it('allows a school administrator to read members without offering grant changes', async () => {
@@ -178,4 +184,31 @@ it('opens a content record from the table and keeps moderation scoped to that re
   const prompt = within(reason.closest('[role="dialog"]') as HTMLElement)
   fireEvent.click(prompt.getByRole('button', {name:/^确\s*认$/}))
   await waitFor(()=>expect(workspace.mutate).toHaveBeenCalledWith('school','posts/post-1/moderation-decisions',{revision:3,decision:'approved',reason:'核验通过'},'POST'))
+})
+
+
+it('keeps school settings scoped after moving them into platform functions', async () => {
+  showManagement('settings', false, 'admin')
+  expect(await screen.findByLabelText('学校名称')).toBeTruthy()
+  expect(screen.getByLabelText('当前学校')).toBeTruthy()
+  expect(screen.queryByText('范围：全平台')).toBeNull()
+})
+
+it('rejects direct global identity URLs without fetching global accounts', async () => {
+  showManagement('accounts', false, 'operator')
+  expect(await screen.findByText('当前账号没有此功能的访问权限')).toBeTruthy()
+  expect(identity.accounts).not.toHaveBeenCalled()
+})
+
+it('shows a clear error for unknown navigation instead of an unrelated page', async () => {
+  showManagement('does-not-exist')
+  expect(await screen.findByText('页面不存在或已迁移')).toBeTruthy()
+  expect(workspace.list).not.toHaveBeenCalled()
+})
+
+it('explains missing school management permission for an ordinary member at the default entry', async () => {
+  showManagement('', false, 'member')
+  expect(await screen.findByText('当前账号没有该学校的后台管理权限，请联系平台管理员。')).toBeTruthy()
+  expect(screen.queryByText('页面不存在或已迁移')).toBeNull()
+  expect(workspace.list).not.toHaveBeenCalled()
 })

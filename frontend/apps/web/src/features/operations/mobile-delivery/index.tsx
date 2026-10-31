@@ -87,8 +87,10 @@ function useActions(scope: string) {
   return { busy, run, error }
 }
 
-export function ExecutionDevices() {
-  const [listTab, setListTab] = useState('devices')
+export function ExecutionDevices({ view, onViewChange }: { view?: string; onViewChange?: (view: string) => void } = {}) {
+  const [internalTab, setInternalTab] = useState('devices')
+  const listTab = view ?? internalTab
+  const setListTab = (value: string) => onViewChange ? onViewChange(value) : setInternalTab(value)
   const [page, setPage] = useState(1),
     [accountPage, setAccountPage] = useState(1),
     [pairing, setPairing] = useState<{ code: string; expiresAt: string; name: string } | null>(
@@ -139,7 +141,7 @@ export function ExecutionDevices() {
         />
       )}
 
-      <Tabs
+      {view ? <Space><Tag>全平台资源维护</Tag>{view !== 'accounts' && <Button onClick={() => setListTab(view === 'rules' ? 'devices' : 'rules')}>{view === 'rules' ? '返回手机设备' : '高级适配'}</Button>}</Space> : <Tabs
         activeKey={listTab}
         onChange={setListTab}
         items={[
@@ -147,7 +149,7 @@ export function ExecutionDevices() {
           { key: 'accounts', label: '发送账号' },
           { key: 'rules', label: '适配管理' },
         ]}
-      />
+      />}
       {listTab === 'rules' ? (
         <ConfigurationWorkbench />
       ) : listTab === 'devices' ? (
@@ -386,8 +388,13 @@ export function ExecutionDevices() {
   )
 }
 
-export default function MobileDelivery({ school, role }: { school: string; role?: string }) {
-  const [listTab, setListTab] = useState('tasks')
+export default function MobileDelivery({ school, role, subview, onSubviewChange }: { school: string; role?: string; subview?: string; onSubviewChange?: (view: string) => void }) {
+  const [internalTab, setInternalTab] = useState('tasks')
+  const allowedTabs = role === 'admin' ? ['tasks','groups','applications','flows','runs','legacy-applications','legacy-flows','legacy-runs','strategies'] : ['tasks','groups']
+  const listTab = allowedTabs.includes(subview ?? '') ? subview! : internalTab
+  const setListTab = (value: string) => onSubviewChange ? onSubviewChange(value) : setInternalTab(value)
+  const [historyOpen, setHistoryOpen] = useState(Boolean(subview && (subview.startsWith('legacy-') || subview === 'strategies')))
+  const historyVisible = historyOpen || listTab.startsWith('legacy-') || listTab === 'strategies'
   const admin = role === 'admin',
     authorized = admin || role === 'operator'
   const [page, setPage] = useState(1),
@@ -420,6 +427,7 @@ export default function MobileDelivery({ school, role }: { school: string; role?
         title="需要当前学校的运营或管理员授权；平台管理员身份不代替学校授权。"
       />
     )
+  if (subview && !allowedTabs.includes(subview)) return <Alert type="warning" title="当前子页面不存在或无权访问" description={<Button onClick={() => setListTab('tasks')}>返回发送任务</Button>} />
   const settings = capability.data?.settings
   return (
     <section className="management-stack">
@@ -434,6 +442,7 @@ export default function MobileDelivery({ school, role }: { school: string; role?
         (e, i) => e && <Alert key={i} type="error" title={e.message} />,
       )}
 
+      {admin && <Button onClick={() => { setHistoryOpen(!historyVisible); if(historyVisible && (listTab.startsWith('legacy-') || listTab === 'strategies')) setListTab('tasks') }}>{historyVisible ? '收起历史模式' : '历史模式'}</Button>}
       <Tabs
         activeKey={listTab}
         onChange={setListTab}
@@ -442,13 +451,13 @@ export default function MobileDelivery({ school, role }: { school: string; role?
           { key: 'groups', label: '目标群' },
           ...(admin
             ? [
-                { key: 'applications', label: '执行设备与账号' },
+                { key: 'applications', label: '本校执行配置' },
                 { key: 'flows', label: '业务流程' },
                 { key: 'runs', label: '执行批次' },
-                { key: 'legacy-applications', label: '历史 v4 应用' },
+                ...(historyVisible ? [{ key: 'legacy-applications', label: '历史 v4 应用' },
                 { key: 'legacy-flows', label: '历史 v4 流程' },
                 { key: 'legacy-runs', label: '历史 v4 执行' },
-                { key: 'strategies', label: '历史发送策略' },
+                { key: 'strategies', label: '历史发送策略' }] : []),
               ]
             : []),
         ]}
@@ -582,7 +591,7 @@ export default function MobileDelivery({ school, role }: { school: string; role?
                         fields={[
                           {
                             name: 'sender_account_id',
-                            title: '发送账号 ID（平台设备与发送账号页面可查）',
+                            title: '发送账号 ID（业务功能的发送账号页面可查）',
                           },
                           { name: 'reason', title: '授权依据' },
                         ]}
