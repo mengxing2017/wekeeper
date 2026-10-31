@@ -78,7 +78,8 @@ export type ValidationState =
   | "failed"
   | "interrupted"
   | "cancelled"
-  | "expired";
+  | "expired"
+  | "declined";
 export interface ManualTiming {
   group_interval_ms: number;
   navigation_ms: number;
@@ -97,6 +98,8 @@ export interface ValidationEvent {
   path: "search" | "all_apps" | null;
 }
 export interface ValidationJob extends Row {
+  authorization_id?: UUID | null;
+  decision_source?: "local_action" | "standing_authorization" | "local_decline" | null;
   school_id: UUID;
   device_id: UUID;
   app_binding_id: UUID | null;
@@ -297,3 +300,20 @@ export const automationApi = {
       key,
     ),
 };
+
+export interface ExecutionAuthorizationScope {
+  origin: string; device_id: UUID; sender_account_id: UUID;
+  schools: Array<{school_id: UUID; applications: Array<{binding_id: UUID; app_key: "wecom"; instance_ref: string}>}>;
+  purpose: "company_business/1"; data_policy: "minimal_visible_results/1"; object_scope: "approved_school_groups/1";
+}
+export interface ExecutionAuthorizationReceipt {
+  authorization_id: UUID; revision: number; state: "effective" | "revoked";
+  notice_version: "internal_business/1"; notice_digest: string; identity_assurance: "local_action";
+  granted_at: string; revoked_at: string | null; maintenance: boolean; scope: ExecutionAuthorizationScope;
+}
+export interface ExecutionAuthorizationContext {
+  id: UUID; authorization_revision: number; environment_generation: number; extension: "standing_authorization/1"; device_id: UUID; device_name: string;
+  account_name: string; responsible_actor_id: UUID;
+  schools: Array<{school_id: UUID; name: string; applications: Array<{binding_id: UUID; app_key: "wecom"; instance_ref: string; label: string}>}>;
+  scope: Omit<ExecutionAuthorizationScope,"origin">;
+}
