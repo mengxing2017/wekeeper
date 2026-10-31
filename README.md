@@ -338,7 +338,7 @@ devbox run -- make dev-embedded
 
 学校管理员从目录选择自己担任群主的群；平台管理员可选择未关联其他学校的群，并有手填已知群标识的例外入口。旧群停用不依赖上游，新建手填群（包括未启用群）必须核验官方详情。完整行为、错误排查和数据保留见 [业务运行手册](docs/runbooks/business.md#客户群目录)。
 
-本轮直接修改现有 `202610200002_business.sql`，没有新增迁移文件。已有开发库须由维护者重新初始化，启动器不会删除既有业务库或改写 SQLx 校验和；嵌入式临时库退出即清理。
+通讯录、目录核验与基础业务已合并到 `202610310101_core_business.sql`。当前数据库采用 4 份初始化基线，见 [迁移目录说明](backend/migrations/README.md)。旧分段迁移库需完整重建 schema；启动器不会自动清库或改写 SQLx 账本。允许清空的 Compose 开发库可执行 `make reset-dev-database`，嵌入式临时库退出即清理。
 
 ### 企业统一群发（FE-03）
 
@@ -346,9 +346,9 @@ devbox run -- make dev-embedded
 
 `WEKEEPER_WECOM_BROADCAST_ENABLED=false` 为默认。核验客户联系可调用应用权限、群主学校授权及企业微信 4.1.10+ 终端后启用。AgentID 不再是发送前提。关闭创建开关后，有效凭据环境仍可查询和停止既有任务。详见 [企业微信接入与验收](docs/runbooks/wecom.md)。
 
-本次新增 `backend/migrations/202610220001_broadcast_tasks.sql`，启动自动 forward-only 升级，保留旧数据；不要求重置已有数据库。真实企业权限及终端行为仍需部署验收。
+官方群发与直接文本结构已合并到 `backend/migrations/202610310102_broadcast.sql`，按当前初始化基线建库。重复启动依据 SQLx 账本跳过已应用迁移；旧分段迁移库不自动转换。真实企业权限及终端行为仍需部署验收。
 
-直接文本由本校 operator/admin 保存草稿，仅 admin 可确认提交；社区内容沿用原权限。新增迁移 `202610220002_broadcast_text.sql` 保留已有任务与正文哈希。升级须停止旧 API/worker 并配套部署新版前后端，不能在文本任务出现后混跑旧 worker。
+直接文本由本校 operator/admin 保存草稿，仅 admin 可确认提交；社区内容沿用原权限。当前基线在建表时同时定义帖子与纯文本来源约束，重复启动不改写任务与正文哈希。升级须停止旧 API/worker 并配套部署新版前后端，不能在文本任务出现后混跑旧 worker。
 
 ### 服务端手机执行接口
 
