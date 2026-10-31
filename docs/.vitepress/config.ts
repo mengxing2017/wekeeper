@@ -30,6 +30,7 @@ export default defineConfig({
         { text: '配置索引', link: '/configuration/' },
       ] },
       { text: '运行与验收', items: [
+        { text: '无环境前置批量任务 v5', link: '/runbooks/dispatch-v5' },
         { text: '运行手册索引', link: '/operations/' },
         { text: '业务、迁移与验收', link: '/runbooks/business' },
         { text: '企业微信接入', link: '/runbooks/wecom' },
