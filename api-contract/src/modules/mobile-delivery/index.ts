@@ -1,3 +1,5 @@
+import { automationApi } from "./automation";
+export type * from "./automation";
 import type {
   ConfigurationInput,
   ExecutionConfiguration,
@@ -328,6 +330,7 @@ function list<T>(path: string, page = 1, size = 30): Promise<Collection<T>> {
   );
 }
 export const mobileDeliveryApi = {
+  automation: automationApi,
   configurations: (page?: number, size?: number) =>
     list<ExecutionConfiguration>(
       "/api/v1/platform/execution-configurations",
