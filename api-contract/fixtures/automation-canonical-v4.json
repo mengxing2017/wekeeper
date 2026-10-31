@@ -1,0 +1,19 @@
+{
+  "value": {
+    "schema_version": 1,
+    "business": {
+      "group_names": [
+        "机器人测试",
+        "第二个群"
+      ],
+      "text": "测试\n\"\\"
+    },
+    "unicode_keys": {
+      "": 1,
+      "𐀀": 2
+    },
+    "interval_seconds": 60
+  },
+  "canonical": "{\"business\":{\"group_names\":[\"机器人测试\",\"第二个群\"],\"text\":\"测试\\n\\\"\\\\\"},\"interval_seconds\":60,\"schema_version\":1,\"unicode_keys\":{\"\":1,\"𐀀\":2}}",
+  "sha256": "ec3d95ced83c62acbf05dad8d0dedd48c7bd5da544396e76174110c4e4d014a8"
+}

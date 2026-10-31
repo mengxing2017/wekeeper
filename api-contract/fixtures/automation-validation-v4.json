@@ -1,0 +1,17 @@
+{
+  "data": {
+    "type": "device-validations",
+    "attributes": {
+      "event": {
+        "event_id": "00000000-0000-0000-0000-000000000101",
+        "generation": "00000000-0000-0000-0000-000000000102",
+        "expected_revision": 2,
+        "stage": "ready",
+        "outcome": "succeeded",
+        "role_matches": {},
+        "timing": null,
+        "path": "search"
+      }
+    }
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "data": {
+    "type": "device-environments",
+    "attributes": {
+      "report": {
+        "generation": 1,
+        "launcher": {
+          "package_name": "com.wekeeper.fixture.launcher",
+          "version_name": "synthetic",
+          "version_code": 1
+        },
+        "applications": [
+          {
+            "app_key": "wecom",
+            "instance_ref": "synthetic-instance",
+            "label": "SYNTHETIC ONLY 企业微信",
+            "client": {
+              "package_name": "com.wekeeper.fixture.wecom",
+              "version_name": "synthetic",
+              "version_code": 1
+            },
+            "instance_visibility": "unique"
+          }
+        ],
+        "engine_version": "otter-automation/1",
+        "capabilities": [
+          "launcher_search/1",
+          "launcher_all_apps/1",
+          "application_binding/1",
+          "validation_jobs/1",
+          "ordered_groups/1"
+        ],
+        "notifications_ready": true,
+        "accessibility_ready": true,
+        "unlocked": true,
+        "maintenance_mode": true
+      }
+    }
+  }
+}
