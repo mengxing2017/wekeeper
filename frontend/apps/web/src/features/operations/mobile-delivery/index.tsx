@@ -1,4 +1,5 @@
 import { createIdempotencyKey as key } from '../../../shared/idempotency-key'
+import { AccountRegistrationForm, ResponsibleActorDisplay } from './account-registration'
 import { ApplicationSetup } from './setup'
 import { BusinessWizard } from './flows'
 import { AutomationRuns } from './runs'
@@ -318,28 +319,7 @@ export function ExecutionDevices() {
               <Space>
                 <VisibleAccountCreate saved={refresh} />
                 <ActionDrawer title="登记旧模式发送账号" primary>
-                  <Editor
-                    fields={[
-                      ...identityFields,
-                      {
-                        name: 'responsible_actor_id',
-                        title: '责任人用户 ID（需有目标学校管理员授权）',
-                      },
-                    ]}
-                    onSave={async (v) => {
-                      await api.createAccount(
-                        {
-                          client_kind: v.client_kind as 'wechat' | 'wecom',
-                          identity_namespace: v.identity_namespace,
-                          external_key: v.external_key,
-                          identity_evidence_ref: v.identity_evidence_ref,
-                          responsible_actor_id: v.responsible_actor_id,
-                        },
-                        key(),
-                      )
-                      await refresh()
-                    }}
-                  />
+                  <AccountRegistrationForm legacy saved={refresh} />
                 </ActionDrawer>
               </Space>
             }
@@ -358,7 +338,8 @@ export function ExecutionDevices() {
                       ? `${a.visible_profile.company_name} · ${a.visible_profile.account_name}`
                       : a.external_key,
                 },
-                { title: '责任人', dataIndex: 'responsible_actor_id', ellipsis: true },
+                { title: '责任人', render: (_, a) => <ResponsibleActorDisplay account={a} /> },
+                { title: '资料核对', render: (_, a) => a.identity_mode === 'ui_visible' ? <Tag>{a.verification_state === 'reviewed' ? '已人工核对' : '待人工核对'}</Tag> : '旧模式' },
                 {
                   title: '状态',
                   render: (_, a) => (
@@ -398,7 +379,7 @@ export function ExecutionDevices() {
                 <Card key={a.id} title={a.visible_profile?.account_name ?? a.external_key}>
                   <VisibleAccountReview account={a} saved={refresh} />
                   <p>
-                    发送账号 ID：{a.id} · 责任人：{a.responsible_actor_id} ·{' '}
+                    责任人：<ResponsibleActorDisplay account={a} /> ·{' '}
                     {a.enabled ? '启用' : '停用'}
                   </p>
                   <Editor
