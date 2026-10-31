@@ -23,6 +23,20 @@ async fn value_command(tx: &mut Transaction<'_, Postgres>, id: Uuid) -> Result<V
         .map_err(Into::into)
 }
 impl Store for Repository {
+    async fn authenticate(&self, token: &str) -> Result<Credential> {
+        if !token.starts_with("wk_device_") || token.len() > 256 {
+            return Err(Error::Unauthorized);
+        }
+        let token_hash = hash(token);
+        let (device_id,generation): (Uuid,i64)=sqlx::query_as("SELECT c.device_id,c.generation FROM device_credentials c JOIN execution_devices d ON d.id=c.device_id WHERE c.token_hash=$1 AND c.revoked_at IS NULL AND c.expires_at>clock_timestamp() AND d.enabled AND d.credential_generation=c.generation")
+            .bind(&token_hash).fetch_optional(&self.0).await?.ok_or(Error::Unauthorized)?;
+        Ok(Credential {
+            device_id,
+            generation,
+            token_hash,
+        })
+    }
+
     async fn device(&self, c: &Credential, op: Operation) -> Result<Frame> {
         let mut tx = self.0.begin().await?;
         let expires:chrono::DateTime<chrono::Utc>=sqlx::query_scalar("SELECT c.expires_at FROM device_credentials c JOIN execution_devices d ON d.id=c.device_id WHERE c.token_hash=$1 AND c.device_id=$2 AND c.generation=$3 AND c.revoked_at IS NULL AND c.expires_at>clock_timestamp() AND d.enabled AND d.credential_generation=c.generation FOR SHARE OF c,d")

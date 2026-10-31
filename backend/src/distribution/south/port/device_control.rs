@@ -5,6 +5,10 @@ use crate::{
 use serde_json::Value;
 use uuid::Uuid;
 pub trait Store: Clone + Send + Sync + 'static {
+    fn authenticate(
+        &self,
+        token: &str,
+    ) -> impl std::future::Future<Output = Result<Credential>> + Send;
     fn device(
         &self,
         credential: &Credential,

@@ -1,5 +1,4 @@
-//! A single transaction advisory guard deliberately serializes delivery writes in v1.
-//! It is shared with official/legacy repositories; never hold it across a network call.
+//! Mobile delivery writes use a channel-local guard; official delivery is independent.
 use crate::{
     business::{Error, Page, Result, hash, require, text},
     distribution::{domain::mobile_delivery::*, south::port::mobile_delivery::Store},
@@ -346,36 +345,6 @@ async fn active_school(tx: &mut Tx<'_>, s: Uuid) -> Result<Value> {
     }
     Ok(v)
 }
-/// Synchronous projection under the shared guard, also called by official write paths.
-pub async fn project(tx: &mut Tx<'_>) -> Result<()> {
-    let rows=sqlx::query("SELECT x.id,t.school_id,g.id AS group_id,t.content,b.sender_account AS actor_id,CASE WHEN x.official_status=1 THEN 'sent' WHEN (b.reconciliation='not_created' AND b.msgid IS NULL) OR (b.state='rejected' AND b.msgid IS NULL) OR (b.state='cancelled' AND b.invocation_id IS NULL) THEN 'not_sent' ELSE 'unknown' END AS state,CASE WHEN x.send_time>0 THEN to_timestamp(x.send_time) ELSE NULL END AS sent_at FROM broadcast_targets x JOIN broadcast_tasks t ON t.id=x.task_id JOIN broadcast_batches b ON b.id=x.batch_id JOIN delivery_groups g ON g.wecom_group_id=x.group_id WHERE t.state='confirmed'").fetch_all(&mut **tx).await?;
-    for r in rows {
-        project_row(tx, &r, "official").await?;
-    }
-    let rows=sqlx::query("SELECT a.id,a.school_id,g.id AS group_id,d.content,a.actor_id,CASE WHEN a.reconciliation='operator_confirmed' OR a.state='client_reported_success' THEN 'sent' WHEN a.reconciliation='operator_rejected' THEN 'not_sent' ELSE 'unknown' END AS state,a.reconciled_at AS sent_at FROM delivery_attempts a JOIN delivery_drafts d ON d.id=a.draft_id JOIN delivery_groups g ON g.wecom_group_id=d.group_id").fetch_all(&mut **tx).await?;
-    for r in rows {
-        project_row(tx, &r, "legacy").await?;
-    }
-    Ok(())
-}
-async fn project_row(tx: &mut Tx<'_>, r: &sqlx::postgres::PgRow, channel: &str) -> Result<()> {
-    let actor: Option<Uuid> = r.get("actor_id");
-    let sender: Option<Uuid> = if let Some(actor) = actor {
-        sqlx::query_scalar(
-            "SELECT min(id::text)::uuid FROM sending_accounts WHERE responsible_actor_id=$1 HAVING count(*)=1",
-        )
-        .bind(actor)
-        .fetch_optional(&mut **tx)
-        .await?
-    } else {
-        None
-    };
-    let content: String = r.get("content");
-    let digest = digest(&content)?;
-    sqlx::query("INSERT INTO delivery_usage(id,source_channel,source_id,school_id,group_id,sender_account_id,content_digest,state,observed_at,evidence_kind,responsible_actor_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,coalesce($9,clock_timestamp()),$2,$10) ON CONFLICT(source_channel,source_id) DO UPDATE SET state=EXCLUDED.state,sender_account_id=EXCLUDED.sender_account_id,observed_at=CASE WHEN delivery_usage.state<>EXCLUDED.state THEN EXCLUDED.observed_at ELSE delivery_usage.observed_at END,responsible_actor_id=EXCLUDED.responsible_actor_id")
-      .bind(Uuid::now_v7()).bind(channel).bind(r.get::<Uuid,_>("id")).bind(r.get::<Uuid,_>("school_id")).bind(r.get::<Uuid,_>("group_id")).bind(sender).bind(digest).bind(r.get::<String,_>("state")).bind(r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("sent_at")).bind(actor).execute(&mut **tx).await?;
-    Ok(())
-}
 async fn restrictions(tx: &mut Tx<'_>, i: &Value) -> Result<()> {
     let account = uid(i, "sender_account_id")?;
     let group = uid(i, "group_id")?;
@@ -456,7 +425,6 @@ async fn restrictions(tx: &mut Tx<'_>, i: &Value) -> Result<()> {
     Ok(())
 }
 async fn preview(tx: &mut Tx<'_>, task: Uuid, origin: &str) -> Result<Value> {
-    project(tx).await?;
     let list = items(tx, task).await?;
     let mut checks = Vec::new();
     for i in list {
@@ -960,7 +928,6 @@ impl Repository {
                 }
                 let g = Uuid::now_v7();
                 sqlx::query("INSERT INTO delivery_groups(id,school_id,name,client_kind,identity_namespace,external_key,identity_evidence_ref,wecom_group_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)").bind(g).bind(school(s)?).bind(text(&name,1,100)?).bind(client_kind).bind(text(&identity_namespace,1,200)?).bind(text(&external_key,1,200)?).bind(text(&identity_evidence_ref,1,500)?).bind(wecom_group_id).execute(&mut **tx).await?;
-                project(tx).await?;
                 object(tx, "delivery_groups", g).await
             }
             Command::BindGroup {
@@ -1065,7 +1032,6 @@ impl Repository {
                         invalidate(tx, d).await?;
                     }
                 }
-                project(tx).await?;
                 settings(tx, school(s)?).await
             }
             Command::Draft { draft } => save_draft(tx, p, s, draft, origin).await,
@@ -1315,7 +1281,6 @@ impl Repository {
                     return Err(Error::Policy("binding_changed"));
                 }
                 if let Some(c)=sqlx::query_scalar::<_,Value>("SELECT to_jsonb(c) FROM mobile_execution_claims c WHERE device_id=$1 AND state IN ('claimed','prepared','permit_issued')").bind(d).fetch_optional(&mut **tx).await? {let i=object(tx,"mobile_delivery_items",uid(&c,"item_id")?).await?;if c["protocol_version"].as_u64().unwrap_or(1) != u64::from(p.protocol()) { return Err(Error::Policy("unsupported_execution_protocol")); } return claim_response(tx,&c,&i).await}
-                project(tx).await?;
                 let candidates:Vec<Value>=match configured::candidate(tx,d,uid(&b,"sender_account_id")?,p.protocol()).await? {
                     Some(Ok(i))=>vec![i],Some(Err(wait))=>return Ok(wait),
 None => sqlx::query_scalar("SELECT to_jsonb(i) FROM (SELECT DISTINCT ON (i.group_id) i.* FROM mobile_delivery_items i JOIN mobile_delivery_tasks t ON t.id=i.task_id JOIN mobile_delivery_settings s ON s.school_id=i.school_id WHERE i.sender_account_id=$1 AND i.state='queued' AND t.state='confirmed' AND s.enabled AND s.history_reviewed ORDER BY i.group_id,i.created_at,i.id) i LEFT JOIN delivery_scheduler_cursors c ON c.school_id=i.school_id ORDER BY i.school_id,CASE WHEN i.group_id>c.last_group_id OR c.last_group_id IS NULL THEN 0 ELSE 1 END,i.group_id LIMIT 100").bind(uid(&b,"sender_account_id")?).fetch_all(&mut **tx).await?,
@@ -1450,7 +1415,6 @@ None => sqlx::query_scalar("SELECT to_jsonb(i) FROM (SELECT DISTINCT ON (i.group
                     return Err(Error::Policy("binding_changed"));
                 }
                 validate_snapshot(tx, &i, origin).await?;
-                project(tx).await?;
                 restrictions(tx, &i).await?;
                 let permit = Uuid::now_v7();
                 let invocation = Uuid::now_v7();
@@ -1621,7 +1585,6 @@ impl Store for Repository {
         let mut tx = self.0.begin().await?;
         guard(&mut tx).await?;
         recover_tx(&mut tx).await?;
-        project(&mut tx).await?;
         sqlx::query("UPDATE mobile_delivery_tasks t SET state='completed',revision=revision+1 WHERE state='confirmed' AND NOT EXISTS(SELECT 1 FROM mobile_delivery_items i WHERE i.task_id=t.id AND i.state IN ('queued','claimed','prepared','permit_issued'))").execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(())
@@ -2025,31 +1988,5 @@ impl Store for Repository {
         };
         tx.commit().await?;
         Ok(result)
-    }
-}
-
-/// School switch is checked inside official/legacy write transactions, not only in HTTP.
-pub async fn official_allowed(tx: &mut Tx<'_>, school: Uuid) -> Result<()> {
-    let enabled: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM mobile_delivery_settings WHERE school_id=$1 AND enabled) OR EXISTS(SELECT 1 FROM school_memberships m JOIN sending_accounts a ON a.responsible_actor_id=m.account_id JOIN sender_group_bindings b ON b.sender_account_id=a.id JOIN mobile_delivery_settings s ON s.school_id=b.school_id WHERE m.school_id=$1 AND s.enabled) OR EXISTS(SELECT 1 FROM delivery_usage u JOIN sending_accounts a ON a.id=u.sender_account_id JOIN school_memberships m ON m.account_id=a.responsible_actor_id WHERE m.school_id=$1 AND u.source_channel='mobile' AND (u.state IN ('pending','unknown') OR (u.state='sent' AND u.observed_at>clock_timestamp()-interval '24 hours')))",
-    )
-    .bind(school)
-    .fetch_one(&mut **tx)
-    .await?;
-    if enabled {
-        Err(Error::Policy("mobile_channel_exclusive"))
-    } else {
-        Ok(())
-    }
-}
-
-impl Repository {
-    pub async fn official_available(&self, school: Uuid) -> Result<bool> {
-        let mut tx = self.0.begin().await?;
-        match official_allowed(&mut tx, school).await {
-            Ok(()) => Ok(true),
-            Err(Error::Policy(_)) => Ok(false),
-            Err(e) => Err(e),
-        }
     }
 }

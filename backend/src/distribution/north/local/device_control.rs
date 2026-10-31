@@ -1,7 +1,7 @@
 use crate::{
-    business::{Error, Result, hash, text},
+    business::{Error, Result, text},
     distribution::{
-        domain::{device_control::*, mobile_delivery::Principal},
+        domain::device_control::*,
         south::{adapter::postgres::device_control::Repository, port::device_control::Store},
     },
 };
@@ -45,16 +45,6 @@ impl crate::bootstrap::Application {
         Service(Repository(self.pool.clone()))
     }
     pub async fn control_credential(&self, token: &str) -> Result<Credential> {
-        if !token.starts_with("wk_device_") {
-            return Err(Error::Unauthorized);
-        }
-        match self.mobile_delivery().authenticate(token).await? {
-            Principal::Device { id, generation } => Ok(Credential {
-                device_id: id,
-                generation,
-                token_hash: hash(token),
-            }),
-            _ => Err(Error::Unauthorized),
-        }
+        self.device_control().0.authenticate(token).await
     }
 }

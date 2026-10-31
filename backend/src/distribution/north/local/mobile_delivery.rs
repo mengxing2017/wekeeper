@@ -44,9 +44,3 @@ impl crate::bootstrap::Application {
         }
     }
 }
-
-impl Service {
-    pub async fn official_available(&self, school: uuid::Uuid) -> Result<bool> {
-        self.store.official_available(school).await
-    }
-}
