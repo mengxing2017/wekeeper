@@ -9,6 +9,8 @@ pub const VISIBLE_PROTOCOL_VERSION: u32 = 2;
 
 mod visible;
 pub use visible::*;
+pub mod dispatch;
+pub use dispatch::*;
 pub mod automation;
 pub use automation::*;
 mod configuration;
@@ -122,6 +124,9 @@ impl Draft {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    Dispatch {
+        input: Box<DispatchCommand>,
+    },
     Automation {
         input: Box<AutomationCommand>,
     },
@@ -358,6 +363,8 @@ pub enum Principal {
     EnrollmentV3,
     DeviceV4 { id: Uuid, generation: i64 },
     EnrollmentV4,
+    DeviceV5 { id: Uuid, generation: i64 },
+    EnrollmentV5,
 }
 impl Principal {
     pub fn key(&self) -> String {
@@ -366,6 +373,8 @@ impl Principal {
             Self::Device { id, generation } => format!("device:{id}:{generation}"),
             Self::Enrollment => "enrollment".into(),
             Self::EnrollmentV2 => "enrollment:v2".into(),
+            Self::EnrollmentV5 => "enrollment:v5".into(),
+            Self::DeviceV5 { id, generation } => format!("device:{id}:{generation}:v5"),
             Self::EnrollmentV4 => "enrollment:v4".into(),
             Self::DeviceV4 { id, generation } => format!("device:{id}:{generation}:v4"),
             Self::EnrollmentV3 => "enrollment:v3".into(),
@@ -374,7 +383,9 @@ impl Principal {
         }
     }
     pub fn protocol(&self) -> u32 {
-        if matches!(self, Self::DeviceV4 { .. } | Self::EnrollmentV4) {
+        if matches!(self, Self::DeviceV5 { .. } | Self::EnrollmentV5) {
+            5
+        } else if matches!(self, Self::DeviceV4 { .. } | Self::EnrollmentV4) {
             4
         } else if matches!(self, Self::DeviceV3 { .. } | Self::EnrollmentV3) {
             3
@@ -389,20 +400,25 @@ impl Principal {
             Self::Device { id, generation }
             | Self::DeviceV2 { id, generation }
             | Self::DeviceV3 { id, generation }
-            | Self::DeviceV4 { id, generation } => match version {
+            | Self::DeviceV4 { id, generation }
+            | Self::DeviceV5 { id, generation } => match version {
+                5 => Self::DeviceV5 { id, generation },
                 4 => Self::DeviceV4 { id, generation },
                 3 => Self::DeviceV3 { id, generation },
                 2 => Self::DeviceV2 { id, generation },
                 _ => Self::Device { id, generation },
             },
-            Self::Enrollment | Self::EnrollmentV2 | Self::EnrollmentV3 | Self::EnrollmentV4 => {
-                match version {
-                    4 => Self::EnrollmentV4,
-                    3 => Self::EnrollmentV3,
-                    2 => Self::EnrollmentV2,
-                    _ => Self::Enrollment,
-                }
-            }
+            Self::Enrollment
+            | Self::EnrollmentV2
+            | Self::EnrollmentV3
+            | Self::EnrollmentV4
+            | Self::EnrollmentV5 => match version {
+                5 => Self::EnrollmentV5,
+                4 => Self::EnrollmentV4,
+                3 => Self::EnrollmentV3,
+                2 => Self::EnrollmentV2,
+                _ => Self::Enrollment,
+            },
             p => p,
         }
     }
@@ -422,6 +438,7 @@ pub struct Scope {
 }
 #[derive(Clone, Debug)]
 pub enum Query {
+    Dispatch(DispatchQuery),
     Automation(AutomationQuery),
     Configurations,
     Configuration,
