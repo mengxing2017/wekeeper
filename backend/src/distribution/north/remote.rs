@@ -186,3 +186,5 @@ pub fn router() -> Router<Application> {
 }
 
 pub mod mobile_delivery;
+
+pub mod device_control;

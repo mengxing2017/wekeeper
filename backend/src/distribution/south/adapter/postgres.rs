@@ -346,3 +346,5 @@ impl crate::distribution::south::port::Store for Repository {
 pub mod broadcast;
 
 pub mod mobile_delivery;
+
+pub mod device_control;
