@@ -75,6 +75,11 @@ impl IntoResponse for Error {
                 "conflict",
                 "数据已变化或操作重复，请刷新后重试".into(),
             ),
+            Self::Policy("revision_conflict") => (
+                StatusCode::CONFLICT,
+                "revision_conflict",
+                "记录已更新，请刷新后核对并重新提交".into(),
+            ),
             Self::Policy("pairing_code_invalid") => (
                 StatusCode::UNAUTHORIZED,
                 "pairing_code_invalid",
