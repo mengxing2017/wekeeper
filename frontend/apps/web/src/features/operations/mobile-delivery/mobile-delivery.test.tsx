@@ -54,7 +54,7 @@ it.each([undefined, {}])('registers a phone without Web Crypto (%s)', async (cry
   vi.mocked(api.devices).mockResolvedValue({ items: [] })
   vi.mocked(api.accounts).mockResolvedValue({ items: [] })
   vi.mocked(api.createDevice).mockResolvedValue({
-    id: 'device', revision: 1, name: '测试手机', enabled: false,
+    id: 'device', revision: 1, name: '测试手机', enabled: true,
     credential_generation: 0, client_instance_id: null, last_seen_at: null,
     created_at: '2026-10-30T00:00:00Z',
   })
