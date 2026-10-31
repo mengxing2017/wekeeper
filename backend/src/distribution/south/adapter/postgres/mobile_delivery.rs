@@ -1917,7 +1917,7 @@ impl Store for Repository {
                 platform(&mut tx, &p).await?;
                 json!(
                     sqlx::query_scalar::<_, Value>(
-                        "SELECT to_jsonb(t) FROM execution_devices t ORDER BY id LIMIT $1 OFFSET $2"
+                        "SELECT to_jsonb(t)||jsonb_build_object('control',to_jsonb(p)) FROM execution_devices t JOIN device_control_presence p ON p.id=t.id ORDER BY t.id LIMIT $1 OFFSET $2"
                     )
                     .bind(limit)
                     .bind(offset)

@@ -32,6 +32,12 @@ impl Store for Repository {
             sqlx::query("INSERT INTO device_control_sessions(device_id,connection_id,transport,connected) VALUES($1,$2,'https',false) ON CONFLICT(device_id) DO NOTHING")
                 .bind(c.device_id).bind(Uuid::new_v4()).execute(&mut *tx).await?;
         }
+        let event = match &op {
+            Operation::Open { .. } => "control_session_opened",
+            Operation::Close { .. } => "control_session_closed",
+            Operation::Pulse(_) => "control_heartbeat_received",
+            _ => "control_frame_polled",
+        };
         let mut closing = false;
         let mut heartbeat_id = None;
         match op {
@@ -80,12 +86,12 @@ impl Store for Repository {
                 if !matches!(transport.as_str(), "https" | "wss") {
                     return Err(Error::Invalid("无效控制传输".into()));
                 }
-                sqlx::query("INSERT INTO device_control_sessions(device_id,connection_id,transport) VALUES($1,$2,$3) ON CONFLICT(device_id) DO UPDATE SET connection_id=EXCLUDED.connection_id,epoch=device_control_sessions.epoch+1,transport=EXCLUDED.transport,connected=true,last_heartbeat_at=clock_timestamp()")
-     .bind(c.device_id).bind(Uuid::new_v4()).bind(transport).execute(&mut *tx).await?;
+                sqlx::query("INSERT INTO device_control_sessions(device_id,connection_id,transport,credential_generation) VALUES($1,$2,$3,$4) ON CONFLICT(device_id) DO UPDATE SET connection_id=EXCLUDED.connection_id,epoch=device_control_sessions.epoch+1,transport=EXCLUDED.transport,credential_generation=EXCLUDED.credential_generation,connected=true,connected_at=clock_timestamp(),last_heartbeat_at=NULL,readiness='waiting',block_reason=NULL,disconnect_reason=NULL")
+     .bind(c.device_id).bind(Uuid::new_v4()).bind(transport).bind(c.generation).execute(&mut *tx).await?;
             }
             Operation::Pulse(p) => {
                 heartbeat_id = p.heartbeat_id;
-                let active:Option<Uuid>=sqlx::query_scalar("UPDATE device_control_sessions SET last_heartbeat_at=clock_timestamp(),connected=true,readiness=$4,block_reason=$5 WHERE device_id=$1 AND connection_id=$2 AND epoch=$3 RETURNING device_id")
+                let active:Option<Uuid>=sqlx::query_scalar("UPDATE device_control_sessions SET last_heartbeat_at=clock_timestamp(),connected=true,readiness=$4,block_reason=$5 WHERE device_id=$1 AND connection_id=$2 AND epoch=$3 AND connected RETURNING device_id")
      .bind(c.device_id).bind(p.connection_id).bind(p.epoch).bind(&p.readiness).bind(&p.block_reason).fetch_optional(&mut *tx).await?;
                 active.ok_or(Error::Policy("control_session_changed"))?;
                 for receipt in p.receipts {
@@ -102,7 +108,7 @@ impl Store for Repository {
                 connection_id,
                 epoch,
             } => {
-                let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM device_control_sessions WHERE device_id=$1 AND connection_id=$2 AND epoch=$3 AND connected AND last_heartbeat_at>clock_timestamp()-interval '65 seconds')")
+                let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM device_control_sessions s CROSS JOIN device_control_policy p WHERE device_id=$1 AND connection_id=$2 AND epoch=$3 AND connected AND coalesce(last_heartbeat_at,connected_at)>clock_timestamp()-make_interval(secs=>p.offline_after_seconds))")
      .bind(c.device_id).bind(connection_id).bind(epoch).fetch_one(&mut *tx).await?;
                 if !valid {
                     return Err(Error::Policy("control_session_changed"));
@@ -112,13 +118,13 @@ impl Store for Repository {
                 connection_id,
                 epoch,
             } => {
-                sqlx::query("UPDATE device_control_sessions SET connected=false WHERE device_id=$1 AND connection_id=$2 AND epoch=$3").bind(c.device_id).bind(connection_id).bind(epoch).execute(&mut *tx).await?;
+                sqlx::query("UPDATE device_control_sessions SET connected=false,last_disconnected_at=clock_timestamp(),disconnect_reason='transport_closed' WHERE device_id=$1 AND connection_id=$2 AND epoch=$3").bind(c.device_id).bind(connection_id).bind(epoch).execute(&mut *tx).await?;
                 closing = true;
             }
         }
         sqlx::query("UPDATE device_control_commands SET state='expired' WHERE device_id=$1 AND state IN ('queued','delivered','accepted') AND expires_at<=clock_timestamp()")
    .bind(c.device_id).execute(&mut *tx).await?;
-        let raw:Value=sqlx::query_scalar("SELECT jsonb_build_object('id',device_id,'connection_id',connection_id,'epoch',epoch,'protocol_version',1,'heartbeat_interval_seconds',20,'offline_after_seconds',65,'server_time',clock_timestamp(),'desired_paused',desired_paused,'desired_revision',desired_revision,'credential_expires_at',$2::timestamptz,'commands','[]'::jsonb) FROM device_control_sessions WHERE device_id=$1")
+        let raw:Value=sqlx::query_scalar("SELECT jsonb_build_object('id',device_id,'connection_id',connection_id,'epoch',epoch,'protocol_version',1,'heartbeat_interval_seconds',p.heartbeat_interval_seconds,'offline_after_seconds',p.offline_after_seconds,'server_time',clock_timestamp(),'desired_paused',desired_paused,'desired_revision',desired_revision,'credential_expires_at',$2::timestamptz,'commands','[]'::jsonb) FROM device_control_sessions CROSS JOIN device_control_policy p WHERE device_id=$1")
    .bind(c.device_id).bind(expires).fetch_one(&mut *tx).await?;
         let mut frame: Frame =
             serde_json::from_value(raw).map_err(|e| Error::Database(e.to_string()))?;
@@ -133,13 +139,26 @@ impl Store for Repository {
             sqlx::query("UPDATE device_control_commands SET state='delivered' WHERE id=ANY($1) AND state='queued'").bind(frame.commands.iter().map(|x|x.id).collect::<Vec<_>>()).execute(&mut *tx).await?;
         }
         tx.commit().await?;
+        tracing::debug!(event, device_id=%c.device_id, connection_id=%frame.connection_id,
+            epoch=frame.epoch, heartbeat_id=?frame.heartbeat_id, "device control committed");
         Ok(frame)
     }
     async fn presence(&self, actor: Uuid, device: Uuid) -> Result<Value> {
         let mut tx = self.0.begin().await?;
         admin(&mut tx, actor).await?;
-        let mut presence:Value=sqlx::query_scalar("SELECT jsonb_build_object('id',d.id,'state',CASE WHEN NOT d.enabled THEN 'disabled' WHEN NOT EXISTS(SELECT 1 FROM device_credentials c WHERE c.device_id=d.id AND c.generation=d.credential_generation AND c.revoked_at IS NULL AND c.expires_at>clock_timestamp()) THEN 'unauthorized' WHEN s.device_id IS NULL OR NOT s.connected OR s.last_heartbeat_at<=clock_timestamp()-interval '65 seconds' THEN 'offline' WHEN s.last_heartbeat_at<=clock_timestamp()-interval '30 seconds' THEN 'suspect' ELSE 'online' END,'last_control_heartbeat_at',s.last_heartbeat_at,'transport',s.transport,'readiness',s.readiness,'block_reason',s.block_reason,'desired_paused',coalesce(s.desired_paused,false),'desired_revision',coalesce(s.desired_revision,0),'credential_expires_at',(SELECT max(expires_at) FROM device_credentials WHERE device_id=d.id AND generation=d.credential_generation AND revoked_at IS NULL),'commands','[]'::jsonb) FROM execution_devices d LEFT JOIN device_control_sessions s ON s.device_id=d.id WHERE d.id=$1")
-   .bind(device).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
+        let mut presence: Value =
+            sqlx::query_scalar("SELECT to_jsonb(p) FROM device_control_presence p WHERE id=$1")
+                .bind(device)
+                .fetch_optional(&mut *tx)
+                .await?
+                .ok_or(Error::NotFound)?;
+        // Validate the public projection against the transport-neutral wire contract.
+        let snapshot: Presence =
+            serde_json::from_value(presence).map_err(|e| Error::Database(e.to_string()))?;
+        if !snapshot.policy.valid() {
+            return Err(Error::Policy("control_policy_invalid"));
+        }
+        presence = serde_json::to_value(snapshot).map_err(|e| Error::Database(e.to_string()))?;
         presence["commands"]=json!(sqlx::query_scalar::<_,Value>("SELECT to_jsonb(c)-'request_digest'-'request_key' FROM device_control_commands c WHERE device_id=$1 ORDER BY sequence DESC LIMIT 30").bind(device).fetch_all(&mut *tx).await?);
         tx.commit().await?;
         Ok(presence)
