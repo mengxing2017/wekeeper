@@ -102,6 +102,20 @@ export function decodeResource(value: unknown): Record<string, unknown> {
 /** Explicit aliases for action routes whose target resource differs from the URL leaf. */
 export function resourceType(path: string): string {
   const parts = path.split("?")[0].split("/").filter(Boolean);
+  if (parts[3] === "mobile-execution" || parts[4] === "mobile-execution") {
+    const kind = parts[2] === "platform" ? parts[4] : parts[5];
+    switch (kind) {
+      case "flow-versions": return "mobile-execution-flow-versions";
+      case "flow-validations": return "mobile-execution-flow-validations";
+      case "flow-releases": return "mobile-execution-flow-releases";
+      case "assignments": return "mobile-execution-assignments";
+      case "targets": case "targets-with-bindings": return "mobile-targets";
+      case "target-bindings": return "mobile-target-bindings";
+      case "device-school-grants": return "mobile-device-school-grants";
+      case "devices": return "mobile-devices";
+      default: throw new Error("Unknown mobile execution resource path");
+    }
+  }
   if (parts[0] !== "api" || parts[1] !== "v1")
     throw new Error("Unknown resource path");
   if (

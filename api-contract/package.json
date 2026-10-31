@@ -15,7 +15,9 @@
     "./identity": "./src/modules/identity/index.ts",
     "./schools": "./src/modules/schools/index.ts",
     "./community": "./src/modules/community/index.ts",
-    "./media": "./src/modules/media/index.ts"
+    "./media": "./src/modules/media/index.ts",
+    "./mobile-execution": "./src/modules/mobile-execution/index.ts",
+    "./mobile-execution/device": "./src/modules/mobile-execution/device.ts"
   },
   "scripts": {
     "build": "tsc --noEmit && tsc -p tsconfig.platform.json",
