@@ -985,3 +985,15 @@ async fn setup_status_does_not_accept_browser_cookie_as_device_identity() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
+
+#[test]
+fn control_presence_matches_shared_contract_and_policy() {
+    use wekeeper_api::distribution::domain::device_control::Presence;
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/device-control-presence.json"
+    ))
+    .unwrap();
+    let presence: Presence = serde_json::from_value(fixture.clone()).unwrap();
+    assert!(presence.policy.valid());
+    assert_eq!(serde_json::to_value(presence).unwrap(), fixture);
+}

@@ -2623,6 +2623,12 @@ async fn device_control_is_independent_durable_and_fenced() {
         )
         .await
         .unwrap();
+    assert_eq!(
+        repo.presence(f.actor, f.device).await.unwrap()["state"],
+        "connecting"
+    );
+    assert_eq!(first.heartbeat_interval_seconds, 20);
+    assert_eq!(first.offline_after_seconds, 90);
     let pause = repo
         .enqueue(
             f.actor,
@@ -2685,6 +2691,9 @@ async fn device_control_is_independent_durable_and_fenced() {
         .await
         .unwrap();
     assert!(second.epoch > first.epoch);
+    let connecting = repo.presence(f.actor, f.device).await.unwrap();
+    assert_eq!(connecting["state"], "connecting");
+    assert!(connecting["last_control_heartbeat_at"].is_null());
     assert!(matches!(
         repo.device(&c, control::Operation::Pulse(beat())).await,
         Err(Error::Policy("control_session_changed"))
@@ -2716,11 +2725,36 @@ async fn device_control_is_independent_durable_and_fenced() {
         repo.presence(f.actor, f.device).await.unwrap()["state"],
         "online"
     );
-    sqlx::query("UPDATE device_control_sessions SET last_heartbeat_at=clock_timestamp()-interval '66 seconds' WHERE device_id=$1").bind(f.device).execute(&f.pool).await.unwrap();
+    sqlx::query("UPDATE device_control_sessions SET last_heartbeat_at=clock_timestamp()-interval '91 seconds' WHERE device_id=$1").bind(f.device).execute(&f.pool).await.unwrap();
     assert_eq!(
         repo.presence(f.actor, f.device).await.unwrap()["state"],
         "offline"
     );
+    sqlx::query("UPDATE device_control_sessions SET last_heartbeat_at=clock_timestamp()-interval '46 seconds' WHERE device_id=$1").bind(f.device).execute(&f.pool).await.unwrap();
+    assert_eq!(
+        repo.presence(f.actor, f.device).await.unwrap()["state"],
+        "suspect"
+    );
+    let devices = f
+        .repo
+        .query(
+            Principal::Actor(f.actor),
+            Scope {
+                school: None,
+                id: None,
+            },
+            Query::Devices,
+            Page::default(),
+        )
+        .await
+        .unwrap();
+    let row = devices
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["id"] == f.device.to_string())
+        .unwrap();
+    assert_eq!(row["control"]["state"], "suspect");
     // Candidate registration and activation survive repeat requests; only hashes are stored.
     let token = format!(
         "wk_device_{}{}",
