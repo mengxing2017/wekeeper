@@ -90,6 +90,26 @@ impl IntoResponse for Error {
                 "device_request_limit",
                 "设备请求过于频繁，请稍后重试".into(),
             ),
+            Self::Policy("automation_environment_required") => (
+                StatusCode::CONFLICT,
+                "automation_environment_required",
+                "等待手机上报当前环境；请检查手机端版本、连接与权限".into(),
+            ),
+            Self::Policy("automation_instance_ambiguous") => (
+                StatusCode::CONFLICT,
+                "automation_instance_ambiguous",
+                "无法唯一确认应用安装实例，请在手机端重新检查".into(),
+            ),
+            Self::Policy("automation_timing_required") => (
+                StatusCode::CONFLICT,
+                "automation_timing_required",
+                "缺少同环境的真实人工计时，请由适配人员完成采样".into(),
+            ),
+            Self::Policy("automation_readiness_required") => (
+                StatusCode::CONFLICT,
+                "automation_readiness_required",
+                "等待手机完成当前应用准备和核验".into(),
+            ),
             Self::Policy(code) => (
                 StatusCode::CONFLICT,
                 code,
