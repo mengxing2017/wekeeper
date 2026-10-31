@@ -87,7 +87,7 @@ const pageLabels: Record<string, string> = {
   all_apps: '全部应用页',
   application: '目标应用核验页',
 }
-const policyFields: Array<[keyof ExecutionPolicy, string]> = [
+export const policyFields: Array<[keyof ExecutionPolicy, string]> = [
   ['account_cooldown_ms', '账号冷却（秒）'],
   ['content_cooldown_ms', '同文冷却（秒）'],
   ['default_group_interval_ms', '建议群间等待（秒）'],
@@ -105,7 +105,13 @@ const policyFields: Array<[keyof ExecutionPolicy, string]> = [
   ['max_navigation_steps', '最多导航步骤'],
   ['minimum_manual_samples', '至少人工样本数'],
 ]
-function SelectorEditor({ value, change }: { value: UiSelector; change: (v: UiSelector) => void }) {
+export function SelectorEditor({
+  value,
+  change,
+}: {
+  value: UiSelector
+  change: (v: UiSelector) => void
+}) {
   function predicate(section: 'predicate' | 'parent' | 'ancestor') {
     const p = value[section] ?? {}
     return (
@@ -194,7 +200,7 @@ function SelectorEditor({ value, change }: { value: UiSelector; change: (v: UiSe
     </Space>
   )
 }
-function PageEditor({
+export function PageEditor({
   pages,
   change,
 }: {
@@ -253,7 +259,7 @@ function PageEditor({
     />
   )
 }
-function StepEditor({
+export function StepEditor({
   steps,
   pages,
   roles,
@@ -365,7 +371,7 @@ function StepEditor({
     </Space>
   )
 }
-function emptyRules(client: UiClient): UiRules {
+export function emptyRules<C = UiClient>(client: C): UiRules<C> {
   return {
     schema_version: 1,
     engine_version: 'otter-ui/1',
@@ -407,7 +413,7 @@ function emptyRules(client: UiClient): UiRules {
     member_count_suffix: 'none',
   }
 }
-function emptyLauncher(client: UiClient): LauncherFlow {
+export function emptyLauncher<C = UiClient>(client: C): LauncherFlow<C> {
   return {
     client,
     pages: Object.fromEntries(
