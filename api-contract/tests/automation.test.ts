@@ -139,3 +139,22 @@ test("validation polling accepts only the bounded collection and does not accept
   expect(fetcher.mock.calls[0][1]?.body).toBeUndefined();
   expect(fetcher).toHaveBeenCalledTimes(1);
 });
+
+test("standing authorization, audit reference and decline have distinct bounded wire contracts", async () => {
+  const { default: consent } = await import("../fixtures/execution-authorization-receipt-v4.json");
+  const { default: context } = await import("../fixtures/execution-authorization-context-v4.json");
+  const fetcher=vi.fn<typeof fetch>().mockResolvedValue(response("execution-authorizations",context.data.attributes,context.data.id));
+  const client=createDeviceExecutionClient({baseUrl:"https://example.test",token:"wk_device_test",protocolVersion:4,fetch:fetcher});
+  await client.authorizationContext();
+  fetcher.mockResolvedValue(response("execution-authorizations",{revision:1}));
+  const receipt=consent.data.attributes.receipt as import("../src/modules/mobile-delivery/automation").ExecutionAuthorizationReceipt;
+  await client.authorizationReceipt(receipt,"receipt-1");
+  expect(JSON.parse(String(fetcher.mock.calls[1][1]?.body))).toEqual(consent);
+  fetcher.mockImplementation(async () => response("device-validations",{}));
+  await client.acceptStandingValidation("job",{expected_revision:1,generation:"generation",authorization_id:receipt.authorization_id},"accept-1");
+  await client.rejectValidation("job",{expected_revision:1,generation:"generation"},"decline-1");
+  expect(fetcher.mock.calls.map(c=>String(c[0]).split("/device-execution/")[1])).toEqual(["execution-authorization-context","execution-authorizations","validation-jobs/job/standing-acceptances","validation-jobs/job/rejections"]);
+  for(const [,init] of fetcher.mock.calls)expect(init).toMatchObject({credentials:"omit",redirect:"error"});
+  expect(JSON.parse(String(fetcher.mock.calls[2][1]?.body)).data.attributes.authorization_id).toBe(receipt.authorization_id);
+  expect(JSON.parse(String(fetcher.mock.calls[3][1]?.body)).data.attributes).toEqual({expected_revision:1,generation:"generation"});
+});
