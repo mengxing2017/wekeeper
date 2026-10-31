@@ -63,6 +63,9 @@ pub async fn normalize_errors(
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
         let (status, code, message): (StatusCode, &str, String) = match self {
+            Self::Policy("device_consent_required") => (StatusCode::CONFLICT,"device_consent_required","请在手机上接受该学校当前用途的设备授权后重试".into()),
+            Self::Policy("device_validation_required") => (StatusCode::CONFLICT,"device_validation_required","请先由已授权设备完成当前流程验证，验证通过后 24 小时内发布".into()),
+            Self::Policy("flow_release_required") => (StatusCode::CONFLICT,"flow_release_required","请选择本校尚未撤销的已发布手机流程".into()),
             Self::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized", "请先登录".into()),
             Self::Forbidden => (
                 StatusCode::FORBIDDEN,
@@ -89,6 +92,11 @@ impl IntoResponse for Error {
                 StatusCode::CONFLICT,
                 "binding_school_authorization_required",
                 "该发送账号缺少有效学校群授权：请先配置目标群与账号授权，并确认责任人已启用且具有对应启用学校的管理员权限；修改核对备注不能解决此问题".into(),
+            ),
+            Self::Policy("school_device_grant_required") => (
+                StatusCode::CONFLICT,
+                "school_device_grant_required",
+                "设备尚未获得本校使用授权，或设备/目标已停用；请联系平台管理员核对学校设备授权，并刷新可用设备后重试".into(),
             ),
             Self::Policy("revision_conflict") => (
                 StatusCode::CONFLICT,
