@@ -232,7 +232,14 @@ const write = <T>(path: string, input: unknown, key: string) => {
     "Idempotency-Key": key,
   });
 };
+export interface SchoolExecutionResource {
+  id: UUID; device_id: UUID; device_name: string; sender_account_id: UUID;
+  account_name: string; company_name: string;
+  control_state: import('./index').DeviceControlSnapshot['state'];
+  last_control_heartbeat_at: string | null; available: boolean; block_reason: string | null;
+}
 export const dispatchApi = {
+  resources: (s: UUID, page = 1) => list<SchoolExecutionResource>(`${school(s)}/execution-resources`, page),
   validations: (s: UUID, page = 1) =>
     list<FlowValidation>(`${school(s)}/automation-flow-validations`, page),
   validate: (
