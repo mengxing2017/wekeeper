@@ -17,6 +17,23 @@ export type UUID = string;
 /** External system identifiers are unavailable to visible UI execution. These UUIDs are local only. */
 export type IdentityMode = "legacy_external" | "ui_visible";
 export type VerificationState = "pending" | "reviewed";
+export interface ResponsibleActor {
+  id: UUID;
+  username: string;
+  display_name: string;
+  active: boolean;
+  eligible: boolean;
+  schools: Array<{ id: UUID; name: string }>;
+}
+export interface AccountProfileReview {
+  actor_id: UUID;
+  actor_name: string;
+  actor_username: string;
+  reviewed_at: string;
+  /** Historical reviews may not have recorded the profile version. */
+  profile_revision: number | null;
+  evidence_ref: string;
+}
 export interface AccountProfile {
   company_name: string;
   account_name: string;
@@ -114,6 +131,10 @@ export interface Device extends Row {
   created_at: string;
 }
 export interface SendingAccount extends Row {
+  /** Platform list/detail projection; absent from device identity snapshots. */
+  responsible_actor?: ResponsibleActor;
+  registration_evidence_ref?: string | null;
+  latest_profile_review?: AccountProfileReview | null;
   client_kind: "wechat" | "wecom";
   identity_namespace: string | null;
   external_key: string | null;
@@ -547,6 +568,10 @@ export const mobileDeliveryApi = {
     ),
   accounts: (page?: number, size?: number) =>
     list<SendingAccount>(accounts, page, size),
+  responsibleActors: (search = "", page = 1, size = 30) =>
+    requestCollection<ResponsibleActor>(
+      `/api/v1/platform/sending-account-responsible-actors?search=${encodeURIComponent(search)}&page[number]=${page}&page[size]=${size}`,
+    ),
   createAccount: (input: AccountInput, key: string) =>
     write<SendingAccount>(accounts, "POST", input, key),
   bindDevice: (
