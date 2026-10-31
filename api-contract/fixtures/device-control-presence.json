@@ -1,0 +1,18 @@
+{
+  "id": "00000000-0000-4000-8000-000000000001",
+  "state": "connecting",
+  "last_control_heartbeat_at": null,
+  "transport": "https",
+  "readiness": "waiting",
+  "block_reason": null,
+  "desired_paused": false,
+  "desired_revision": 0,
+  "credential_expires_at": "2026-11-30T00:00:00Z",
+  "connected_at": "2026-11-01T00:00:00Z",
+  "last_disconnected_at": null,
+  "disconnect_reason": null,
+  "server_time": "2026-11-01T00:00:00Z",
+  "heartbeat_interval_seconds": 20,
+  "suspect_after_seconds": 45,
+  "offline_after_seconds": 90
+}

@@ -343,3 +343,14 @@ test("device control presence and commands use the authenticated platform client
   expect(fetcher.mock.calls[0][0]).toBe("/api/v1/platform/execution-devices/phone/control");
   expect(JSON.parse(fetcher.mock.calls[0][1]?.body as string).data.attributes).toEqual({ kind: "pause_execution" });
 });
+
+test("batched device list preserves the shared control presence projection", async () => {
+  const fixture = (await import("../fixtures/device-control-presence.json")).default;
+  const snapshot: import("../src/modules/mobile-delivery").DeviceControlSnapshot = { ...fixture, state: "connecting", transport: "https" };
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response({ data: [{ type: "execution-devices", id: fixture.id, attributes: { name: "phone", control: snapshot } }] }));
+  vi.stubGlobal("fetch", fetcher);
+  const page = await mobileDeliveryApi.devices();
+  expect(page.items[0].control).toEqual(snapshot);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(snapshot.last_control_heartbeat_at).toBeNull();
+});

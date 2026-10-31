@@ -5,7 +5,7 @@
   "protocol_version": 1,
   "heartbeat_id": null,
   "heartbeat_interval_seconds": 20,
-  "offline_after_seconds": 65,
+  "offline_after_seconds": 90,
   "server_time": "2026-10-31T00:00:00Z",
   "desired_paused": true,
   "desired_revision": 3,
