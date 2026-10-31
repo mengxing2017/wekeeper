@@ -37,6 +37,8 @@ export default defineConfig({
             },
             { text: "官方群发任务", link: "/guide/operator/broadcast-tasks" },
             { text: "手机发送任务", link: "/guide/operator/mobile-tasks" },
+            { text: "手机执行配置", link: "/guide/operator/mobile-execution-flows" },
+            { text: "手机目标群与设备绑定", link: "/guide/operator/mobile-targets" },
             { text: "手机设备与发送账号", link: "/guide/operator/execution-resources" },
             {
               text: "结果与异常处理",
@@ -74,6 +76,7 @@ export default defineConfig({
               text: "手机设备与发送账号",
               link: "/guide/platform-admin/devices-and-accounts",
             },
+            { text: "学校设备使用授权", link: "/guide/platform-admin/device-school-grants" },
             {
               text: "流程维护与发布",
               link: "/guide/platform-admin/flow-maintenance",
