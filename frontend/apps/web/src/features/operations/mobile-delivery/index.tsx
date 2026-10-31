@@ -1,9 +1,24 @@
 import { createIdempotencyKey as key } from '../../../shared/idempotency-key'
+import { ApplicationSetup } from './setup'
+import { BusinessWizard } from './flows'
+import { AutomationRuns } from './runs'
 import { ConfigurationWorkbench } from './configuration'
 import { ActionDrawer } from '../../../shared/action-drawer'
 import { useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Alert, Button, Card, Checkbox, Drawer, Table, Input, Space, Tabs, Tag, Typography } from 'antd'
+import {
+  Alert,
+  Button,
+  Card,
+  Checkbox,
+  Drawer,
+  Table,
+  Input,
+  Space,
+  Tabs,
+  Tag,
+  Typography,
+} from 'antd'
 import { Editor } from '../../admin/workspace/editor'
 import { Field } from '../../../shared/field'
 import { PaginationControls } from '../../../shared/pagination-controls'
@@ -70,7 +85,9 @@ export function ExecutionDevices() {
   const [listTab, setListTab] = useState('devices')
   const [page, setPage] = useState(1),
     [accountPage, setAccountPage] = useState(1),
-    [pairing, setPairing] = useState<{ code: string; expiresAt: string; name: string } | null>(null),
+    [pairing, setPairing] = useState<{ code: string; expiresAt: string; name: string } | null>(
+      null,
+    ),
     [deviceId, setDeviceId] = useState(''),
     [senderId, setSenderId] = useState('')
   const devices = useQuery({
@@ -98,10 +115,15 @@ export function ExecutionDevices() {
           title={`${pairing.name} · 一次性配对码`}
           description={
             <>
-              <p><Typography.Text strong copyable={{ text: pairing.code }}>
-                {pairing.code.slice(0, 4)} {pairing.code.slice(4)}
-              </Typography.Text></p>
-              <p>在 Otter 输入这 8 位数字即可，无需输入设备 ID。有效期至 {new Date(pairing.expiresAt).toLocaleString()}，使用一次或重新生成后失效。</p>
+              <p>
+                <Typography.Text strong copyable={{ text: pairing.code }}>
+                  {pairing.code.slice(0, 4)} {pairing.code.slice(4)}
+                </Typography.Text>
+              </p>
+              <p>
+                在 Otter 输入这 8 位数字即可，无需输入设备 ID。有效期至{' '}
+                {new Date(pairing.expiresAt).toLocaleString()}，使用一次或重新生成后失效。
+              </p>
               <Button onClick={() => setPairing(null)}>关闭配对码</Button>
             </>
           }
@@ -114,7 +136,7 @@ export function ExecutionDevices() {
         items={[
           { key: 'devices', label: '手机设备' },
           { key: 'accounts', label: '发送账号' },
-          { key: 'rules', label: '规则与政策中心' },
+          { key: 'rules', label: '适配管理' },
         ]}
       />
       {listTab === 'rules' ? (
@@ -200,7 +222,11 @@ export function ExecutionDevices() {
                             setPairing(null)
                             throw new Error('配对码无法重放，请重新生成')
                           }
-                          setPairing({ code: result.code, expiresAt: result.expires_at, name: d.name })
+                          setPairing({
+                            code: result.code,
+                            expiresAt: result.expires_at,
+                            name: d.name,
+                          })
                         })
                       }
                     >
@@ -238,7 +264,19 @@ export function ExecutionDevices() {
                     key={`bind-${d.revision}`}
                     submit="绑定发送账号"
                     fields={[
-                      { name: 'sender_account_id', title: '发送账号 ID' },
+                      {
+                        name: 'sender_account_id',
+                        title: '已核对发送账号',
+                        options:
+                          accounts.data?.items
+                            .filter((a) => a.enabled)
+                            .map((a) => ({
+                              value: a.id,
+                              label: a.visible_profile
+                                ? `${a.visible_profile.company_name} · ${a.visible_profile.account_name}`
+                                : a.id,
+                            })) ?? [],
+                      },
                       { name: 'identity_evidence_ref', title: '手机登录身份核验依据' },
                     ]}
                     onSave={async (v) => {
@@ -453,10 +491,35 @@ export default function MobileDelivery({ school, role }: { school: string; role?
         items={[
           { key: 'tasks', label: '发送任务' },
           { key: 'groups', label: '目标群' },
-          ...(admin ? [{ key: 'strategies', label: '发送策略' }] : []),
+          ...(admin
+            ? [
+                { key: 'applications', label: '手机与应用' },
+                { key: 'flows', label: '业务流程' },
+                { key: 'runs', label: '执行记录' },
+                { key: 'strategies', label: '历史发送策略' },
+              ]
+            : []),
         ]}
       />
-      {listTab === 'strategies' && admin ? (
+      {listTab === 'applications' && admin ? (
+        <ApplicationSetup school={school} />
+      ) : listTab === 'flows' && admin ? (
+        <BusinessWizard
+          school={school}
+          openTask={(id) => {
+            setSelected(id)
+            setListTab('tasks')
+          }}
+        />
+      ) : listTab === 'runs' && admin ? (
+        <AutomationRuns
+          school={school}
+          openTask={(id) => {
+            setSelected(id)
+            setListTab('tasks')
+          }}
+        />
+      ) : listTab === 'strategies' && admin ? (
         <VisibleStrategies
           school={school}
           openTask={(id) => {
