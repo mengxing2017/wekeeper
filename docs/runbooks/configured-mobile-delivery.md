@@ -27,7 +27,7 @@
 
 「登记依据」填写 1–500 字实际来源说明，例如手机上的企业与账号资料页面。保存后可见账号仍为「待人工核对」。打开「账号配置」，查看资料版本，填写新的「本次核对依据」，点击「已在手机核对本版本账号资料」才会完成正式核对。核对人及时间由当前操作身份和服务端事件记录生成；修改资料后重新核对，旧依据仅供历史查阅。当前阶段提供现场说明，尚未开放截图材料库和已有证据选择。旧历史若缺少登记依据或资料版本，页面如实标明未记录。
 
-责任人候选查询为 `GET /api/v1/platform/sending-account-responsible-actors?search=姓名或登录名&page[number]=1&page[size]=30`，仅平台管理员可访问，返回 JSON:API 分页集合。账号列表和限额详情新增 `responsible_actor`、`registration_evidence_ref`、`latest_profile_review` 展示字段；这些信息不进入设备身份快照，也不改变旧任务摘要。迁移 `202610310003_account_profile_event_lookup.sql` 仅增加账号资料事件查询索引，启动自动应用。
+责任人候选查询为 `GET /api/v1/platform/sending-account-responsible-actors?search=姓名或登录名&page[number]=1&page[size]=30`，仅平台管理员可访问，返回 JSON:API 分页集合。账号列表和限额详情新增 `responsible_actor`、`registration_evidence_ref`、`latest_profile_review` 展示字段；这些信息不进入设备身份快照，也不改变旧任务摘要。迁移 `202610310004_account_profile_event_lookup.sql` 仅增加账号资料事件查询索引，启动自动应用。
 
 1. 平台管理员登记并人工核对可见账号；学校管理员登记并核对可见群，建立账号与群授权，绑定并启用指定手机。平台身份不能替代学校权限。
 2. Otter 选择企业微信并登记 v3 能力。启动先恢复旧请求与结果，读取实际安装环境，解析并校验唯一兼容发布，再构造无障碍适配器。缺少配置、摘要/能力/安装版本不符均阻断。
