@@ -124,8 +124,8 @@ export interface LauncherStep {
   operation: LauncherOperation;
   delay_ms: number;
 }
-export interface LauncherFlow {
-  client: UiClient;
+export interface LauncherFlow<C=UiClient> {
+  client: C;
   pages: UiRules["pages"];
   roles: Record<string, UiSelector>;
   search_steps: LauncherStep[];

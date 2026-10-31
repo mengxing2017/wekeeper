@@ -21,11 +21,11 @@ export interface UiClient {
   version_name: string;
   version_code: number;
 }
-export interface UiRules {
+export interface UiRules<C=UiClient> {
   schema_version: number;
   engine_version: string;
   required_capabilities: string[];
-  client: UiClient;
+  client: C;
   pages: Record<
     string,
     { marker: UiSelector; required: UiSelector[]; forbidden: UiSelector[] }
