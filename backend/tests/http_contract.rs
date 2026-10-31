@@ -634,3 +634,91 @@ fn strategy_commands_are_strict_and_default_to_disabled() {
     v["resource_id"] = serde_json::json!("unavailable");
     assert!(serde_json::from_value::<Command>(v).is_err());
 }
+
+#[test]
+fn automation_v4_shared_wire_is_typed_and_does_not_relax_v3() {
+    use wekeeper_api::distribution::domain::mobile_delivery::{
+        AutomationCommand, Command, EnvironmentReport, ValidationEvent, ValidationKind,
+    };
+    let environment: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/automation-environment-v4.json"
+    ))
+    .unwrap();
+    let report: EnvironmentReport =
+        serde_json::from_value(environment["data"]["attributes"]["report"].clone()).unwrap();
+    report.validate().unwrap();
+    assert!(report.supports_execution());
+    assert_eq!(
+        serde_json::to_value(&report).unwrap(),
+        environment["data"]["attributes"]["report"]
+    );
+    let parsed: AutomationCommand =
+        serde_json::from_value(serde_json::json!({"action":"report_environment","report":report}))
+            .unwrap();
+    assert!(matches!(
+        parsed,
+        AutomationCommand::ReportEnvironment { .. }
+    ));
+    let mut old_claim =
+        serde_json::json!({"operation":"claim","binding_revision":1,"environment":report});
+    assert!(serde_json::from_value::<Command>(old_claim.clone()).is_err());
+    old_claim.as_object_mut().unwrap().remove("environment");
+    assert_eq!(
+        serde_json::to_value(serde_json::from_value::<Command>(old_claim.clone()).unwrap())
+            .unwrap(),
+        old_claim
+    );
+    let event: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/automation-validation-v4.json"
+    ))
+    .unwrap();
+    let parsed: ValidationEvent =
+        serde_json::from_value(event["data"]["attributes"]["event"].clone()).unwrap();
+    parsed.validate(ValidationKind::OpenApplication).unwrap();
+    assert_eq!(
+        serde_json::to_value(parsed).unwrap(),
+        event["data"]["attributes"]["event"]
+    );
+}
+#[tokio::test]
+async fn automation_and_v4_routes_are_registered_and_require_authorization() {
+    for (path, method) in [
+        (
+            "/api/v1/schools/00000000-0000-0000-0000-000000000001/automation-apps",
+            "GET",
+        ),
+        ("/api/v1/platform/automation-adaptations/components", "GET"),
+        ("/api/v4/device-execution/validation-jobs", "GET"),
+        ("/api/v4/device-execution/environment-snapshots", "POST"),
+        ("/api/v4/device-execution/claims", "POST"),
+    ] {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
+    }
+}
+
+#[test]
+fn automation_manifest_canonicalization_matches_shared_utf8_bytes() {
+    use wekeeper_api::distribution::domain::mobile_delivery::automation_digest;
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/automation-canonical-v4.json"
+    ))
+    .unwrap();
+    assert_eq!(
+        fixture["value"].to_string(),
+        fixture["canonical"].as_str().unwrap()
+    );
+    assert_eq!(
+        automation_digest(&fixture["value"]),
+        fixture["sha256"].as_str().unwrap()
+    );
+}
