@@ -1,0 +1,48 @@
+{
+  "data": {
+    "type": "execution-authorizations",
+    "id": "22222222-2222-4222-8222-222222222222",
+    "attributes": {
+      "extension": "standing_authorization/1",
+      "authorization_revision": 0,
+      "device_id": "22222222-2222-4222-8222-222222222222",
+      "device_name": "合成测试手机",
+      "account_name": "合成公司账号",
+      "responsible_actor_id": "55555555-5555-4555-8555-555555555555",
+      "schools": [
+        {
+          "school_id": "66666666-6666-4666-8666-666666666666",
+          "name": "合成单位",
+          "applications": [
+            {
+              "binding_id": "33333333-3333-4333-8333-333333333333",
+              "app_key": "wecom",
+              "instance_ref": "synthetic",
+              "label": "企业微信"
+            }
+          ]
+        }
+      ],
+      "scope": {
+        "device_id": "22222222-2222-4222-8222-222222222222",
+        "sender_account_id": "55555555-5555-4555-8555-555555555555",
+        "schools": [
+          {
+            "school_id": "66666666-6666-4666-8666-666666666666",
+            "applications": [
+              {
+                "binding_id": "33333333-3333-4333-8333-333333333333",
+                "app_key": "wecom",
+                "instance_ref": "synthetic"
+              }
+            ]
+          }
+        ],
+        "purpose": "company_business/1",
+        "data_policy": "minimal_visible_results/1",
+        "object_scope": "approved_school_groups/1"
+      },
+      "environment_generation": 0
+    }
+  }
+}
