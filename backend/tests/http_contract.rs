@@ -1029,3 +1029,90 @@ async fn school_execution_resources_have_a_minimal_contract_and_require_identity
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn v6_consent_endpoints_require_device_bearer_even_with_browser_cookie() {
+    for (method,path,body) in [
+        ("GET","/api/v6/device-execution/authorization-context",String::new()),
+        ("POST","/api/v6/device-execution/consents",json!({"data":{"type":"mobile-device-consents","attributes":{"grant_id":"00000000-0000-0000-0000-000000000001","grant_revision":1,"scope_digest":"a".repeat(64),"expected_revision":0,"accepted":true}}}).to_string()),
+    ] {
+        let response=app().oneshot(Request::builder().method(method).uri(path)
+            .header("cookie","session=browser-session")
+            .header("content-type","application/vnd.api+json")
+            .body(Body::from(body)).unwrap()).await.unwrap();
+        assert_eq!(response.status(),StatusCode::UNAUTHORIZED);
+        let doc:Value=serde_json::from_slice(&to_bytes(response.into_body(),8192).await.unwrap()).unwrap();
+        assert_eq!(doc["errors"][0]["code"],"unauthorized");
+    }
+}
+
+#[tokio::test]
+async fn v6_consent_context_matches_shared_fixture_without_account_identity() {
+    use axum::response::IntoResponse;
+    use wekeeper_api::distribution::domain::mobile_execution::consent_scope;
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/mobile-device-consent-context.json"
+    ))
+    .unwrap();
+    let scope = consent_scope(
+        uuid::Uuid::from_u128(1),
+        uuid::Uuid::from_u128(2),
+        uuid::Uuid::from_u128(3),
+        1,
+        "通知",
+    );
+    let value = json!({"id":scope["device_id"],"protocol_version":6,"scopes":[{"id":scope["grant_id"],"school_name":"示例学校","scope_digest":wekeeper_api::business::hash(&scope.to_string()),"scope":scope,"consent":null,"accepted":false}]});
+    let response = wekeeper_api::http::jsonapi::resource("mobile-device-consent-contexts", value)
+        .into_response();
+    let actual: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 8192).await.unwrap()).unwrap();
+    assert_eq!(actual, fixture);
+}
+
+#[tokio::test]
+async fn v6_flow_version_wire_matches_shared_fixture() {
+    use axum::response::IntoResponse;
+    use wekeeper_api::distribution::domain::mobile_execution::FlowV2;
+    let flow: FlowV2 = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/mobile-execution-flow-v2.json"
+    ))
+    .unwrap();
+    flow.validate().unwrap();
+    let flow = serde_json::to_value(flow).unwrap();
+    let response=wekeeper_api::http::jsonapi::resource("mobile-execution-flow-versions",json!({"id":"00000000-0000-0000-0000-000000000011","school_id":"00000000-0000-0000-0000-000000000002","name":"示例流程（仅用于契约测试）","content_digest":wekeeper_api::business::hash(&flow.to_string()),"flow":flow,"created_at":"2026-11-01T00:00:00Z"})).into_response();
+    let actual: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 65536).await.unwrap()).unwrap();
+    let expected: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/mobile-execution-flow-version.json"
+    ))
+    .unwrap();
+    assert_eq!(actual, expected);
+}
+#[tokio::test]
+async fn new_flow_management_and_device_validation_do_not_accept_anonymous_access() {
+    for (method, path) in [
+        (
+            "GET",
+            "/api/v1/schools/00000000-0000-0000-0000-000000000001/mobile-execution/flow-versions",
+        ),
+        (
+            "GET",
+            "/api/v1/schools/00000000-0000-0000-0000-000000000001/mobile-execution/assignments",
+        ),
+        ("GET", "/api/v6/device-execution/flow-validations"),
+    ] {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+    let response=app().oneshot(Request::builder().method("POST").uri("/api/v6/device-execution/flow-validations/00000000-0000-0000-0000-000000000001/results").header("content-type","application/vnd.api+json").body(Body::from(json!({"data":{"type":"mobile-execution-flow-validations","attributes":{}}}).to_string())).unwrap()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
