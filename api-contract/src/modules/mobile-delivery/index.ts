@@ -128,11 +128,16 @@ export interface DeviceControlCommand {
   state: "queued" | "delivered" | "accepted" | "completed" | "rejected" | "expired";
   expires_at: string; result_code: string | null;
 }
-export interface DeviceControlPresence {
-  id: UUID; state: "online" | "suspect" | "offline" | "disabled" | "unauthorized";
+export interface DeviceControlSnapshot {
+  id: UUID; state: "connecting" | "online" | "suspect" | "offline" | "disabled" | "unauthorized";
   last_control_heartbeat_at: string | null; transport: "wss" | "https" | null;
   readiness: string | null; block_reason: string | null;
   desired_paused: boolean; desired_revision: number; credential_expires_at: string | null;
+  server_time?: string;
+  heartbeat_interval_seconds?: number; suspect_after_seconds?: number; offline_after_seconds?: number;
+  connected_at?: string | null; last_disconnected_at?: string | null; disconnect_reason?: string | null;
+}
+export interface DeviceControlPresence extends DeviceControlSnapshot {
   commands: DeviceControlCommand[];
 }
 export interface DeviceControlPulse {
@@ -147,6 +152,7 @@ export interface DeviceControlFrame {
   credential_expires_at: string; commands: Array<Omit<DeviceControlCommand, "result_code"> & { resource_id: UUID | null; desired_revision: number | null }>;
 }
 export interface Device extends Row {
+  control?: DeviceControlSnapshot;
   execution_protocol_version?: 1 | 2 | 3 | 4 | 5;
   supported_protocol_versions?: number[];
   name: string;
