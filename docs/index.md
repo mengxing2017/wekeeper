@@ -1,5 +1,6 @@
 ---
 layout: home
+
 hero:
   name: WeKeeper
   text: 校园社区与内容运营
@@ -19,6 +20,9 @@ features:
   - title: 受控内容发送
     details: 官方任务与独立手机执行遵循人工确认、共享额度、去重和 unknown 核对，不自动补发。
 ---
+
+当前新业务使用[无环境前置批量任务 v5](./runbooks/dispatch-v5.md)。旧 v3/v4 文档仅适用于对应协议和历史在途任务。
+
 
 ## 文档定位
 
