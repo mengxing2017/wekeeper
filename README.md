@@ -13,7 +13,7 @@ make docs-install
 make docs
 ```
 
-浏览 <http://127.0.0.1:22596/>。独立安装只需 Node 22 与 pnpm 11.22.0；`make docs-build` 构建静态站，`make docs-preview` 在 <http://127.0.0.1:22597/> 预览。入口为 [docs/index.md](docs/index.md)，启动说明见 [开发文档](docs/development/index.md#文档站)。文档包独立于 frontend/api-contract，不新增部署服务。
+浏览 <http://127.0.0.1:22596/docs/>。独立安装只需 Node 22 与 pnpm 11.22.0；`make docs-build` 构建静态站，`make docs-preview` 在 <http://127.0.0.1:22597/docs/> 预览。入口为 [docs/index.md](docs/index.md)，启动说明见 [开发文档](docs/development/index.md#文档站)。文档包独立于 frontend/api-contract，静态产物随 Web 镜像发布到 `/docs/`，不新增部署服务。
 
 ## 目录
 
@@ -55,6 +55,7 @@ docker compose --env-file .env -f compose.yaml -f compose.dev.yaml up --build --
 
 默认访问地址：
 
+- 帮助中心：http://127.0.0.1:8088/docs/
 - 后台：http://127.0.0.1:8088/admin
 - 社区：http://127.0.0.1:8088/community
 - 企业微信 H5 页面：http://127.0.0.1:8088/wecom

@@ -619,3 +619,12 @@ make reset-dev-database
 没有执行自动清库；API 正常启动仍只执行迁移。上述命令保留 PostgreSQL 数据卷和 Caddy 证书卷，但业务表中的媒体也会随 schema 清除。外部 PostgreSQL 的一次性开发库由其管理员重建专用数据库/schema，应用连接角色须拥有新 schema 的建表权限。
 
 本文按仓库 Dockerfile、Compose、Caddy 和配置解析代码核对。镜像构建、Compose 就绪及公网 HTTPS 仍需在具备 Docker daemon 的目标环境实测。
+
+
+## 同镜像帮助中心
+
+Web 镜像同时构建 React 与独立 docs 包。访问站点 `/docs/` 阅读使用手册与开发者手册，无需额外文档服务或端口。`/docs` 自动跳转，文章支持直接访问和刷新，未知文章返回 404。离线交付 Web 镜像时已包含文档、本地搜索和静态资源。
+
+源码构建必须保留 docs 目录、独立锁文件与构建脚本。可通过 Docker build 参数 `WEKEEPER_BUILD_VERSION` 写入版本；未指定显示“开发构建”。文档与业务 Web 随同镜像回退，不回退数据库 migration。
+
+发布后运行 `make smoke`，再使用浏览器检查帮助入口、搜索、深链接、复制和 CSP。构建及安全头生成见[文档发布](../development/docs-publishing.md)。

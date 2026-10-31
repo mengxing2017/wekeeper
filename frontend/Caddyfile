@@ -1,3 +1,5 @@
+import /etc/caddy/docs.caddy
+
 # Internal process check stays independent of public domain / automatic HTTPS.
 http://:8081 {
   respond /healthz "ok" 200
@@ -9,8 +11,37 @@ http://:8081 {
     X-Content-Type-Options nosniff
     X-Frame-Options DENY
     Referrer-Policy strict-origin-when-cross-origin
-    Content-Security-Policy "default-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data: https:; font-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+    # Application CSP is set separately from the generated docs hashes.
     -Server
+  }
+
+  @application not path /docs /docs/*
+  header @application Content-Security-Policy "default-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data: https:; font-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+
+  redir /docs /docs/ 308
+  handle_path /docs/* {
+    import docs_csp
+    root * /srv/docs
+    header Cache-Control no-cache
+    @hashed path_regexp hashed ^/assets/.*[.-][A-Za-z0-9_-]{8,}\.(js|css|woff2?)$
+    # Apply after the default no-cache header, regardless of directive sorting.
+    header @hashed {
+      Cache-Control "public, max-age=31536000, immutable"
+      defer
+    }
+    @document file {
+      try_files {path} {path}.html {path}/index.html
+    }
+    handle @document {
+      rewrite * {file_match.relative}
+      file_server
+    }
+    handle {
+      rewrite * /404.html
+      file_server {
+        status 404
+      }
+    }
   }
 
   @api path /api /api/* /healthz /readyz

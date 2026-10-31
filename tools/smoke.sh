@@ -27,3 +27,5 @@ for name in ('admin', 'wecom'):
     assert '<div id="root"></div>' in (root / f'{name}.html').read_text()
 print('Smoke checks passed: readiness, API contract, SPA routes and rejected unscoped routes.')
 PY
+
+python3 tools/check_docs.py

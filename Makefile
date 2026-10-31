@@ -3,8 +3,9 @@
 install:
 	pnpm --dir api-contract install --frozen-lockfile
 	pnpm --dir frontend install --frozen-lockfile
+	pnpm --dir docs install --frozen-lockfile
 
-check: check-web check-backend
+check: check-web check-backend docs-build
 
 check-web:
 	pnpm --dir api-contract build

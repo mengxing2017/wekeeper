@@ -23,8 +23,26 @@ jobs:
           cache-dependency-path: |
             frontend/pnpm-lock.yaml
             api-contract/pnpm-lock.yaml
+            docs/pnpm-lock.yaml
       - run: make install
       - run: make check-web
+
+  docs:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.22.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: docs/pnpm-lock.yaml
+      - run: make docs-install
+      - run: make docs-build
+        env:
+          WEKEEPER_BUILD_VERSION: ${{ github.sha }}
 
   rust:
     runs-on: ubuntu-24.04

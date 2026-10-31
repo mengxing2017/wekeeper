@@ -10,3 +10,5 @@ services:
     build:
       context: .
       dockerfile: frontend/Dockerfile
+      args:
+        WEKEEPER_BUILD_VERSION: ${WEKEEPER_BUILD_VERSION:-开发构建}

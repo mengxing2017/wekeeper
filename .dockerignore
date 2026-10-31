@@ -7,6 +7,12 @@
 !frontend/**
 !api-contract/
 !api-contract/**
+!docs/
+!docs/**
+docs/node_modules/
+docs/.vitepress/cache/
+docs/.vitepress/dist/
+docs/.vitepress/caddy/
 backend/target/
 frontend/**/node_modules/
 frontend/**/dist/

@@ -45,3 +45,5 @@ report/
 
 # VitePress documentation cache (dist/node_modules already ignored)
 /docs/.vitepress/cache/
+
+/docs/.vitepress/caddy/
