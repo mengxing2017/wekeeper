@@ -824,3 +824,48 @@ fn standing_authorization_shared_wire_preserves_receipt_and_decline_semantics() 
         AutomationCommand::RejectValidation { .. }
     ));
 }
+
+#[tokio::test]
+async fn dispatch_v5_routes_are_registered_and_require_dedicated_authorization() {
+    for (path, method) in [
+        ("/api/v1/platform/automation-flows", "GET"),
+        ("/api/v1/platform/automation-pacing-profiles", "GET"),
+        (
+            "/api/v1/schools/00000000-0000-0000-0000-000000000001/automation-dispatch-batches",
+            "GET",
+        ),
+        ("/api/v5/device-execution/session", "GET"),
+        ("/api/v5/device-execution/task-inbox", "GET"),
+        (
+            "/api/v5/device-execution/execution-authorization-context",
+            "GET",
+        ),
+        ("/api/v5/device-execution/execution-authorizations", "POST"),
+        ("/api/v5/device-execution/flow-validations", "GET"),
+        (
+            "/api/v5/device-execution/task-deliveries/00000000-0000-0000-0000-000000000001/preparation-leases",
+            "POST",
+        ),
+        (
+            "/api/v5/device-execution/task-deliveries/00000000-0000-0000-0000-000000000001/failures",
+            "POST",
+        ),
+        ("/api/v5/device-execution/claims", "POST"),
+        (
+            "/api/v5/device-execution/claims/00000000-0000-0000-0000-000000000001/preparations",
+            "POST",
+        ),
+    ] {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
+    }
+}
