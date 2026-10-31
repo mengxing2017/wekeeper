@@ -21,6 +21,66 @@ fn embedded_migration_versions_are_unique_and_ordered() {
 
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL; run make test-integration"]
+async fn enabled_default_migration_preserves_existing_disabled_devices() {
+    let url = std::env::var("WEKEEPER_TEST_DATABASE_URL")
+        .expect("WEKEEPER_TEST_DATABASE_URL must point to an isolated disposable database");
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&url)
+        .await
+        .unwrap();
+    let schema = format!("device_default_{}", uuid::Uuid::new_v4().simple());
+    sqlx::raw_sql(&format!(
+        "CREATE SCHEMA {schema}; SET search_path TO {schema};"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    for migration in database::MIGRATOR
+        .iter()
+        .filter(|m| m.version < 202610310105)
+    {
+        sqlx::raw_sql(&migration.sql).execute(&pool).await.unwrap();
+    }
+    let old = uuid::Uuid::new_v4();
+    sqlx::query("INSERT INTO execution_devices(id,name) VALUES($1,'Previously disabled')")
+        .bind(old)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let migration = database::MIGRATOR
+        .iter()
+        .find(|m| m.version == 202610310105)
+        .unwrap();
+    sqlx::raw_sql(&migration.sql).execute(&pool).await.unwrap();
+    let enabled: bool = sqlx::query_scalar("SELECT enabled FROM execution_devices WHERE id=$1")
+        .bind(old)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        !enabled,
+        "existing disabled devices must not be enabled by the migration"
+    );
+    let enabled: bool = sqlx::query_scalar(
+        "INSERT INTO execution_devices(id,name) VALUES($1,'New registration') RETURNING enabled",
+    )
+    .bind(uuid::Uuid::new_v4())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(enabled);
+    sqlx::raw_sql(&format!(
+        "SET search_path TO public; DROP SCHEMA {schema} CASCADE;"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL; run make test-integration"]
 async fn migrations_handle_residual_objects_after_table_only_reset() {
     let url = std::env::var("WEKEEPER_TEST_DATABASE_URL")
         .expect("WEKEEPER_TEST_DATABASE_URL must point to an isolated disposable database");
