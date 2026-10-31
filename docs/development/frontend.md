@@ -28,7 +28,7 @@ Web 默认 `http://localhost:5173`，通过 Vite 代理请求 `WEKEEPER_API_ORIG
 4. 运行 `pnpm --dir frontend build:miniapp`，用微信开发者工具导入 `apps/miniapp/dist/build/mp-weixin`。开发模式输出位于 `dist/dev/mp-weixin`。
 5. 用真实身份及隔离学校验收登录、绑定、图片选择、发布、后台审核、详情互动和弱网恢复。构建成功不表示真实微信身份或真机验收完成。
 
-默认开启小程序域名检查，关闭 uniStatistics。生产发布与微信审核单独进行，不加入 Compose；Web Dockerfile 仅安装/构建 contract + web，运行层仅复制 Web dist。
+默认开启小程序域名检查，关闭 uniStatistics。生产发布与微信审核单独进行，不加入 Compose；Web Dockerfile 安装/构建 contract + web，并独立构建 docs；运行层复制 Web dist 和文档静态产物。
 
 ## 接口与边界
 
