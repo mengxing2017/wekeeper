@@ -212,6 +212,30 @@ async fn create_account(
         .await?;
     Ok(response("sending-accounts", value, None, true))
 }
+async fn responsible_actors(
+    State(a): State<Application>,
+    actor: Actor,
+    Query(page): Query<Page>,
+) -> Result<Response> {
+    let value = a
+        .mobile_delivery()
+        .query(
+            Principal::Actor(actor.id),
+            Scope {
+                school: None,
+                id: None,
+            },
+            Read::ResponsibleActors,
+            page.clone(),
+        )
+        .await?;
+    Ok(response(
+        "sending-account-responsible-actors",
+        value,
+        Some(&page),
+        false,
+    ))
+}
 async fn bind_device(
     State(a): State<Application>,
     actor: Actor,
@@ -1527,6 +1551,10 @@ pub fn router() -> Router<Application> {
         .route(
             "/api/v1/platform/sending-accounts",
             get(accounts).post(create_account),
+        )
+        .route(
+            "/api/v1/platform/sending-account-responsible-actors",
+            get(responsible_actors),
         )
         .route(
             "/api/v1/platform/execution-devices/{id}/account-bindings",
