@@ -37,6 +37,7 @@ export default defineConfig({
             },
             { text: "官方群发任务", link: "/guide/operator/broadcast-tasks" },
             { text: "手机发送任务", link: "/guide/operator/mobile-tasks" },
+            { text: "手机设备与发送账号", link: "/guide/operator/execution-resources" },
             {
               text: "结果与异常处理",
               link: "/guide/operator/results-and-recovery",
