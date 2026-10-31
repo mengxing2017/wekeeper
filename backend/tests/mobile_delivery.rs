@@ -1510,15 +1510,37 @@ async fn pairing_preserves_leading_zeroes_and_only_stores_code_hashes() {
 }
 
 // Synthetic protocol coverage only; these fixtures never seed a real supported environment.
+async fn grant_test_authorization(f: &Fixture, revision: i64, maintenance: bool) -> Value {
+    let context = f
+        .repo
+        .query(
+            f.principal.clone(),
+            Scope {
+                school: None,
+                id: None,
+            },
+            Query::Automation(AutomationQuery::AuthorizationContext),
+            Page::default(),
+        )
+        .await
+        .unwrap();
+    let mut scope = context["scope"].clone();
+    scope["origin"] = json!("https://example.test");
+    let receipt = json!({"authorization_id":Uuid::new_v4(),"revision":revision,"state":"effective","notice_version":"internal_business/1","notice_digest":"a".repeat(64),"identity_assurance":"local_action","granted_at":chrono::Utc::now(),"revoked_at":null,"maintenance":maintenance,"scope":scope});
+    f.device_call(None,json!({"operation":"automation","input":{"action":"record_authorization","receipt":receipt}})).await;
+    receipt
+}
 async fn automation_fixture() -> (Fixture, Value, Value) {
     let mut f = visible_fixture().await;
     f.principal = f.principal.for_protocol(4);
+    grant_test_authorization(&f, 1, false).await;
     let wire: Value = serde_json::from_str(include_str!(
         "../../api-contract/fixtures/automation-environment-v4.json"
     ))
     .unwrap();
     let e=f.device_call(None,json!({"operation":"automation","input":{"action":"report_environment","report":wire["data"]["attributes"]["report"]}})).await;
     let b=f.call(Some(f.school),None,json!({"operation":"automation","input":{"action":"bind_application","device_id":f.device,"app_id":"00000000-0000-0000-0000-000000000001","environment_id":e["id"],"instance_ref":"synthetic-instance","expected_revision":0}})).await;
+    grant_test_authorization(&f, 2, true).await;
     (f, e, b)
 }
 async fn automation_job(f: &Fixture, b: &Value, kind: &str, components: Value) -> Value {
@@ -1679,9 +1701,11 @@ async fn automation_compiles_preview_freezes_manifest_and_requires_readiness_bef
             true,
             "",
         )
-        .await
-        .unwrap();
-    assert_eq!(old["reason"], "unsupported_execution_protocol");
+        .await;
+    assert!(
+        old.is_err(),
+        "a device with standing authorization must not acquire new work through v3"
+    );
     let no_ticket = f
         .device_call(
             None,
@@ -1689,6 +1713,33 @@ async fn automation_compiles_preview_freezes_manifest_and_requires_readiness_bef
         )
         .await;
     assert!(no_ticket["claim_id"].is_null());
+    // An optional maintenance request outside the standing scope must not monopolize ordinary business.
+    grant_test_authorization(&f, 3, false).await;
+    sqlx::query("UPDATE accounts SET platform_admin=true WHERE id=$1")
+        .bind(f.actor)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let waiting_maintenance = automation_job(&f, &b, "measure_manual", json!([])).await;
+    sqlx::query("UPDATE accounts SET platform_admin=false WHERE id=$1")
+        .bind(f.actor)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(waiting_maintenance["state"], "queued");
+    // Untouched business outside the local scope is not selected for UI preparation.
+    let mut environment_only = grant_test_authorization(&f, 4, false).await;
+    environment_only["revision"] = json!(5);
+    environment_only["scope"]["schools"][0]["applications"] = json!([]);
+    f.device_call(None,json!({"operation":"automation","input":{"action":"record_authorization","receipt":environment_only}})).await;
+    let waiting = f
+        .device_call(
+            None,
+            json!({"operation":"automation","input":{"action":"prepare_execution"}}),
+        )
+        .await;
+    assert_eq!(waiting["reason"], "no_ready_task");
+    grant_test_authorization(&f, 6, false).await;
     let ticket = f
         .device_call(
             None,
@@ -1720,4 +1771,55 @@ async fn automation_compiles_preview_freezes_manifest_and_requires_readiness_bef
         .await
         .unwrap();
     assert_eq!(permits, 0);
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn standing_authorization_revoke_fences_late_grants_and_decline_never_accepts() {
+    let (f, _, b) = automation_fixture().await;
+    let job = automation_job(&f, &b, "inspect_environment", json!([])).await;
+    let rejected=f.device_call(Some(uuid(&job,"id")),json!({"operation":"automation","input":{"action":"reject_validation","expected_revision":job["revision"],"generation":job["generation"]}})).await;
+    assert_eq!(rejected["state"], "declined");
+    assert_eq!(rejected["decision_source"], "local_decline");
+    assert!(rejected["accepted_at"].is_null());
+    let r = grant_test_authorization(&f, 3, false).await;
+    let job = automation_job(&f, &b, "inspect_environment", json!([])).await;
+    let accepted=f.device_call(Some(uuid(&job,"id")),json!({"operation":"automation","input":{"action":"accept_standing_validation","expected_revision":job["revision"],"generation":job["generation"],"authorization_id":r["authorization_id"]}})).await;
+    assert_eq!(accepted["decision_source"], "standing_authorization");
+    assert_eq!(accepted["authorization_id"], r["authorization_id"]);
+    let mut revoked = r.clone();
+    revoked["state"] = json!("revoked");
+    revoked["revision"] = json!(4);
+    revoked["revoked_at"] = json!(chrono::Utc::now());
+    f.device_call(None,json!({"operation":"automation","input":{"action":"record_authorization","receipt":revoked}})).await;
+    let late=f.repo.execute(f.principal.clone(),Scope{school:None,id:None},"late-grant",command(json!({"operation":"automation","input":{"action":"record_authorization","receipt":r}})),true,"https://example.test").await;
+    assert!(late.is_err());
+    for protocol in [1, 3, 4] {
+        let blocked = f
+            .repo
+            .execute(
+                f.principal.clone().for_protocol(protocol),
+                Scope {
+                    school: None,
+                    id: None,
+                },
+                &format!("revoked-claim-{protocol}"),
+                command(json!({"operation":"claim","binding_revision":f.binding_revision})),
+                true,
+                "https://example.test",
+            )
+            .await;
+        assert!(
+            blocked.is_err(),
+            "revoked receipt must also fence downgraded clients"
+        );
+    }
+
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM device_validation_events WHERE job_id=$1")
+            .bind(uuid(&rejected, "id"))
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 0);
 }
