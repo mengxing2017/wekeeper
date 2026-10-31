@@ -5,6 +5,29 @@ import { ApiError, setCsrf } from "../src/http";
 import permit from "../fixtures/mobile-send-permit.json";
 import wait from "../fixtures/mobile-execution-wait.json";
 import notClicked from "../fixtures/mobile-execution-not-clicked.json";
+import responsibleActors from "../fixtures/sending-account-responsible-actors.json";
+import profileReview from "../fixtures/sending-account-profile-review.json";
+import type { AccountProfileReview, SendingAccount } from "../src/modules/mobile-delivery";
+test("platform account projections preserve the actual reviewer and nullable historical version", async () => {
+  const review: AccountProfileReview = profileReview;
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response({ data: [{ type: "sending-accounts", id: "account", attributes: { responsible_actor: { id: responsibleActors.data[0].id, ...responsibleActors.data[0].attributes }, latest_profile_review: review, registration_evidence_ref: "手机登记来源" } }] }));
+  vi.stubGlobal("fetch", fetcher);
+  const result = await mobileDeliveryApi.accounts();
+  const account: SendingAccount = result.items[0];
+  expect(account.latest_profile_review).toEqual(profileReview);
+  expect(account.responsible_actor?.username).toBe("zhangsan");
+  const historical: AccountProfileReview = { ...review, profile_revision: null };
+  expect(historical.profile_revision).toBeNull();
+});
+test("responsible actor selection decodes the Rust fixture and encodes literal search and paging", async () => {
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response(responsibleActors));
+  vi.stubGlobal("fetch", fetcher);
+  const result = await mobileDeliveryApi.responsibleActors("张三% &", 2, 10);
+  expect(result.items[0]).toEqual({ id: responsibleActors.data[0].id, ...responsibleActors.data[0].attributes });
+  expect(result.page).toEqual({ number: 1, size: 30, has_more: false });
+  expect(fetcher.mock.calls[0][0]).toBe(`/api/v1/platform/sending-account-responsible-actors?search=${encodeURIComponent("张三% &")}&page[number]=2&page[size]=10`);
+  expect(fetcher.mock.calls[0][1]?.method).toBe("GET");
+});
 afterEach(() => {
   vi.unstubAllGlobals();
   setCsrf("");
