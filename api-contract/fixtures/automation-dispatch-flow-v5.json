@@ -1,0 +1,740 @@
+{
+  "schema_version": 1,
+  "app_key": "wecom",
+  "capability": "group_text",
+  "application_label": "SYNTHETIC 企业微信",
+  "configuration": {
+    "name": "SYNTHETIC ONLY - 非真实企业微信适配",
+    "evidence_ref": "fixture:synthetic-only",
+    "rules": {
+      "schema_version": 2,
+      "engine_version": "otter-ui/2",
+      "required_capabilities": [
+        "non_id_query/1",
+        "bounded_navigation/1",
+        "visible_verification/1",
+        "ordered_groups/1"
+      ],
+      "client": {
+        "package_name": "com.wekeeper.fixture.wecom"
+      },
+      "pages": {
+        "home": {
+          "marker": {
+            "predicate": {
+              "text": null,
+              "description": "page_home",
+              "class_name": null,
+              "visible": true,
+              "enabled": true,
+              "editable": null,
+              "clickable": null
+            },
+            "parent": null,
+            "ancestor": null,
+            "ancestor_depth": 8,
+            "all_of": [],
+            "any_of": []
+          },
+          "required": [],
+          "forbidden": []
+        },
+        "account": {
+          "marker": {
+            "predicate": {
+              "text": null,
+              "description": "page_account",
+              "class_name": null,
+              "visible": true,
+              "enabled": true,
+              "editable": null,
+              "clickable": null
+            },
+            "parent": null,
+            "ancestor": null,
+            "ancestor_depth": 8,
+            "all_of": [],
+            "any_of": []
+          },
+          "required": [],
+          "forbidden": []
+        },
+        "search": {
+          "marker": {
+            "predicate": {
+              "text": null,
+              "description": "page_search",
+              "class_name": null,
+              "visible": true,
+              "enabled": true,
+              "editable": null,
+              "clickable": null
+            },
+            "parent": null,
+            "ancestor": null,
+            "ancestor_depth": 8,
+            "all_of": [],
+            "any_of": []
+          },
+          "required": [],
+          "forbidden": []
+        },
+        "results": {
+          "marker": {
+            "predicate": {
+              "text": null,
+              "description": "page_results",
+              "class_name": null,
+              "visible": true,
+              "enabled": true,
+              "editable": null,
+              "clickable": null
+            },
+            "parent": null,
+            "ancestor": null,
+            "ancestor_depth": 8,
+            "all_of": [],
+            "any_of": []
+          },
+          "required": [],
+          "forbidden": []
+        },
+        "chat": {
+          "marker": {
+            "predicate": {
+              "text": null,
+              "description": "page_chat",
+              "class_name": null,
+              "visible": true,
+              "enabled": true,
+              "editable": null,
+              "clickable": null
+            },
+            "parent": null,
+            "ancestor": null,
+            "ancestor_depth": 8,
+            "all_of": [],
+            "any_of": []
+          },
+          "required": [],
+          "forbidden": []
+        }
+      },
+      "controls": {
+        "company": {
+          "predicate": {
+            "text": null,
+            "description": "company",
+            "class_name": null,
+            "visible": true,
+            "enabled": true,
+            "editable": null,
+            "clickable": null
+          },
+          "parent": null,
+          "ancestor": null,
+          "ancestor_depth": 8,
+          "all_of": [],
+          "any_of": []
+        },
+        "account": {
+          "predicate": {
+            "text": null,
+            "description": "account",
+            "class_name": null,
+            "visible": true,
+            "enabled": true,
+            "editable": null,
+            "clickable": null
+          },
+          "parent": null,
+          "ancestor": null,
+          "ancestor_depth": 8,
+          "all_of": [],
+          "any_of": []
+        },
+        "account_detail": {
+          "predicate": {
+            "text": null,
+            "description": "account_detail",
+            "class_name": null,
+            "visible": true,
+            "enabled": true,
+            "editable": null,
+            "clickable": null
+          },
+          "parent": null,
+          "ancestor": null,
+          "ancestor_depth": 8,
+          "all_of": [],
+          "any_of": []
+        },
+        "search_input": {
+          "predicate": {
+            "text": null,
+            "description": "search_input",
+            "class_name": null,
+            "visible": true,
+            "enabled": true,
+            "editable": true,
+            "clickable": null
+          },
+          "parent": null,
+          "ancestor": null,
+          "ancestor_depth": 8,
+          "all_of": [],
+          "any_of": []
+        },
+        "group_tab": {
+          "predicate": {
+            "text": null,
+            "description": "group_tab",
+            "class_name": null,
+            "visible": true,
+            "enabled": true,
+            "editable": null,
+            "clickable": true
+          },
+          "parent": null,
+          "ancestor": null,
+          "ancestor_depth": 8,
+          "all_of": [],
+          "any_of": []
+        },
+        "result_title": {
+          "predicate": {
+            "text": null,
+            "description": "result_title",
+            "class_name": null,
+            "visible": true,
+            "enabled": true,
+            "editable": null,
+            "clickable": true
+          },
+          "parent": null,
+          "ancestor": null,
+          "ancestor_depth": 8,
+          "all_of": [],
+          "any_of": []
+        },
+        "results_complete": {
+          "predicate": {
+            "text": null,
+            "description": "results_complete",
+            "class_name": null,
+            "visible": true,
+            "enabled": true,
+            "editable": null,
+            "clickable": null
+          },
+          "parent": null,
+          "ancestor": null,
+          "ancestor_depth": 8,
+          "all_of": [],
+          "any_of": []
+        },
+        "chat_title": {
+          "predicate": {
+            "text": null,
+            "description": "chat_title",
+            "class_name": null,
+            "visible": true,
+            "enabled": true,
+            "editable": null,
+            "clickable": null
+          },
+          "parent": null,
+          "ancestor": null,
+          "ancestor_depth": 8,
+          "all_of": [],
+          "any_of": []
+        },
+        "group_type": {
+          "predicate": {
+            "text": null,
+            "description": "group_type",
+            "class_name": null,
+            "visible": true,
+            "enabled": true,
+            "editable": null,
+            "clickable": null
+          },
+          "parent": null,
+          "ancestor": null,
+          "ancestor_depth": 8,
+          "all_of": [],
+          "any_of": []
+        },
+        "owner": {
+          "predicate": {
+            "text": null,
+            "description": "owner",
+            "class_name": null,
+            "visible": true,
+            "enabled": true,
+            "editable": null,
+            "clickable": null
+          },
+          "parent": null,
+          "ancestor": null,
+          "ancestor_depth": 8,
+          "all_of": [],
+          "any_of": []
+        },
+        "input": {
+          "predicate": {
+            "text": null,
+            "description": "input",
+            "class_name": null,
+            "visible": true,
+            "enabled": true,
+            "editable": true,
+            "clickable": null
+          },
+          "parent": null,
+          "ancestor": null,
+          "ancestor_depth": 8,
+          "all_of": [],
+          "any_of": []
+        },
+        "send": {
+          "predicate": {
+            "text": null,
+            "description": "send",
+            "class_name": null,
+            "visible": true,
+            "enabled": true,
+            "editable": null,
+            "clickable": true
+          },
+          "parent": null,
+          "ancestor": null,
+          "ancestor_depth": 8,
+          "all_of": [],
+          "any_of": []
+        },
+        "message_row": {
+          "predicate": {
+            "text": null,
+            "description": "message_row",
+            "class_name": null,
+            "visible": true,
+            "enabled": true,
+            "editable": null,
+            "clickable": null
+          },
+          "parent": null,
+          "ancestor": null,
+          "ancestor_depth": 8,
+          "all_of": [],
+          "any_of": []
+        },
+        "message_text": {
+          "predicate": {
+            "text": null,
+            "description": "message_text",
+            "class_name": null,
+            "visible": true,
+            "enabled": true,
+            "editable": null,
+            "clickable": null
+          },
+          "parent": null,
+          "ancestor": null,
+          "ancestor_depth": 8,
+          "all_of": [],
+          "any_of": []
+        },
+        "outgoing": {
+          "predicate": {
+            "text": null,
+            "description": "outgoing",
+            "class_name": null,
+            "visible": true,
+            "enabled": true,
+            "editable": null,
+            "clickable": null
+          },
+          "parent": null,
+          "ancestor": null,
+          "ancestor_depth": 8,
+          "all_of": [],
+          "any_of": []
+        },
+        "failed": {
+          "predicate": {
+            "text": null,
+            "description": "failed",
+            "class_name": null,
+            "visible": true,
+            "enabled": true,
+            "editable": null,
+            "clickable": null
+          },
+          "parent": null,
+          "ancestor": null,
+          "ancestor_depth": 8,
+          "all_of": [],
+          "any_of": []
+        },
+        "pending": {
+          "predicate": {
+            "text": null,
+            "description": "pending",
+            "class_name": null,
+            "visible": true,
+            "enabled": true,
+            "editable": null,
+            "clickable": null
+          },
+          "parent": null,
+          "ancestor": null,
+          "ancestor_depth": 8,
+          "all_of": [],
+          "any_of": []
+        },
+        "back": {
+          "predicate": {
+            "text": null,
+            "description": "back",
+            "class_name": null,
+            "visible": true,
+            "enabled": true,
+            "editable": null,
+            "clickable": true
+          },
+          "parent": null,
+          "ancestor": null,
+          "ancestor_depth": 8,
+          "all_of": [],
+          "any_of": []
+        },
+        "open_account": {
+          "predicate": {
+            "text": null,
+            "description": "open_account",
+            "class_name": null,
+            "visible": true,
+            "enabled": true,
+            "editable": null,
+            "clickable": true
+          },
+          "parent": null,
+          "ancestor": null,
+          "ancestor_depth": 8,
+          "all_of": [],
+          "any_of": []
+        },
+        "open_search": {
+          "predicate": {
+            "text": null,
+            "description": "open_search",
+            "class_name": null,
+            "visible": true,
+            "enabled": true,
+            "editable": null,
+            "clickable": true
+          },
+          "parent": null,
+          "ancestor": null,
+          "ancestor_depth": 8,
+          "all_of": [],
+          "any_of": []
+        }
+      },
+      "navigation_graph": [
+        {
+          "from": "home",
+          "to": "account",
+          "control": "open_account",
+          "min_delay_ms": 100
+        },
+        {
+          "from": "account",
+          "to": "home",
+          "control": "back",
+          "min_delay_ms": 100
+        },
+        {
+          "from": "home",
+          "to": "search",
+          "control": "open_search",
+          "min_delay_ms": 100
+        },
+        {
+          "from": "search",
+          "to": "home",
+          "control": "back",
+          "min_delay_ms": 100
+        },
+        {
+          "from": "search",
+          "to": "results",
+          "control": "group_tab",
+          "min_delay_ms": 100
+        },
+        {
+          "from": "results",
+          "to": "search",
+          "control": "back",
+          "min_delay_ms": 100
+        },
+        {
+          "from": "results",
+          "to": "chat",
+          "control": "result_title",
+          "min_delay_ms": 100
+        },
+        {
+          "from": "chat",
+          "to": "home",
+          "control": "back",
+          "min_delay_ms": 100
+        }
+      ],
+      "landmarks": {
+        "entry": "home",
+        "account": "account",
+        "search": "search",
+        "results": "results",
+        "chat": "chat"
+      },
+      "group_type_labels": {
+        "external": "外部群",
+        "internal": "内部群"
+      },
+      "member_count_suffix": "ascii"
+    },
+    "policy": {
+      "account_cooldown_ms": 30000,
+      "content_cooldown_ms": 10000,
+      "default_group_interval_ms": 60000,
+      "minimum_group_interval_ms": 30000,
+      "session_max_duration_ms": 600000,
+      "quota_window_ms": 86400000,
+      "account_limit": 20,
+      "group_limit": 10,
+      "max_targets": 20,
+      "input_codepoint_delay_ms": 100,
+      "input_settle_ms": 200,
+      "page_timeout_ms": 5000,
+      "observation_timeout_ms": 3000,
+      "poll_interval_ms": 100,
+      "max_navigation_steps": 20,
+      "minimum_manual_samples": 3
+    },
+    "baseline": {
+      "version": "synthetic-1",
+      "samples": 3,
+      "human_group_min_interval_ms": 30000,
+      "navigation_min_ms": 100,
+      "input_codepoint_min_ms": 80,
+      "input_settle_min_ms": 200,
+      "observation_min_ms": 200,
+      "evidence_ref": "fixture:synthetic-manual-samples"
+    }
+  },
+  "launchers": [
+    {
+      "client": {
+        "package_name": "*"
+      },
+      "pages": {
+        "home": {
+          "marker": {
+            "predicate": {
+              "visible": true,
+              "enabled": true,
+              "text": "home",
+              "description": null,
+              "class_name": null,
+              "editable": null,
+              "clickable": null
+            },
+            "parent": null,
+            "ancestor": null,
+            "ancestor_depth": 1,
+            "all_of": [],
+            "any_of": []
+          },
+          "required": [],
+          "forbidden": []
+        },
+        "search": {
+          "marker": {
+            "predicate": {
+              "visible": true,
+              "enabled": true,
+              "text": "search",
+              "description": null,
+              "class_name": null,
+              "editable": null,
+              "clickable": null
+            },
+            "parent": null,
+            "ancestor": null,
+            "ancestor_depth": 1,
+            "all_of": [],
+            "any_of": []
+          },
+          "required": [],
+          "forbidden": []
+        },
+        "results": {
+          "marker": {
+            "predicate": {
+              "visible": true,
+              "enabled": true,
+              "text": "results",
+              "description": null,
+              "class_name": null,
+              "editable": null,
+              "clickable": null
+            },
+            "parent": null,
+            "ancestor": null,
+            "ancestor_depth": 1,
+            "all_of": [],
+            "any_of": []
+          },
+          "required": [],
+          "forbidden": []
+        },
+        "app": {
+          "marker": {
+            "predicate": {
+              "visible": true,
+              "enabled": true,
+              "text": "app",
+              "description": null,
+              "class_name": null,
+              "editable": null,
+              "clickable": null
+            },
+            "parent": null,
+            "ancestor": null,
+            "ancestor_depth": 1,
+            "all_of": [],
+            "any_of": []
+          },
+          "required": [],
+          "forbidden": []
+        }
+      },
+      "roles": {
+        "search_entry": {
+          "predicate": {
+            "visible": true,
+            "enabled": true,
+            "text": "搜索",
+            "description": null,
+            "class_name": null,
+            "editable": null,
+            "clickable": true
+          },
+          "parent": null,
+          "ancestor": null,
+          "ancestor_depth": 1,
+          "all_of": [],
+          "any_of": []
+        },
+        "search_field": {
+          "predicate": {
+            "visible": true,
+            "enabled": true,
+            "text": null,
+            "description": null,
+            "class_name": null,
+            "editable": true,
+            "clickable": null
+          },
+          "parent": null,
+          "ancestor": null,
+          "ancestor_depth": 1,
+          "all_of": [],
+          "any_of": []
+        },
+        "application_result": {
+          "predicate": {
+            "visible": true,
+            "enabled": true,
+            "text": "SYNTHETIC 企业微信",
+            "description": null,
+            "class_name": null,
+            "editable": null,
+            "clickable": true
+          },
+          "parent": null,
+          "ancestor": null,
+          "ancestor_depth": 1,
+          "all_of": [],
+          "any_of": []
+        }
+      },
+      "search_steps": [
+        {
+          "from": "home",
+          "to": "home",
+          "operation": {
+            "action": "home"
+          },
+          "delay_ms": 100
+        },
+        {
+          "from": "home",
+          "to": "search",
+          "operation": {
+            "action": "click",
+            "role": "search_entry"
+          },
+          "delay_ms": 100
+        },
+        {
+          "from": "search",
+          "to": "results",
+          "operation": {
+            "action": "search_application",
+            "role": "search_field"
+          },
+          "delay_ms": 100
+        },
+        {
+          "from": "results",
+          "to": "app",
+          "operation": {
+            "action": "click",
+            "role": "application_result"
+          },
+          "delay_ms": 100
+        },
+        {
+          "from": "app",
+          "to": "app",
+          "operation": {
+            "action": "verify_application"
+          },
+          "delay_ms": 100
+        }
+      ],
+      "all_apps_steps": [],
+      "max_steps": 32,
+      "timeout_ms": 60000,
+      "max_scrolls": 16,
+      "local_application_results_only": true
+    }
+  ],
+  "specializations": [],
+  "max_attempts": 8,
+  "max_total_steps": 256,
+  "max_total_scrolls": 64,
+  "max_total_duration_ms": 300000,
+  "recoverable_errors": [
+    "navigation_failed",
+    "control_unavailable",
+    "navigation_path_unavailable",
+    "application_not_found",
+    "unexpected_page",
+    "page_changed",
+    "page_timeout"
+  ]
+}
