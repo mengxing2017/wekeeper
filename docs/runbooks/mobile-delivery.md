@@ -9,7 +9,7 @@
 
 新的管理员入口及 v4 服务端接入见 [多应用业务配置与安卓应用准备](automation-workflows.md)。本轮仅更新 WeKeeper；当前 keeper-otter 未接入 v4，需等待手机端实施与真实环境验证。以下保留旧协议的运行和恢复说明。
 
-本手册说明 migration `202610240001_mobile_execution.sql` 引入的通用执行约定和旧 v1 外部身份流程。企业微信可见身份、后台规则及 v3 多群执行见 [规则配置与多群顺序执行](configured-mobile-delivery.md)，不按下文 v1 的外部 ID 登记或固定版本审批流程接入。Android 执行端为独立 `keeper-otter` 项目，已编码 demo 及企业微信 v3 通用引擎；真实规则、APK 和真机发送尚未验收，不包含自动登录。联调 client：`@wekeeper/api-contract/mobile-delivery` 和 `@wekeeper/api-contract/device-execution`。
+本手册说明 `202610310103_mobile_execution.sql` 基线中的通用执行约定和旧 v1 外部身份流程。企业微信可见身份、后台规则及 v3 多群执行见 [规则配置与多群顺序执行](configured-mobile-delivery.md)，不按下文 v1 的外部 ID 登记或固定版本审批流程接入。Android 执行端为独立 `keeper-otter` 项目，已编码 demo 及企业微信 v3 通用引擎；真实规则、APK 和真机发送尚未验收，不包含自动登录。联调 client：`@wekeeper/api-contract/mobile-delivery` 和 `@wekeeper/api-contract/device-execution`。
 
 ## 上线顺序
 
@@ -54,7 +54,7 @@ Web 管理端通过共享 `createIdempotencyKey()` 调用第三方 `nanoid/non-s
 - 所有协议和 API 副本共享数据库限次：每 10 分钟全站最多 100 次，每个客户端实例最多 5 次，每个配对码最多 5 次。成功、错误、格式不合法的兑换尝试都计数；计数独立提交，失败事务不能回滚计数。实例标识可伪造，因此全站预算同时限制轮换实例和换码猜测。配对入口达到全站预算时，合法配对同样需等待窗口恢复。
 - 无效、不存在、已使用、过期或设备不匹配的码统一返回 `401 pairing_code_invalid`，不暴露码属于哪台设备。限次返回 `429 pairing_rate_limited`、`Retry-After: 600`。原有按设备每 10 分钟 20 次预算继续保留。
 
-部署顺序：先部署含 migration `202610300001_short_device_pairing.sql` 的 API，再更新 Web 镜像和 Otter APK。旧的「设备 ID + 64 字符配对码」请求在原有效期内仍可用；更新后的 Otter 只展示短码入口，已配对设备不要求重新配对。请用新生成的 8 位码验证，不要将历史长码截断使用。
+短码结构已包含在 `202610310103_mobile_execution.sql` 初始化基线中；旧分段迁移库先完整重建。部署顺序：先部署新版 API，再更新 Web 镜像和 Otter APK。旧的「设备 ID + 64 字符配对码」请求在原有效期内仍可用；更新后的 Otter 只展示短码入口，已配对设备不要求重新配对。请用新生成的 8 位码验证，不要将历史长码截断使用。
 
 列表 `page[number]`/`page[size]` 默认 1/30、最大 100，meta.page.has_more。无任务是 200 data:null，meta 包含 reason/retry_after_seconds/next_eligible_at；unknown 的 next_eligible_at 为 null。
 

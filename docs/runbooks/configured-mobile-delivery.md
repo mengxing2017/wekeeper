@@ -12,7 +12,7 @@
 
 ## 配置、验证与发布
 
-1. 在隔离环境验证迁移 `202610290001_visible_delivery_strategies.sql` 与 `202610290002_configured_ordered_delivery.sql`。保持新执行关闭，部署兼容后端与 Web；不新增服务，也不改写旧 migration。
+1. 在隔离环境验证当前 4 份初始化基线，规则与逐群结构位于 `202610310103_mobile_execution.sql`。旧分段迁移库先按 [数据库重建说明](docker.md#开发数据库重建与残留对象错误) 完整重建。保持新执行关闭，配套部署后端与 Web。
 2. 在规则中心以声明式 JSON 创建不可变版本，录入页面、非 ID 节点条件、角色、有界导航图、消息状态、精确安装环境、业务政策及人工基准。修改既有配置时复制为新版本，可与原文对照。
 3. 配置账号/正文冷却、统计窗口与额度、目标数、默认/最小群间等待、会话时长、输入节奏、页面/观察超时和人工样本下限。阶段时间及群间等待不得低于已审核人工基准；有效额度取发布政策与账号/群独立配置的较小值。
 4. 补齐非 ID 节点样本和人工计时依据，按 `minimum_manual_samples` 采集有效样本。静态截图不能证明节点层级、返回路径或实际耗时。真实规则不能从合成 fixture 推定。
@@ -27,7 +27,7 @@
 
 「登记依据」填写 1–500 字实际来源说明，例如手机上的企业与账号资料页面。保存后可见账号仍为「待人工核对」。打开「账号配置」，查看资料版本，填写新的「本次核对依据」，点击「已在手机核对本版本账号资料」才会完成正式核对。核对人及时间由当前操作身份和服务端事件记录生成；修改资料后重新核对，旧依据仅供历史查阅。当前阶段提供现场说明，尚未开放截图材料库和已有证据选择。旧历史若缺少登记依据或资料版本，页面如实标明未记录。
 
-责任人候选查询为 `GET /api/v1/platform/sending-account-responsible-actors?search=姓名或登录名&page[number]=1&page[size]=30`，仅平台管理员可访问，返回 JSON:API 分页集合。账号列表和限额详情新增 `responsible_actor`、`registration_evidence_ref`、`latest_profile_review` 展示字段；这些信息不进入设备身份快照，也不改变旧任务摘要。迁移 `202610310004_account_profile_event_lookup.sql` 仅增加账号资料事件查询索引，启动自动应用。
+责任人候选查询为 `GET /api/v1/platform/sending-account-responsible-actors?search=姓名或登录名&page[number]=1&page[size]=30`，仅平台管理员可访问，返回 JSON:API 分页集合。账号列表和限额详情新增 `responsible_actor`、`registration_evidence_ref`、`latest_profile_review` 展示字段；这些信息不进入设备身份快照，也不改变旧任务摘要。账号资料事件查询索引已包含在 `202610310103_mobile_execution.sql` 基线中。
 
 1. 平台管理员登记并人工核对可见账号；学校管理员登记并核对可见群，建立账号与群授权，绑定并启用指定手机。平台身份不能替代学校权限。
 2. Otter 选择企业微信并登记 v3 能力。启动先恢复旧请求与结果，读取实际安装环境，解析并校验唯一兼容发布，再构造无障碍适配器。缺少配置、摘要/能力/安装版本不符均阻断。
@@ -79,7 +79,7 @@ Otter 先持久化 ACK 进度与等待锚点，再删除固定结果 outbox。�
 
 声明与事务实现分别在 `backend/src/distribution/domain/mobile_delivery/configuration.rs` 和 `backend/src/distribution/south/adapter/postgres/mobile_delivery/configured.rs`。共享类型位于 `api-contract/src/modules/mobile-delivery/configuration.ts` 和 device-execution 模块；`mobile-configuration-v3.json`、`mobile-configured-claim-v3.json` 仅是合成契约样例，不入库、不自动发布。
 
-数据层保存不可变配置与发布、有序 targets/items、run 进度和追加执行修订；`delivery_content_scope_owners` 将同文归属限定到本 run，`delivery_execution_defaults` 保留旧执行路径初始冷却/统计窗口。保留全部历史 migration、正文归属和共享账本，不通过回滚表结构恢复旧发送能力。
+数据层保存不可变配置与发布、有序 targets/items、run 进度和追加执行修订；`delivery_content_scope_owners` 将同文归属限定到本 run，`delivery_execution_defaults` 保留旧执行路径初始冷却/统计窗口。当前初始化基线保留正文归属和共享账本结构，历史增量脚本已合并；后续迁移前向增加，不通过回滚表结构恢复旧发送能力。
 
 ## 验证记录与发布前事项
 
