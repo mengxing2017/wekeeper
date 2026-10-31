@@ -171,3 +171,18 @@ test("setup status uses dedicated device credentials before any grant", async ()
     Authorization: "Bearer device-test",
   });
 });
+
+
+test("school resource projection uses only the school read endpoint", async () => {
+  const fixture = (await import("../fixtures/school-execution-resource.json")).default;
+  const { id, ...attributes } = fixture;
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+    data: [{ type: "school-execution-resources", id, attributes }],
+  }), { headers: { "Content-Type": "application/vnd.api+json" } }));
+  vi.stubGlobal("fetch", fetcher);
+  const result = await api.dispatch.resources("school-a", 2);
+  expect(result.items).toEqual([fixture]);
+  expect(String(fetcher.mock.calls[0][0])).toContain("/schools/school-a/execution-resources");
+  expect(String(fetcher.mock.calls[0][0])).toContain("page[number]=2");
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
