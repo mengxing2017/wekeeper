@@ -282,6 +282,10 @@ pub(super) async fn run(
     school_auth(tx, p.actor()?, school(s)?, true).await?;
     let strategy = scoped_object(tx, s, "mobile_delivery_strategies").await?;
     revision(&strategy, rev)?;
+    require(
+        strategy["automation_binding_id"].is_null(),
+        "新版业务请通过业务向导重新预览确认",
+    )?;
     require(strategy["enabled"] == true, "策略已停用")?;
     let input: StrategyInput = StrategyInput {
         name: strv(&strategy, "name")?.into(),
@@ -362,7 +366,8 @@ pub(super) async fn validate_execution(
             Err(Error::Policy("unsupported_execution_protocol"))
         };
     }
-    if ![2, 3].contains(&protocol) || i["snapshot"]["requirements"]["protocol_version"] != protocol
+    if ![2, 3, 4].contains(&protocol)
+        || i["snapshot"]["requirements"]["protocol_version"] != protocol
     {
         return Err(Error::Policy("unsupported_execution_protocol"));
     }
@@ -408,6 +413,13 @@ pub(super) async fn validate_execution(
         if live != i["snapshot"][snap] {
             return Err(Error::Policy("binding_changed"));
         }
+    }
+    if protocol == 4 {
+        automation::validate_manifest(tx, i).await?;
+        if device.is_some() {
+            automation::require_readiness(tx, i).await?;
+        }
+        return configured::validate_configuration(tx, i).await;
     }
     if protocol == 3 {
         return configured::validate_configuration(tx, i).await;
@@ -455,7 +467,7 @@ pub(super) async fn query(
             Ok(json!({"id":school(s)?,"accounts":accounts,"devices":devices,"accounts_has_more":accounts_has_more,"devices_has_more":devices_has_more}))
  },
  Query::Strategy => scoped_object(tx,s,"mobile_delivery_strategies").await,
- Query::Strategies => Ok(json!(sqlx::query_scalar::<_,Value>("SELECT to_jsonb(t) FROM mobile_delivery_strategies t WHERE school_id=$1 ORDER BY id LIMIT $2 OFFSET $3").bind(school(s)?).bind(limit).bind(offset).fetch_all(&mut **tx).await?)),
+ Query::Strategies => Ok(json!(sqlx::query_scalar::<_,Value>("SELECT to_jsonb(t) FROM mobile_delivery_strategies t WHERE school_id=$1 AND automation_binding_id IS NULL ORDER BY id LIMIT $2 OFFSET $3").bind(school(s)?).bind(limit).bind(offset).fetch_all(&mut **tx).await?)),
  Query::StrategyRuns => {scoped_object(tx,s,"mobile_delivery_strategies").await?;Ok(json!(sqlx::query_scalar::<_,Value>("SELECT to_jsonb(r)||jsonb_build_object('task_state',t.state) FROM mobile_delivery_strategy_runs r JOIN mobile_delivery_tasks t ON t.id=r.task_id WHERE r.school_id=$1 AND r.strategy_id=$2 ORDER BY r.created_at DESC,r.id DESC LIMIT $3 OFFSET $4").bind(school(s)?).bind(id(s)?).bind(limit).bind(offset).fetch_all(&mut **tx).await?))},
  _=>Err(Error::NotFound)
  }

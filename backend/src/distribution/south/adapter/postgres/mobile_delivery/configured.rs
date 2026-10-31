@@ -2,7 +2,10 @@
 use super::*;
 
 pub(super) fn is_configured(i: &Value) -> bool {
-    i["snapshot"]["requirements"]["protocol_version"] == 3
+    matches!(
+        i["snapshot"]["requirements"]["protocol_version"].as_u64(),
+        Some(3 | 4)
+    )
 }
 pub(super) fn config(i: &Value) -> Result<ConfigurationInput> {
     serde_json::from_value(i["snapshot"]["configuration"]["configuration"].clone())
@@ -197,6 +200,7 @@ pub(super) async fn validate(tx: &mut Tx<'_>, i: &Value) -> Result<()> {
     Ok(())
 }
 pub(super) async fn validate_configuration(tx: &mut Tx<'_>, i: &Value) -> Result<()> {
+    automation::validate_manifest(tx, i).await?;
     let progress = object(
         tx,
         "mobile_delivery_run_progress",
@@ -307,11 +311,17 @@ pub(super) async fn candidate(
     account: Uuid,
     protocol: u32,
 ) -> Result<Option<std::result::Result<Value, Value>>> {
-    let row:Option<Value>=sqlx::query_scalar("SELECT to_jsonb(p)||jsonb_build_object('device_id',r.device_id,'school_id',r.school_id,'task_id',r.task_id) FROM mobile_delivery_run_progress p JOIN mobile_delivery_strategy_runs r ON r.id=p.id JOIN mobile_delivery_tasks t ON t.id=r.task_id WHERE (t.state='confirmed' OR EXISTS(SELECT 1 FROM mobile_delivery_run_items m JOIN delivery_usage u ON u.source_channel='mobile' AND u.source_id=m.item_id WHERE m.run_id=r.id AND u.state IN ('pending','unknown'))) AND (r.device_id=$1 OR r.strategy_snapshot->>'sender_account_id'=$2) AND EXISTS(SELECT 1 FROM mobile_delivery_run_items m WHERE m.run_id=r.id AND m.position>=p.current_position) ORDER BY p.confirmed_at NULLS LAST,r.id LIMIT 1").bind(d).bind(account.to_string()).fetch_optional(&mut **tx).await?;
+    let row:Option<Value>=sqlx::query_scalar("SELECT to_jsonb(p)||jsonb_build_object('device_id',r.device_id,'school_id',r.school_id,'task_id',r.task_id,'automation_manifest_id',r.automation_manifest_id) FROM mobile_delivery_run_progress p JOIN mobile_delivery_strategy_runs r ON r.id=p.id JOIN mobile_delivery_tasks t ON t.id=r.task_id WHERE (t.state='confirmed' OR EXISTS(SELECT 1 FROM mobile_delivery_run_items m JOIN delivery_usage u ON u.source_channel='mobile' AND u.source_id=m.item_id WHERE m.run_id=r.id AND u.state IN ('pending','unknown'))) AND (r.device_id=$1 OR r.strategy_snapshot->>'sender_account_id'=$2) AND EXISTS(SELECT 1 FROM mobile_delivery_run_items m WHERE m.run_id=r.id AND m.position>=p.current_position) ORDER BY p.confirmed_at NULLS LAST,r.id LIMIT 1").bind(d).bind(account.to_string()).fetch_optional(&mut **tx).await?;
     let Some(row) = row else { return Ok(None) };
     let reason = if row["device_id"] != d.to_string() {
         Some("ordered_run_owns_account")
-    } else if protocol != 3 {
+    } else if protocol
+        != if row["automation_manifest_id"].is_null() {
+            3
+        } else {
+            4
+        }
+    {
         Some("unsupported_execution_protocol")
     } else {
         row["pause_reason"].as_str()

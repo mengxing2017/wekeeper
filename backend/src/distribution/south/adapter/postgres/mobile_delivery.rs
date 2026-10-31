@@ -10,6 +10,7 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct Repository(pub PgPool);
 type Tx<'a> = Transaction<'a, Postgres>;
+mod automation;
 mod configured;
 mod pairing;
 mod visible;
@@ -66,7 +67,8 @@ async fn device(tx: &mut Tx<'_>, p: &Principal) -> Result<(Uuid, i64)> {
     let (id, generation) = match p {
         Principal::Device { id, generation }
         | Principal::DeviceV2 { id, generation }
-        | Principal::DeviceV3 { id, generation } => (id, generation),
+        | Principal::DeviceV3 { id, generation }
+        | Principal::DeviceV4 { id, generation } => (id, generation),
         _ => return Err(Error::Unauthorized),
     };
     sqlx::query("SELECT d.id FROM execution_devices d WHERE d.id=$1 AND d.enabled AND d.credential_generation=$2 AND EXISTS(SELECT 1 FROM device_credentials c WHERE c.device_id=d.id AND c.generation=$2 AND c.revoked_at IS NULL AND c.expires_at>clock_timestamp()) FOR SHARE OF d").bind(id).bind(generation).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("device_revoked"))?;
@@ -85,7 +87,10 @@ async fn event(
 ) -> Result<()> {
     let (actor, dev) = match p {
         Principal::Actor(id) => (Some(*id), None),
-        Principal::Device { id, .. } | Principal::DeviceV2 { id, .. } => (None, Some(*id)),
+        Principal::Device { id, .. }
+        | Principal::DeviceV2 { id, .. }
+        | Principal::DeviceV3 { id, .. }
+        | Principal::DeviceV4 { id, .. } => (None, Some(*id)),
         _ => (None, None),
     };
     sqlx::query("INSERT INTO mobile_delivery_events(id,school_id,task_id,actor_id,device_id,action,detail) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(Uuid::now_v7()).bind(s.school).bind(task).bind(actor).bind(dev).bind(action).bind(detail).execute(&mut **tx).await?;
@@ -236,6 +241,9 @@ async fn validate_snapshot(tx: &mut Tx<'_>, i: &Value, origin: &str) -> Result<(
             for k in ["configuration", "execution_revision", "sequence"] {
                 current[k] = i["snapshot"][k].clone();
             }
+        }
+        if i["snapshot"]["requirements"]["protocol_version"] == 4 {
+            current["automation_manifest"] = i["snapshot"]["automation_manifest"].clone();
         }
     }
     // Policy changes are evaluated independently and must not invalidate identity snapshots.
@@ -494,9 +502,11 @@ async fn claim_response(tx: &mut Tx<'_>, c: &Value, i: &Value) -> Result<Value> 
         visible::requirements(&set, 1)
     };
     let permit:Option<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',id,'invocation_id',invocation_id,'state',state,'execute_before',execute_before) FROM mobile_send_permits WHERE claim_id=$1").bind(uid(c,"id")?).fetch_optional(&mut **tx).await?;
-    Ok(
-        json!({"id":c["id"],"claim_id":c["id"],"item_id":i["id"],"school_id":i["school_id"],"state":c["state"],"item_state":i["state"],"fence":c["fence"],"binding_revision":c["binding_revision"],"lease_until":c["lease_until"],"group_snapshot":i["snapshot"]["group"],"sender_binding":i["snapshot"]["sender"],"content":i["content"],"content_digest":i["content_digest"],"snapshot_digest":i["snapshot_digest"],"permit":permit,"may_execute":may_execute,"execution_target":i["snapshot"]["execution_target"],"requirements":req,"configuration":i["snapshot"]["configuration"],"sequence":i["snapshot"]["sequence"],"execution_revision":i["snapshot"]["execution_revision"],"server_time":db_now(tx).await?}),
-    )
+    let mut response = json!({"id":c["id"],"claim_id":c["id"],"item_id":i["id"],"school_id":i["school_id"],"state":c["state"],"item_state":i["state"],"fence":c["fence"],"binding_revision":c["binding_revision"],"lease_until":c["lease_until"],"group_snapshot":i["snapshot"]["group"],"sender_binding":i["snapshot"]["sender"],"content":i["content"],"content_digest":i["content_digest"],"snapshot_digest":i["snapshot_digest"],"permit":permit,"may_execute":may_execute,"execution_target":i["snapshot"]["execution_target"],"requirements":req,"configuration":i["snapshot"]["configuration"],"sequence":i["snapshot"]["sequence"],"execution_revision":i["snapshot"]["execution_revision"],"server_time":db_now(tx).await?});
+    if req["protocol_version"] == 4 {
+        response["automation_manifest"] = i["snapshot"]["automation_manifest"].clone();
+    }
+    Ok(response)
 }
 async fn db_now(tx: &mut Tx<'_>) -> Result<chrono::DateTime<chrono::Utc>> {
     Ok(sqlx::query_scalar("SELECT clock_timestamp()")
@@ -548,6 +558,81 @@ async fn ready_claim(
     active_school(tx, uid(&i, "school_id")?).await?;
     Ok((c, i))
 }
+struct TaskConfirmation {
+    expected_revision: i64,
+    preview_digest: String,
+    content_review: bool,
+    scope_acceptance: bool,
+    substantive_difference_reviewed: bool,
+    shared_text_scope_acceptance: Option<bool>,
+    evidence_ref: String,
+}
+async fn confirm_task(
+    tx: &mut Tx<'_>,
+    p: &Principal,
+    s: &Scope,
+    input: TaskConfirmation,
+    origin: &str,
+    automation: bool,
+) -> Result<Value> {
+    let TaskConfirmation {
+        expected_revision,
+        preview_digest,
+        content_review,
+        scope_acceptance,
+        substantive_difference_reviewed,
+        shared_text_scope_acceptance,
+        evidence_ref,
+    } = input;
+    let task = scoped_object(tx, s, "mobile_delivery_tasks").await?;
+    let list = items(tx, id(s)?).await?;
+    let text = list.iter().any(|i| i["source"]["kind"] == "text");
+    school_auth(tx, p.actor()?, school(s)?, text).await?;
+    revision(&task, expected_revision)?;
+    require(
+        automation
+            || !list
+                .iter()
+                .any(|i| i["snapshot"]["requirements"]["protocol_version"] == 4),
+        "新版业务必须通过向导预览和确认",
+    )?;
+    let shared = list.iter().any(configured::is_configured);
+    require(
+        task["state"] == "draft"
+            && content_review
+            && scope_acceptance
+            && if shared {
+                shared_text_scope_acceptance == Some(true)
+            } else {
+                substantive_difference_reviewed
+            },
+        "需要逐群人工确认内容、范围和实质差异",
+    )?;
+    let check = preview(tx, id(s)?, origin).await?;
+    if check["preview_digest"] != preview_digest {
+        return Err(Error::Policy("revision_conflict"));
+    }
+    for i in list {
+        validate_snapshot(tx, &i, origin).await?;
+        // Temporary quota/cooldown holds may be queued, permanent conflicts may not.
+        if let Err(e) = restrictions(tx, &i).await {
+            match e {
+                Error::Policy(
+                    "quota_exhausted"
+                    | "cooldown_active"
+                    | "unknown_requires_review"
+                    | "official_delivery_pending",
+                ) => {}
+                other => return Err(other),
+            }
+        }
+        sqlx::query("INSERT INTO delivery_dedup_reservations(item_id,school_id,group_id,content_digest) VALUES($1,$2,$3,$4)").bind(uid(&i,"id")?).bind(school(s)?).bind(uid(&i,"group_id")?).bind(strv(&i,"content_digest")?).execute(&mut **tx).await?;
+    }
+    sqlx::query("UPDATE mobile_delivery_tasks SET state='confirmed',confirmed_by=$2,revision=revision+1,review_evidence_ref=$3 WHERE id=$1").bind(id(s)?).bind(p.actor()?).bind(crate::business::text(&evidence_ref,1,500)?).execute(&mut **tx).await?;
+    sqlx::query("UPDATE mobile_delivery_run_progress p SET confirmed_at=clock_timestamp() FROM mobile_delivery_strategy_runs r WHERE r.id=p.id AND r.task_id=$1").bind(id(s)?).execute(&mut **tx).await?;
+    object(tx, "mobile_delivery_tasks", id(s)?).await
+}
+
 impl Repository {
     #[allow(clippy::too_many_arguments)]
     async fn apply(
@@ -559,6 +644,9 @@ impl Repository {
         origin: &str,
     ) -> Result<Value> {
         match c {
+            Command::Automation { input } => {
+                automation::apply(tx, p, s, *input, enabled, origin).await
+            }
             Command::CreateConfiguration { input } => configured::create(tx, p, *input).await,
             Command::PublishConfiguration {
                 expected_revision,
@@ -608,6 +696,11 @@ impl Repository {
                 preview_digest,
                 evidence_ref,
             } => {
+                let run = scoped_object(tx, s, "mobile_delivery_strategy_runs").await?;
+                require(
+                    run["automation_manifest_id"].is_null(),
+                    "新版业务变更须停止未发送项并重新预览，保留成功及 unknown 记录",
+                )?;
                 configured::revise(
                     tx,
                     p,
@@ -955,46 +1048,23 @@ impl Repository {
                 shared_text_scope_acceptance,
                 evidence_ref,
             } => {
-                let task = scoped_object(tx, s, "mobile_delivery_tasks").await?;
-                let list = items(tx, id(s)?).await?;
-                let text = list.iter().any(|i| i["source"]["kind"] == "text");
-                school_auth(tx, p.actor()?, school(s)?, text).await?;
-                revision(&task, expected_revision)?;
-                let shared = list.iter().any(configured::is_configured);
-                require(
-                    task["state"] == "draft"
-                        && content_review
-                        && scope_acceptance
-                        && if shared {
-                            shared_text_scope_acceptance == Some(true)
-                        } else {
-                            substantive_difference_reviewed
-                        },
-                    "需要逐群人工确认内容、范围和实质差异",
-                )?;
-                let check = preview(tx, id(s)?, origin).await?;
-                if check["preview_digest"] != preview_digest {
-                    return Err(Error::Policy("revision_conflict"));
-                }
-                for i in list {
-                    validate_snapshot(tx, &i, origin).await?;
-                    // Temporary quota/cooldown holds may be queued, permanent conflicts may not.
-                    if let Err(e) = restrictions(tx, &i).await {
-                        match e {
-                            Error::Policy(
-                                "quota_exhausted"
-                                | "cooldown_active"
-                                | "unknown_requires_review"
-                                | "official_delivery_pending",
-                            ) => {}
-                            other => return Err(other),
-                        }
-                    }
-                    sqlx::query("INSERT INTO delivery_dedup_reservations(item_id,school_id,group_id,content_digest) VALUES($1,$2,$3,$4)").bind(uid(&i,"id")?).bind(school(s)?).bind(uid(&i,"group_id")?).bind(strv(&i,"content_digest")?).execute(&mut **tx).await?;
-                }
-                sqlx::query("UPDATE mobile_delivery_tasks SET state='confirmed',confirmed_by=$2,revision=revision+1,review_evidence_ref=$3 WHERE id=$1").bind(id(s)?).bind(p.actor()?).bind(crate::business::text(&evidence_ref,1,500)?).execute(&mut **tx).await?;
-                sqlx::query("UPDATE mobile_delivery_run_progress p SET confirmed_at=clock_timestamp() FROM mobile_delivery_strategy_runs r WHERE r.id=p.id AND r.task_id=$1").bind(id(s)?).execute(&mut **tx).await?;
-                object(tx, "mobile_delivery_tasks", id(s)?).await
+                confirm_task(
+                    tx,
+                    p,
+                    s,
+                    TaskConfirmation {
+                        expected_revision,
+                        preview_digest,
+                        content_review,
+                        scope_acceptance,
+                        substantive_difference_reviewed,
+                        shared_text_scope_acceptance,
+                        evidence_ref,
+                    },
+                    origin,
+                    false,
+                )
+                .await
             }
             Command::Stop {
                 expected_revision,
@@ -1136,7 +1206,10 @@ impl Repository {
                 require(
                     matches!(
                         p,
-                        Principal::Enrollment | Principal::EnrollmentV2 | Principal::EnrollmentV3
+                        Principal::Enrollment
+                            | Principal::EnrollmentV2
+                            | Principal::EnrollmentV3
+                            | Principal::EnrollmentV4
                     ),
                     "配对主体无效",
                 )?;
@@ -1145,7 +1218,7 @@ impl Repository {
                 }
                 let device_id = device_id.ok_or(Error::Policy("pairing_code_invalid"))?;
                 sqlx::query("UPDATE device_enrollments SET consumed_at=clock_timestamp() WHERE device_id=$1 AND code_hash=$2 AND consumed_at IS NULL AND expires_at>clock_timestamp() RETURNING id").bind(device_id).bind(hash(&code)).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("pairing_code_invalid"))?;
-                sqlx::query("UPDATE execution_devices SET client_instance_id=$2,execution_protocol_version=$3,supported_protocol_versions=CASE WHEN $3=3 THEN ARRAY[1,2,3] WHEN $3=2 THEN ARRAY[1,2] ELSE ARRAY[1] END WHERE id=$1")
+                sqlx::query("UPDATE execution_devices SET client_instance_id=$2,execution_protocol_version=$3,supported_protocol_versions=CASE WHEN $3=4 THEN ARRAY[1,2,3,4] WHEN $3=3 THEN ARRAY[1,2,3] WHEN $3=2 THEN ARRAY[1,2] ELSE ARRAY[1] END WHERE id=$1")
                     .bind(device_id)
                     .bind(text(&client_instance_id, 1, 200)?)
                     .bind(p.protocol() as i32)
@@ -1180,7 +1253,7 @@ impl Repository {
                     claim_object(tx, p, c).await?;
                 }
                 sqlx::query(
-                    "UPDATE execution_devices SET last_seen_at=clock_timestamp(),execution_protocol_version=$2,supported_protocol_versions=CASE WHEN $2=3 THEN ARRAY[1,2,3] WHEN $2=2 THEN ARRAY[1,2] ELSE ARRAY[1] END WHERE id=$1",
+                    "UPDATE execution_devices SET last_seen_at=clock_timestamp(),execution_protocol_version=$2,supported_protocol_versions=CASE WHEN $2=4 THEN ARRAY[1,2,3,4] WHEN $2=3 THEN ARRAY[1,2,3] WHEN $2=2 THEN ARRAY[1,2] ELSE ARRAY[1] END WHERE id=$1",
                 )
                 .bind(d)
                 .bind(p.protocol() as i32)
@@ -1195,6 +1268,7 @@ impl Repository {
                     return Err(Error::Unavailable);
                 }
                 let (d, generation) = device(tx, p).await?;
+                automation::validation_gate(tx, d).await?;
                 let b = binding(tx, d).await?;
                 if b["revision"] != binding_revision {
                     return Err(Error::Policy("binding_changed"));
@@ -1523,7 +1597,8 @@ impl Store for Repository {
                         school,
                         matches!(
                             c,
-                            Command::UpdateGroupProfile { .. }
+                            Command::Automation { .. }
+                                | Command::UpdateGroupProfile { .. }
                                 | Command::ReviewGroupProfile { .. }
                                 | Command::CreateStrategy { .. }
                                 | Command::UpdateStrategy { .. }
@@ -1542,13 +1617,19 @@ impl Store for Repository {
                     platform(&mut tx, &p).await?;
                 }
             }
-            Principal::Device { .. } | Principal::DeviceV2 { .. } | Principal::DeviceV3 { .. } => {
+            Principal::Device { .. }
+            | Principal::DeviceV2 { .. }
+            | Principal::DeviceV3 { .. }
+            | Principal::DeviceV4 { .. } => {
                 device(&mut tx, &p).await?;
-                if let Some(id) = s.id {
+                if let Some(id) = s.id.filter(|_| !matches!(c, Command::Automation { .. })) {
                     claim_object(&mut tx, &p, id).await?;
                 }
             }
-            Principal::Enrollment | Principal::EnrollmentV2 | Principal::EnrollmentV3 => {
+            Principal::Enrollment
+            | Principal::EnrollmentV2
+            | Principal::EnrollmentV3
+            | Principal::EnrollmentV4 => {
                 if !matches!(c, Command::Enroll { .. }) {
                     return Err(Error::Unauthorized);
                 }
@@ -1619,8 +1700,12 @@ impl Store for Repository {
             Some(uid(&response, "task_id")?)
         } else if matches!(
             p,
-            Principal::Device { .. } | Principal::DeviceV2 { .. } | Principal::DeviceV3 { .. }
+            Principal::Device { .. }
+                | Principal::DeviceV2 { .. }
+                | Principal::DeviceV3 { .. }
+                | Principal::DeviceV4 { .. }
         ) && s.id.is_some()
+            && action != "automation"
         {
             let (_, item) = claim_object(&mut tx, &p, id(&s)?).await?;
             Some(uid(&item, "task_id")?)
@@ -1648,6 +1733,9 @@ impl Store for Repository {
                 detail.insert(field.into(), v.clone());
             }
         }
+        if action == "automation" {
+            detail.insert("automation_action".into(), value["input"]["action"].clone());
+        }
         detail.insert("scope_id".into(), json!(s.id));
         detail.insert("request_digest".into(), json!(hash(&value.to_string())));
         event(
@@ -1674,12 +1762,18 @@ impl Store for Repository {
                     platform(&mut tx, &p).await?;
                 }
             }
-            Principal::Device { .. } | Principal::DeviceV2 { .. } | Principal::DeviceV3 { .. } => {
+            Principal::Device { .. }
+            | Principal::DeviceV2 { .. }
+            | Principal::DeviceV3 { .. }
+            | Principal::DeviceV4 { .. } => {
                 device(&mut tx, &p).await?;
             }
             _ => return Err(Error::Unauthorized),
         }
         let result = match q {
+            Query::Automation(input) => {
+                automation::query(&mut tx, &p, &s, input, limit, offset).await?
+            }
             Query::Configurations => {
                 platform(&mut tx, &p).await?;
                 json!(sqlx::query_scalar::<_,Value>("SELECT to_jsonb(v) FROM client_rule_bundle_versions v ORDER BY created_at DESC,id DESC LIMIT $1 OFFSET $2").bind(limit).bind(offset).fetch_all(&mut *tx).await?)
@@ -1796,7 +1890,7 @@ impl Store for Repository {
                     Err(e) => return Err(e),
                 };
                 let configuration_clients:Vec<Value>=sqlx::query_scalar("SELECT DISTINCT v.configuration->'rules'->'client' FROM client_rule_releases r JOIN client_rule_bundle_versions v ON v.id=r.configuration_id JOIN device_account_bindings b ON b.device_id=$1 JOIN sending_accounts a ON a.id=b.sender_account_id JOIN school_memberships m ON m.account_id=a.responsible_actor_id AND m.school_id=r.school_id AND m.role='admin' WHERE NOT r.revoked AND (r.active OR EXISTS(SELECT 1 FROM mobile_delivery_run_progress p JOIN mobile_delivery_strategy_runs sr ON sr.id=p.id JOIN mobile_delivery_tasks t ON t.id=sr.task_id WHERE p.configuration_release_id=r.id AND sr.device_id=$1 AND t.state='confirmed')) AND (r.device_id IS NULL OR r.device_id=$1)").bind(d).fetch_all(&mut *tx).await?;
-                json!({"configuration_clients":configuration_clients,"id":d,"credential_generation":g,"binding":binding,"server_time":db_now(&mut tx).await?,"minimum_protocol_version":p.protocol(),"supported_protocol_versions":[1,2,3]})
+                json!({"configuration_clients":configuration_clients,"id":d,"credential_generation":g,"binding":binding,"server_time":db_now(&mut tx).await?,"minimum_protocol_version":p.protocol(),"supported_protocol_versions":if p.protocol()==4 {json!([1,2,3,4])}else{json!([1,2,3])}})
             }
             Query::Claim => {
                 let (c, i) = claim_object(&mut tx, &p, id(&s)?).await?;
