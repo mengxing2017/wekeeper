@@ -48,6 +48,7 @@ export function Assets() {
     [filter, setFilter] = useState<AssetFilter>({ page: 1 }),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
+    [preparingDirectory, setPreparingDirectory] = useState(false),
     [relationship, setRelationship] = useState<'owner' | 'participant'>('owner'),
     [selected, setSelected] = useState<{ kind: 'groups' | 'sync-runs'; id: string }>()
   const status = useQuery({
@@ -90,12 +91,40 @@ export function Assets() {
     setBusy(true)
     setError('')
     try {
+      // The backend requires a complete directory to enumerate the owner scope.
+      // Reuse its leased sync job instead of treating an empty directory as an empty scope.
+      const directoryStatus = await directory.status()
+      if (
+        !directoryStatus.snapshot_id ||
+        status.data?.datasets.some(
+          (d) => d.latest_run?.error_code === 'directory_snapshot_required',
+        )
+      ) {
+        setPreparingDirectory(true)
+        let run = await directory.sync()
+        const deadline = Date.now() + 5 * 60 * 1000
+        while (run.state === 'queued' || run.state === 'running') {
+          if (Date.now() >= deadline) {
+            throw new Error('通讯录仍在同步，请稍后再次点击同步客户群')
+          }
+          await new Promise((resolve) => setTimeout(resolve, 3000))
+          run = await directory.run(run.id)
+        }
+        if (run.state !== 'succeeded') {
+          throw new Error(
+            `内部通讯录同步失败：${run.error_code ?? '未知错误'}；请在内部通讯录中检查后重试`,
+          )
+        }
+        await cache.invalidateQueries({ queryKey: ['wecom-assets', 'member-options'] })
+      }
+      setPreparingDirectory(false)
       await assets.sync('groups')
       await status.refetch()
       await cache.invalidateQueries({ queryKey: ['wecom-assets', 'list', 'sync-runs'] })
     } catch (e) {
       setError((e as Error).message)
     } finally {
+      setPreparingDirectory(false)
       setBusy(false)
     }
   }
@@ -115,7 +144,7 @@ export function Assets() {
           }
           onClick={() => void sync()}
         >
-          同步客户群
+          {preparingDirectory ? '正在同步内部通讯录' : '同步客户群'}
         </Button>
       }
     >
@@ -133,7 +162,10 @@ export function Assets() {
             {formatDate(d.last_success_at, '尚未同步')} · {stateName(d.latest_run?.state)}
           </p>
           {d.latest_run?.error_code && (
-            <Alert type="error" title={`同步失败：${d.latest_run.error_code}；保留上次成功快照`} />
+            <Alert
+              type="error"
+              title={`同步失败：${d.latest_run.error_code === 'directory_snapshot_required' ? '请先完成当前凭据下的内部通讯录同步，再重试客户群同步' : d.latest_run.error_code}；${d.current_run_id ? '保留上次成功快照' : '尚无成功快照'}`}
+            />
           )}{' '}
           {d.scope_changed && (
             <Alert
