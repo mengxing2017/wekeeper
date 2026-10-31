@@ -1,8 +1,18 @@
+-- Database baseline: application metadata and core business. Requires an empty schema.
+CREATE TABLE application_metadata (
+    singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+    schema_generation INTEGER NOT NULL CHECK (schema_generation > 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO application_metadata (singleton, schema_generation) VALUES (TRUE, 1);
+
 CREATE TABLE accounts (
  id UUID PRIMARY KEY, username TEXT UNIQUE NOT NULL, password_hash TEXT,
  display_name TEXT NOT NULL, platform_admin BOOLEAN NOT NULL DEFAULT FALSE,
  active BOOLEAN NOT NULL DEFAULT TRUE, wecom_member_id UUID UNIQUE, wecom_binding_revision BIGINT NOT NULL DEFAULT 0, wx_openid TEXT UNIQUE,
- bound_school_id UUID, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+ bound_school_id UUID, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ avatar_url TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE schools (
  id UUID PRIMARY KEY, name TEXT NOT NULL, active BOOLEAN NOT NULL DEFAULT TRUE,
@@ -12,7 +22,7 @@ CREATE TABLE schools (
 ALTER TABLE accounts ADD FOREIGN KEY (bound_school_id) REFERENCES schools(id);
 CREATE TABLE school_memberships (
  school_id UUID NOT NULL REFERENCES schools(id), account_id UUID NOT NULL REFERENCES accounts(id),
- role TEXT NOT NULL CHECK (role IN ('member','operator','admin')), PRIMARY KEY (school_id,account_id)
+ role TEXT NOT NULL CHECK (role IN ('member','operator','admin','revoked')), PRIMARY KEY (school_id,account_id)
 );
 CREATE TABLE sessions (
  token_hash TEXT PRIMARY KEY, account_id UUID NOT NULL REFERENCES accounts(id), csrf TEXT NOT NULL,
@@ -23,7 +33,8 @@ CREATE INDEX sessions_expiry ON sessions(expires_at);
 CREATE TABLE login_attempts (username TEXT PRIMARY KEY, failures INTEGER NOT NULL, reset_at TIMESTAMPTZ NOT NULL);
 CREATE TABLE audit_events (
  id UUID PRIMARY KEY, school_id UUID REFERENCES schools(id), actor_id UUID REFERENCES accounts(id),
- action TEXT NOT NULL, object_id UUID, detail JSONB NOT NULL DEFAULT '{}', created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+ action TEXT NOT NULL, object_id UUID, detail JSONB NOT NULL DEFAULT '{}', created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ request_id TEXT
 );
 CREATE INDEX audit_scope ON audit_events(school_id,created_at DESC);
 CREATE TABLE posts (
@@ -37,7 +48,7 @@ CREATE TABLE posts (
 CREATE INDEX post_feed ON posts(school_id,audit_status,visibility,top_sort DESC,created_at DESC,id);
 CREATE TABLE comments (
  id UUID PRIMARY KEY, school_id UUID NOT NULL, post_id UUID NOT NULL, author_id UUID NOT NULL REFERENCES accounts(id),
- parent_id UUID REFERENCES comments(id), content TEXT NOT NULL,
+ parent_id UUID REFERENCES comments(id) DEFERRABLE INITIALLY DEFERRED, content TEXT NOT NULL,
  audit_status TEXT NOT NULL DEFAULT 'pending' CHECK(audit_status IN ('pending','approved','rejected')),
  deleted BOOLEAN NOT NULL DEFAULT FALSE, revision BIGINT NOT NULL DEFAULT 1, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
  FOREIGN KEY(school_id,post_id) REFERENCES posts(school_id,id)
@@ -66,10 +77,11 @@ CREATE TABLE cases (
  kind TEXT NOT NULL CHECK(kind IN ('report','feedback')), post_id UUID, content TEXT NOT NULL, contact TEXT NOT NULL DEFAULT '',
  state TEXT NOT NULL DEFAULT 'open' CHECK(state IN ('open','resolved','dismissed')), resolution TEXT NOT NULL DEFAULT '',
  revision BIGINT NOT NULL DEFAULT 1, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
- FOREIGN KEY(school_id,post_id) REFERENCES posts(school_id,id)
+ FOREIGN KEY(school_id,post_id) REFERENCES posts(school_id,id),
+ images JSONB NOT NULL DEFAULT '[]'
 );
 CREATE TABLE school_resources (
- id UUID PRIMARY KEY, school_id UUID NOT NULL REFERENCES schools(id),
+ id UUID PRIMARY KEY, school_id UUID REFERENCES schools(id),
  kind TEXT NOT NULL CHECK(kind IN ('banner','qrcode','service','legal','tag','blocked_word')),
  title TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', url TEXT NOT NULL DEFAULT '', active BOOLEAN NOT NULL DEFAULT TRUE,
  sort_order INTEGER NOT NULL DEFAULT 0, starts_at TIMESTAMPTZ, ends_at TIMESTAMPTZ,
@@ -107,7 +119,8 @@ CREATE TABLE delivery_attempts (
  reconciliation_note TEXT, reconciled_by UUID REFERENCES accounts(id), reconciled_at TIMESTAMPTZ,
  resend_of UUID REFERENCES delivery_attempts(id), resend_reason TEXT,
  created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
- FOREIGN KEY(school_id,draft_id) REFERENCES delivery_drafts(school_id,id), UNIQUE(actor_id,idempotency_key)
+ FOREIGN KEY(school_id,draft_id) REFERENCES delivery_drafts(school_id,id), UNIQUE(actor_id,idempotency_key),
+ client_invoked_at TIMESTAMPTZ
 );
 CREATE INDEX attempt_draft ON delivery_attempts(draft_id,created_at DESC);
 CREATE TABLE media_assets (
@@ -207,3 +220,22 @@ ALTER TABLE wecom_asset_objects ADD CHECK (kind<>'members' OR (parent_key IS NOT
 ALTER TABLE wecom_asset_objects ADD CHECK (kind<>'members' OR member_type IS NOT NULL);
 ALTER TABLE wecom_asset_objects ADD CHECK (credential_generation>0);
 CREATE UNIQUE INDEX wecom_group_member_identity ON wecom_asset_objects(corp_id,parent_key,member_type,member_key) WHERE kind='members';
+
+-- Public aliases and historical business records
+-- Integer aliases preserve old mini-app routes without constraining new UUID entities.
+-- A table-only development reset can leave this formerly standalone sequence.
+-- Reuse its counter, then make its lifetime follow the column that uses it.
+CREATE SEQUENCE IF NOT EXISTS legacy_public_id START 1000000000000;
+CREATE TABLE legacy_aliases(kind TEXT NOT NULL,target_id UUID NOT NULL,public_id BIGINT NOT NULL DEFAULT nextval('legacy_public_id'),PRIMARY KEY(kind,target_id),UNIQUE(kind,public_id));
+ALTER SEQUENCE legacy_public_id OWNED BY legacy_aliases.public_id;
+CREATE TABLE historical_delivery_events(id UUID PRIMARY KEY,school_id UUID NOT NULL REFERENCES schools(id),post_id UUID REFERENCES posts(id),source_id TEXT NOT NULL UNIQUE,evidence JSONB NOT NULL,created_at TIMESTAMPTZ NOT NULL);
+CREATE TABLE comment_reactions(school_id UUID NOT NULL REFERENCES schools(id),comment_id UUID NOT NULL REFERENCES comments(id),account_id UUID NOT NULL REFERENCES accounts(id),PRIMARY KEY(comment_id,account_id));
+CREATE TABLE media_access_tokens(token_hash TEXT PRIMARY KEY,school_id UUID NOT NULL REFERENCES schools(id),asset_id UUID NOT NULL REFERENCES media_assets(id),expires_at TIMESTAMPTZ NOT NULL);
+CREATE INDEX media_access_expiry ON media_access_tokens(expires_at);
+CREATE INDEX notification_owner ON notifications(school_id,account_id,created_at DESC);
+CREATE INDEX cases_school ON cases(school_id,state,created_at DESC);
+
+-- History lookup indexes
+-- Related-history checks must remain efficient as schools accumulate drafts.
+CREATE INDEX delivery_drafts_group ON delivery_drafts(school_id,group_id);
+CREATE INDEX delivery_draft_posts_post ON delivery_draft_posts(post_id,draft_id);

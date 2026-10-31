@@ -1,14 +1,19 @@
--- Forward-only: legacy delivery snapshots and reconciliation evidence remain intact.
+-- Database baseline: official WeCom broadcast. Depends on core business.
 CREATE TABLE broadcast_tasks (
  id UUID PRIMARY KEY, school_id UUID NOT NULL REFERENCES schools(id), creator_id UUID NOT NULL REFERENCES accounts(id),
- template_version_id UUID NOT NULL, content TEXT NOT NULL CHECK(octet_length(content) BETWEEN 1 AND 4000), content_hash TEXT NOT NULL,
+ template_version_id UUID, content TEXT NOT NULL CHECK(octet_length(content) BETWEEN 1 AND 4000), content_hash TEXT NOT NULL,
  revision BIGINT NOT NULL DEFAULT 1, state TEXT NOT NULL DEFAULT 'draft' CHECK(state IN ('draft','confirmed','abandoned')),
  corp_id TEXT NOT NULL, generation BIGINT NOT NULL, confirmed_by UUID REFERENCES accounts(id), confirmed_at TIMESTAMPTZ,
  stopped BOOLEAN NOT NULL DEFAULT FALSE, source_task_id UUID, source_draft_id UUID, resend_reason TEXT NOT NULL DEFAULT '',
  created_at TIMESTAMPTZ NOT NULL DEFAULT now(), UNIQUE(school_id,id),
  FOREIGN KEY(school_id,template_version_id) REFERENCES template_versions(school_id,id),
  FOREIGN KEY(school_id,source_task_id) REFERENCES broadcast_tasks(school_id,id),
- FOREIGN KEY(school_id,source_draft_id) REFERENCES delivery_drafts(school_id,id)
+ FOREIGN KEY(school_id,source_draft_id) REFERENCES delivery_drafts(school_id,id),
+ content_source TEXT NOT NULL DEFAULT 'posts',
+ CONSTRAINT broadcast_content_source CHECK (
+  (content_source = 'posts' AND template_version_id IS NOT NULL) OR
+  (content_source = 'text' AND template_version_id IS NULL)
+ )
 );
 CREATE INDEX broadcast_task_school ON broadcast_tasks(school_id,created_at DESC,id);
 CREATE TABLE broadcast_task_posts (
