@@ -2768,3 +2768,73 @@ async fn device_control_is_independent_durable_and_fenced() {
         Err(Error::Unauthorized)
     ));
 }
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn setup_is_visible_before_consent_and_revocation_survives_binding_removal() {
+    let mut f = visible_fixture().await;
+    f.principal = f.principal.for_protocol(5);
+    let scope = Scope {
+        school: None,
+        id: None,
+    };
+    let status = f
+        .repo
+        .query(
+            f.principal.clone(),
+            scope.clone(),
+            Query::Dispatch(DispatchQuery::SetupStatus),
+            Page::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(status["sender_account_id"], json!(f.sender));
+    assert_eq!(status["binding_revision"], json!(f.binding_revision));
+    assert!(
+        status["schools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["id"] == json!(f.school) && s["assignment_ready"] == false)
+    );
+    let mut receipt = json!({"authorization_id":Uuid::new_v4(),"revision":1,"state":"effective","granted_at":chrono::Utc::now(),"revoked_at":null,"binding_revision":f.binding_revision+1,"scope":{"format":"business_application_scope/2","origin":"https://example.test","device_id":f.device,"sender_account_id":f.sender,"schools":[f.school],"app_key":"wecom","capability":"group_text"}});
+    let stale=f.repo.execute(f.principal.clone(),scope.clone(),"stale-setup-consent",command(json!({"operation":"dispatch","input":{"action":"authorization","receipt":receipt}})),true,"https://example.test").await;
+    assert!(matches!(
+        stale,
+        Err(Error::Policy("authorization_context_changed"))
+    ));
+    receipt["binding_revision"] = json!(f.binding_revision);
+    f.device_call(
+        None,
+        json!({"operation":"dispatch","input":{"action":"authorization","receipt":receipt}}),
+    )
+    .await;
+    sqlx::query("DELETE FROM device_account_bindings WHERE device_id=$1")
+        .bind(f.device)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let status = f
+        .repo
+        .query(
+            f.principal.clone(),
+            scope,
+            Query::Dispatch(DispatchQuery::SetupStatus),
+            Page::default(),
+        )
+        .await
+        .unwrap();
+    assert!(status["sender_account_id"].is_null());
+    assert_eq!(status["schools"], json!([]));
+    receipt["state"] = json!("revoked");
+    receipt["revision"] = json!(2);
+    receipt["revoked_at"] = json!(chrono::Utc::now());
+    receipt.as_object_mut().unwrap().remove("binding_revision");
+    f.device_call(
+        None,
+        json!({"operation":"dispatch","input":{"action":"authorization","receipt":receipt}}),
+    )
+    .await;
+    let body:Value=sqlx::query_scalar("SELECT body FROM automation_business_authorizations WHERE device_id=$1 ORDER BY revision DESC LIMIT 1").bind(f.device).fetch_one(&f.pool).await.unwrap();
+    assert_eq!(body["state"], "revoked");
+}

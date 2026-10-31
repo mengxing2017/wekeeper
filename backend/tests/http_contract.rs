@@ -858,6 +858,7 @@ async fn dispatch_v5_routes_are_registered_and_require_dedicated_authorization()
         ),
         ("/api/v5/device-execution/session", "GET"),
         ("/api/v5/device-execution/task-inbox", "GET"),
+        ("/api/v5/device-execution/setup-status", "GET"),
         (
             "/api/v5/device-execution/execution-authorization-context",
             "GET",
@@ -962,6 +963,21 @@ async fn device_control_does_not_accept_browser_identity_as_a_device() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/device-control/session")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn setup_status_does_not_accept_browser_cookie_as_device_identity() {
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v5/device-execution/setup-status")
+                .header("Cookie", "wekeeper_session=browser-only")
                 .body(Body::empty())
                 .unwrap(),
         )
