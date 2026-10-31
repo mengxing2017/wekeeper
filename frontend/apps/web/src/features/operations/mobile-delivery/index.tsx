@@ -1,5 +1,6 @@
 import { createIdempotencyKey as key } from '../../../shared/idempotency-key'
 import { AccountRegistrationForm, ResponsibleActorDisplay } from './account-registration'
+import { DeviceStateEditor } from './device-state'
 import { DispatchWorkspace } from './dispatch'
 import { ApplicationSetup } from './setup'
 import { BusinessWizard } from './flows'
@@ -235,33 +236,9 @@ export function ExecutionDevices() {
                       生成配对码
                     </Button>
                   </Space>
-                  <Editor
-                    key={`state-${d.revision}`}
-                    fields={[
-                      {
-                        name: 'enabled',
-                        title: '设备状态',
-                        value: String(d.enabled),
-                        options: [
-                          { value: 'true', label: '启用' },
-                          { value: 'false', label: '停用' },
-                        ],
-                      },
-                      { name: 'reason', title: '变更原因' },
-                    ]}
-                    onSave={async (v) => {
-                      await api.updateDevice(
-                        d.id,
-                        {
-                          expected_revision: d.revision,
-                          enabled: v.enabled === 'true',
-                          reason: v.reason,
-                        },
-                        key(),
-                      )
-                      await refresh()
-                    }}
-                  />
+                  {!d.enabled && <Alert type="warning" title="此设备已停用"
+                    description="可以配对，但连接验证和执行会被拒绝。请确认管理意图，需要恢复时在下方启用设备。" />}
+                  <DeviceStateEditor key={`state-${d.id}`} device={d} refresh={refresh} />
                   <Editor
                     key={`bind-${d.revision}`}
                     submit="绑定发送账号"
