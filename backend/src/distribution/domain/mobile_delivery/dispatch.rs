@@ -398,6 +398,7 @@ pub enum DispatchCommand {
 }
 #[derive(Clone, Debug)]
 pub enum DispatchQuery {
+    Resources,
     Flows,
     Releases,
     Pacing,
@@ -517,4 +518,19 @@ mod tests {
         input.targets.pop();
         input.validate().unwrap();
     }
+}
+
+/// School-use projection: no credentials, global account ownership or command history.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SchoolExecutionResource {
+    pub id: Uuid,
+    pub device_id: Uuid,
+    pub device_name: String,
+    pub sender_account_id: Uuid,
+    pub account_name: String,
+    pub company_name: String,
+    pub control_state: crate::distribution::domain::device_control::PresenceState,
+    pub last_control_heartbeat_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub available: bool,
+    pub block_reason: Option<String>,
 }

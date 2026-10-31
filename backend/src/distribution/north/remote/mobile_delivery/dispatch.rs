@@ -267,6 +267,7 @@ platform_item_write!(publish, "automation-flow-releases", "publish_flow");
 platform_item_write!(revoke, "automation-flow-releases", "revoke_flow");
 platform_read!(failures, "automation-execution-failures", Failures);
 school_read!(school_releases, "automation-flow-releases", Releases);
+school_read!(resources, "school-execution-resources", Resources);
 school_read!(assignments, "automation-execution-assignments", Assignments);
 school_read!(groups, "automation-device-groups", DeviceGroups);
 school_read!(batches, "automation-dispatch-batches", Batches);
@@ -378,6 +379,10 @@ pub(super) fn router() -> Router<Application> {
         .route(
             "/api/v1/schools/{school}/automation-device-groups",
             get(groups).post(save_group),
+        )
+        .route(
+            "/api/v1/schools/{school}/execution-resources",
+            get(resources),
         )
         .route(
             "/api/v1/schools/{school}/automation-execution-assignments",

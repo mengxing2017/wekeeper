@@ -1267,9 +1267,21 @@ pub(super) async fn query(
     offset: i64,
 ) -> Result<Value> {
     if let Some(school) = s.school {
-        school_auth(tx, p.actor()?, school, true).await?;
+        school_auth(
+            tx,
+            p.actor()?,
+            school,
+            !matches!(q, DispatchQuery::Resources),
+        )
+        .await?;
     }
     match q {
+        DispatchQuery::Resources => {
+            let rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',a.id,'device_id',d.id,'device_name',d.name,'sender_account_id',s.id,'account_name',coalesce(s.visible_profile->>'account_name','未命名账号'),'company_name',coalesce(s.visible_profile->>'company_name',''),'control_state',p.state,'last_control_heartbeat_at',p.last_control_heartbeat_at,'available',d.enabled AND s.enabled AND r.active AND NOT r.revoked,'block_reason',CASE WHEN NOT d.enabled THEN 'device_disabled' WHEN NOT s.enabled THEN 'account_disabled' WHEN NOT r.active OR r.revoked THEN 'configuration_unavailable' ELSE NULL END) FROM automation_execution_assignments a JOIN execution_devices d ON d.id=a.device_id JOIN device_control_presence p ON p.id=d.id JOIN sending_accounts s ON s.id=a.sender_account_id JOIN device_account_bindings b ON b.device_id=d.id AND b.sender_account_id=s.id AND b.revision=a.account_binding_revision JOIN automation_flow_releases r ON r.id=a.release_id AND r.school_id=a.school_id WHERE a.school_id=$1 AND a.enabled AND EXISTS(SELECT 1 FROM school_memberships m JOIN accounts actor ON actor.id=m.account_id WHERE m.school_id=a.school_id AND m.account_id=s.responsible_actor_id AND m.role='admin' AND actor.active) ORDER BY a.id LIMIT $2 OFFSET $3")
+                .bind(school(s)?).bind(limit).bind(offset).fetch_all(&mut **tx).await?;
+            let rows:Vec<SchoolExecutionResource> = rows.into_iter().map(serde_json::from_value).collect::<std::result::Result<_,_>>().map_err(|e|Error::Database(e.to_string()))?;
+            Ok(json!(rows))
+        }
         DispatchQuery::Validations|DispatchQuery::DeviceValidations=>{
             let d=if matches!(q,DispatchQuery::DeviceValidations){require(p.protocol()==5,"维护要求 v5")?;let d=device(tx,p).await?.0;authorization_gate(tx,d).await?;Some(d)}else{platform(tx,p).await?;None};
             let rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(j) FROM automation_flow_validations j WHERE ($1::uuid IS NULL OR j.device_id=$1) AND ($2::uuid IS NULL OR school_id=$2) AND ($1::uuid IS NULL OR (state IN ('queued','accepted') AND expires_at>clock_timestamp())) ORDER BY created_at DESC,id DESC LIMIT $3 OFFSET $4").bind(d).bind(s.school).bind(limit).bind(offset).fetch_all(&mut **tx).await?;
