@@ -47,3 +47,22 @@ export type {
   UiSelector,
   UiClient,
 } from '@wekeeper/api-contract/mobile-delivery'
+
+export type {
+  FlowValidation,
+  FlowClient,
+  FlowRules,
+  FlowConfiguration,
+  FlowLauncher,
+  FlowSpecialization,
+  DispatchFlowV1,
+  FlowVersion,
+  FlowRelease,
+  PacingProfile,
+  ExecutionAssignment,
+  AutomationDeviceGroup,
+  DispatchInput,
+  DispatchPlan,
+  DispatchBatch,
+  ExecutionFailure,
+} from '@wekeeper/api-contract/mobile-delivery'
