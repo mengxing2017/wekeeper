@@ -10,6 +10,104 @@ pub const AUTOMATION_CAPABILITIES: &[&str] = &[
     "validation_jobs/1",
     "ordered_groups/1",
 ];
+pub const AUTHORIZATION_EXTENSION: &str = "standing_authorization/1";
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorizedApplication {
+    pub binding_id: Uuid,
+    pub app_key: String,
+    pub instance_ref: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorizedSchool {
+    pub school_id: Uuid,
+    pub applications: Vec<AuthorizedApplication>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionScope {
+    pub origin: String,
+    pub device_id: Uuid,
+    pub sender_account_id: Uuid,
+    pub schools: Vec<AuthorizedSchool>,
+    pub purpose: String,
+    pub data_policy: String,
+    pub object_scope: String,
+}
+impl ExecutionScope {
+    pub fn validate(&self) -> Result<()> {
+        require(
+            self.purpose == "company_business/1"
+                && self.data_policy == "minimal_visible_results/1"
+                && self.object_scope == "approved_school_groups/1",
+            "授权用途或数据范围不支持",
+        )?;
+        require(
+            !self.schools.is_empty() && self.schools.len() <= 100,
+            "授权学校数量无效",
+        )?;
+        let mut seen = BTreeSet::new();
+        for school in &self.schools {
+            require(
+                seen.insert(school.school_id) && school.applications.len() <= 16,
+                "学校重复或应用过多",
+            )?;
+            let mut apps = BTreeSet::new();
+            for app in &school.applications {
+                require(
+                    apps.insert(app.binding_id) && app.app_key == "wecom",
+                    "授权应用无效",
+                )?;
+                text(&app.instance_ref, 1, 200)?;
+            }
+        }
+        Ok(())
+    }
+    pub fn covers(&self, school: Uuid, binding: Option<&AuthorizedApplication>) -> bool {
+        self.schools
+            .iter()
+            .any(|s| s.school_id == school && binding.is_none_or(|b| s.applications.contains(b)))
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionAuthorizationReceipt {
+    pub authorization_id: Uuid,
+    pub revision: i64,
+    pub state: String,
+    pub notice_version: String,
+    pub notice_digest: String,
+    pub identity_assurance: String,
+    pub granted_at: chrono::DateTime<chrono::Utc>,
+    pub revoked_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub maintenance: bool,
+    pub scope: ExecutionScope,
+}
+impl ExecutionAuthorizationReceipt {
+    pub fn validate(&self) -> Result<()> {
+        self.scope.validate()?;
+        require(
+            (1..=9_007_199_254_740_991).contains(&self.revision)
+                && self.notice_version == "internal_business/1"
+                && self.identity_assurance == "local_action",
+            "授权凭证版本或身份等级无效",
+        )?;
+        require(
+            self.notice_digest.len() == 64
+                && self
+                    .notice_digest
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+            "告知摘要无效",
+        )?;
+        require(
+            matches!(self.state.as_str(), "effective" | "revoked")
+                && (self.state == "revoked") == self.revoked_at.is_some(),
+            "撤销状态无效",
+        )
+    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InstalledApplication {
@@ -425,6 +523,18 @@ impl ValidationEvent {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AutomationCommand {
+    RecordAuthorization {
+        receipt: Box<ExecutionAuthorizationReceipt>,
+    },
+    AcceptStandingValidation {
+        expected_revision: i64,
+        generation: Uuid,
+        authorization_id: Uuid,
+    },
+    RejectValidation {
+        expected_revision: i64,
+        generation: Uuid,
+    },
     ReportEnvironment {
         report: EnvironmentReport,
     },
@@ -486,6 +596,7 @@ pub enum AutomationCommand {
 }
 #[derive(Clone, Debug)]
 pub enum AutomationQuery {
+    AuthorizationContext,
     Apps,
     Applications,
     Bindings,
@@ -505,6 +616,61 @@ pub fn automation_digest(value: &serde_json::Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+    #[test]
+    fn standing_authorization_is_typed_scoped_and_distinct_from_local_acceptance() {
+        let id = Uuid::new_v4();
+        let scope = ExecutionScope {
+            origin: "https://example.test".into(),
+            device_id: id,
+            sender_account_id: id,
+            schools: vec![AuthorizedSchool {
+                school_id: id,
+                applications: vec![AuthorizedApplication {
+                    binding_id: id,
+                    app_key: "wecom".into(),
+                    instance_ref: "local".into(),
+                }],
+            }],
+            purpose: "company_business/1".into(),
+            data_policy: "minimal_visible_results/1".into(),
+            object_scope: "approved_school_groups/1".into(),
+        };
+        scope.validate().unwrap();
+        assert!(scope.covers(id, Some(&scope.schools[0].applications[0])));
+        assert!(!scope.covers(Uuid::new_v4(), None));
+        let r = ExecutionAuthorizationReceipt {
+            authorization_id: id,
+            revision: 1,
+            state: "effective".into(),
+            notice_version: "internal_business/1".into(),
+            notice_digest: "a".repeat(64),
+            identity_assurance: "local_action".into(),
+            granted_at: chrono::Utc::now(),
+            revoked_at: None,
+            maintenance: false,
+            scope,
+        };
+        r.validate().unwrap();
+        let mut v = json!(r);
+        v["identity_assurance"] = json!("corporate_verified");
+        assert!(
+            serde_json::from_value::<ExecutionAuthorizationReceipt>(v)
+                .unwrap()
+                .validate()
+                .is_err()
+        );
+        let mut c = json!({"action":"accept_standing_validation","expected_revision":1,"generation":id,"authorization_id":id});
+        assert!(serde_json::from_value::<AutomationCommand>(c.clone()).is_ok());
+        c["source"] = json!("user_clicked");
+        assert!(serde_json::from_value::<AutomationCommand>(c).is_err());
+        assert!(
+            serde_json::from_value::<AutomationCommand>(
+                json!({"action":"reject_validation","expected_revision":1,"generation":id})
+            )
+            .is_ok()
+        );
+    }
     #[test]
     fn typed_business_rejects_json_scripts_fractional_times_and_duplicate_groups() {
         let mut v = serde_json::json!({"app_binding_id":Uuid::nil(),"capability_id":Uuid::nil(),"name":"业务","group_ids":[Uuid::nil()],"text_content":"测试","interval_seconds":60,"schedule":"manual_once"});
