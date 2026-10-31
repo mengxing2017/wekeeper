@@ -84,7 +84,7 @@ CREATE TRIGGER dispatch_pacing_immutable BEFORE UPDATE OR DELETE ON automation_p
 CREATE TRIGGER dispatch_failure_immutable BEFORE UPDATE OR DELETE ON automation_execution_failures FOR EACH ROW EXECUTE FUNCTION automation_immutable();
 CREATE TRIGGER dispatch_event_immutable BEFORE UPDATE OR DELETE ON automation_dispatch_events FOR EACH ROW EXECUTE FUNCTION automation_immutable();
 
-CREATE FUNCTION delivery_scope_owner(run uuid) RETURNS uuid LANGUAGE sql STABLE AS $$
+CREATE OR REPLACE FUNCTION delivery_scope_owner(run uuid) RETURNS uuid LANGUAGE sql STABLE AS $$
  SELECT coalesce((SELECT coalesce(b.scope_owner_id,b.id) FROM automation_dispatch_plans p JOIN automation_dispatch_batches b ON b.id=p.batch_id WHERE p.run_id=run),run)
 $$;
 CREATE OR REPLACE FUNCTION maintain_delivery_content_scope() RETURNS trigger LANGUAGE plpgsql AS $$

@@ -73,7 +73,7 @@ INSERT INTO delivery_content_scope_owners(id,school_id,content_digest,owner_id,a
 UPDATE delivery_dedup_reservations SET content_scope_id=item_id;
 ALTER TABLE delivery_dedup_reservations ALTER COLUMN content_scope_id SET NOT NULL,
  ADD FOREIGN KEY(content_scope_id,school_id,content_digest) REFERENCES delivery_content_scope_owners(id,school_id,content_digest);
-CREATE FUNCTION maintain_delivery_content_scope() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION maintain_delivery_content_scope() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE intended uuid; scope uuid; existing_owner uuid;
 BEGIN
  IF TG_OP='INSERT' THEN

@@ -184,7 +184,7 @@ CREATE VIEW wecom_group_directory AS SELECT * FROM wecom_asset_objects WHERE kin
 CREATE VIEW wecom_group_directory_members AS SELECT o.*,g.id AS directory_group_id,m.id AS member_id FROM wecom_asset_objects o LEFT JOIN wecom_asset_objects g ON g.kind='groups' AND g.corp_id=o.corp_id AND g.key=o.parent_key LEFT JOIN wecom_members m ON o.member_type=1 AND m.userid_key=o.member_key WHERE o.kind='members';
 ALTER TABLE wecom_groups ADD COLUMN directory_group_id UUID UNIQUE REFERENCES wecom_asset_objects(id);
 -- The polymorphic directory reference must always denote this exact official group.
-CREATE FUNCTION check_wecom_directory_group() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION check_wecom_directory_group() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF NEW.directory_group_id IS NOT NULL AND NOT EXISTS (
   SELECT 1 FROM wecom_asset_objects WHERE id=NEW.directory_group_id AND kind='groups' AND corp_id=NEW.corp_id AND key=NEW.chat_id

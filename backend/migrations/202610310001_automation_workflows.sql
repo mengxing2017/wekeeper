@@ -82,7 +82,7 @@ CREATE TABLE automation_readiness_tickets (
  expires_at timestamptz NOT NULL DEFAULT clock_timestamp()+interval '2 minutes'
 );
 -- Immutable evidence can never be edited in place, including by later application code.
-CREATE FUNCTION automation_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION automation_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN RAISE EXCEPTION 'automation evidence is immutable'; END; $$;
 CREATE TRIGGER automation_environment_immutable BEFORE UPDATE OR DELETE ON device_environment_snapshots FOR EACH ROW EXECUTE FUNCTION automation_immutable();
 CREATE TRIGGER automation_component_immutable BEFORE UPDATE OR DELETE ON automation_component_versions FOR EACH ROW EXECUTE FUNCTION automation_immutable();
