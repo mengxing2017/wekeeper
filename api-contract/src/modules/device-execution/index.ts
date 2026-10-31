@@ -1,4 +1,59 @@
 import type {
+  TaskDelivery,
+  DispatchPreparation,
+  DispatchFailure,
+  FailureVersions,
+  BusinessAuthorizationReceipt,
+  FlowConfiguration,
+  DispatchPlan,
+  FlowValidation,
+} from "../mobile-delivery/dispatch";
+export interface DispatchRequirements {
+  protocol_version: 5;
+  plan_digest: string;
+  configuration_digest: string;
+  no_injection: true;
+  no_hook: true;
+  no_private_protocol: true;
+  no_client_data_modification: true;
+  local_invocation_consumption_required: true;
+  no_external_ids: true;
+  no_resource_ids: true;
+  ordered_groups_required: true;
+  human_pacing_required: true;
+}
+export type DispatchClaim = Omit<
+  Claim,
+  "configuration" | "requirements" | "execution_target"
+> & {
+  dispatch_plan: DispatchPlan;
+  configuration: {
+    id: UUID;
+    configuration: FlowConfiguration;
+    content_digest: string;
+    revoked: false;
+  };
+  requirements: DispatchRequirements;
+  execution_target: Omit<ExecutionTarget, "strategy_id"> & {
+    strategy_id: null;
+  };
+};
+export interface DispatchHeartbeat {
+  binding_revision: number;
+  sender_account_id: UUID;
+  permissions_ready: boolean;
+}
+export interface DispatchPreparationInput {
+  fence: number;
+  snapshot_digest: string;
+  observed_account_id: UUID;
+  observed_group_id: UUID;
+  plan_digest: string;
+  path_digest: string;
+  checks_passed: true;
+  verification: VisibleVerification;
+}
+import type {
   ExecutionAuthorizationReceipt,
   ExecutionAuthorizationContext,
   EnvironmentReport,
@@ -192,7 +247,7 @@ export interface DeviceTransportOptions {
   baseUrl: string;
   token?: string;
   fetch?: typeof fetch;
-  protocolVersion?: 1 | 2 | 3 | 4;
+  protocolVersion?: 1 | 2 | 3 | 4 | 5;
 }
 export function createDeviceExecutionClient(options: DeviceTransportOptions) {
   const base = new URL(options.baseUrl);
@@ -207,7 +262,13 @@ export function createDeviceExecutionClient(options: DeviceTransportOptions) {
     throw new Error("Device baseUrl must be a fixed HTTPS origin");
   const transport = options.fetch ?? fetch;
   const protocol = options.protocolVersion ?? 1;
-  if (protocol !== 1 && protocol !== 2 && protocol !== 3 && protocol !== 4)
+  if (
+    protocol !== 1 &&
+    protocol !== 2 &&
+    protocol !== 3 &&
+    protocol !== 4 &&
+    protocol !== 5
+  )
     throw new Error("Unsupported device protocol");
   async function wire<T>(
     path: string,
@@ -282,12 +343,192 @@ export function createDeviceExecutionClient(options: DeviceTransportOptions) {
       throw new ApiError(200, "invalid_document", "Expected resource");
     return r.value;
   }
+  function legacy() {
+    if (protocol === 5) throw new Error("Use version-free v5 methods");
+  }
+  function v5() {
+    if (protocol !== 5) throw new Error("v5 execution protocol required");
+  }
   function v4() {
     if (protocol !== 4)
       throw new Error("This operation requires device protocol v4");
   }
   const claimPath = (id: UUID) => `claims/${encodeURIComponent(id)}`;
   return {
+    dispatchInbox: async () => {
+      v5();
+      return (
+        (
+          await wire<TaskDelivery[]>(
+            "task-inbox",
+            "automation-task-deliveries",
+            undefined,
+            undefined,
+            true,
+          )
+        ).value ?? []
+      );
+    },
+    dispatchReceipt: (id: UUID, plan_digest: string, key: string) => {
+      v5();
+      return one<TaskDelivery>(
+        `task-deliveries/${encodeURIComponent(id)}/receipts`,
+        "automation-task-deliveries",
+        { plan_digest },
+        key,
+      );
+    },
+    dispatchLease: (
+      id: UUID,
+      plan_digest: string,
+      authorization_id: UUID,
+      key: string,
+    ) => {
+      v5();
+      return one<DispatchPreparation>(
+        `task-deliveries/${encodeURIComponent(id)}/preparation-leases`,
+        "automation-dispatch-preparations",
+        { plan_digest, authorization_id },
+        key,
+      );
+    },
+    dispatchStage: (
+      id: UUID,
+      input: {
+        generation: UUID;
+        item_id: UUID;
+        stage: "preparing_app" | "ready";
+        path_key: string;
+      },
+      key: string,
+    ) => {
+      v5();
+      return one<DispatchPreparation>(
+        `task-deliveries/${encodeURIComponent(id)}/events`,
+        "automation-dispatch-preparations",
+        input,
+        key,
+      );
+    },
+    dispatchFailure: (id: UUID, failure: DispatchFailure, key: string) => {
+      v5();
+      return one(
+        `task-deliveries/${encodeURIComponent(id)}/failures`,
+        "automation-execution-failures",
+        { failure },
+        key,
+      );
+    },
+    dispatchDiagnostic: (
+      id: UUID,
+      input: { failure_id: UUID; event_id: UUID; versions: FailureVersions },
+      key: string,
+    ) => {
+      v5();
+      return one(
+        `task-deliveries/${encodeURIComponent(id)}/diagnostics`,
+        "automation-dispatch-diagnostics",
+        input,
+        key,
+      );
+    },
+    businessAuthorizationContext: () => {
+      v5();
+      return one<{
+        id: UUID;
+        extension: "business_application_scope/2";
+        device_name: string;
+        account_name: string;
+        schools: Array<{ id: UUID; name: string }>;
+        authorization_revision: number;
+        scope: Omit<BusinessAuthorizationReceipt["scope"], "origin">;
+      }>(
+        "execution-authorization-context",
+        "automation-business-authorizations",
+      );
+    },
+    businessAuthorizationReceipt: (
+      receipt: BusinessAuthorizationReceipt,
+      key: string,
+    ) => {
+      v5();
+      return one(
+        "execution-authorizations",
+        "automation-business-authorizations",
+        { receipt },
+        key,
+      );
+    },
+    dispatchHeartbeat: (input: DispatchHeartbeat, key: string) => {
+      v5();
+      return one("heartbeats", "device-heartbeats", input, key);
+    },
+    dispatchPrepare: (
+      id: UUID,
+      input: DispatchPreparationInput,
+      key: string,
+    ) => {
+      v5();
+      return one<Preparation>(
+        `${claimPath(id)}/preparations`,
+        "mobile-execution-preparations",
+        input,
+        key,
+      );
+    },
+    dispatchClaim: async (binding_revision: number, key: string) => {
+      v5();
+      const r = await wire<DispatchClaim>(
+        "claims",
+        "mobile-execution-claims",
+        { binding_revision },
+        key,
+      );
+      return {
+        claim: r.value,
+        wait: r.value === null ? (r.meta as unknown as Wait) : undefined,
+      };
+    },
+    flowValidations: async () => {
+      v5();
+      return (
+        (
+          await wire<FlowValidation[]>(
+            "flow-validations",
+            "automation-flow-validations",
+            undefined,
+            undefined,
+            true,
+          )
+        ).value ?? []
+      );
+    },
+    acceptFlowValidation: (
+      id: UUID,
+      input: {
+        expected_revision: number;
+        generation: UUID;
+        authorization_id: UUID;
+      },
+      key: string,
+    ) => {
+      v5();
+      return one<FlowValidation>(
+        `flow-validations/${encodeURIComponent(id)}/acceptances`,
+        "automation-flow-validations",
+        input,
+        key,
+      );
+    },
+    flowValidationEvent: (id: UUID, event: ValidationEvent, key: string) => {
+      v5();
+      return one<FlowValidation>(
+        `flow-validations/${encodeURIComponent(id)}/events`,
+        "automation-flow-validations",
+        { event },
+        key,
+      );
+    },
     reportEnvironment: (report: EnvironmentReport, key: string) => {
       v4();
       return one<DeviceEnvironment>(
@@ -315,10 +556,55 @@ export function createDeviceExecutionClient(options: DeviceTransportOptions) {
       );
       return result.value ?? [];
     },
-    authorizationContext: () => { v4(); return one<ExecutionAuthorizationContext>("execution-authorization-context","execution-authorizations"); },
-    authorizationReceipt: (receipt: ExecutionAuthorizationReceipt,key:string) => { v4(); return one<{id: UUID;revision:number}>("execution-authorizations","execution-authorizations",{receipt},key); },
-    acceptStandingValidation: (id:UUID,input:{expected_revision:number;generation:UUID;authorization_id:UUID},key:string) => { v4(); return one<ValidationJob>(`validation-jobs/${encodeURIComponent(id)}/standing-acceptances`,"device-validations",input,key); },
-    rejectValidation: (id:UUID,input:{expected_revision:number;generation:UUID},key:string) => { v4(); return one<ValidationJob>(`validation-jobs/${encodeURIComponent(id)}/rejections`,"device-validations",input,key); },
+    authorizationContext: () => {
+      v4();
+      return one<ExecutionAuthorizationContext>(
+        "execution-authorization-context",
+        "execution-authorizations",
+      );
+    },
+    authorizationReceipt: (
+      receipt: ExecutionAuthorizationReceipt,
+      key: string,
+    ) => {
+      v4();
+      return one<{ id: UUID; revision: number }>(
+        "execution-authorizations",
+        "execution-authorizations",
+        { receipt },
+        key,
+      );
+    },
+    acceptStandingValidation: (
+      id: UUID,
+      input: {
+        expected_revision: number;
+        generation: UUID;
+        authorization_id: UUID;
+      },
+      key: string,
+    ) => {
+      v4();
+      return one<ValidationJob>(
+        `validation-jobs/${encodeURIComponent(id)}/standing-acceptances`,
+        "device-validations",
+        input,
+        key,
+      );
+    },
+    rejectValidation: (
+      id: UUID,
+      input: { expected_revision: number; generation: UUID },
+      key: string,
+    ) => {
+      v4();
+      return one<ValidationJob>(
+        `validation-jobs/${encodeURIComponent(id)}/rejections`,
+        "device-validations",
+        input,
+        key,
+      );
+    },
     acceptValidation: (
       id: UUID,
       input: { expected_revision: number; generation: UUID },
@@ -413,14 +699,16 @@ export function createDeviceExecutionClient(options: DeviceTransportOptions) {
     rotate: (key: string) =>
       one<Credential>("credential-rotations", "device-credentials", {}, key),
     session: () => one<Session>("session", "device-execution-sessions"),
-    heartbeat: (input: HeartbeatInput, key: string) =>
-      one<{
+    heartbeat: (input: HeartbeatInput, key: string) => {
+      legacy();
+      return one<{
         id: UUID;
         binding: Binding;
         permissions_ready_declared: boolean;
         server_time: string;
         heartbeat_interval_seconds: number;
-      }>("heartbeats", "device-heartbeats", input, key),
+      }>("heartbeats", "device-heartbeats", input, key);
+    },
     claim: async (
       input: { binding_revision: number },
       key: string,
@@ -449,13 +737,15 @@ export function createDeviceExecutionClient(options: DeviceTransportOptions) {
         input,
         key,
       ),
-    prepare: (id: UUID, input: PreparationInput, key: string) =>
-      one<Preparation>(
+    prepare: (id: UUID, input: PreparationInput, key: string) => {
+      legacy();
+      return one<Preparation>(
         `${claimPath(id)}/preparations`,
         "mobile-execution-preparations",
         input,
         key,
-      ),
+      );
+    },
     permit: (id: UUID, input: PermitInput, key: string) =>
       one<Permit>(
         `${claimPath(id)}/permits`,
