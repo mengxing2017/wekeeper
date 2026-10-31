@@ -1,3 +1,6 @@
+import { MobileExecutionFlows } from '../../operations/mobile-execution/flows'
+import { MobileDeviceGrants } from '../../operations/mobile-execution/grants'
+import { MobileTargets } from '../../operations/mobile-execution/targets'
 import { navigation, visibleNavigationKeys, resolveNavigation } from '../../../app/navigation'
 import { SchoolExecutionResources } from '../../operations/mobile-delivery/school-resources'
 import { ListPanel } from '../../../shared/list-panel'
@@ -137,7 +140,7 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
       : denied ? <Alert type="warning" title="当前账号没有此功能的访问权限" description={<>请核对当前学校与角色，或从导航选择已授权功能。<Button onClick={() => navigate(allowedKeys[0] ?? 'posts')}>返回可用功能</Button></>} />
       : resourcePage && globalScope && user.platform_admin ? (
         <ExecutionDevices key={tab} view={tab === 'execution-accounts' ? 'accounts' : params.get('subview') === 'rules' ? 'rules' : 'devices'} onViewChange={setSubview} />
-      ) : tab === 'wecom-assets' && user.platform_admin ? (
+      ) : tab === 'mobile-device-grants' && user.platform_admin ? <MobileDeviceGrants schools={visibleSchools ?? []} /> : tab === 'wecom-assets' && user.platform_admin ? (
         <Assets />
       ) : tab === 'wecom-directory' && user.platform_admin ? (
         <Directory />
@@ -182,7 +185,7 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
         <div className="business-panel" key={`${school.id}-${tab}`}>
           {resourcePage ? (role === 'admin' || role === 'operator' ? <SchoolExecutionResources key={`${school.id}-${tab}`} school={school.id} accounts={tab === 'execution-accounts'} admin={role === 'admin'} /> : <Alert type="warning" title="查看学校执行资源需要本校运营或管理员授权" />) : tab === 'mobile-delivery' ? (
             <MobileDelivery key={school.id} school={school.id} role={role} subview={params.get('subview') ?? undefined} onSubviewChange={setSubview} />
-          ) : tab === 'broadcast-tasks' ? (
+          ) : tab === 'mobile-execution-flows' ? <MobileExecutionFlows key={school.id} school={school.id} admin={role === 'admin'} /> : tab === 'mobile-targets' ? <MobileTargets key={school.id} school={school.id} admin={role === 'admin'} /> : tab === 'broadcast-tasks' ? (
             <BroadcastTasks
               key={school.id}
               school={school.id}
