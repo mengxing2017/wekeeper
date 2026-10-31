@@ -13,6 +13,7 @@ type Tx<'a> = Transaction<'a, Postgres>;
 mod automation;
 mod configured;
 mod pairing;
+mod responsible;
 mod visible;
 pub async fn guard(tx: &mut Tx<'_>) -> Result<()> {
     sqlx::query("SELECT pg_advisory_xact_lock(78234610241)")
@@ -827,6 +828,8 @@ impl Repository {
                 identity_mode,
                 visible_profile,
             } => {
+                platform(tx, p).await?;
+                responsible::require_eligible(tx, responsible_actor_id).await?;
                 if identity_mode == IdentityMode::UiVisible {
                     return visible::create_account(
                         tx,
@@ -1756,7 +1759,20 @@ impl Store for Repository {
         if action == "automation" {
             detail.insert("automation_action".into(), value["input"]["action"].clone());
         }
-        detail.insert("scope_id".into(), json!(s.id));
+        detail.insert(
+            "scope_id".into(),
+            if value["operation"] == "create_account" {
+                response["id"].clone()
+            } else {
+                json!(s.id)
+            },
+        );
+        if value["operation"] == "review_account_profile" {
+            detail.insert(
+                "profile_revision".into(),
+                response["profile_revision"].clone(),
+            );
+        }
         detail.insert("request_digest".into(), json!(hash(&value.to_string())));
         event(
             &mut tx,
@@ -1791,6 +1807,9 @@ impl Store for Repository {
             _ => return Err(Error::Unauthorized),
         }
         let result = match q {
+            Query::ResponsibleActors => {
+                responsible::candidates(&mut tx, &p, &page, limit, offset).await?
+            }
             Query::Automation(input) => {
                 automation::query(&mut tx, &p, &s, input, limit, offset).await?
             }
@@ -1818,17 +1837,23 @@ impl Store for Repository {
             Query::Targets | Query::Strategies | Query::Strategy | Query::StrategyRuns => {
                 visible::query(&mut tx, &p, &s, q, limit, offset).await?
             }
-            Query::Devices | Query::Accounts => {
+            Query::Accounts => {
                 platform(&mut tx, &p).await?;
-                let table = if matches!(q, Query::Devices) {
-                    "execution_devices"
-                } else {
-                    "sending_accounts"
-                };
+                let rows = sqlx::query_scalar::<_, Value>(
+                    "SELECT to_jsonb(a) FROM sending_accounts a ORDER BY a.id LIMIT $1 OFFSET $2",
+                )
+                .bind(limit)
+                .bind(offset)
+                .fetch_all(&mut *tx)
+                .await?;
+                json!(responsible::account_displays(&mut tx, rows).await?)
+            }
+            Query::Devices => {
+                platform(&mut tx, &p).await?;
                 json!(
-                    sqlx::query_scalar::<_, Value>(&format!(
-                        "SELECT to_jsonb(t) FROM {table} t ORDER BY id LIMIT $1 OFFSET $2"
-                    ))
+                    sqlx::query_scalar::<_, Value>(
+                        "SELECT to_jsonb(t) FROM execution_devices t ORDER BY id LIMIT $1 OFFSET $2"
+                    )
                     .bind(limit)
                     .bind(offset)
                     .fetch_all(&mut *tx)
@@ -1837,7 +1862,7 @@ impl Store for Repository {
             }
             Query::Device | Query::AccountPolicy => {
                 platform(&mut tx, &p).await?;
-                object(
+                let value = object(
                     &mut tx,
                     if matches!(q, Query::Device) {
                         "execution_devices"
@@ -1846,7 +1871,15 @@ impl Store for Repository {
                     },
                     id(&s)?,
                 )
-                .await?
+                .await?;
+                if matches!(q, Query::AccountPolicy) {
+                    responsible::account_displays(&mut tx, vec![value])
+                        .await?
+                        .pop()
+                        .ok_or(Error::NotFound)?
+                } else {
+                    value
+                }
             }
             Query::Groups | Query::Tasks => {
                 p.actor()?;
