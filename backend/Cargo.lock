@@ -282,8 +282,9 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "cairnkit-jsonapi"
-version = "0.1.0-alpha.1"
-source = "git+https://github.com/mengxing2017/cairnkit.git?rev=1068bcbc04750a1d5d6d63a429260237e8a19861#1068bcbc04750a1d5d6d63a429260237e8a19861"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0c230cd6a11edb6a965d4ccb5c63b0d4732f02cbad20ee92706e75277b787ae"
 dependencies = [
  "queryst",
  "serde",

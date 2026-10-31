@@ -7,8 +7,8 @@ publish = false
 
 [dependencies]
 unicode-normalization = "0.1"
-cairnkit-jsonapi = { git = "https://github.com/mengxing2017/cairnkit.git", rev = "1068bcbc04750a1d5d6d63a429260237e8a19861" }
-axum = { version = "0.8", features = ["multipart"] }
+cairnkit-jsonapi = "0.1.0"
+axum = { version = "0.8", features = ["multipart", "ws"] }
 argon2 = "0.5"
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
 sha2 = "0.10"
