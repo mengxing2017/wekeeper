@@ -398,9 +398,7 @@ async fn stopping_during_creation_covers_late_created_task() {
 
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn forward_upgrade_preserves_legacy_snapshots() {
-    use sqlx::migrate::Migrator;
-    use std::borrow::Cow;
+async fn repeat_startup_preserves_delivery_snapshots() {
     let url = std::env::var("WEKEEPER_TEST_DATABASE_URL").unwrap();
     let base = PgPool::connect(&url).await.unwrap();
     let schema = format!("upgrade_{}", Uuid::new_v4().simple());
@@ -408,9 +406,10 @@ async fn forward_upgrade_preserves_legacy_snapshots() {
         .execute(&base)
         .await
         .unwrap();
+    let search_schema = schema.clone();
     let pool = PgPoolOptions::new()
         .after_connect(move |c, _| {
-            let sql = format!("SET search_path TO {schema}");
+            let sql = format!("SET search_path TO {search_schema}");
             Box::pin(async move {
                 sqlx::query(&sql).execute(c).await?;
                 Ok(())
@@ -419,17 +418,7 @@ async fn forward_upgrade_preserves_legacy_snapshots() {
         .connect(&url)
         .await
         .unwrap();
-    let old = Migrator {
-        migrations: Cow::Owned(
-            database::MIGRATOR
-                .iter()
-                .filter(|m| m.version < 202610220002)
-                .cloned()
-                .collect(),
-        ),
-        ..Migrator::DEFAULT
-    };
-    old.run(&pool).await.unwrap();
+    database::migrate(&pool).await.unwrap();
     let id = Uuid::new_v4();
     sqlx::query("INSERT INTO schools(id,name) VALUES($1,'Legacy')")
         .bind(id)
@@ -490,6 +479,12 @@ async fn forward_upgrade_preserves_legacy_snapshots() {
         .await
         .unwrap();
     assert_eq!(state, "unknown");
+    pool.close().await;
+    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+        .execute(&base)
+        .await
+        .unwrap();
+    base.close().await;
 }
 
 #[tokio::test]
