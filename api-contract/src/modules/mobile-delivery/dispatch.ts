@@ -204,6 +204,7 @@ export interface BusinessAuthorizationReceipt {
   granted_at: string;
   revoked_at: string | null;
   scope: BusinessApplicationScope;
+  binding_revision?: number;
 }
 export interface DispatchPreparation extends Row {
   delivery_id: UUID;

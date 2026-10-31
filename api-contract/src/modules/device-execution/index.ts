@@ -1,3 +1,9 @@
+export interface DeviceSetupStatus {
+  id: string; protocol_version: 5; checked_at: string; device_name: string;
+  account_name: string | null; sender_account_id: string | null; binding_revision: number | null;
+  scope_source: 'responsible_actor_school_admin';
+  schools: Array<{ id: string; name: string; dispatch_enabled: boolean; assignment_ready: boolean }>;
+}
 import type {
   TaskDelivery,
   DispatchPreparation,
@@ -432,6 +438,7 @@ export function createDeviceExecutionClient(options: DeviceTransportOptions) {
         key,
       );
     },
+    setupStatus: () => { v5(); return one<DeviceSetupStatus>("setup-status", "device-setup-status"); },
     businessAuthorizationContext: () => {
       v5();
       return one<{
@@ -441,6 +448,8 @@ export function createDeviceExecutionClient(options: DeviceTransportOptions) {
         account_name: string;
         schools: Array<{ id: UUID; name: string }>;
         authorization_revision: number;
+        binding_revision?: number;
+        scope_source?: "responsible_actor_school_admin";
         scope: Omit<BusinessAuthorizationReceipt["scope"], "origin">;
       }>(
         "execution-authorization-context",
