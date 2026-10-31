@@ -87,7 +87,17 @@ pub(super) async fn account_displays(
             reviews.insert(id, json!(review));
         }
     }
+    let account_ids = accounts
+        .iter()
+        .map(|a| uid(a, "id"))
+        .collect::<Result<Vec<_>>>()?;
+    let eligibility = binding_eligibilities(tx, &account_ids).await?;
     for account in &mut accounts {
+        account["device_binding_eligibility"] = json!(
+            eligibility
+                .get(&uid(account, "id")?)
+                .ok_or(Error::Conflict)?
+        );
         let actor = uid(account, "responsible_actor_id")?;
         account["responsible_actor"] = json!(summaries.get(&actor).ok_or(Error::Conflict)?);
         let id = uid(account, "id")?.to_string();
@@ -101,4 +111,33 @@ pub(super) async fn account_displays(
         account["latest_profile_review"] = reviews.remove(&id).unwrap_or(Value::Null);
     }
     Ok(accounts)
+}
+
+/// Shared by platform projections and binding writes so selectable accounts cannot
+/// bypass the same enabled-account and school authorization checks.
+pub(super) async fn binding_eligibilities(
+    tx: &mut Tx<'_>,
+    ids: &[Uuid],
+) -> Result<std::collections::HashMap<Uuid, DeviceBindingEligibility>> {
+    let rows = sqlx::query("SELECT a.id,a.enabled,EXISTS(SELECT 1 FROM sender_group_bindings b JOIN school_memberships m ON m.school_id=b.school_id AND m.account_id=a.responsible_actor_id JOIN schools s ON s.id=b.school_id JOIN accounts u ON u.id=a.responsible_actor_id WHERE b.sender_account_id=a.id AND m.role='admin' AND u.active AND s.active) AS authorized FROM sending_accounts a WHERE a.id=ANY($1)")
+        .bind(ids).fetch_all(&mut **tx).await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let reason = if !row.get::<bool, _>("enabled") {
+                Some(DeviceBindingBlockReason::AccountDisabled)
+            } else if !row.get::<bool, _>("authorized") {
+                Some(DeviceBindingBlockReason::SchoolAuthorizationRequired)
+            } else {
+                None
+            };
+            (
+                row.get("id"),
+                DeviceBindingEligibility {
+                    eligible: reason.is_none(),
+                    reason,
+                },
+            )
+        })
+        .collect())
 }

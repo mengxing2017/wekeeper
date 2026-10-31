@@ -879,16 +879,23 @@ impl Repository {
                 sender_account_id,
                 identity_evidence_ref,
             } => {
-                platform(tx, p).await?;
+                platform(tx, p).await.map_err(|error| match error {
+                    Error::Forbidden => Error::Policy("binding_platform_permission_required"),
+                    error => error,
+                })?;
                 let d = id(s)?;
                 revision(
                     &object(tx, "execution_devices", d).await?,
                     expected_revision,
                 )?;
-                let authorized:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sender_group_bindings b JOIN sending_accounts a ON a.id=b.sender_account_id JOIN school_memberships m ON m.school_id=b.school_id AND m.account_id=a.responsible_actor_id JOIN schools s ON s.id=b.school_id JOIN accounts u ON u.id=a.responsible_actor_id WHERE b.sender_account_id=$1 AND m.role='admin' AND u.active AND s.active)").bind(sender_account_id).fetch_one(&mut **tx).await?;
-                if !authorized {
-                    return Err(Error::Forbidden);
+                let eligibility =
+                    responsible::binding_eligibilities(tx, &[sender_account_id]).await?;
+                let eligibility = eligibility.get(&sender_account_id).ok_or(Error::NotFound)?;
+                if let Some(reason) = &eligibility.reason {
+                    return Err(Error::Policy(reason.policy_code()));
                 }
+                // Validate before invalidating any current binding. Empty notes are valid.
+                let identity_evidence_ref = text(&identity_evidence_ref, 0, 500)?;
                 invalidate(tx, d).await?;
                 let old:Option<Uuid>=sqlx::query_scalar("SELECT device_id FROM device_account_bindings WHERE sender_account_id=$1 AND device_id<>$2").bind(sender_account_id).bind(d).fetch_optional(&mut **tx).await?;
                 if let Some(old) = old {
@@ -902,7 +909,7 @@ impl Repository {
                         .execute(&mut **tx)
                         .await?;
                 }
-                sqlx::query("INSERT INTO device_account_bindings(device_id,sender_account_id,revision,identity_evidence_ref) VALUES($1,$2,$3,$4) ON CONFLICT(device_id) DO UPDATE SET sender_account_id=EXCLUDED.sender_account_id,revision=EXCLUDED.revision,identity_evidence_ref=EXCLUDED.identity_evidence_ref").bind(d).bind(sender_account_id).bind(expected_revision+1).bind(text(&identity_evidence_ref,1,500)?).execute(&mut **tx).await?;
+                sqlx::query("INSERT INTO device_account_bindings(device_id,sender_account_id,revision,identity_evidence_ref) VALUES($1,$2,$3,$4) ON CONFLICT(device_id) DO UPDATE SET sender_account_id=EXCLUDED.sender_account_id,revision=EXCLUDED.revision,identity_evidence_ref=EXCLUDED.identity_evidence_ref").bind(d).bind(sender_account_id).bind(expected_revision+1).bind(&identity_evidence_ref).execute(&mut **tx).await?;
                 sqlx::query("UPDATE execution_devices SET revision=revision+1 WHERE id=$1")
                     .bind(d)
                     .execute(&mut **tx)

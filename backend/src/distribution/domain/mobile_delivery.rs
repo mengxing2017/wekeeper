@@ -40,6 +40,25 @@ pub struct AccountProfileReview {
     pub profile_revision: Option<i64>,
     pub evidence_ref: String,
 }
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceBindingBlockReason {
+    AccountDisabled,
+    SchoolAuthorizationRequired,
+}
+impl DeviceBindingBlockReason {
+    pub fn policy_code(&self) -> &'static str {
+        match self {
+            Self::AccountDisabled => "binding_account_disabled",
+            Self::SchoolAuthorizationRequired => "binding_school_authorization_required",
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DeviceBindingEligibility {
+    pub eligible: bool,
+    pub reason: Option<DeviceBindingBlockReason>,
+}
 pub const CLAIM_SECONDS: i64 = 120;
 pub const PERMIT_SECONDS: i64 = 60;
 pub fn normalize(content: &str) -> Result<String> {
@@ -221,6 +240,8 @@ pub enum Command {
     BindDevice {
         expected_revision: i64,
         sender_account_id: Uuid,
+        /// Optional human note; never used as device identity evidence.
+        #[serde(default)]
         identity_evidence_ref: String,
     },
     CreateGroup {

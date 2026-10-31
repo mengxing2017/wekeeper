@@ -75,6 +75,21 @@ impl IntoResponse for Error {
                 "conflict",
                 "数据已变化或操作重复，请刷新后重试".into(),
             ),
+            Self::Policy("binding_platform_permission_required") => (
+                StatusCode::FORBIDDEN,
+                "binding_platform_permission_required",
+                "绑定手机发送账号需要平台管理员权限，请联系平台管理员操作".into(),
+            ),
+            Self::Policy("binding_account_disabled") => (
+                StatusCode::CONFLICT,
+                "binding_account_disabled",
+                "发送账号已停用，请先启用账号再绑定手机".into(),
+            ),
+            Self::Policy("binding_school_authorization_required") => (
+                StatusCode::CONFLICT,
+                "binding_school_authorization_required",
+                "该发送账号缺少有效学校群授权：请先配置目标群与账号授权，并确认责任人已启用且具有对应启用学校的管理员权限；修改核对备注不能解决此问题".into(),
+            ),
             Self::Policy("revision_conflict") => (
                 StatusCode::CONFLICT,
                 "revision_conflict",
