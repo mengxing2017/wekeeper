@@ -358,6 +358,9 @@ pub(super) async fn validate_execution(
     device: Option<Uuid>,
     protocol: u32,
 ) -> Result<()> {
+    if protocol == 5 {
+        return dispatch::validate(tx, i, device).await;
+    }
     let ui = i["snapshot"]["group"]["identity_mode"] == "ui_visible";
     if !ui {
         return if protocol == 1 {

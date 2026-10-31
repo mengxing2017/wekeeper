@@ -4,12 +4,17 @@ use super::*;
 pub(super) fn is_configured(i: &Value) -> bool {
     matches!(
         i["snapshot"]["requirements"]["protocol_version"].as_u64(),
-        Some(3 | 4)
+        Some(3..=5)
     )
 }
-pub(super) fn config(i: &Value) -> Result<ConfigurationInput> {
-    serde_json::from_value(i["snapshot"]["configuration"]["configuration"].clone())
-        .map_err(|_| Error::Policy("configuration_missing"))
+pub(super) fn execution_policy(i: &Value) -> Result<ExecutionPolicy> {
+    if dispatch::is_dispatch(i) {
+        return dispatch::policy(i);
+    }
+    let c: ConfigurationInput =
+        serde_json::from_value(i["snapshot"]["configuration"]["configuration"].clone())
+            .map_err(|_| Error::Policy("configuration_missing"))?;
+    Ok(c.policy)
 }
 pub(super) async fn release(
     tx: &mut Tx<'_>,
@@ -200,6 +205,9 @@ pub(super) async fn validate(tx: &mut Tx<'_>, i: &Value) -> Result<()> {
     Ok(())
 }
 pub(super) async fn validate_configuration(tx: &mut Tx<'_>, i: &Value) -> Result<()> {
+    if dispatch::is_dispatch(i) {
+        return dispatch::validate(tx, i, None).await;
+    }
     automation::validate_manifest(tx, i).await?;
     let progress = object(
         tx,
@@ -231,7 +239,7 @@ pub(super) async fn advance(tx: &mut Tx<'_>, i: &Value, sent: bool) -> Result<()
         sqlx::query("UPDATE mobile_delivery_run_progress SET pause_reason='unknown_requires_review',revision=revision+1 WHERE id=$1").bind(run).execute(&mut **tx).await?;
         return Ok(());
     }
-    let p = config(i)?.policy;
+    let p = execution_policy(i)?;
     sqlx::query("UPDATE mobile_delivery_run_progress p SET current_position=p.current_position+1,last_completed_at=i.observed_at,next_eligible_at=i.observed_at+greatest(p.inter_group_interval_ms,$3,$4)*interval '1 millisecond',revision=p.revision+1 FROM mobile_delivery_run_items r JOIN mobile_delivery_items i ON i.id=r.item_id WHERE p.id=$1 AND r.item_id=$2 AND r.run_id=p.id AND r.position=p.current_position").bind(run).bind(uid(i,"id")?).bind(p.account_cooldown_ms).bind(p.content_cooldown_ms).execute(&mut **tx).await?;
     Ok(())
 }
@@ -311,17 +319,22 @@ pub(super) async fn candidate(
     account: Uuid,
     protocol: u32,
 ) -> Result<Option<std::result::Result<Value, Value>>> {
+    if protocol == 5 {
+        return dispatch::candidate(tx, d, account).await;
+    }
     let application_ids = if protocol == 4 {
         automation::authorized_application_ids(tx, d, account).await?
     } else {
         Vec::new()
     };
-    let row:Option<Value>=sqlx::query_scalar("SELECT to_jsonb(p)||jsonb_build_object('device_id',r.device_id,'school_id',r.school_id,'task_id',r.task_id,'automation_manifest_id',r.automation_manifest_id) FROM mobile_delivery_run_progress p JOIN mobile_delivery_strategy_runs r ON r.id=p.id JOIN mobile_delivery_tasks t ON t.id=r.task_id WHERE (t.state='confirmed' OR EXISTS(SELECT 1 FROM mobile_delivery_run_items m JOIN delivery_usage u ON u.source_channel='mobile' AND u.source_id=m.item_id WHERE m.run_id=r.id AND u.state IN ('pending','unknown'))) AND (r.device_id=$1 OR r.strategy_snapshot->>'sender_account_id'=$2) AND EXISTS(SELECT 1 FROM mobile_delivery_run_items m WHERE m.run_id=r.id AND m.position>=p.current_position) AND ($3::int<>4 OR r.device_id<>$1 OR r.automation_manifest_id IS NULL OR p.current_position>1 OR EXISTS(SELECT 1 FROM mobile_delivery_run_items started JOIN mobile_execution_claims c ON c.item_id=started.item_id WHERE started.run_id=r.id) OR EXISTS(SELECT 1 FROM mobile_delivery_run_items m JOIN delivery_usage u ON u.source_channel='mobile' AND u.source_id=m.item_id WHERE m.run_id=r.id AND u.state IN ('pending','unknown')) OR EXISTS(SELECT 1 FROM automation_execution_manifests am WHERE am.id=r.automation_manifest_id AND am.body#>>'{resolution,binding,id}'=ANY($4::text[]))) ORDER BY p.confirmed_at NULLS LAST,r.id LIMIT 1").bind(d).bind(account.to_string()).bind(protocol as i32).bind(&application_ids).fetch_optional(&mut **tx).await?;
+    let row:Option<Value>=sqlx::query_scalar("SELECT to_jsonb(p)||jsonb_build_object('device_id',r.device_id,'school_id',r.school_id,'task_id',r.task_id,'automation_manifest_id',r.automation_manifest_id,'dispatch_plan_id',p.dispatch_plan_id) FROM mobile_delivery_run_progress p JOIN mobile_delivery_strategy_runs r ON r.id=p.id JOIN mobile_delivery_tasks t ON t.id=r.task_id WHERE (t.state='confirmed' OR EXISTS(SELECT 1 FROM mobile_delivery_run_items m JOIN delivery_usage u ON u.source_channel='mobile' AND u.source_id=m.item_id WHERE m.run_id=r.id AND u.state IN ('pending','unknown'))) AND (r.device_id=$1 OR r.strategy_snapshot->>'sender_account_id'=$2) AND EXISTS(SELECT 1 FROM mobile_delivery_run_items m WHERE m.run_id=r.id AND m.position>=p.current_position) AND ($3::int<>4 OR r.device_id<>$1 OR r.automation_manifest_id IS NULL OR p.current_position>1 OR EXISTS(SELECT 1 FROM mobile_delivery_run_items started JOIN mobile_execution_claims c ON c.item_id=started.item_id WHERE started.run_id=r.id) OR EXISTS(SELECT 1 FROM mobile_delivery_run_items m JOIN delivery_usage u ON u.source_channel='mobile' AND u.source_id=m.item_id WHERE m.run_id=r.id AND u.state IN ('pending','unknown')) OR EXISTS(SELECT 1 FROM automation_execution_manifests am WHERE am.id=r.automation_manifest_id AND am.body#>>'{resolution,binding,id}'=ANY($4::text[]))) ORDER BY p.confirmed_at NULLS LAST,r.id LIMIT 1").bind(d).bind(account.to_string()).bind(protocol as i32).bind(&application_ids).fetch_optional(&mut **tx).await?;
     let Some(row) = row else { return Ok(None) };
     let reason = if row["device_id"] != d.to_string() {
         Some("ordered_run_owns_account")
     } else if protocol
-        != if row["automation_manifest_id"].is_null() {
+        != if !row["dispatch_plan_id"].is_null() {
+            5
+        } else if row["automation_manifest_id"].is_null() {
             3
         } else {
             4

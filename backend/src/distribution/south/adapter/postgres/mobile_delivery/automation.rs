@@ -61,6 +61,9 @@ pub(super) async fn authorized_application_ids(
         .collect())
 }
 pub(super) async fn authorization_gate(tx: &mut Tx<'_>, device: Uuid, protocol: u32) -> Result<()> {
+    if protocol == 5 {
+        return dispatch::authorization_gate(tx, device).await;
+    }
     let state:Option<String>=sqlx::query_scalar("SELECT body->>'state' FROM device_execution_authorizations WHERE device_id=$1 ORDER BY local_revision DESC LIMIT 1").bind(device).fetch_optional(&mut **tx).await?;
     if let Some(state) = state {
         require(

@@ -12,6 +12,7 @@ pub struct Repository(pub PgPool);
 type Tx<'a> = Transaction<'a, Postgres>;
 mod automation;
 mod configured;
+mod dispatch;
 mod pairing;
 mod responsible;
 mod visible;
@@ -69,7 +70,8 @@ async fn device(tx: &mut Tx<'_>, p: &Principal) -> Result<(Uuid, i64)> {
         Principal::Device { id, generation }
         | Principal::DeviceV2 { id, generation }
         | Principal::DeviceV3 { id, generation }
-        | Principal::DeviceV4 { id, generation } => (id, generation),
+        | Principal::DeviceV4 { id, generation }
+        | Principal::DeviceV5 { id, generation } => (id, generation),
         _ => return Err(Error::Unauthorized),
     };
     sqlx::query("SELECT d.id FROM execution_devices d WHERE d.id=$1 AND d.enabled AND d.credential_generation=$2 AND EXISTS(SELECT 1 FROM device_credentials c WHERE c.device_id=d.id AND c.generation=$2 AND c.revoked_at IS NULL AND c.expires_at>clock_timestamp()) FOR SHARE OF d").bind(id).bind(generation).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("device_revoked"))?;
@@ -91,7 +93,8 @@ async fn event(
         Principal::Device { id, .. }
         | Principal::DeviceV2 { id, .. }
         | Principal::DeviceV3 { id, .. }
-        | Principal::DeviceV4 { id, .. } => (None, Some(*id)),
+        | Principal::DeviceV4 { id, .. }
+        | Principal::DeviceV5 { id, .. } => (None, Some(*id)),
         _ => (None, None),
     };
     sqlx::query("INSERT INTO mobile_delivery_events(id,school_id,task_id,actor_id,device_id,action,detail) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(Uuid::now_v7()).bind(s.school).bind(task).bind(actor).bind(dev).bind(action).bind(detail).execute(&mut **tx).await?;
@@ -243,6 +246,9 @@ async fn validate_snapshot(tx: &mut Tx<'_>, i: &Value, origin: &str) -> Result<(
                 current[k] = i["snapshot"][k].clone();
             }
         }
+        if dispatch::is_dispatch(i) {
+            current["dispatch_plan"] = i["snapshot"]["dispatch_plan"].clone();
+        }
         if i["snapshot"]["requirements"]["protocol_version"] == 4 {
             current["automation_manifest"] = i["snapshot"]["automation_manifest"].clone();
         }
@@ -377,7 +383,7 @@ async fn restrictions(tx: &mut Tx<'_>, i: &Value) -> Result<()> {
     let item = uid(i, "id")?;
     let digest = strv(i, "content_digest")?;
     let policy = if configured::is_configured(i) {
-        json!(configured::config(i)?.policy)
+        json!(configured::execution_policy(i)?)
     } else {
         sqlx::query_scalar::<_, Value>(
             "SELECT to_jsonb(p) FROM delivery_execution_defaults p WHERE id",
@@ -386,7 +392,12 @@ async fn restrictions(tx: &mut Tx<'_>, i: &Value) -> Result<()> {
         .await?
     };
     let scope_run: Option<Uuid> = if configured::is_configured(i) {
-        Some(uid(&i["snapshot"]["execution_target"], "run_id")?)
+        Some(
+            sqlx::query_scalar::<_, Uuid>("SELECT delivery_scope_owner($1)")
+                .bind(uid(&i["snapshot"]["execution_target"], "run_id")?)
+                .fetch_one(&mut **tx)
+                .await?,
+        )
     } else {
         None
     };
@@ -404,7 +415,7 @@ async fn restrictions(tx: &mut Tx<'_>, i: &Value) -> Result<()> {
     if duplicate {
         return Err(Error::Policy("duplicate_delivery"));
     }
-    let allocation:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM delivery_dedup_reservations r WHERE r.active AND r.item_id<>$1 AND r.content_digest=$2 AND ((r.school_id=$3 AND r.group_id<>$4) OR r.group_id=$4) AND NOT (r.group_id<>$4 AND $5::uuid IS NOT NULL AND EXISTS(SELECT 1 FROM mobile_delivery_run_items m WHERE m.item_id=r.item_id AND m.run_id=$5))) OR EXISTS(SELECT 1 FROM delivery_usage u WHERE u.school_id=$3 AND u.group_id<>$4 AND u.content_digest=$2 AND u.state<>'not_sent' AND NOT ($5::uuid IS NOT NULL AND u.source_channel='mobile' AND u.state='sent' AND EXISTS(SELECT 1 FROM mobile_delivery_run_items m WHERE m.item_id=u.source_id AND m.run_id=$5)))").bind(item).bind(digest).bind(s).bind(group).bind(scope_run).fetch_one(&mut **tx).await?;
+    let allocation:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM delivery_dedup_reservations r WHERE r.active AND r.item_id<>$1 AND r.content_digest=$2 AND ((r.school_id=$3 AND r.group_id<>$4) OR r.group_id=$4) AND NOT (r.group_id<>$4 AND $5::uuid IS NOT NULL AND EXISTS(SELECT 1 FROM mobile_delivery_run_items m WHERE m.item_id=r.item_id AND delivery_scope_owner(m.run_id)=$5))) OR EXISTS(SELECT 1 FROM delivery_usage u WHERE u.school_id=$3 AND u.group_id<>$4 AND u.content_digest=$2 AND u.state<>'not_sent' AND NOT ($5::uuid IS NOT NULL AND u.source_channel='mobile' AND u.state='sent' AND EXISTS(SELECT 1 FROM mobile_delivery_run_items m WHERE m.item_id=u.source_id AND delivery_scope_owner(m.run_id)=$5)))").bind(item).bind(digest).bind(s).bind(group).bind(scope_run).fetch_one(&mut **tx).await?;
     if allocation {
         return Err(Error::Policy("school_content_conflict"));
     }
@@ -514,6 +525,9 @@ async fn claim_response(tx: &mut Tx<'_>, c: &Value, i: &Value) -> Result<Value> 
     };
     let permit:Option<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',id,'invocation_id',invocation_id,'state',state,'execute_before',execute_before) FROM mobile_send_permits WHERE claim_id=$1").bind(uid(c,"id")?).fetch_optional(&mut **tx).await?;
     let mut response = json!({"id":c["id"],"claim_id":c["id"],"item_id":i["id"],"school_id":i["school_id"],"state":c["state"],"item_state":i["state"],"fence":c["fence"],"binding_revision":c["binding_revision"],"lease_until":c["lease_until"],"group_snapshot":i["snapshot"]["group"],"sender_binding":i["snapshot"]["sender"],"content":i["content"],"content_digest":i["content_digest"],"snapshot_digest":i["snapshot_digest"],"permit":permit,"may_execute":may_execute,"execution_target":i["snapshot"]["execution_target"],"requirements":req,"configuration":i["snapshot"]["configuration"],"sequence":i["snapshot"]["sequence"],"execution_revision":i["snapshot"]["execution_revision"],"server_time":db_now(tx).await?});
+    if req["protocol_version"] == 5 {
+        response["dispatch_plan"] = i["snapshot"]["dispatch_plan"].clone();
+    }
     if req["protocol_version"] == 4 {
         response["automation_manifest"] = i["snapshot"]["automation_manifest"].clone();
     }
@@ -602,9 +616,12 @@ async fn confirm_task(
     revision(&task, expected_revision)?;
     require(
         automation
-            || !list
-                .iter()
-                .any(|i| i["snapshot"]["requirements"]["protocol_version"] == 4),
+            || !list.iter().any(|i| {
+                matches!(
+                    i["snapshot"]["requirements"]["protocol_version"].as_u64(),
+                    Some(4 | 5)
+                )
+            }),
         "新版业务必须通过向导预览和确认",
     )?;
     let shared = list.iter().any(configured::is_configured);
@@ -655,6 +672,7 @@ impl Repository {
         origin: &str,
     ) -> Result<Value> {
         match c {
+            Command::Dispatch { input } => dispatch::apply(tx, p, s, *input, enabled, origin).await,
             Command::Automation { input } => {
                 automation::apply(tx, p, s, *input, enabled, origin).await
             }
@@ -709,7 +727,7 @@ impl Repository {
             } => {
                 let run = scoped_object(tx, s, "mobile_delivery_strategy_runs").await?;
                 require(
-                    run["automation_manifest_id"].is_null(),
+                    run["automation_manifest_id"].is_null() && !sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM automation_dispatch_plans WHERE run_id=$1)").bind(id(s)?).fetch_one(&mut **tx).await?,
                     "新版业务变更须停止未发送项并重新预览，保留成功及 unknown 记录",
                 )?;
                 configured::revise(
@@ -1223,6 +1241,7 @@ impl Repository {
                             | Principal::EnrollmentV2
                             | Principal::EnrollmentV3
                             | Principal::EnrollmentV4
+                            | Principal::EnrollmentV5
                     ),
                     "配对主体无效",
                 )?;
@@ -1231,7 +1250,7 @@ impl Repository {
                 }
                 let device_id = device_id.ok_or(Error::Policy("pairing_code_invalid"))?;
                 sqlx::query("UPDATE device_enrollments SET consumed_at=clock_timestamp() WHERE device_id=$1 AND code_hash=$2 AND consumed_at IS NULL AND expires_at>clock_timestamp() RETURNING id").bind(device_id).bind(hash(&code)).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("pairing_code_invalid"))?;
-                sqlx::query("UPDATE execution_devices SET client_instance_id=$2,execution_protocol_version=$3,supported_protocol_versions=CASE WHEN $3=4 THEN ARRAY[1,2,3,4] WHEN $3=3 THEN ARRAY[1,2,3] WHEN $3=2 THEN ARRAY[1,2] ELSE ARRAY[1] END WHERE id=$1")
+                sqlx::query("UPDATE execution_devices SET client_instance_id=$2,execution_protocol_version=$3,supported_protocol_versions=CASE WHEN $3=5 THEN ARRAY[1,2,3,4,5] WHEN $3=4 THEN ARRAY[1,2,3,4] WHEN $3=3 THEN ARRAY[1,2,3] WHEN $3=2 THEN ARRAY[1,2] ELSE ARRAY[1] END WHERE id=$1")
                     .bind(device_id)
                     .bind(text(&client_instance_id, 1, 200)?)
                     .bind(p.protocol() as i32)
@@ -1266,7 +1285,7 @@ impl Repository {
                     claim_object(tx, p, c).await?;
                 }
                 sqlx::query(
-                    "UPDATE execution_devices SET last_seen_at=clock_timestamp(),execution_protocol_version=$2,supported_protocol_versions=CASE WHEN $2=4 THEN ARRAY[1,2,3,4] WHEN $2=3 THEN ARRAY[1,2,3] WHEN $2=2 THEN ARRAY[1,2] ELSE ARRAY[1] END WHERE id=$1",
+                    "UPDATE execution_devices SET last_seen_at=clock_timestamp(),execution_protocol_version=$2,supported_protocol_versions=CASE WHEN $2=5 THEN ARRAY[1,2,3,4,5] WHEN $2=4 THEN ARRAY[1,2,3,4] WHEN $2=3 THEN ARRAY[1,2,3] WHEN $2=2 THEN ARRAY[1,2] ELSE ARRAY[1] END WHERE id=$1",
                 )
                 .bind(d)
                 .bind(p.protocol() as i32)
@@ -1281,7 +1300,9 @@ impl Repository {
                     return Err(Error::Unavailable);
                 }
                 let (d, generation) = device(tx, p).await?;
-                automation::validation_gate(tx, d).await?;
+                if p.protocol() != 5 {
+                    automation::validation_gate(tx, d).await?;
+                }
                 let b = binding(tx, d).await?;
                 if b["revision"] != binding_revision {
                     return Err(Error::Policy("binding_changed"));
@@ -1352,6 +1373,9 @@ None => sqlx::query_scalar("SELECT to_jsonb(i) FROM (SELECT DISTINCT ON (i.group
                 let (c, i) = ready_claim(tx, p, s, fence).await?;
                 if c["binding_revision"] != binding_revision {
                     return Err(Error::Policy("binding_changed"));
+                }
+                if p.protocol() == 5 {
+                    sqlx::query("UPDATE automation_dispatch_preparations SET expires_at=clock_timestamp()+interval '120 seconds' WHERE item_id=$1 AND fence=$2 AND credential_generation=$3 AND ready AND expires_at>clock_timestamp()").bind(uid(&i,"id")?).bind(fence).bind(c["generation"].as_i64().ok_or(Error::Conflict)?).execute(&mut **tx).await?;
                 }
                 sqlx::query("UPDATE mobile_execution_claims SET lease_until=clock_timestamp()+interval '120 seconds' WHERE id=$1").bind(id(s)?).execute(&mut **tx).await?;
                 {
@@ -1611,6 +1635,7 @@ impl Store for Repository {
                         matches!(
                             c,
                             Command::Automation { .. }
+                                | Command::Dispatch { .. }
                                 | Command::UpdateGroupProfile { .. }
                                 | Command::ReviewGroupProfile { .. }
                                 | Command::CreateStrategy { .. }
@@ -1633,16 +1658,21 @@ impl Store for Repository {
             Principal::Device { .. }
             | Principal::DeviceV2 { .. }
             | Principal::DeviceV3 { .. }
-            | Principal::DeviceV4 { .. } => {
+            | Principal::DeviceV4 { .. }
+            | Principal::DeviceV5 { .. } => {
                 device(&mut tx, &p).await?;
-                if let Some(id) = s.id.filter(|_| !matches!(c, Command::Automation { .. })) {
+                if let Some(id) = s
+                    .id
+                    .filter(|_| !matches!(c, Command::Automation { .. } | Command::Dispatch { .. }))
+                {
                     claim_object(&mut tx, &p, id).await?;
                 }
             }
             Principal::Enrollment
             | Principal::EnrollmentV2
             | Principal::EnrollmentV3
-            | Principal::EnrollmentV4 => {
+            | Principal::EnrollmentV4
+            | Principal::EnrollmentV5 => {
                 if !matches!(c, Command::Enroll { .. }) {
                     return Err(Error::Unauthorized);
                 }
@@ -1727,8 +1757,10 @@ impl Store for Repository {
                 | Principal::DeviceV2 { .. }
                 | Principal::DeviceV3 { .. }
                 | Principal::DeviceV4 { .. }
+                | Principal::DeviceV5 { .. }
         ) && s.id.is_some()
             && action != "automation"
+            && action != "dispatch"
         {
             let (_, item) = claim_object(&mut tx, &p, id(&s)?).await?;
             Some(uid(&item, "task_id")?)
@@ -1801,7 +1833,8 @@ impl Store for Repository {
             Principal::Device { .. }
             | Principal::DeviceV2 { .. }
             | Principal::DeviceV3 { .. }
-            | Principal::DeviceV4 { .. } => {
+            | Principal::DeviceV4 { .. }
+            | Principal::DeviceV5 { .. } => {
                 device(&mut tx, &p).await?;
             }
             _ => return Err(Error::Unauthorized),
@@ -1809,6 +1842,9 @@ impl Store for Repository {
         let result = match q {
             Query::ResponsibleActors => {
                 responsible::candidates(&mut tx, &p, &page, limit, offset).await?
+            }
+            Query::Dispatch(input) => {
+                dispatch::query(&mut tx, &p, &s, input, limit, offset).await?
             }
             Query::Automation(input) => {
                 automation::query(&mut tx, &p, &s, input, limit, offset).await?
@@ -1942,8 +1978,16 @@ impl Store for Repository {
                     Err(Error::Policy("binding_changed")) => None,
                     Err(e) => return Err(e),
                 };
-                let configuration_clients:Vec<Value>=sqlx::query_scalar("SELECT DISTINCT v.configuration->'rules'->'client' FROM client_rule_releases r JOIN client_rule_bundle_versions v ON v.id=r.configuration_id JOIN device_account_bindings b ON b.device_id=$1 JOIN sending_accounts a ON a.id=b.sender_account_id JOIN school_memberships m ON m.account_id=a.responsible_actor_id AND m.school_id=r.school_id AND m.role='admin' WHERE NOT r.revoked AND (r.active OR EXISTS(SELECT 1 FROM mobile_delivery_run_progress p JOIN mobile_delivery_strategy_runs sr ON sr.id=p.id JOIN mobile_delivery_tasks t ON t.id=sr.task_id WHERE p.configuration_release_id=r.id AND sr.device_id=$1 AND t.state='confirmed')) AND (r.device_id IS NULL OR r.device_id=$1)").bind(d).fetch_all(&mut *tx).await?;
-                json!({"configuration_clients":configuration_clients,"id":d,"credential_generation":g,"binding":binding,"server_time":db_now(&mut tx).await?,"minimum_protocol_version":p.protocol(),"supported_protocol_versions":if p.protocol()==4 {json!([1,2,3,4])}else{json!([1,2,3])}})
+                let configuration_clients: Vec<Value> = if p.protocol() == 5 {
+                    Vec::new()
+                } else {
+                    sqlx::query_scalar("SELECT DISTINCT v.configuration->'rules'->'client' FROM client_rule_releases r JOIN client_rule_bundle_versions v ON v.id=r.configuration_id JOIN device_account_bindings b ON b.device_id=$1 JOIN sending_accounts a ON a.id=b.sender_account_id JOIN school_memberships m ON m.account_id=a.responsible_actor_id AND m.school_id=r.school_id AND m.role='admin' WHERE NOT r.revoked AND (r.active OR EXISTS(SELECT 1 FROM mobile_delivery_run_progress p JOIN mobile_delivery_strategy_runs sr ON sr.id=p.id JOIN mobile_delivery_tasks t ON t.id=sr.task_id WHERE p.configuration_release_id=r.id AND sr.device_id=$1 AND t.state='confirmed')) AND (r.device_id IS NULL OR r.device_id=$1)").bind(d).fetch_all(&mut *tx).await?
+                };
+                if p.protocol() == 5 {
+                    json!({"id":d,"credential_generation":g,"binding":binding,"server_time":db_now(&mut tx).await?,"minimum_protocol_version":5,"supported_protocol_versions":[1,2,3,4,5]})
+                } else {
+                    json!({"configuration_clients":configuration_clients,"id":d,"credential_generation":g,"binding":binding,"server_time":db_now(&mut tx).await?,"minimum_protocol_version":p.protocol(),"supported_protocol_versions":if p.protocol()==4 {json!([1,2,3,4])}else{json!([1,2,3])}})
+                }
             }
             Query::Claim => {
                 let (c, i) = claim_object(&mut tx, &p, id(&s)?).await?;
