@@ -1,10 +1,12 @@
 import { createIdempotencyKey as key } from '../../../shared/idempotency-key'
 import { useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Alert, Button, Card, Space, Table, Tag, Select, InputNumber } from 'antd'
+import { Alert, Button, Card, Space, Table, Tag, Select, InputNumber, Form, Input } from 'antd'
 import { ActionDrawer } from '../../../shared/action-drawer'
 import { PaginationControls } from '../../../shared/pagination-controls'
 import { Editor } from '../../admin/workspace/editor'
+import { AccountRegistrationForm, EvidenceField, ProfileForm } from './account-registration'
+import { formatDate } from '../../../shared/format-date'
 import {
   api,
   type SendingAccount,
@@ -14,7 +16,6 @@ import {
   type ConfigurationRelease,
   type RunRevisionPreview,
 } from './api'
-const evidence = { name: 'evidence_ref', title: '人工核对依据' }
 const accountFields = [
   { name: 'company_name', title: '企业微信中可见企业名称' },
   { name: 'account_name', title: '企业微信中可见账号名称' },
@@ -44,27 +45,8 @@ const groupProfile = (v: Record<string, string>) => ({
 export function VisibleAccountCreate({ saved }: { saved: () => Promise<void> }) {
   return (
     <ActionDrawer title="登记企业微信界面账号">
-      <p>按手机可见信息登记，无需企业微信 ID。保存后需人工核对。</p>
-      <Editor
-        fields={[
-          ...accountFields,
-          { name: 'responsible_actor_id', title: '本系统责任人用户 ID' },
-          evidence,
-        ]}
-        onSave={async (v) => {
-          await api.createAccount(
-            {
-              client_kind: 'wecom',
-              identity_mode: 'ui_visible',
-              visible_profile: accountProfile(v),
-              responsible_actor_id: v.responsible_actor_id,
-              identity_evidence_ref: v.evidence_ref,
-            },
-            key(),
-          )
-          await saved()
-        }}
-      />
+      <p>按手机可见信息登记，无需企业微信 ID。保存后为待人工核对，登记依据不会自动完成核对。</p>
+      <AccountRegistrationForm saved={saved} />
     </ActionDrawer>
   )
 }
@@ -78,23 +60,19 @@ export function VisibleGroupCreate({
   return (
     <ActionDrawer title="登记企业微信界面群">
       <p>以完整群名查找，无需官方群目录或群 ID。同名无法区分时停止执行。</p>
-      <Editor
-        fields={[...groupFields, evidence]}
-        onSave={async (v) => {
-          await api.createGroup(
-            school,
-            {
-              name: v.name,
-              client_kind: 'wecom',
-              identity_mode: 'ui_visible',
-              visible_profile: groupProfile(v),
-              identity_evidence_ref: v.evidence_ref,
-            },
-            key(),
-          )
-          await saved()
-        }}
-      />
+      <p>登记依据只记录来源；保存后仍需人工核对本版本群资料。</p>
+      <ProfileForm onSave={async (v, requestKey) => {
+        await api.createGroup(school, {
+          name: v.name, client_kind: 'wecom', identity_mode: 'ui_visible',
+          visible_profile: groupProfile(v), identity_evidence_ref: v.evidence_ref,
+        }, requestKey)
+        await saved()
+      }}>
+        <Form.Item name="name" label="完整群名（不含成员数）" rules={[{ required: true, whitespace: true }]}><Input /></Form.Item>
+        <Form.Item name="group_type" label="群类型" rules={[{ required: true }]}><Select options={groupFields[1].options} /></Form.Item>
+        <Form.Item name="owner_name" label="可见群主名称"><Input /></Form.Item>
+        <EvidenceField registration />
+      </ProfileForm>
     </ActionDrawer>
   )
 }
@@ -113,18 +91,23 @@ export function VisibleAccountReview({
         {a.visible_profile?.company_name} · {a.visible_profile?.account_name}（资料版本{' '}
         {a.profile_revision}）
       </p>
-      <Editor
-        fields={[evidence]}
+      <p>登记依据：{a.registration_evidence_ref ?? '历史记录未独立保存登记依据'}</p>
+      {a.latest_profile_review && <p>
+        最近一次核对：{a.latest_profile_review.actor_name}（{a.latest_profile_review.actor_username}）
+        {' · '}{formatDate(a.latest_profile_review.reviewed_at)}
+        {' · '}资料版本 {a.latest_profile_review.profile_revision ?? '历史版本未记录'}
+        {' · '}依据：{a.latest_profile_review.evidence_ref}
+        {a.verification_state !== 'reviewed' && '（历史核对，不适用于当前待核对资料）'}
+      </p>}
+      {!a.latest_profile_review && a.verification_state === 'reviewed' && <p>历史核对依据：{a.identity_evidence_ref}（核对人及时间未完整记录）</p>}
+      <ProfileForm
+        key={`review-${a.revision}`}
         submit="已在手机核对本版本账号资料"
-        onSave={async (v) => {
-          await api.reviewAccountProfile(
-            a.id,
-            { expected_revision: a.revision, evidence_ref: v.evidence_ref },
-            key(),
-          )
+        onSave={async (v, requestKey) => {
+          await api.reviewAccountProfile(a.id, { expected_revision: a.revision, evidence_ref: v.evidence_ref }, requestKey)
           await saved()
         }}
-      />
+      ><EvidenceField /></ProfileForm>
       <Editor
         fields={[
           ...accountFields.map((f) => ({
@@ -165,19 +148,15 @@ export function VisibleGroupReview({
       <p>
         完整群名：{g.name} · 资料版本 {g.profile_revision}
       </p>
-      <Editor
-        fields={[evidence]}
+      <p>已保存依据（仅供参考）：{g.identity_evidence_ref}</p>
+      <ProfileForm
+        key={`review-${g.revision}`}
         submit="已在手机核对本版本群资料"
-        onSave={async (v) => {
-          await api.reviewGroupProfile(
-            school,
-            g.id,
-            { expected_revision: g.revision, evidence_ref: v.evidence_ref },
-            key(),
-          )
+        onSave={async (v, requestKey) => {
+          await api.reviewGroupProfile(school, g.id, { expected_revision: g.revision, evidence_ref: v.evidence_ref }, requestKey)
           await saved()
         }}
-      />
+      ><EvidenceField /></ProfileForm>
       <Editor
         fields={[
           ...groupFields.map((f) => ({
