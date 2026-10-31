@@ -318,3 +318,17 @@ test("ordered strategy preserves explicit order, interval and published release"
     JSON.parse(String(fetcher.mock.calls[0][1]?.body)).data.attributes,
   ).toEqual(input);
 });
+
+test("binding eligibility survives platform projection and a binding note can be omitted", async () => {
+  const { default: fixture } = await import("../fixtures/device-binding-eligibility.json");
+  const fetcher = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(response({ data: [{ type: "sending-accounts", id: "account", attributes: { device_binding_eligibility: fixture } }] }))
+    .mockResolvedValueOnce(response({ data: { type: "device-account-bindings", id: "phone", attributes: { device_id: "phone", sender_account_id: "account", revision: 2, identity_evidence_ref: "" } } }));
+  vi.stubGlobal("fetch", fetcher);
+  const accounts = await mobileDeliveryApi.accounts();
+  expect(accounts.items[0].device_binding_eligibility).toEqual(fixture);
+  const binding = await mobileDeliveryApi.bindDevice("phone", { expected_revision: 1, sender_account_id: "account" }, "binding-no-note");
+  expect(binding.identity_evidence_ref).toBe("");
+  const body = JSON.parse(fetcher.mock.calls[1][1]?.body as string);
+  expect(body.data.attributes).toEqual({ expected_revision: 1, sender_account_id: "account" });
+});
