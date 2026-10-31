@@ -15,6 +15,29 @@ mod configuration;
 pub use configuration::*;
 pub const ACCOUNT_INTERVAL_SECONDS: i64 = 1800;
 pub const CONTENT_INTERVAL_SECONDS: i64 = 600;
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ResponsibleSchool {
+    pub id: Uuid,
+    pub name: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ResponsibleActor {
+    pub id: Uuid,
+    pub username: String,
+    pub display_name: String,
+    pub active: bool,
+    pub eligible: bool,
+    pub schools: Vec<ResponsibleSchool>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AccountProfileReview {
+    pub actor_id: Uuid,
+    pub actor_name: String,
+    pub actor_username: String,
+    pub reviewed_at: chrono::DateTime<chrono::Utc>,
+    pub profile_revision: Option<i64>,
+    pub evidence_ref: String,
+}
 pub const CLAIM_SECONDS: i64 = 120;
 pub const PERMIT_SECONDS: i64 = 60;
 pub fn normalize(content: &str) -> Result<String> {
@@ -413,6 +436,7 @@ pub enum Query {
     Devices,
     Device,
     Accounts,
+    ResponsibleActors,
     AccountPolicy,
     Groups,
     GroupPolicy,
