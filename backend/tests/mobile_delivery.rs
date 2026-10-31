@@ -606,7 +606,7 @@ async fn actual_http_device_auth_contract_and_management_csrf_are_separate() {
     assert_eq!(response.status(), StatusCode::CREATED);
     let doc: Value =
         serde_json::from_slice(&to_bytes(response.into_body(), 8192).await.unwrap()).unwrap();
-    assert_eq!(doc["data"]["attributes"]["enabled"], false);
+    assert_eq!(doc["data"]["attributes"]["enabled"], true);
     assert!(doc["data"]["attributes"].get("device_token").is_none());
 }
 
@@ -1671,6 +1671,127 @@ fn enrollment_contract_accepts_code_only_and_keeps_optional_device_constraint() 
     assert_eq!(
         serde_json::to_value(command(legacy.clone())).unwrap(),
         legacy
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn new_device_pairs_without_enable_step_and_state_changes_keep_revision_and_revocation_guards()
+ {
+    let f = setup().await;
+    let created = f
+        .call(
+            None,
+            None,
+            json!({"operation":"create_device","name":"New phone"}),
+        )
+        .await;
+    assert_eq!(created["enabled"], true);
+    let d = uuid(&created, "id");
+    let code = f
+        .call(
+            None,
+            Some(d),
+            json!({"operation":"enrollment","expected_revision":1}),
+        )
+        .await;
+    let credentials = pair_code(
+        &f,
+        code["code"].as_str().unwrap(),
+        "new-install",
+        "new-pair",
+        5,
+        None,
+    )
+    .await
+    .unwrap();
+    let token = credentials["device_token"].as_str().unwrap();
+    let p = f.repo.authenticate(token).await.unwrap().for_protocol(5);
+    let session = f
+        .repo
+        .query(
+            p,
+            Scope {
+                school: None,
+                id: None,
+            },
+            Query::Session,
+            Page::default(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        session["binding"].is_null(),
+        "connection must not require account binding or environment"
+    );
+    let update = |revision, enabled| {
+        command(
+            json!({"operation":"update_device","expected_revision":revision,"enabled":enabled,"reason":"Administrator reviewed state"}),
+        )
+    };
+    let scope = Scope {
+        school: None,
+        id: Some(d),
+    };
+    let stale = f
+        .repo
+        .execute(
+            Principal::Actor(f.actor),
+            scope.clone(),
+            "stale-state",
+            update(1, false),
+            false,
+            "https://example.test",
+        )
+        .await;
+    assert!(matches!(stale, Err(Error::Policy("revision_conflict"))));
+    f.repo
+        .execute(
+            Principal::Actor(f.actor),
+            scope.clone(),
+            "disable-state",
+            update(2, false),
+            false,
+            "https://example.test",
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        f.repo.authenticate(token).await,
+        Err(Error::Unauthorized)
+    ));
+    f.repo
+        .execute(
+            Principal::Actor(f.actor),
+            scope.clone(),
+            "enable-state",
+            update(3, true),
+            false,
+            "https://example.test",
+        )
+        .await
+        .unwrap();
+    f.repo.authenticate(token).await.unwrap();
+    f.call(
+        None,
+        Some(d),
+        json!({"operation":"revoke","expected_revision":4,"reason":"Device lost"}),
+    )
+    .await;
+    f.repo
+        .execute(
+            Principal::Actor(f.actor),
+            scope.clone(),
+            "enable-after-revoke",
+            update(5, true),
+            false,
+            "https://example.test",
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(f.repo.authenticate(token).await, Err(Error::Unauthorized)),
+        "enabling must not revive revoked credentials"
     );
 }
 
