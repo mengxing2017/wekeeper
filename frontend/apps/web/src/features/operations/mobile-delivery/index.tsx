@@ -1,3 +1,4 @@
+import { DeviceControlPanel } from './device-control'
 import { DeviceAccountBinding } from './device-account-binding'
 import { createIdempotencyKey as key } from '../../../shared/idempotency-key'
 import { AccountRegistrationForm, ResponsibleActorDisplay } from './account-registration'
@@ -239,6 +240,7 @@ export function ExecutionDevices() {
                   </Space>
                   {!d.enabled && <Alert type="warning" title="此设备已停用"
                     description="可以配对，但连接验证和执行会被拒绝。请确认管理意图，需要恢复时在下方启用设备。" />}
+                  <DeviceControlPanel deviceId={d.id} />
                   <DeviceStateEditor key={`state-${d.id}`} device={d} refresh={refresh} />
                   <DeviceAccountBinding
                     key={`bind-${d.revision}`}

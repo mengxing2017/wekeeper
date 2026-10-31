@@ -1,6 +1,8 @@
 export { mobileDeliveryApi as api } from '@wekeeper/api-contract/mobile-delivery'
 export type {
   Device,
+  DeviceControlPresence,
+  DeviceControlKind,
   MobileTask,
   MobileItem,
   Preview,
