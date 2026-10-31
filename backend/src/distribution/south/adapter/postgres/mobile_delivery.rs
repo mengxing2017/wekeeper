@@ -777,7 +777,7 @@ impl Repository {
             Command::CreateDevice { name } => {
                 platform(tx, p).await?;
                 let d = Uuid::now_v7();
-                sqlx::query("INSERT INTO execution_devices(id,name) VALUES($1,$2)")
+                sqlx::query("INSERT INTO execution_devices(id,name,enabled) VALUES($1,$2,true)")
                     .bind(d)
                     .bind(text(&name, 1, 100)?)
                     .execute(&mut **tx)
@@ -1578,7 +1578,29 @@ None => sqlx::query_scalar("SELECT to_jsonb(i) FROM (SELECT DISTINCT ON (i.group
 impl Store for Repository {
     async fn authenticate(&self, token: &str) -> Result<Principal> {
         require(token.len() <= 256, "凭据过长")?;
-        let r=sqlx::query("SELECT c.device_id,c.generation FROM device_credentials c JOIN execution_devices d ON d.id=c.device_id WHERE c.token_hash=$1 AND c.revoked_at IS NULL AND c.expires_at>clock_timestamp() AND d.enabled AND d.credential_generation=c.generation").bind(hash(token)).fetch_optional(&self.0).await?.ok_or(Error::Unauthorized)?;
+        let row=sqlx::query("SELECT c.device_id,c.generation,c.revoked_at IS NOT NULL AS revoked,c.expires_at>clock_timestamp() AS unexpired,d.enabled,d.credential_generation=c.generation AS current_generation FROM device_credentials c JOIN execution_devices d ON d.id=c.device_id WHERE c.token_hash=$1").bind(hash(token)).fetch_optional(&self.0).await?;
+        let Some(r) = row else {
+            tracing::warn!(
+                reason = "credential_not_found",
+                "device authentication rejected"
+            );
+            return Err(Error::Unauthorized);
+        };
+        let reason = if r.get::<bool, _>("revoked") {
+            Some("credential_revoked")
+        } else if !r.get::<bool, _>("unexpired") {
+            Some("credential_expired")
+        } else if !r.get::<bool, _>("enabled") {
+            Some("device_disabled")
+        } else if !r.get::<bool, _>("current_generation") {
+            Some("credential_generation_changed")
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            tracing::warn!(reason, device_id = %r.get::<Uuid, _>("device_id"), "device authentication rejected");
+            return Err(Error::Unauthorized);
+        }
         let requests:i32=sqlx::query_scalar("INSERT INTO device_request_windows(device_id,requests,reset_at) VALUES($1,1,clock_timestamp()+interval '1 minute') ON CONFLICT(device_id) DO UPDATE SET requests=CASE WHEN device_request_windows.reset_at<=clock_timestamp() THEN 1 ELSE device_request_windows.requests+1 END,reset_at=CASE WHEN device_request_windows.reset_at<=clock_timestamp() THEN clock_timestamp()+interval '1 minute' ELSE device_request_windows.reset_at END RETURNING requests").bind(r.get::<Uuid,_>("device_id")).fetch_one(&self.0).await?;
         if requests > 120 {
             return Err(Error::Policy("device_request_limit"));
