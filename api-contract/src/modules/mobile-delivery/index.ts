@@ -132,7 +132,13 @@ export interface Device extends Row {
   last_seen_at: string | null;
   created_at: string;
 }
+export interface DeviceBindingEligibility {
+  eligible: boolean;
+  reason: "account_disabled" | "school_authorization_required" | null;
+}
 export interface SendingAccount extends Row {
+  /** Platform-only projection; checked again when binding. */
+  device_binding_eligibility?: DeviceBindingEligibility;
   /** Platform list/detail projection; absent from device identity snapshots. */
   responsible_actor?: ResponsibleActor;
   registration_evidence_ref?: string | null;
@@ -583,7 +589,8 @@ export const mobileDeliveryApi = {
     input: {
       expected_revision: number;
       sender_account_id: UUID;
-      identity_evidence_ref: string;
+      /** Optional binding note, not consumed by the executor as identity evidence. */
+      identity_evidence_ref?: string;
     },
     key: string,
   ) =>
