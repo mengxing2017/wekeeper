@@ -1,3 +1,4 @@
+import { DeviceAccountBinding } from './device-account-binding'
 import { createIdempotencyKey as key } from '../../../shared/idempotency-key'
 import { AccountRegistrationForm, ResponsibleActorDisplay } from './account-registration'
 import { DeviceStateEditor } from './device-state'
@@ -239,37 +240,11 @@ export function ExecutionDevices() {
                   {!d.enabled && <Alert type="warning" title="此设备已停用"
                     description="可以配对，但连接验证和执行会被拒绝。请确认管理意图，需要恢复时在下方启用设备。" />}
                   <DeviceStateEditor key={`state-${d.id}`} device={d} refresh={refresh} />
-                  <Editor
+                  <DeviceAccountBinding
                     key={`bind-${d.revision}`}
-                    submit="绑定发送账号"
-                    fields={[
-                      {
-                        name: 'sender_account_id',
-                        title: '已核对发送账号',
-                        options:
-                          accounts.data?.items
-                            .filter((a) => a.enabled)
-                            .map((a) => ({
-                              value: a.id,
-                              label: a.visible_profile
-                                ? `${a.visible_profile.company_name} · ${a.visible_profile.account_name}`
-                                : a.id,
-                            })) ?? [],
-                      },
-                      { name: 'identity_evidence_ref', title: '手机登录身份核验依据' },
-                    ]}
-                    onSave={async (v) => {
-                      await api.bindDevice(
-                        d.id,
-                        {
-                          expected_revision: d.revision,
-                          sender_account_id: v.sender_account_id,
-                          identity_evidence_ref: v.identity_evidence_ref,
-                        },
-                        key(),
-                      )
-                      await refresh()
-                    }}
+                    device={d}
+                    accounts={accounts.data?.items ?? []}
+                    refresh={refresh}
                   />
                   <Editor
                     key={`revoke-${d.revision}`}
