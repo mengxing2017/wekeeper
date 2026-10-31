@@ -253,6 +253,35 @@ async fn create(
 }
 device_write!(environment, "device-environments", "report_environment");
 device_write!(readiness, "execution-readiness", "prepare_execution");
+device_write!(
+    authorization_receipt,
+    "execution-authorizations",
+    "record_authorization"
+);
+device_item_write!(
+    standing_accept,
+    "device-validations",
+    "accept_standing_validation"
+);
+device_item_write!(decline, "device-validations", "reject_validation");
+async fn authorization_context(
+    State(a): State<Application>,
+    DevicePrincipal(p): DevicePrincipal,
+) -> Result<Response> {
+    let v = a
+        .mobile_delivery()
+        .query(
+            p,
+            Scope {
+                school: None,
+                id: None,
+            },
+            Read::Automation(AutomationQuery::AuthorizationContext),
+            Page::default(),
+        )
+        .await?;
+    Ok(response("execution-authorizations", v, None, false))
+}
 device_item_write!(accept, "device-validations", "accept_validation");
 device_item_write!(event, "device-validations", "report_validation");
 device_item_write!(
@@ -359,6 +388,22 @@ pub(super) fn router() -> Router<Application> {
         .route(
             "/api/v4/device-execution/app-binding-resolutions/{id}",
             get(resolution),
+        )
+        .route(
+            "/api/v4/device-execution/execution-authorization-context",
+            get(authorization_context),
+        )
+        .route(
+            "/api/v4/device-execution/execution-authorizations",
+            post(authorization_receipt),
+        )
+        .route(
+            "/api/v4/device-execution/validation-jobs/{id}/standing-acceptances",
+            post(standing_accept),
+        )
+        .route(
+            "/api/v4/device-execution/validation-jobs/{id}/rejections",
+            post(decline),
         )
         .route("/api/v4/device-execution/validation-jobs", get(jobs))
         .route(
