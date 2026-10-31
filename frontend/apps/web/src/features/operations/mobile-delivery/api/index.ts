@@ -8,6 +8,7 @@ export type {
   AccountProfile,
   GroupProfile,
   SendingAccount,
+  ResponsibleActor,
   DeliveryGroup,
   DeliveryStrategy,
   StrategyInput,
