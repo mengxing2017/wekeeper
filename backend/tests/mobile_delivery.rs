@@ -2515,3 +2515,75 @@ async fn dispatch_v5_queues_and_prepares_without_environment_tables() {
         0
     );
 }
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL"]
+async fn binding_eligibility_matches_projection_and_optional_notes_do_not_authorize() {
+    let f = setup().await;
+    let scope = Scope {
+        school: None,
+        id: Some(f.device),
+    };
+    let revision: i64 = sqlx::query_scalar("SELECT revision FROM execution_devices WHERE id=$1")
+        .bind(f.device)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    let bound = f.call(None, Some(f.device), json!({"operation":"bind_device","expected_revision":revision,"sender_account_id":f.sender})).await;
+    assert_eq!(bound["identity_evidence_ref"], "");
+    let revision = bound["revision"].as_i64().unwrap();
+    for (mutation, policy) in [
+        (
+            "UPDATE sending_accounts SET enabled=false",
+            "binding_account_disabled",
+        ),
+        (
+            "UPDATE sending_accounts SET enabled=true; UPDATE schools SET active=false",
+            "binding_school_authorization_required",
+        ),
+        (
+            "UPDATE schools SET active=true; UPDATE school_memberships SET role='operator'",
+            "binding_school_authorization_required",
+        ),
+        (
+            "UPDATE school_memberships SET role='admin'; DELETE FROM sender_group_bindings",
+            "binding_school_authorization_required",
+        ),
+    ] {
+        sqlx::raw_sql(mutation).execute(&f.pool).await.unwrap();
+        let accounts = f
+            .repo
+            .query(
+                Principal::Actor(f.actor),
+                Scope {
+                    school: None,
+                    id: None,
+                },
+                Query::Accounts,
+                Page::default(),
+            )
+            .await
+            .unwrap();
+        let account = accounts
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["id"] == f.sender.to_string())
+            .unwrap();
+        assert_eq!(account["device_binding_eligibility"]["eligible"], false);
+        let reason = account["device_binding_eligibility"]["reason"]
+            .as_str()
+            .unwrap();
+        assert_eq!(format!("binding_{reason}"), policy);
+        for note in ["", "我已经核对了真实身份"] {
+            let result = f.repo.execute(Principal::Actor(f.actor), scope.clone(), &Uuid::new_v4().to_string(), command(json!({"operation":"bind_device","expected_revision":revision,"sender_account_id":f.sender,"identity_evidence_ref":note})), true, "https://example.test").await;
+            assert!(matches!(result, Err(Error::Policy(code)) if code == policy));
+        }
+        let actual: i64 = sqlx::query_scalar("SELECT revision FROM execution_devices WHERE id=$1")
+            .bind(f.device)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+        assert_eq!(actual, revision);
+    }
+}

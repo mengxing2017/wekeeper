@@ -2,7 +2,7 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 use sqlx::postgres::PgPoolOptions;
 use tower::ServiceExt;
 use wekeeper_api::{bootstrap, http};
@@ -889,5 +889,56 @@ async fn dispatch_v5_routes_are_registered_and_require_dedicated_authorization()
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
+    }
+}
+
+#[test]
+fn binding_contract_accepts_missing_note_and_serializes_eligibility() {
+    use wekeeper_api::distribution::domain::mobile_delivery::{Command, DeviceBindingEligibility};
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/device-binding-eligibility.json"
+    ))
+    .unwrap();
+    let eligibility: DeviceBindingEligibility = serde_json::from_value(fixture.clone()).unwrap();
+    assert!(!eligibility.eligible);
+    assert_eq!(serde_json::to_value(eligibility).unwrap(), fixture);
+    let command: Command = serde_json::from_value(json!({"operation":"bind_device","expected_revision":1,"sender_account_id":"00000000-0000-4000-8000-000000000001"})).unwrap();
+    assert!(
+        matches!(command, Command::BindDevice { identity_evidence_ref, .. } if identity_evidence_ref.is_empty())
+    );
+}
+
+#[tokio::test]
+async fn binding_errors_identify_the_actual_missing_requirement() {
+    use axum::response::IntoResponse;
+    use wekeeper_api::business::Error;
+    for (code, status, message) in [
+        (
+            "binding_platform_permission_required",
+            StatusCode::FORBIDDEN,
+            "平台管理员权限",
+        ),
+        (
+            "binding_school_authorization_required",
+            StatusCode::CONFLICT,
+            "目标群与账号授权",
+        ),
+        (
+            "binding_account_disabled",
+            StatusCode::CONFLICT,
+            "发送账号已停用",
+        ),
+    ] {
+        let response = Error::Policy(code).into_response();
+        assert_eq!(response.status(), status);
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["errors"][0]["code"], code);
+        assert!(
+            body["errors"][0]["detail"]
+                .as_str()
+                .unwrap()
+                .contains(message)
+        );
     }
 }
