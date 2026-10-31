@@ -991,6 +991,355 @@ async fn visible_fixture() -> Fixture {
     f.device_call(None,json!({"operation":"heartbeat","binding_revision":f.binding_revision,"sender_account_id":f.sender,"client_version":"client1","script_version":"script1","baseline_version":"base1","permissions_ready":true,"current_claim_id":null})).await;
     f
 }
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn responsible_actors_filter_search_page_and_recheck_registration() {
+    let f = setup().await;
+    let inactive_school = Uuid::new_v4();
+    let other_school = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO schools(id,name,active) VALUES($1,'Inactive',false),($2,'Other',true)",
+    )
+    .bind(inactive_school)
+    .bind(other_school)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    let mut users = Vec::new();
+    for (name, active, platform_admin, school, role) in [
+        ("candidate_one", true, false, f.school, "admin"),
+        ("candidate_two", true, false, other_school, "admin"),
+        ("candidate_disabled", false, false, f.school, "admin"),
+        ("candidate_operator", true, false, f.school, "operator"),
+        ("candidate_revoked", true, false, f.school, "revoked"),
+        (
+            "candidate_inactive_school",
+            true,
+            false,
+            inactive_school,
+            "admin",
+        ),
+        ("candidate_platform_only", true, true, f.school, "member"),
+    ] {
+        let id = Uuid::new_v4();
+        sqlx::query("INSERT INTO accounts(id,username,display_name,active,platform_admin) VALUES($1,$2,'同名责任人',$3,$4)")
+            .bind(id).bind(name).bind(active).bind(platform_admin).execute(&f.pool).await.unwrap();
+        sqlx::query("INSERT INTO school_memberships VALUES($1,$2,$3)")
+            .bind(school)
+            .bind(id)
+            .bind(role)
+            .execute(&f.pool)
+            .await
+            .unwrap();
+        users.push(id);
+    }
+    let scope = Scope {
+        school: None,
+        id: None,
+    };
+    let candidates = f
+        .repo
+        .query(
+            Principal::Actor(f.actor),
+            scope.clone(),
+            Query::ResponsibleActors,
+            Page {
+                search: Some("CaNdIdAtE".into()),
+                page_size: Some(1),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    // Store fetches a sentinel row; HTTP collection uses it for has_more.
+    assert_eq!(candidates.as_array().unwrap().len(), 2);
+    let first: ResponsibleActor = serde_json::from_value(candidates[0].clone()).unwrap();
+    let second: ResponsibleActor = serde_json::from_value(candidates[1].clone()).unwrap();
+    assert_eq!(first.id, users[0]);
+    assert_eq!(second.id, users[1]);
+    assert!(first.active && first.eligible);
+    assert_eq!(second.schools[0].id, other_school);
+    let page_two = f
+        .repo
+        .query(
+            Principal::Actor(f.actor),
+            scope.clone(),
+            Query::ResponsibleActors,
+            Page {
+                search: Some("candidate".into()),
+                page: Some(2),
+                page_size: Some(1),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(page_two, json!([second]));
+    for search in ["%", "_", "不存在"] {
+        let found = f
+            .repo
+            .query(
+                Principal::Actor(f.actor),
+                scope.clone(),
+                Query::ResponsibleActors,
+                Page {
+                    search: Some(search.into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        // '_' is literal: every candidate login contains it. '%' is not a wildcard.
+        assert_eq!(
+            found.as_array().unwrap().len(),
+            if search == "_" { 2 } else { 0 }
+        );
+    }
+    let by_name = f
+        .repo
+        .query(
+            Principal::Actor(f.actor),
+            scope.clone(),
+            Query::ResponsibleActors,
+            Page {
+                search: Some("同名责任人".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(by_name.as_array().unwrap().len(), 2);
+    assert!(matches!(
+        f.repo
+            .query(
+                Principal::Actor(users[0]),
+                scope.clone(),
+                Query::ResponsibleActors,
+                Page::default()
+            )
+            .await,
+        Err(Error::Forbidden)
+    ));
+    assert!(
+        f.repo
+            .query(
+                Principal::Actor(f.actor),
+                scope.clone(),
+                Query::ResponsibleActors,
+                Page {
+                    search: Some("中".repeat(101)),
+                    ..Default::default()
+                }
+            )
+            .await
+            .is_err()
+    );
+
+    sqlx::query("UPDATE school_memberships SET role='revoked' WHERE account_id=$1")
+        .bind(users[0])
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    for actor in [
+        users[0],
+        users[2],
+        users[3],
+        users[4],
+        users[5],
+        users[6],
+        Uuid::new_v4(),
+    ] {
+        for visible in [false, true] {
+            let input = if visible {
+                json!({"operation":"create_account","client_kind":"wecom","identity_mode":"ui_visible","visible_profile":{"company_name":"测试企业","account_name":"不可用"},"responsible_actor_id":actor,"identity_evidence_ref":"phone:account"})
+            } else {
+                json!({"operation":"create_account","client_kind":"wechat","identity_namespace":"test","external_key":"not-eligible","responsible_actor_id":actor,"identity_evidence_ref":"phone:account"})
+            };
+            let result = f
+                .repo
+                .execute(
+                    Principal::Actor(f.actor),
+                    scope.clone(),
+                    &Uuid::new_v4().to_string(),
+                    command(input),
+                    true,
+                    "https://example.test",
+                )
+                .await;
+            assert!(matches!(result, Err(Error::Invalid(_))), "{result:?}");
+        }
+    }
+    // A valid B-school administrator is registrable at platform level, but cannot
+    // authorize this account for A-school groups merely because the creator is platform admin.
+    let created = f.call(None, None, json!({"operation":"create_account","client_kind":"wecom","identity_mode":"ui_visible","visible_profile":{"company_name":"测试企业","account_name":"Other school account"},"responsible_actor_id":users[1],"identity_evidence_ref":"B校手机账号登记"})).await;
+    assert_eq!(created["verification_state"], "pending");
+    let group = f.call(Some(f.school), None, json!({"operation":"create_group","name":"A校群","client_kind":"wecom","identity_mode":"ui_visible","visible_profile":{"group_type":"external"},"identity_evidence_ref":"A校群登记"})).await;
+    let result = f.repo.execute(Principal::Actor(f.actor), Scope { school: Some(f.school), id: Some(uuid(&group,"id")) }, "cross-school", command(json!({"operation":"bind_group","sender_account_id":created["id"],"mapping_revision":1,"reason":"cross-school denied"})), true, "https://example.test").await;
+    assert!(matches!(result, Err(Error::Forbidden)));
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn account_projection_keeps_registration_review_actor_and_stale_history() {
+    let f = setup().await;
+    let responsible = Uuid::new_v4();
+    sqlx::query("INSERT INTO accounts(id,username,display_name) VALUES($1,'responsible','责任人')")
+        .bind(responsible)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO school_memberships VALUES($1,$2,'admin')")
+        .bind(f.school)
+        .bind(responsible)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let input = command(
+        json!({"operation":"create_account","client_kind":"wecom","identity_mode":"ui_visible","visible_profile":{"company_name":"测试企业","account_name":"实际账号"},"responsible_actor_id":responsible,"identity_evidence_ref":"登记时手机账号页面"}),
+    );
+    let scope = Scope {
+        school: None,
+        id: None,
+    };
+    let created = f
+        .repo
+        .execute(
+            Principal::Actor(f.actor),
+            scope.clone(),
+            "create-stable",
+            input.clone(),
+            true,
+            "https://example.test",
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        created,
+        f.repo
+            .execute(
+                Principal::Actor(f.actor),
+                scope,
+                "create-stable",
+                input,
+                true,
+                "https://example.test"
+            )
+            .await
+            .unwrap()
+    );
+    let scope = Scope {
+        school: None,
+        id: Some(uuid(&created, "id")),
+    };
+    for evidence in [" ".into(), "字".repeat(501)] {
+        assert!(f.repo.execute(Principal::Actor(f.actor), scope.clone(), &Uuid::new_v4().to_string(), command(json!({"operation":"review_account_profile","expected_revision":1,"evidence_ref":evidence})), true, "https://example.test").await.is_err());
+    }
+    let review = command(
+        json!({"operation":"review_account_profile","expected_revision":1,"evidence_ref":"本次现场核对企业及账号资料"}),
+    );
+    let reviewed = f
+        .repo
+        .execute(
+            Principal::Actor(f.actor),
+            scope.clone(),
+            "review-stable",
+            review.clone(),
+            true,
+            "https://example.test",
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        reviewed,
+        f.repo
+            .execute(
+                Principal::Actor(f.actor),
+                scope.clone(),
+                "review-stable",
+                review,
+                true,
+                "https://example.test"
+            )
+            .await
+            .unwrap()
+    );
+    let projection = f
+        .repo
+        .query(
+            Principal::Actor(f.actor),
+            scope.clone(),
+            Query::AccountPolicy,
+            Page::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        projection["registration_evidence_ref"],
+        "登记时手机账号页面"
+    );
+    assert_eq!(
+        projection["latest_profile_review"]["actor_id"],
+        json!(f.actor)
+    );
+    assert_ne!(
+        projection["latest_profile_review"]["actor_id"],
+        json!(responsible)
+    );
+    assert_eq!(projection["latest_profile_review"]["profile_revision"], 1);
+    assert!(projection["latest_profile_review"]["reviewed_at"].is_string());
+    assert_eq!(projection["responsible_actor"]["username"], "responsible");
+    f.call(None, scope.id, json!({"operation":"update_account_profile","expected_revision":2,"visible_profile":{"company_name":"测试企业","account_name":"更新账号"},"reason":"实际资料变化"})).await;
+    let stale = f.repo.execute(Principal::Actor(f.actor), scope.clone(), "stale-review", command(json!({"operation":"review_account_profile","expected_revision":2,"evidence_ref":"旧页提交"})), true, "https://example.test").await;
+    assert!(matches!(stale, Err(Error::Policy("revision_conflict"))));
+    sqlx::query("UPDATE accounts SET active=false WHERE id=$1")
+        .bind(responsible)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let projection = f
+        .repo
+        .query(
+            Principal::Actor(f.actor),
+            scope.clone(),
+            Query::AccountPolicy,
+            Page::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(projection["verification_state"], "pending");
+    assert_eq!(projection["profile_revision"], 2);
+    assert_eq!(projection["responsible_actor"]["eligible"], false);
+    assert_eq!(projection["responsible_actor"]["display_name"], "责任人");
+    assert_eq!(projection["latest_profile_review"]["profile_revision"], 1);
+    assert_eq!(
+        projection["registration_evidence_ref"],
+        "登记时手机账号页面"
+    );
+    let list = f
+        .repo
+        .query(
+            Principal::Actor(f.actor),
+            Scope {
+                school: None,
+                id: None,
+            },
+            Query::Accounts,
+            Page::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        list.as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["id"] == created["id"])
+            .unwrap(),
+        &projection
+    );
+    let events: i64 = sqlx::query_scalar("SELECT count(*) FROM mobile_delivery_events WHERE action='review_account_profile' AND detail->>'scope_id'=$1").bind(scope.id.unwrap().to_string()).fetch_one(&f.pool).await.unwrap();
+    assert_eq!(events, 1);
+}
 async fn visible_run(f: &Fixture) -> (Value, Value) {
     let strategy=f.call(Some(f.school),None,json!({"operation":"create_strategy","name":"指定群测试","sender_account_id":f.sender,"group_id":f.group,"device_id":f.device,"text_content":"测试","trigger_mode":"manual_once","enabled":true})).await;
     let scope = Scope {
