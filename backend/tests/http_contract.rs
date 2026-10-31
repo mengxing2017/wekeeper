@@ -997,3 +997,35 @@ fn control_presence_matches_shared_contract_and_policy() {
     assert!(presence.policy.valid());
     assert_eq!(serde_json::to_value(presence).unwrap(), fixture);
 }
+
+#[tokio::test]
+async fn school_execution_resources_have_a_minimal_contract_and_require_identity() {
+    use wekeeper_api::distribution::domain::mobile_delivery::SchoolExecutionResource;
+    let resource = SchoolExecutionResource {
+        id: "00000000-0000-4000-8000-000000000001".parse().unwrap(),
+        device_id: "00000000-0000-4000-8000-000000000002".parse().unwrap(),
+        device_name: "业务手机".into(),
+        sender_account_id: "00000000-0000-4000-8000-000000000003".parse().unwrap(),
+        account_name: "发送人员".into(),
+        company_name: "示例企业".into(),
+        control_state: wekeeper_api::distribution::domain::device_control::PresenceState::Offline,
+        last_control_heartbeat_at: None,
+        available: true,
+        block_reason: None,
+    };
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/school-execution-resource.json"
+    ))
+    .unwrap();
+    assert_eq!(serde_json::to_value(resource).unwrap(), fixture);
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/schools/00000000-0000-4000-8000-000000000001/execution-resources")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}

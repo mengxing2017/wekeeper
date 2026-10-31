@@ -2408,6 +2408,88 @@ async fn dispatch_v5_queues_and_prepares_without_environment_tables() {
     }
     let release=f.call(None,Some(uuid(&flow,"id")),json!({"operation":"dispatch","input":{"action":"publish_flow","school_id":f.school,"validation_id":inspected["id"]}})).await;
     let assignments=f.call(Some(f.school),None,json!({"operation":"dispatch","input":{"action":"assign","device_ids":[f.device],"group_id":null,"release_id":release["id"]}})).await;
+    // School-use visibility requires an explicit assignment and a current binding.
+    let operator = Uuid::new_v4();
+    sqlx::query("INSERT INTO accounts(id,username,display_name) VALUES($1,$2,'Operator')")
+        .bind(operator)
+        .bind(format!("operator-{operator}"))
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO school_memberships VALUES($1,$2,'operator')")
+        .bind(f.school)
+        .bind(operator)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    async fn resources(f: &Fixture, actor: Uuid, school: Uuid) -> Result<Value, Error> {
+        f.repo
+            .query(
+                Principal::Actor(actor),
+                Scope {
+                    school: Some(school),
+                    id: None,
+                },
+                Query::Dispatch(DispatchQuery::Resources),
+                Page::default(),
+            )
+            .await
+    }
+    let visible = resources(&f, operator, f.school).await.unwrap();
+    assert_eq!(visible.as_array().unwrap().len(), 1);
+    assert_eq!(visible[0]["device_id"], json!(f.device));
+    assert!(visible[0].get("credential_generation").is_none());
+    assert!(visible[0].get("responsible_actor_id").is_none());
+    assert!(matches!(
+        resources(&f, operator, Uuid::new_v4()).await,
+        Err(Error::Forbidden)
+    ));
+    sqlx::query("UPDATE device_account_bindings SET revision=revision+1 WHERE device_id=$1")
+        .bind(f.device)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    assert!(
+        resources(&f, operator, f.school)
+            .await
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    sqlx::query("UPDATE device_account_bindings SET revision=revision-1 WHERE device_id=$1")
+        .bind(f.device)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE automation_execution_assignments SET enabled=false WHERE school_id=$1")
+        .bind(f.school)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    assert!(
+        resources(&f, operator, f.school)
+            .await
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    sqlx::query("UPDATE automation_execution_assignments SET enabled=true WHERE school_id=$1")
+        .bind(f.school)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE school_memberships SET role='member' WHERE school_id=$1 AND account_id=$2")
+        .bind(f.school)
+        .bind(operator)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    assert!(matches!(
+        resources(&f, operator, f.school).await,
+        Err(Error::Forbidden)
+    ));
     // Still offline and registered as an old client: queueing must not require protocol/environment readiness.
     sqlx::query(
         "UPDATE execution_devices SET execution_protocol_version=2,last_seen_at=NULL WHERE id=$1",
