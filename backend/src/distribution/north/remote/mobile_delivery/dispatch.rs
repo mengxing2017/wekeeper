@@ -279,6 +279,7 @@ school_write!(enable, "automation-dispatch-settings", "set_enabled");
 school_item_write!(confirm, "automation-dispatch-batches", "confirm");
 school_item_write!(control, "automation-dispatch-batches", "control_batch");
 school_item_write!(rebuild, "automation-dispatch-batches", "rebuild_remaining");
+device_read!(setup_status, "device-setup-status", SetupStatus);
 device_read!(inbox, "automation-task-deliveries", Inbox);
 device_read!(
     authorization_context,
@@ -414,6 +415,7 @@ pub(super) fn router() -> Router<Application> {
             "/api/v1/schools/{school}/automation-execution-failures",
             get(school_failures),
         )
+        .route("/api/v5/device-execution/setup-status", get(setup_status))
         .route("/api/v5/device-execution/task-inbox", get(inbox))
         .route(
             "/api/v5/device-execution/execution-authorization-context",

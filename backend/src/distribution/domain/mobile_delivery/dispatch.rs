@@ -260,6 +260,27 @@ pub struct BusinessAuthorizationReceipt {
     pub granted_at: chrono::DateTime<chrono::Utc>,
     pub revoked_at: Option<chrono::DateTime<chrono::Utc>>,
     pub scope: BusinessApplicationScope,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding_revision: Option<i64>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DeviceSetupSchool {
+    pub id: Uuid,
+    pub name: String,
+    pub dispatch_enabled: bool,
+    pub assignment_ready: bool,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DeviceSetupStatus {
+    pub id: Uuid,
+    pub protocol_version: u32,
+    pub checked_at: chrono::DateTime<chrono::Utc>,
+    pub device_name: String,
+    pub account_name: Option<String>,
+    pub sender_account_id: Option<Uuid>,
+    pub binding_revision: Option<i64>,
+    pub scope_source: String,
+    pub schools: Vec<DeviceSetupSchool>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -386,6 +407,7 @@ pub enum DispatchQuery {
     Batch,
     Inbox,
     AuthorizationContext,
+    SetupStatus,
     Failures,
     Validations,
     DeviceValidations,
@@ -394,6 +416,30 @@ pub enum DispatchQuery {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn unbound_device_setup_serialization_is_explicit_and_read_only() {
+        let value: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../../api-contract/fixtures/device-setup-status-v5.json"
+        ))
+        .unwrap();
+        let status: DeviceSetupStatus = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(status.protocol_version, 5);
+        assert!(status.sender_account_id.is_none() && status.schools.is_empty());
+        assert_eq!(serde_json::to_value(status).unwrap(), value);
+    }
+    #[test]
+    fn business_receipt_binding_revision_remains_backward_compatible() {
+        let value = serde_json::json!({"authorization_id":Uuid::nil(),"revision":1,"state":"effective","granted_at":"2026-10-31T00:00:00Z","revoked_at":null,"scope":{"format":"business_application_scope/2","origin":"https://keeper.test","device_id":Uuid::nil(),"sender_account_id":Uuid::nil(),"schools":[Uuid::nil()],"app_key":"wecom","capability":"group_text"}});
+        let old: BusinessAuthorizationReceipt = serde_json::from_value(value.clone()).unwrap();
+        assert!(old.binding_revision.is_none());
+        assert_eq!(serde_json::to_value(old).unwrap(), value);
+        let mut current = value;
+        current["binding_revision"] = serde_json::json!(7);
+        let receipt: BusinessAuthorizationReceipt =
+            serde_json::from_value(current.clone()).unwrap();
+        assert_eq!(receipt.binding_revision, Some(7));
+        assert_eq!(serde_json::to_value(receipt).unwrap(), current);
+    }
     fn fixture() -> serde_json::Value {
         serde_json::from_str(include_str!(
             "../../../../../api-contract/fixtures/automation-dispatch-flow-v5.json"

@@ -1116,13 +1116,11 @@ pub(super) async fn apply(
         }
         DispatchCommand::Authorization { receipt: r } => {
             let (d, _) = device(tx, p).await?;
-            let b = binding(tx, d).await?;
             let scope = &r.scope;
             require(
                 scope.format == "business_application_scope/2"
                     && scope.origin == origin
                     && scope.device_id == d
-                    && scope.sender_account_id == uid(&b, "sender_account_id")?
                     && scope.app_key == "wecom"
                     && scope.capability == "group_text"
                     && r.revision > 0
@@ -1134,8 +1132,31 @@ pub(super) async fn apply(
                 !scope.schools.is_empty() && scope.schools.len() <= 100,
                 "业务学校范围无效",
             )?;
-            for school in &scope.schools {
-                scoped_device(tx, *school, d).await?;
+            if r.state == "effective" {
+                let b = binding(tx, d).await?;
+                require(
+                    scope.sender_account_id == uid(&b, "sender_account_id")?,
+                    "authorization_context_changed",
+                )?;
+                if let Some(expected) = r.binding_revision {
+                    require(b["revision"] == expected, "authorization_context_changed")?;
+                }
+                for school in &scope.schools {
+                    scoped_device(tx, *school, d).await?;
+                }
+            } else {
+                // Withdrawal remains possible after account or school access changed.
+                // The device can only withdraw its own previously recorded grant.
+                let old:Option<Value> = sqlx::query_scalar("SELECT body FROM automation_business_authorizations WHERE device_id=$1 AND authorization_id=$2 ORDER BY revision DESC LIMIT 1")
+                    .bind(d).bind(r.authorization_id).fetch_optional(&mut **tx).await?;
+                if let Some(old) = old {
+                    require(
+                        old["scope"] == json!(scope) && old["granted_at"] == json!(r.granted_at),
+                        "业务授权回执无效",
+                    )?;
+                }
+                // A local grant may have been revoked before its first upload.
+                // Such a withdrawal grants no execution rights and still advances the fence.
             }
             let max:i64=sqlx::query_scalar("SELECT coalesce(max(revision),0) FROM automation_business_authorizations WHERE device_id=$1").bind(d).fetch_one(&mut **tx).await?;
             require(r.revision > max, "授权回执代次过旧")?;
@@ -1270,12 +1291,32 @@ pub(super) async fn query(
             require(p.protocol()==5,"收件箱要求 v5")?;let(d,_)=device(tx,p).await?;authorization_gate(tx,d).await?;let auth=receipt(tx,d).await?;let b=binding(tx,d).await?;
             Ok(json!(sqlx::query_scalar::<_,Value>("SELECT to_jsonb(d)||jsonb_build_object('plan',to_jsonb(p),'batch_state',b.state,'progress',to_jsonb(q)) FROM automation_task_deliveries d JOIN automation_dispatch_plans p ON p.id=d.plan_id JOIN automation_dispatch_batches b ON b.id=p.batch_id JOIN mobile_delivery_run_progress q ON q.id=p.run_id WHERE d.device_id=$1 AND p.sender_account_id=$4 AND p.school_id=ANY($5) AND EXISTS(SELECT 1 FROM schools school JOIN school_memberships member ON member.school_id=school.id JOIN sending_accounts account ON account.responsible_actor_id=member.account_id JOIN accounts actor ON actor.id=member.account_id WHERE school.id=p.school_id AND school.active AND member.role='admin' AND actor.active AND account.id=p.sender_account_id AND account.enabled) AND NOT d.cancelled AND b.state IN ('confirmed','paused') AND EXISTS(SELECT 1 FROM mobile_delivery_run_items m WHERE m.run_id=p.run_id AND m.position>=q.current_position) ORDER BY p.created_at,p.id LIMIT least($2,1) OFFSET $3").bind(d).bind(limit).bind(offset).bind(uid(&b,"sender_account_id")?).bind(auth.scope.schools).fetch_all(&mut **tx).await?))
         }
+        DispatchQuery::SetupStatus => {
+            require(p.protocol() == 5, "设置要求 v5")?;
+            let (d, _) = device(tx, p).await?;
+            let dev = object(tx, "execution_devices", d).await?;
+            // No consent or binding prerequisite: a newly paired device must see
+            // what the administrator still needs to prepare.
+            let b: Option<Value> = sqlx::query_scalar("SELECT to_jsonb(b) FROM device_account_bindings b JOIN sending_accounts a ON a.id=b.sender_account_id WHERE b.device_id=$1 AND a.enabled")
+                .bind(d).fetch_optional(&mut **tx).await?;
+            let mut result = DeviceSetupStatus { id:d, protocol_version:5, checked_at:db_now(tx).await?, device_name:strv(&dev,"name")?.into(), account_name:None, sender_account_id:None, binding_revision:None, scope_source:"responsible_actor_school_admin".into(), schools:vec![] };
+            if let Some(b) = b {
+                let account = object(tx,"sending_accounts",uid(&b,"sender_account_id")?).await?;
+                result.account_name=account["visible_profile"]["account_name"].as_str().map(str::to_owned);
+                result.sender_account_id=Some(uid(&b,"sender_account_id")?);
+                result.binding_revision=b["revision"].as_i64();
+                let rows:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',s.id,'name',s.name,'dispatch_enabled',coalesce(settings.dispatch_enabled,false),'assignment_ready',EXISTS(SELECT 1 FROM automation_execution_assignments x JOIN automation_flow_releases r ON r.id=x.release_id WHERE x.school_id=s.id AND x.device_id=$2 AND x.sender_account_id=$3 AND x.account_binding_revision=$4 AND x.enabled AND r.active AND NOT r.revoked)) FROM schools s JOIN school_memberships m ON m.school_id=s.id JOIN accounts actor ON actor.id=m.account_id LEFT JOIN mobile_delivery_settings settings ON settings.school_id=s.id WHERE m.account_id=$1 AND m.role='admin' AND s.active AND actor.active ORDER BY s.id LIMIT 100")
+                    .bind(uid(&account,"responsible_actor_id")?).bind(d).bind(result.sender_account_id).bind(result.binding_revision).fetch_all(&mut **tx).await?;
+                result.schools=rows.into_iter().map(serde_json::from_value).collect::<std::result::Result<_,_>>().map_err(|_|Error::Conflict)?;
+            }
+            Ok(json!(result))
+        }
         DispatchQuery::AuthorizationContext=>{
             require(p.protocol()==5,"授权要求 v5")?;let(d,_)=device(tx,p).await?;let b=binding(tx,d).await?;let a=object(tx,"sending_accounts",uid(&b,"sender_account_id")?).await?;
             let schools:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',s.id,'name',s.name) FROM schools s JOIN school_memberships m ON m.school_id=s.id JOIN accounts a ON a.id=m.account_id WHERE m.account_id=$1 AND m.role='admin' AND s.active AND a.active ORDER BY s.id LIMIT 100").bind(uid(&a,"responsible_actor_id")?).fetch_all(&mut **tx).await?;
             let revision:i64=sqlx::query_scalar("SELECT coalesce(max(revision),0) FROM automation_business_authorizations WHERE device_id=$1").bind(d).fetch_one(&mut **tx).await?;
             let dev=object(tx,"execution_devices",d).await?;
-            Ok(json!({"id":d,"extension":"business_application_scope/2","device_name":dev["name"],"account_name":a["visible_profile"]["account_name"],"authorization_revision":revision,"schools":schools,"scope":{"format":"business_application_scope/2","origin":null,"device_id":d,"sender_account_id":b["sender_account_id"],"schools":schools.iter().map(|v|v["id"].clone()).collect::<Vec<_>>(),"app_key":"wecom","capability":"group_text"}}))
+            Ok(json!({"id":d,"extension":"business_application_scope/2","device_name":dev["name"],"account_name":a["visible_profile"]["account_name"],"authorization_revision":revision,"binding_revision":b["revision"],"scope_source":"responsible_actor_school_admin","schools":schools,"scope":{"format":"business_application_scope/2","origin":null,"device_id":d,"sender_account_id":b["sender_account_id"],"schools":schools.iter().map(|v|v["id"].clone()).collect::<Vec<_>>(),"app_key":"wecom","capability":"group_text"}}))
         }
     }
 }
