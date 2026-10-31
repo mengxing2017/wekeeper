@@ -1,4 +1,4 @@
-.PHONY: install check check-web check-backend fmt test-unit test-integration test-embedded api-dev dev-embedded web-dev miniapp-dev check-miniapp compose-config compose-up compose-down smoke
+.PHONY: install check check-web check-backend fmt test-unit test-integration test-embedded api-dev dev-embedded web-dev miniapp-dev check-miniapp compose-config compose-up compose-down reset-dev-database smoke
 
 install:
 	pnpm --dir api-contract install --frozen-lockfile
@@ -63,6 +63,9 @@ compose-up:
 
 compose-down:
 	docker compose --env-file .env -f compose.yaml -f compose.dev.yaml down
+
+reset-dev-database:
+	sh tools/reset-dev-database.sh
 
 smoke:
 	sh tools/smoke.sh
