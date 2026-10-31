@@ -2587,3 +2587,184 @@ async fn binding_eligibility_matches_projection_and_optional_notes_do_not_author
         assert_eq!(actual, revision);
     }
 }
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL"]
+async fn device_control_is_independent_durable_and_fenced() {
+    use wekeeper_api::distribution::{
+        domain::device_control as control,
+        south::{
+            adapter::postgres::device_control::Repository as ControlRepository,
+            port::device_control::Store as ControlStore,
+        },
+    };
+    let f = setup().await;
+    let repo = ControlRepository(f.pool.clone());
+    let generation = match &f.principal {
+        Principal::Device { generation, .. } => *generation,
+        _ => panic!("device principal"),
+    };
+    let c = control::Credential {
+        device_id: f.device,
+        generation,
+        token_hash: wekeeper_api::business::hash(&f.token),
+    };
+    sqlx::query("DELETE FROM device_account_bindings WHERE device_id=$1")
+        .bind(f.device)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let first = repo
+        .device(
+            &c,
+            control::Operation::Open {
+                transport: "https".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let pause = repo
+        .enqueue(
+            f.actor,
+            f.device,
+            "pause",
+            control::CommandInput {
+                kind: control::CommandKind::PauseExecution,
+            },
+        )
+        .await
+        .unwrap();
+    let replay = repo
+        .enqueue(
+            f.actor,
+            f.device,
+            "pause",
+            control::CommandInput {
+                kind: control::CommandKind::PauseExecution,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(pause["id"], replay["id"]);
+    assert!(
+        repo.enqueue(
+            f.actor,
+            f.device,
+            "pause",
+            control::CommandInput {
+                kind: control::CommandKind::ResumeExecution
+            }
+        )
+        .await
+        .is_err()
+    );
+    let beat = || control::Pulse {
+        connection_id: first.connection_id,
+        epoch: first.epoch,
+        heartbeat_id: Some(Uuid::new_v4()),
+        readiness: "blocked".into(),
+        block_reason: Some("device_locked".into()),
+        receipts: vec![],
+    };
+    let frame = repo
+        .device(&c, control::Operation::Pulse(beat()))
+        .await
+        .unwrap();
+    assert!(frame.desired_paused);
+    assert!(frame.commands.iter().any(|x| x.id == uuid(&pause, "id")));
+    let p = repo.presence(f.actor, f.device).await.unwrap();
+    assert_eq!(p["state"], "online");
+    assert_eq!(p["block_reason"], "device_locked");
+    let second = repo
+        .device(
+            &c,
+            control::Operation::Open {
+                transport: "wss".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(second.epoch > first.epoch);
+    assert!(matches!(
+        repo.device(&c, control::Operation::Pulse(beat())).await,
+        Err(Error::Policy("control_session_changed"))
+    ));
+    let mut receipt = beat();
+    receipt.connection_id = second.connection_id;
+    receipt.epoch = second.epoch;
+    receipt.receipts = vec![control::Receipt {
+        id: uuid(&pause, "id"),
+        state: control::ReceiptState::Completed,
+        result_code: None,
+    }];
+    let ack = repo
+        .device(&c, control::Operation::Pulse(receipt.clone()))
+        .await
+        .unwrap();
+    assert_eq!(ack.heartbeat_id, receipt.heartbeat_id);
+    assert!(!ack.commands.iter().any(|x| x.id == uuid(&pause, "id")));
+    repo.device(
+        &c,
+        control::Operation::Close {
+            connection_id: first.connection_id,
+            epoch: first.epoch,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        repo.presence(f.actor, f.device).await.unwrap()["state"],
+        "online"
+    );
+    sqlx::query("UPDATE device_control_sessions SET last_heartbeat_at=clock_timestamp()-interval '66 seconds' WHERE device_id=$1").bind(f.device).execute(&f.pool).await.unwrap();
+    assert_eq!(
+        repo.presence(f.actor, f.device).await.unwrap()["state"],
+        "offline"
+    );
+    // Candidate registration and activation survive repeat requests; only hashes are stored.
+    let token = format!(
+        "wk_device_{}{}",
+        Uuid::new_v4().simple(),
+        Uuid::new_v4().simple()
+    );
+    let hash = wekeeper_api::business::hash(&token);
+    for _ in 0..2 {
+        repo.device(
+            &c,
+            control::Operation::Renew {
+                candidate_hash: hash.clone(),
+            },
+        )
+        .await
+        .unwrap();
+    }
+    let next = control::Credential {
+        device_id: f.device,
+        generation,
+        token_hash: hash,
+    };
+    for _ in 0..2 {
+        repo.device(&next, control::Operation::Activate)
+            .await
+            .unwrap();
+    }
+    let remaining:bool=sqlx::query_scalar("SELECT expires_at<=clock_timestamp()+interval '10 minutes' FROM device_credentials WHERE token_hash=$1").bind(&c.token_hash).fetch_one(&f.pool).await.unwrap();
+    assert!(remaining);
+    sqlx::query(
+        "UPDATE execution_devices SET credential_generation=credential_generation+1 WHERE id=$1",
+    )
+    .bind(f.device)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    assert!(matches!(
+        repo.device(
+            &next,
+            control::Operation::Open {
+                transport: "https".into()
+            }
+        )
+        .await,
+        Err(Error::Unauthorized)
+    ));
+}

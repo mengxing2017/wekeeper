@@ -942,3 +942,30 @@ async fn binding_errors_identify_the_actual_missing_requirement() {
         );
     }
 }
+
+#[test]
+fn device_control_frame_matches_shared_contract() {
+    use wekeeper_api::distribution::domain::device_control::{Frame, Pulse};
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/device-control-frame.json"
+    ))
+    .unwrap();
+    let frame: Frame = serde_json::from_value(fixture.clone()).unwrap();
+    assert_eq!(serde_json::to_value(frame).unwrap(), fixture);
+    assert!(serde_json::from_value::<Pulse>(json!({"connection_id":"00000000-0000-4000-8000-000000000002","epoch":2,"readiness":"ready","permit_token":"must-not-authorize"})).is_err());
+}
+
+#[tokio::test]
+async fn device_control_does_not_accept_browser_identity_as_a_device() {
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/device-control/session")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
