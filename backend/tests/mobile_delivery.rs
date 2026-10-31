@@ -1508,3 +1508,216 @@ async fn pairing_preserves_leading_zeroes_and_only_stores_code_hashes() {
     assert_eq!(operation["secret_replay_unavailable"], true);
     assert!(operation.get("device_token").is_none());
 }
+
+// Synthetic protocol coverage only; these fixtures never seed a real supported environment.
+async fn automation_fixture() -> (Fixture, Value, Value) {
+    let mut f = visible_fixture().await;
+    f.principal = f.principal.for_protocol(4);
+    let wire: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/automation-environment-v4.json"
+    ))
+    .unwrap();
+    let e=f.device_call(None,json!({"operation":"automation","input":{"action":"report_environment","report":wire["data"]["attributes"]["report"]}})).await;
+    let b=f.call(Some(f.school),None,json!({"operation":"automation","input":{"action":"bind_application","device_id":f.device,"app_id":"00000000-0000-0000-0000-000000000001","environment_id":e["id"],"instance_ref":"synthetic-instance","expected_revision":0}})).await;
+    (f, e, b)
+}
+async fn automation_job(f: &Fixture, b: &Value, kind: &str, components: Value) -> Value {
+    f.call(Some(f.school),None,json!({"operation":"automation","input":{"action":"request_validation","device_id":f.device,"app_binding_id":b["id"],"kind":kind,"component_ids":components}})).await
+}
+async fn automation_finish(
+    f: &Fixture,
+    job: &Value,
+    path: Option<&str>,
+    role_matches: Value,
+    timing: Value,
+) -> Value {
+    let j=f.device_call(Some(uuid(job,"id")),json!({"operation":"automation","input":{"action":"accept_validation","expected_revision":job["revision"],"generation":job["generation"]}})).await;
+    f.device_call(Some(uuid(&j,"id")),json!({"operation":"automation","input":{"action":"report_validation","event":{"event_id":Uuid::new_v4(),"generation":j["generation"],"expected_revision":j["revision"],"stage":"ready","outcome":"succeeded","path":path,"role_matches":role_matches,"timing":timing}}})).await
+}
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn automation_validations_are_owned_cas_cancel_safe_and_never_send() {
+    let (f, _, b) = automation_fixture().await;
+    let job = automation_job(&f, &b, "measure_manual", json!([])).await;
+    let accepted=f.device_call(Some(uuid(&job,"id")),json!({"operation":"automation","input":{"action":"accept_validation","expected_revision":job["revision"],"generation":job["generation"]}})).await;
+    let wrong=f.repo.execute(f.principal.clone(),Scope{school:None,id:Some(uuid(&job,"id"))},"stale-generation",command(json!({"operation":"automation","input":{"action":"accept_validation","expected_revision":job["revision"],"generation":Uuid::new_v4()}})),true,"").await;
+    assert!(wrong.is_err());
+    let cancelled=f.call(Some(f.school),Some(uuid(&job,"id")),json!({"operation":"automation","input":{"action":"cancel_validation","expected_revision":accepted["revision"]}})).await;
+    let event = json!({"operation":"automation","input":{"action":"report_validation","event":{"event_id":Uuid::new_v4(),"generation":job["generation"],"expected_revision":accepted["revision"],"stage":"ready","outcome":"succeeded","role_matches":{},"path":null,"timing":{"group_interval_ms":10000,"navigation_ms":100,"input_codepoint_ms":100,"input_settle_ms":100,"observation_ms":100}}}});
+    let late = f.device_call(Some(uuid(&job, "id")), event.clone()).await;
+    assert_eq!(late, cancelled);
+    let replay = f.device_call(Some(uuid(&job, "id")), event).await;
+    assert_eq!(late, replay);
+    let applied: bool =
+        sqlx::query_scalar("SELECT applied FROM device_validation_events WHERE job_id=$1")
+            .bind(uuid(&job, "id"))
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert!(!applied);
+    let sends: i64 = sqlx::query_scalar("SELECT count(*) FROM mobile_send_permits")
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(sends, 0);
+    let events: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM device_validation_events WHERE job_id=$1")
+            .bind(uuid(&job, "id"))
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(events, 1);
+}
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn automation_compiles_preview_freezes_manifest_and_requires_readiness_before_claim() {
+    let (f, e, b) = automation_fixture().await;
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/mobile-configuration-v3.json"
+    ))
+    .unwrap();
+    let configuration = &fixture["configuration"];
+    let marker = configuration["rules"]["pages"]["home"].clone();
+    let role = configuration["rules"]["controls"]["send"].clone();
+    let search = configuration["rules"]["controls"]["search_input"].clone();
+    let launcher=f.call(None,None,json!({"operation":"automation","input":{"action":"create_component","name":"SYNTHETIC launcher","body":{"kind":"launcher","flow":{"client":e["body"]["launcher"],"pages":{"home":marker,"search":marker,"app":marker},"roles":{"application":role,"search":search},"search_steps":[{"from":"home","to":"home","operation":{"action":"home"},"delay_ms":100},{"from":"home","to":"search","operation":{"action":"search_application","role":"search"},"delay_ms":100},{"from":"search","to":"app","operation":{"action":"click","role":"application"},"delay_ms":100},{"from":"app","to":"app","operation":{"action":"verify_application"},"delay_ms":100}],"all_apps_steps":[],"max_steps":10,"timeout_ms":60000,"max_scrolls":10,"local_application_results_only":true}}}})).await;
+    let workflow=f.call(None,None,json!({"operation":"automation","input":{"action":"create_component","name":"SYNTHETIC workflow","body":{"kind":"workflow","rules":configuration["rules"]}}})).await;
+    let policy=f.call(None,None,json!({"operation":"automation","input":{"action":"create_component","name":"SYNTHETIC policy","body":{"kind":"policy","policy":configuration["policy"]}}})).await;
+    let opened = automation_finish(
+        &f,
+        &automation_job(&f, &b, "open_application", json!([launcher["id"]])).await,
+        Some("search"),
+        json!({}),
+        Value::Null,
+    )
+    .await;
+    let mut matches = serde_json::Map::new();
+    for k in configuration["rules"]["controls"]
+        .as_object()
+        .unwrap()
+        .keys()
+    {
+        matches.insert(k.clone(), json!(1));
+    }
+    for k in configuration["rules"]["pages"].as_object().unwrap().keys() {
+        matches.insert(format!("page:{k}"), json!(1));
+    }
+    let inspected = automation_finish(
+        &f,
+        &automation_job(
+            &f,
+            &b,
+            "inspect_roles",
+            json!([workflow["id"], policy["id"]]),
+        )
+        .await,
+        None,
+        Value::Object(matches),
+        Value::Null,
+    )
+    .await;
+    let base = &configuration["baseline"];
+    let timed=automation_finish(&f,&automation_job(&f,&b,"measure_manual",json!([])).await,None,json!({}),json!({"group_interval_ms":base["human_group_min_interval_ms"],"navigation_ms":base["navigation_min_ms"],"input_codepoint_ms":base["input_codepoint_min_ms"],"input_settle_ms":base["input_settle_min_ms"],"observation_ms":base["observation_min_ms"]})).await;
+    // Fixture policy needs three distinct manual samples, each backed by a phone acceptance.
+    let mut samples = vec![timed.clone()];
+    for _ in 1..configuration["policy"]["minimum_manual_samples"]
+        .as_u64()
+        .unwrap()
+    {
+        samples.push(
+            automation_finish(
+                &f,
+                &automation_job(&f, &b, "measure_manual", json!([])).await,
+                None,
+                json!({}),
+                timed["result"]["timing"].clone(),
+            )
+            .await,
+        );
+    }
+    let baseline=f.call(None,None,json!({"operation":"automation","input":{"action":"create_component","name":"SYNTHETIC timing","body":{"kind":"baseline","validation_ids":samples.iter().map(|v|v["id"].clone()).collect::<Vec<_>>()}}})).await;
+    for (component, validation) in [
+        (&launcher, &opened),
+        (&workflow, &inspected),
+        (&policy, &inspected),
+        (&baseline, &timed),
+    ] {
+        f.call(None,Some(uuid(component,"id")),json!({"operation":"automation","input":{"action":"publish_component","school_id":f.school,"device_id":f.device,"validation_id":validation["id"],"expected_revision":1}})).await;
+    }
+    // School administrators do not need platform maintenance privileges to preview/confirm a business.
+    sqlx::query("UPDATE accounts SET platform_admin=false WHERE id=$1")
+        .bind(f.actor)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let preview=f.call(Some(f.school),None,json!({"operation":"automation","input":{"action":"preview_business","input":{"app_binding_id":b["id"],"capability_id":"00000000-0000-0000-0000-000000000011","name":"SYNTHETIC business","group_ids":[f.group],"text_content":"测试 v4","interval_seconds":configuration["policy"]["default_group_interval_ms"].as_i64().unwrap()/1000,"schedule":"manual_once"}}})).await;
+    let task: Value = sqlx::query_scalar("SELECT to_jsonb(t) FROM mobile_delivery_tasks t JOIN mobile_delivery_strategy_runs r ON r.task_id=t.id WHERE r.id=$1")
+        .bind(uuid(&preview, "run_id")).fetch_one(&f.pool).await.unwrap();
+    let bypass = f.repo.execute(Principal::Actor(f.actor), Scope { school: Some(f.school), id: Some(uuid(&task, "id")) }, "legacy-confirm-bypass", command(json!({"operation":"confirm","expected_revision":task["revision"],"preview_digest":preview["task_preview"]["preview_digest"],"content_review":true,"scope_acceptance":true,"substantive_difference_reviewed":true,"shared_text_scope_acceptance":true,"evidence_ref":"synthetic bypass"})), true, "https://example.test").await;
+    assert!(matches!(bypass, Err(Error::Invalid(_))));
+    // Refreshing the same environment may continue frozen runs, but invalidates an unconfirmed preview.
+    let mut wire: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/automation-environment-v4.json"
+    ))
+    .unwrap();
+    wire["data"]["attributes"]["report"]["generation"] = json!(2);
+    f.device_call(None,json!({"operation":"automation","input":{"action":"report_environment","report":wire["data"]["attributes"]["report"]}})).await;
+    let stale = f.repo.execute(Principal::Actor(f.actor), Scope { school: Some(f.school), id: Some(uuid(&preview, "id")) }, "stale-environment-preview", command(json!({"operation":"automation","input":{"action":"confirm_business","expected_revision":1,"preview_digest":preview["preview_digest"],"reviewed":true}})), true, "https://example.test").await;
+    assert!(matches!(stale, Err(Error::Policy("revision_conflict"))));
+    let preview=f.call(Some(f.school),None,json!({"operation":"automation","input":{"action":"preview_business","input":preview["input"]}})).await;
+    let run=f.call(Some(f.school),Some(uuid(&preview,"id")),json!({"operation":"automation","input":{"action":"confirm_business","expected_revision":1,"preview_digest":preview["preview_digest"],"reviewed":true}})).await;
+    let old = f
+        .repo
+        .execute(
+            f.principal.clone().for_protocol(3),
+            Scope {
+                school: None,
+                id: None,
+            },
+            "old-client",
+            command(json!({"operation":"claim","binding_revision":f.binding_revision})),
+            true,
+            "",
+        )
+        .await
+        .unwrap();
+    assert_eq!(old["reason"], "unsupported_execution_protocol");
+    let no_ticket = f
+        .device_call(
+            None,
+            json!({"operation":"claim","binding_revision":f.binding_revision}),
+        )
+        .await;
+    assert!(no_ticket["claim_id"].is_null());
+    let ticket = f
+        .device_call(
+            None,
+            json!({"operation":"automation","input":{"action":"prepare_execution"}}),
+        )
+        .await;
+    assert_eq!(ticket["ready"], false);
+    let frozen: Value =
+        sqlx::query_scalar("SELECT body FROM automation_execution_manifests WHERE id=$1")
+            .bind(uuid(&run, "automation_manifest_id"))
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(frozen["business"]["text_content"], "测试 v4");
+    f.device_call(Some(uuid(&ticket,"id")),json!({"operation":"automation","input":{"action":"application_ready","generation":ticket["generation"],"manifest_digest":ticket["manifest"]["content_digest"],"environment_id":ticket["environment_id"]}})).await;
+    let claim = f
+        .device_call(
+            None,
+            json!({"operation":"claim","binding_revision":f.binding_revision}),
+        )
+        .await;
+    assert_eq!(claim["requirements"]["protocol_version"], 4);
+    assert_eq!(
+        claim["automation_manifest"]["id"],
+        run["automation_manifest_id"]
+    );
+    let permits: i64 = sqlx::query_scalar("SELECT count(*) FROM mobile_send_permits")
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(permits, 0);
+}
