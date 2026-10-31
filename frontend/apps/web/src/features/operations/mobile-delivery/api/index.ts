@@ -21,3 +21,28 @@ export type {
   RunProgress,
   RunRevisionPreview,
 } from '@wekeeper/api-contract/mobile-delivery'
+
+export type {
+  AutomationApp,
+  InstalledApplication,
+  EnvironmentReport,
+  DeviceEnvironment,
+  DeviceApplications,
+  AppBinding,
+  ValidationKind,
+  ValidationState,
+  ValidationJob,
+  ManualTiming,
+  LauncherOperation,
+  LauncherStep,
+  LauncherFlow,
+  AutomationComponentBody,
+  AutomationComponent,
+  AutomationRelease,
+  AutomationBusinessInput,
+  AutomationPreview,
+  CapabilityResolution,
+  AutomationRun,
+  UiSelector,
+  UiClient,
+} from '@wekeeper/api-contract/mobile-delivery'
