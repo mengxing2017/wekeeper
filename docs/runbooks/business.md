@@ -145,7 +145,7 @@ devbox run -- make test-embedded
 
 - `wecom_40001`：核对 CorpID/Secret 与应用；token 获取错误也会保留官方码。
 - `wecom_60020`：核对真实 API 公网出口可信 IP。
-- `directory_snapshot_required`：先完整同步当前代次内部通讯录。
+- `directory_snapshot_required`：先完整同步当前代次内部通讯录。Web 客户群页面在首次同步（尚无通讯录快照）或重试此错误时，会先发起/复用通讯录任务，成功后再同步客户群；等待超过 5 分钟会提示稍后重试，不取消后台任务。通讯录失败时不继续同步客户群。没有成功群快照时页面显示“尚无成功快照”，已有快照则继续保留。
 - `cursor_loop` / `invalid_response` / `inconsistent_snapshot`：停止发布并保留旧快照；待上游数据稳定后重试。
 - `network_or_rate_limit`：网络、45009 或可重试 HTTP 异常经过有限退避仍失败。
 - 历史群主不可见：先修复权限；确认确实缩小范围时，在失败任务详情填写依据并确认范围变化，再重新同步群。只接受对应任务明确记录的不可见错误，当前可见成员仍会被重新枚举；确认操作写审计，原历史群及学校映射保留。
