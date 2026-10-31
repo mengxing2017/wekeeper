@@ -202,8 +202,8 @@ pub struct LauncherStep {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct LauncherFlow {
-    pub client: UiClient,
+pub struct LauncherFlow<C = UiClient> {
+    pub client: C,
     pub pages: BTreeMap<String, UiPage>,
     pub roles: BTreeMap<String, UiSelector>,
     pub search_steps: Vec<LauncherStep>,
@@ -213,9 +213,9 @@ pub struct LauncherFlow {
     pub max_scrolls: usize,
     pub local_application_results_only: bool,
 }
-impl LauncherFlow {
+impl<C: RuleClient> LauncherFlow<C> {
     pub fn validate(&self) -> Result<()> {
-        validate_client(&self.client)?;
+        self.client.validate_rule_client()?;
         require(
             !self.pages.is_empty() && self.pages.len() <= 32 && self.roles.len() <= 64,
             "桌面页面或角色数量无效",

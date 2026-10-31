@@ -88,13 +88,38 @@ pub struct UiClient {
     pub version_name: String,
     pub version_code: i64,
 }
+pub trait RuleClient {
+    const SCHEMA: u32;
+    const ENGINE: &'static str;
+    fn validate_rule_client(&self) -> Result<()>;
+}
+pub fn validate_package(package: &str) -> Result<()> {
+    require(
+        package.split('.').count() >= 2
+            && package.split('.').all(|s| {
+                s.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+                    && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            }),
+        "应用包名无效",
+    )
+}
+impl RuleClient for UiClient {
+    const SCHEMA: u32 = CONFIGURATION_SCHEMA;
+    const ENGINE: &'static str = ENGINE_VERSION;
+    fn validate_rule_client(&self) -> Result<()> {
+        validate_package(&self.package_name)?;
+        require(self.version_code > 0, "客户端版本无效")?;
+        text(&self.version_name, 1, 100)?;
+        Ok(())
+    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct UiRules {
+pub struct UiRules<C = UiClient> {
     pub schema_version: u32,
     pub engine_version: String,
     pub required_capabilities: Vec<String>,
-    pub client: UiClient,
+    pub client: C,
     pub pages: BTreeMap<String, UiPage>,
     pub controls: BTreeMap<String, UiSelector>,
     pub navigation_graph: Vec<UiTransition>,
@@ -122,10 +147,10 @@ pub const REQUIRED_CONTROLS: &[&str] = &[
     "failed",
     "pending",
 ];
-impl UiRules {
+impl<C: RuleClient> UiRules<C> {
     pub fn validate(&self) -> Result<()> {
         require(
-            self.schema_version == CONFIGURATION_SCHEMA && self.engine_version == ENGINE_VERSION,
+            self.schema_version == C::SCHEMA && self.engine_version == C::ENGINE,
             "规则 schema 或引擎版本不支持",
         )?;
         let capabilities: BTreeSet<_> = self
@@ -137,16 +162,7 @@ impl UiRules {
             capabilities == ENGINE_CAPABILITIES.iter().copied().collect(),
             "引擎能力要求不完整或不支持",
         )?;
-        require(
-            self.client.version_code > 0
-                && self.client.package_name.split('.').count() >= 2
-                && self.client.package_name.split('.').all(|s| {
-                    s.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
-                        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-                }),
-            "客户端包或版本无效",
-        )?;
-        text(&self.client.version_name, 1, 100)?;
+        self.client.validate_rule_client()?;
         require(
             !self.pages.is_empty()
                 && self.pages.len() <= 64
@@ -197,14 +213,17 @@ impl UiRules {
             require(
                 self.pages.contains_key(&edge.from)
                     && self.pages.contains_key(&edge.to)
-                    && self.controls.contains_key(&edge.control)
+                    && (self.controls.contains_key(&edge.control)
+                        || (C::SCHEMA == 2 && edge.control == "__back"))
                     && edge.control != "send"
                     && edge.min_delay_ms >= 0,
                 "导航边或动作无效",
             )?;
             require(
-                serde_json::to_value(&self.controls[&edge.control]).map_err(|_| Error::Conflict)?
-                    != send,
+                (C::SCHEMA == 2 && edge.control == "__back")
+                    || serde_json::to_value(&self.controls[&edge.control])
+                        .map_err(|_| Error::Conflict)?
+                        != send,
                 "导航不能指向发送控件",
             )?;
         }
@@ -294,14 +313,14 @@ pub struct ManualBaseline {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ConfigurationInput {
+pub struct ConfigurationInput<C = UiClient> {
     pub name: String,
-    pub rules: UiRules,
+    pub rules: UiRules<C>,
     pub policy: ExecutionPolicy,
     pub baseline: ManualBaseline,
     pub evidence_ref: String,
 }
-impl ConfigurationInput {
+impl<C: RuleClient> ConfigurationInput<C> {
     pub fn validate(&self) -> Result<()> {
         label(&self.name)?;
         text(&self.evidence_ref, 1, 500)?;
