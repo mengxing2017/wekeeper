@@ -104,7 +104,8 @@ a:focus-visible {
   gap: 16px;
   margin-left: auto;
 }
-.community-link {
+.community-link,
+.help-center-link {
   color: var(--color-text-secondary);
 }
 .account-trigger {

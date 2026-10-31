@@ -80,6 +80,7 @@ export function SessionGate({
           </Form>
           {wecom && <a href="/api/v1/wecom/oauth/start">使用企业微信身份登录</a>}
           <p className="auth-caption">使用管理员分配的账号进入工作空间</p>
+          <a href="/docs/guide/quick-start">登录与使用帮助</a>
         </section>
       </div>
     )

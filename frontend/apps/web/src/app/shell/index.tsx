@@ -23,6 +23,7 @@ import {
   UsergroupAddOutlined,
 } from '@ant-design/icons'
 import { Link } from 'react-router-dom'
+import { helpHref } from './help'
 
 export interface NavigationItem {
   key: string
@@ -220,6 +221,9 @@ export function AppShell({
         </Link>
         <span className="header-workspace">运营工作台</span>
         <div className="header-actions">
+          <a className="help-center-link" href="/docs/">
+            帮助中心
+          </a>
           <Link className="community-link" to="/community">
             校园社区 ↗
           </Link>
@@ -344,6 +348,7 @@ export function AppShell({
             <header className="page-heading">
               <div>
                 <h1>{current.label}</h1>
+                <a href={helpHref(active)}>使用说明</a>
               </div>
               {pageExtra}
             </header>
