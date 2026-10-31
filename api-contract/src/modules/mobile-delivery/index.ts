@@ -1,3 +1,5 @@
+import { dispatchApi } from "./dispatch";
+export type * from "./dispatch";
 import { automationApi } from "./automation";
 export type * from "./automation";
 import type {
@@ -121,7 +123,7 @@ export interface Row {
   revision: number;
 }
 export interface Device extends Row {
-  execution_protocol_version?: 1 | 2 | 3;
+  execution_protocol_version?: 1 | 2 | 3 | 4 | 5;
   supported_protocol_versions?: number[];
   name: string;
   enabled: boolean;
@@ -352,6 +354,7 @@ function list<T>(path: string, page = 1, size = 30): Promise<Collection<T>> {
 }
 export const mobileDeliveryApi = {
   automation: automationApi,
+  dispatch: dispatchApi,
   configurations: (page?: number, size?: number) =>
     list<ExecutionConfiguration>(
       "/api/v1/platform/execution-configurations",
