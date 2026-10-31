@@ -584,27 +584,37 @@ docker compose --env-file .env -f compose.yaml exec -T web \
 | 页面加载失败 | 浏览器控制台、静态资源版本、Caddy HTML/assets 缓存；重新加载 |
 | `/api/v1/posts` 返回 404 | 该无学校作用域路径不存在，使用 `/api/v1/schools/{school}/posts` |
 
-### 开发数据库重建与同名函数错误
+### 当前数据库初始化基线
 
-`ExecuteMigration(... "check_wecom_directory_group" already exists ..., 202610200002)` 表示迁移创建函数时，当前 schema 已有同签名函数。只删除业务表不会删除独立函数；仅清空 `_sqlx_migrations` 也不等于重建数据库。当前迁移使用 `CREATE OR REPLACE FUNCTION` 写入本版本的函数定义，避免函数残留阻止建表。同时迁移编号必须唯一：账号事件索引使用 `202610310004_account_profile_event_lookup.sql`，v5 使用 `202610310003_dispatch_v5.sql`。
+2026-10-31 按不保留旧数据库的方式将 14 份增量迁移合并为 4 份基线，依次执行：
 
-本轮按不保留旧数据库的开发方式处理，不提供旧迁移 checksum 或重复编号账本的自动转换。若当前开发库已手工删表、清迁移账本，或更新后出现 checksum 不一致，应重建整个业务 schema，再由新 API 初始化。不要继续逐个删除报错对象，也不要只删迁移记录。
+| 文件 | 内容 |
+| --- | --- |
+| `202610310101_core_business.sql` | 元数据、身份、学校、社区、企业微信目录、公共别名、历史业务记录 |
+| `202610310102_broadcast.sql` | 官方群发、帖子/纯文本来源、批次、目标和操作账本 |
+| `202610310103_mobile_execution.sql` | 手机凭据、可见身份、原发送账本、规则发布、多群顺序、配对与查询索引 |
+| `202610310104_automation.sql` | 多应用流程、集中维护、业务授权、v5 批次、投递与共享正文归属触发器 |
+
+协议范围和相关约束直接按最终定义创建，删除旧回填与反复重建步骤；`maintain_delivery_content_scope` 仅在 v5 依赖表就绪后定义一次。合并前后在隔离 PostgreSQL 17 比较了 1,643 条目录记录，包含列顺序、默认值、约束、索引、视图、函数、触发器、序列归属及初始数据，结果完全一致。
+
+新基线只用于空白 schema；不能在已有旧分段迁移账本上直接升级，不自动删除旧表、接受旧 checksum 或跳过缺失迁移。正常重启仍由 SQLx 账本校验并跳过已成功迁移；后续变更新增更大编号的前向迁移。
+
+### 开发数据库重建与残留对象错误
+
+`ExecuteMigration(... "check_wecom_directory_group" already exists ..., 202610200002)` 表示迁移创建函数时，当前 schema 已有同签名函数。只删除业务表不会删除独立函数或未绑定表列的序列；仅清空 `_sqlx_migrations` 也不等于重建数据库。当前迁移使用 `CREATE OR REPLACE FUNCTION` 写入本版本的函数定义，避免函数残留阻止建表。相关函数和序列的修复已包含在当前基线中，迁移编号由测试检查唯一性与顺序。
+
+`202610200003` 中的 `relation "legacy_public_id" already exists` 同属残留对象问题：它是未归属表列的独立序列。迁移现在复用已有序列并保留计数，再用 `OWNED BY legacy_aliases.public_id` 绑定所属列；以后删除该表会一并删除序列。
+
+本轮不提供旧分段迁移、旧 checksum 或重复编号账本的自动转换。若当前开发库已手工删表、清迁移账本，或更新后出现 checksum 不一致，应重建整个业务 schema，再由新 API 初始化。不要继续逐个删除报错对象，也不要只删迁移记录。
 
 以下命令**会删除 Compose 专用 PostgreSQL 中 `public` schema 的全部数据、表、函数、迁移记录和相关依赖**，仅用于允许丢弃全部数据的开发环境。外部数据库、共享 schema 或需要保留数据的环境不使用这些命令。先重新构建/拉取修复后的 API 镜像，再执行：
 
 ```bash
-docker compose --env-file .env -f compose.yaml stop api web
-docker compose --env-file .env -f compose.yaml up -d --wait postgres
-docker compose --env-file .env -f compose.yaml exec -T postgres \
-  sh -c 'psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB"' <<'SQL'
-BEGIN;
-DROP SCHEMA public CASCADE;
-CREATE SCHEMA public;
-COMMIT;
-SQL
-docker compose --env-file .env -f compose.yaml up -d --wait api web
-docker compose --env-file .env -f compose.yaml logs --tail 100 api
+# WeKeeper 根目录；先准备修复后的 API 镜像
+make reset-dev-database
 ```
+
+该入口执行 `tools/reset-dev-database.sh`：停止 API/Web，启动专用 PostgreSQL，使用容器内的数据库名和角色执行 `tools/reset-dev-schema.sql`，再启动 API/Web 并检查就绪。SQL 在一个事务内删除并重建 `public`，同时清除表、函数、序列和 `_sqlx_migrations`。任一步失败立即停止，避免在未重建成功时继续启动。默认读取 `.env`；其他 Compose 环境文件可用 `WEKEEPER_COMPOSE_ENV_FILE=/path/to/dev.env make reset-dev-database` 指定。
 
 没有执行自动清库；API 正常启动仍只执行迁移。上述命令保留 PostgreSQL 数据卷和 Caddy 证书卷，但业务表中的媒体也会随 schema 清除。外部 PostgreSQL 的一次性开发库由其管理员重建专用数据库/schema，应用连接角色须拥有新 schema 的建表权限。
 
