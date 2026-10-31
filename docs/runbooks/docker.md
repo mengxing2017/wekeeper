@@ -584,4 +584,28 @@ docker compose --env-file .env -f compose.yaml exec -T web \
 | 页面加载失败 | 浏览器控制台、静态资源版本、Caddy HTML/assets 缓存；重新加载 |
 | `/api/v1/posts` 返回 404 | 该无学校作用域路径不存在，使用 `/api/v1/schools/{school}/posts` |
 
+### 开发数据库重建与同名函数错误
+
+`ExecuteMigration(... "check_wecom_directory_group" already exists ..., 202610200002)` 表示迁移创建函数时，当前 schema 已有同签名函数。只删除业务表不会删除独立函数；仅清空 `_sqlx_migrations` 也不等于重建数据库。当前迁移使用 `CREATE OR REPLACE FUNCTION` 写入本版本的函数定义，避免函数残留阻止建表。同时迁移编号必须唯一：账号事件索引使用 `202610310004_account_profile_event_lookup.sql`，v5 使用 `202610310003_dispatch_v5.sql`。
+
+本轮按不保留旧数据库的开发方式处理，不提供旧迁移 checksum 或重复编号账本的自动转换。若当前开发库已手工删表、清迁移账本，或更新后出现 checksum 不一致，应重建整个业务 schema，再由新 API 初始化。不要继续逐个删除报错对象，也不要只删迁移记录。
+
+以下命令**会删除 Compose 专用 PostgreSQL 中 `public` schema 的全部数据、表、函数、迁移记录和相关依赖**，仅用于允许丢弃全部数据的开发环境。外部数据库、共享 schema 或需要保留数据的环境不使用这些命令。先重新构建/拉取修复后的 API 镜像，再执行：
+
+```bash
+docker compose --env-file .env -f compose.yaml stop api web
+docker compose --env-file .env -f compose.yaml up -d --wait postgres
+docker compose --env-file .env -f compose.yaml exec -T postgres \
+  sh -c 'psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB"' <<'SQL'
+BEGIN;
+DROP SCHEMA public CASCADE;
+CREATE SCHEMA public;
+COMMIT;
+SQL
+docker compose --env-file .env -f compose.yaml up -d --wait api web
+docker compose --env-file .env -f compose.yaml logs --tail 100 api
+```
+
+没有执行自动清库；API 正常启动仍只执行迁移。上述命令保留 PostgreSQL 数据卷和 Caddy 证书卷，但业务表中的媒体也会随 schema 清除。外部 PostgreSQL 的一次性开发库由其管理员重建专用数据库/schema，应用连接角色须拥有新 schema 的建表权限。
+
 本文按仓库 Dockerfile、Compose、Caddy 和配置解析代码核对。镜像构建、Compose 就绪及公网 HTTPS 仍需在具备 Docker daemon 的目标环境实测。
