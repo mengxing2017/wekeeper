@@ -688,6 +688,19 @@ async fn automation_and_v4_routes_are_registered_and_require_authorization() {
             "GET",
         ),
         ("/api/v1/platform/automation-adaptations/components", "GET"),
+        (
+            "/api/v4/device-execution/execution-authorization-context",
+            "GET",
+        ),
+        ("/api/v4/device-execution/execution-authorizations", "POST"),
+        (
+            "/api/v4/device-execution/validation-jobs/00000000-0000-0000-0000-000000000001/standing-acceptances",
+            "POST",
+        ),
+        (
+            "/api/v4/device-execution/validation-jobs/00000000-0000-0000-0000-000000000001/rejections",
+            "POST",
+        ),
         ("/api/v4/device-execution/validation-jobs", "GET"),
         ("/api/v4/device-execution/environment-snapshots", "POST"),
         ("/api/v4/device-execution/claims", "POST"),
@@ -721,4 +734,28 @@ fn automation_manifest_canonicalization_matches_shared_utf8_bytes() {
         automation_digest(&fixture["value"]),
         fixture["sha256"].as_str().unwrap()
     );
+}
+
+#[test]
+fn standing_authorization_shared_wire_preserves_receipt_and_decline_semantics() {
+    use wekeeper_api::distribution::domain::mobile_delivery::{
+        AutomationCommand, ExecutionAuthorizationReceipt,
+    };
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/execution-authorization-receipt-v4.json"
+    ))
+    .unwrap();
+    let wire = &fixture["data"]["attributes"]["receipt"];
+    let r: ExecutionAuthorizationReceipt = serde_json::from_value(wire.clone()).unwrap();
+    r.validate().unwrap();
+    assert_eq!(serde_json::to_value(r).unwrap(), *wire);
+    let mut decline: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/execution-validation-decline-v4.json"
+    ))
+    .unwrap();
+    decline["data"]["attributes"]["action"] = serde_json::json!("reject_validation");
+    assert!(matches!(
+        serde_json::from_value::<AutomationCommand>(decline["data"]["attributes"].clone()).unwrap(),
+        AutomationCommand::RejectValidation { .. }
+    ));
 }
