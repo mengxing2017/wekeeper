@@ -2172,3 +2172,225 @@ async fn standing_authorization_revoke_fences_late_grants_and_decline_never_acce
             .unwrap();
     assert_eq!(count, 0);
 }
+
+/// All rows and evidence in this test are synthetic. No production validation is seeded.
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn dispatch_v5_queues_and_prepares_without_environment_tables() {
+    let mut f = visible_fixture().await;
+    f.principal = f.principal.for_protocol(5);
+    // Make accidental old environment/binding SQL fail, instead of merely returning no rows.
+    sqlx::query(
+        "ALTER TABLE device_environment_snapshots RENAME TO forbidden_environment_snapshots",
+    )
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    sqlx::query("ALTER TABLE device_app_bindings RENAME TO forbidden_app_bindings")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let authorization = Uuid::new_v4();
+    f.device_call(None,json!({"operation":"dispatch","input":{"action":"authorization","receipt":{
+        "authorization_id":authorization,"revision":1,"state":"effective","granted_at":chrono::Utc::now(),"revoked_at":null,
+        "scope":{"format":"business_application_scope/2","origin":"https://example.test","device_id":f.device,"sender_account_id":f.sender,"schools":[f.school],"app_key":"wecom","capability":"group_text"}
+    }}})).await;
+    let mut generic: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/automation-dispatch-flow-v5.json"
+    ))
+    .unwrap();
+    let timing = json!({"group_interval_ms":generic["configuration"]["baseline"]["human_group_min_interval_ms"],"navigation_ms":generic["configuration"]["baseline"]["navigation_min_ms"],"input_codepoint_ms":generic["configuration"]["baseline"]["input_codepoint_min_ms"],"input_settle_ms":generic["configuration"]["baseline"]["input_settle_min_ms"],"observation_ms":generic["configuration"]["baseline"]["observation_min_ms"]});
+    // Test fixture helper carries the independent wire evidence dimensions.
+    #[allow(clippy::too_many_arguments)]
+    async fn validation(
+        f: &Fixture,
+        auth: Uuid,
+        flow: Option<Uuid>,
+        kind: &str,
+        launcher: Option<usize>,
+        roles: Value,
+        timing: Value,
+        path: Value,
+    ) -> Value {
+        let manual = if flow.is_none() {
+            json!({"label":"SYNTHETIC","client":{"package_name":"com.wekeeper.fixture.wecom"}})
+        } else {
+            Value::Null
+        };
+        let j=f.call(Some(f.school),None,json!({"operation":"dispatch","input":{"action":"request_validation","device_id":f.device,"flow_id":flow,"manual_application":manual,"kind":kind,"path_key":"generic","launcher_index":launcher}})).await;
+        let accepted=f.device_call(Some(uuid(&j,"id")),json!({"operation":"dispatch","input":{"action":"accept_validation","expected_revision":j["revision"],"generation":j["generation"],"authorization_id":auth}})).await;
+        assert_eq!(accepted["state"], "accepted");
+        f.device_call(Some(uuid(&j,"id")),json!({"operation":"dispatch","input":{"action":"validation_event","event":{"event_id":Uuid::new_v4(),"generation":accepted["generation"],"expected_revision":accepted["revision"],"stage":"ready","outcome":"succeeded","role_matches":roles,"timing":timing,"path":path}}})).await
+    }
+    let mut measurements = Vec::new();
+    for _ in 0..3 {
+        measurements.push(uuid(
+            &validation(
+                &f,
+                authorization,
+                None,
+                "measure_manual",
+                None,
+                json!({}),
+                timing.clone(),
+                Value::Null,
+            )
+            .await,
+            "id",
+        ));
+    }
+    let pacing=f.call(None,None,json!({"operation":"dispatch","input":{"action":"create_pacing","name":"SYNTHETIC baseline","school_id":f.school,"validation_ids":measurements}})).await;
+    generic["configuration"]["baseline"] = pacing["baseline"].clone();
+    let flow=f.call(None,None,json!({"operation":"dispatch","input":{"action":"create_flow","flow":generic,"pacing_profile_id":pacing["id"]}})).await;
+    let mut roles = serde_json::Map::new();
+    for k in generic["configuration"]["rules"]["controls"]
+        .as_object()
+        .unwrap()
+        .keys()
+    {
+        roles.insert(k.clone(), json!(1));
+    }
+    for k in generic["configuration"]["rules"]["pages"]
+        .as_object()
+        .unwrap()
+        .keys()
+    {
+        roles.insert(format!("page:{k}"), json!(1));
+    }
+    let inspected = validation(
+        &f,
+        authorization,
+        Some(uuid(&flow, "id")),
+        "inspect_roles",
+        None,
+        Value::Object(roles),
+        Value::Null,
+        Value::Null,
+    )
+    .await;
+    for (index, launcher) in generic["launchers"].as_array().unwrap().iter().enumerate() {
+        for (path, key) in [("search", "search_steps"), ("all_apps", "all_apps_steps")] {
+            if !launcher[key].as_array().unwrap().is_empty() {
+                validation(
+                    &f,
+                    authorization,
+                    Some(uuid(&flow, "id")),
+                    "open_application",
+                    Some(index),
+                    json!({}),
+                    Value::Null,
+                    json!(path),
+                )
+                .await;
+            }
+        }
+    }
+    let release=f.call(None,Some(uuid(&flow,"id")),json!({"operation":"dispatch","input":{"action":"publish_flow","school_id":f.school,"validation_id":inspected["id"]}})).await;
+    let assignments=f.call(Some(f.school),None,json!({"operation":"dispatch","input":{"action":"assign","device_ids":[f.device],"group_id":null,"release_id":release["id"]}})).await;
+    // Still offline and registered as an old client: queueing must not require protocol/environment readiness.
+    sqlx::query(
+        "UPDATE execution_devices SET execution_protocol_version=2,last_seen_at=NULL WHERE id=$1",
+    )
+    .bind(f.device)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    f.call(Some(f.school),None,json!({"operation":"dispatch","input":{"action":"set_enabled","enabled":true,"reviewed_history":true}})).await;
+    let batch=f.call(Some(f.school),None,json!({"operation":"dispatch","input":{"action":"preview","input":{"name":"SYNTHETIC batch","text_content":"测试 v5","interval_seconds":60,"targets":[{"assignment_id":assignments["assignments"][0]["id"],"group_ids":[f.group]}]}}})).await;
+    let key = Uuid::new_v4().to_string();
+    let confirm = command(
+        json!({"operation":"dispatch","input":{"action":"confirm","preview_digest":batch["preview_digest"],"reviewed":true}}),
+    );
+    let scope = Scope {
+        school: Some(f.school),
+        id: Some(uuid(&batch, "id")),
+    };
+    let first = f
+        .repo
+        .execute(
+            Principal::Actor(f.actor),
+            scope.clone(),
+            &key,
+            confirm.clone(),
+            true,
+            "https://example.test",
+        )
+        .await
+        .unwrap();
+    let replay = f
+        .repo
+        .execute(
+            Principal::Actor(f.actor),
+            scope,
+            &key,
+            confirm,
+            true,
+            "https://example.test",
+        )
+        .await
+        .unwrap();
+    assert_eq!(first, replay);
+    let inbox = f
+        .repo
+        .query(
+            f.principal.clone(),
+            Scope {
+                school: None,
+                id: None,
+            },
+            Query::Dispatch(DispatchQuery::Inbox),
+            Page::default(),
+        )
+        .await
+        .unwrap();
+    let delivery = &inbox[0];
+    assert_eq!(delivery["plan"]["body"]["protocol_version"], 5);
+    assert!(delivery["plan"]["body"].get("environment_id").is_none());
+    let did = uuid(delivery, "id");
+    let digest = delivery["plan"]["content_digest"].clone();
+    f.device_call(
+        Some(did),
+        json!({"operation":"dispatch","input":{"action":"receipt","plan_digest":digest}}),
+    )
+    .await;
+    let wait = f
+        .device_call(
+            None,
+            json!({"operation":"claim","binding_revision":f.binding_revision}),
+        )
+        .await;
+    assert!(
+        wait["claim_id"].is_null(),
+        "a receipt is not readiness: {wait}"
+    );
+    let lease=f.device_call(Some(did),json!({"operation":"dispatch","input":{"action":"preparation_lease","plan_digest":digest,"authorization_id":authorization}})).await;
+    f.device_call(Some(did),json!({"operation":"dispatch","input":{"action":"stage","generation":lease["generation"],"item_id":lease["item_id"],"stage":"ready","path_key":"generic"}})).await;
+    let claim = f
+        .device_call(
+            None,
+            json!({"operation":"claim","binding_revision":f.binding_revision}),
+        )
+        .await;
+    assert_eq!(claim["requirements"]["protocol_version"], 5);
+    assert!(claim["requirements"].get("client_version").is_none());
+    assert_eq!(claim["dispatch_plan"]["content_digest"], digest);
+    f.device_call(
+        Some(uuid(&claim, "id")),
+        json!({"operation":"abort","fence":claim["fence"],"reason":"synthetic-not-clicked"}),
+    )
+    .await;
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM forbidden_environment_snapshots")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM forbidden_app_bindings")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        0
+    );
+}
