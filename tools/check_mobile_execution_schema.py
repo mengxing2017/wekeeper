@@ -91,6 +91,87 @@ END $$;
     run(command, input=verify + "\n\n")
 
 
+def verify_tasks(command):
+    """Exercise durable identity/immutability/physical reservation constraints."""
+    source = (ROOT / 'backend/src/distribution/south/adapter/postgres/mobile_execution/tasks.rs').read_text()
+    configuration = re.search(r'"(SELECT jsonb_build_object\(\'device_id[^"\n]+)"', source).group(1)
+    for key,value in {'$1': "'00000000-0000-0000-0000-000000000001'::uuid", '$2': "'00000000-0000-0000-0000-000000000006'::uuid"}.items():
+        configuration = configuration.replace(key,value)
+    def config_check(expected, message):
+        return f"DO $$ DECLARE found jsonb; BEGIN SELECT value INTO found FROM ({configuration}) q(value); IF (found IS NOT NULL) IS DISTINCT FROM {str(expected).lower()} THEN RAISE EXCEPTION '{message}'; END IF; END $$;"
+    config_sql = "UPDATE execution_devices SET credential_generation=0;" + config_check(True, 'valid task configuration rejected')
+    config_sql += "UPDATE mobile_device_consents SET accepted=false;" + config_check(False, 'withdrawn consent accepted for task')
+    config_sql += "UPDATE mobile_device_consents SET accepted=true; UPDATE mobile_execution_flow_releases SET enabled=false;" + config_check(False, 'revoked release accepted for task')
+    config_sql += "UPDATE mobile_execution_flow_releases SET enabled=true; UPDATE mobile_device_school_grants SET revision=4;" + config_check(False, 'stale grant accepted for task')
+    config_sql += "UPDATE mobile_device_school_grants SET revision=2;"
+    run(command, input=config_sql + "\n\n")
+    uid = lambda n: f"'00000000-0000-0000-0000-{n:012d}'"
+    a,b,actor,device,target,binding = (uid(n) for n in (1,2,3,6,7,9))
+    p,t,intent,plan,item = (uid(n) for n in (40,41,42,43,44))
+    sql = f"""
+INSERT INTO mobile_execution_task_previews(id,school_id,device_id,input,snapshot,digest,created_by) VALUES({p},{a},{device},'{{}}','{{"message":"原文"}}',repeat('c',64),{actor});
+INSERT INTO mobile_execution_tasks(id,school_id,intent_id,device_id,preview_id,created_by,confirmed_by) VALUES({t},{a},{intent},{device},{p},{actor},{actor});
+INSERT INTO mobile_execution_plans(id,school_id,task_id,snapshot,digest) VALUES({plan},{a},{t},'{{"message":"原文"}}',repeat('c',64));
+INSERT INTO mobile_execution_task_items(id,school_id,task_id,intent_id,device_id,target_id,binding_id,position,snapshot) VALUES({item},{a},{t},{intent},{device},{target},{binding},1,'{{"search_text":"原始群名"}}');
+INSERT INTO mobile_execution_device_reservations(device_id,school_id,task_id) VALUES({device},{a},{t});
+INSERT INTO mobile_execution_task_previews(id,school_id,device_id,input,snapshot,digest,created_by) VALUES({uid(50)},{b},{device},'{{}}','{{}}',repeat('c',64),{actor});
+INSERT INTO mobile_execution_tasks(id,school_id,intent_id,device_id,preview_id,created_by,confirmed_by) VALUES({uid(51)},{b},{uid(52)},{device},{uid(50)},{actor},{actor});
+DO $$ BEGIN
+ BEGIN
+  INSERT INTO mobile_execution_device_reservations(device_id,school_id,task_id) VALUES({device},{b},{uid(51)});
+  RAISE EXCEPTION 'another school reserved occupied physical device';
+ EXCEPTION WHEN unique_violation THEN NULL; END;
+ BEGIN
+  UPDATE mobile_execution_plans SET snapshot='{{}}' WHERE id={plan};
+  RAISE EXCEPTION 'plan rewritten';
+ EXCEPTION WHEN check_violation THEN NULL; END;
+ BEGIN
+  UPDATE mobile_execution_task_previews SET digest=repeat('d',64) WHERE id={p};
+  RAISE EXCEPTION 'preview rewritten';
+ EXCEPTION WHEN check_violation THEN NULL; END;
+ BEGIN
+  UPDATE mobile_execution_task_items SET snapshot='{{}}' WHERE id={item};
+  RAISE EXCEPTION 'target snapshot rewritten';
+ EXCEPTION WHEN check_violation THEN NULL; END;
+ BEGIN
+  INSERT INTO mobile_execution_device_reservations(device_id,school_id,task_id) VALUES({device},{a},{t});
+  RAISE EXCEPTION 'duplicate physical reservation accepted';
+ EXCEPTION WHEN unique_violation THEN NULL; END;
+ BEGIN
+  UPDATE mobile_execution_tasks SET school_id={b} WHERE id={t};
+  RAISE EXCEPTION 'cross school task accepted';
+ EXCEPTION WHEN foreign_key_violation THEN NULL; END;
+ BEGIN
+  INSERT INTO mobile_execution_task_items(id,school_id,task_id,intent_id,device_id,target_id,binding_id,position,snapshot) VALUES({uid(45)},{a},{t},{intent},{device},{target},{binding},2,'{{}}');
+  RAISE EXCEPTION 'intent repeated target accepted';
+ EXCEPTION WHEN unique_violation THEN NULL; END;
+END $$;
+UPDATE mobile_execution_task_items SET state='unknown' WHERE id={item};
+"""
+    repository = ROOT / 'backend/src/distribution/south/adapter/postgres/mobile_execution.rs'
+    task_query = re.search(r'Resource::Tasks => \{\s*"([^"\n]+)"', repository.read_text()).group(1)
+    for key,value in {'$1': a+'::uuid', '$2': "''::text", '$3': 'NULL::uuid', '$4': '31', '$5': '0'}.items():
+        task_query = task_query.replace(key,value)
+    sql += f"""DO $$ DECLARE found jsonb; BEGIN SELECT value INTO found FROM ({task_query}) q(value);
+ IF found->>'device_name' IS DISTINCT FROM 'Phone' OR found->'items'->0->'snapshot'->>'search_text' IS DISTINCT FROM '原始群名' THEN RAISE EXCEPTION 'task projection lost device name or target snapshot'; END IF;
+END $$;"""
+    # Execute the exact cancellation predicate used by the repository: unknown must keep its reservation.
+    source = (ROOT / 'backend/src/distribution/south/adapter/postgres/mobile_execution/tasks.rs').read_text()
+    cancel = re.search(r'"(UPDATE mobile_execution_tasks t SET [^"\n]+)"', source).group(1)
+    for key,value in {'$1': a+'::uuid', '$2': t+'::uuid', '$3': '1::bigint'}.items():
+        cancel = cancel.replace(key,value)
+    sql += cancel + ";"
+    sql += f"""DO $$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM mobile_execution_tasks WHERE id={t} AND state='queued') OR NOT EXISTS(SELECT 1 FROM mobile_execution_device_reservations WHERE device_id={device}) THEN RAISE EXCEPTION 'unknown released physical reservation'; END IF;
+END $$;
+UPDATE mobile_execution_task_items SET state='pending' WHERE id={item};
+""" + cancel + ";"
+    sql += f"""DO $$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM mobile_execution_tasks WHERE id={t} AND state='cancelled') THEN RAISE EXCEPTION 'certainly unclaimed work cannot cancel'; END IF;
+END $$;"""
+    run(command, input=sql + "\n\n")
+
+
 def run(command, **kwargs):
     result = subprocess.run(command, text=True, capture_output=True, **kwargs)
     errors = [line for line in result.stderr.splitlines() if "ERROR:" in line or "FATAL:" in line or "PANIC:" in line]
@@ -118,7 +199,8 @@ def main():
         static_queries = [json.loads('"' + query + '"') for query in queries if "{table}" not in query]
         run(command, input="\n".join(f"PREPARE phone_query_{i} AS {query};" for i, query in enumerate(static_queries)) + "\n\n")
         verify_flows(command, repository)
-    print("PASS: upgrade preserves official data; phone resources/flow assignments reject cross-school/device bindings, stale consent, revoked releases and invalid validation; repository SQL prepares successfully")
+        verify_tasks(command)
+    print("PASS: upgrade preserves official data; phone resources/flow assignments reject cross-school/device bindings, stale consent, revoked releases and invalid validation; task snapshots/intents/reservations remain constrained; repository SQL prepares successfully")
 
 
 if __name__ == "__main__":
