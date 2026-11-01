@@ -13,13 +13,33 @@ use axum::{
 use serde::Deserialize;
 use serde_json::Value;
 use uuid::Uuid;
+// Keep query fields flat: serde's flatten buffers URL values as strings,
+// preventing numeric pagination fields from using the URL deserializer.
 #[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct Filter {
-    #[serde(flatten)]
-    page: Page,
+    #[serde(rename = "page[number]")]
+    page_number: Option<i64>,
+    #[serde(rename = "page[size]")]
+    page_size: Option<i64>,
     #[serde(default)]
     search: String,
     device_id: Option<Uuid>,
+    status: Option<String>,
+    mine: Option<bool>,
+    kind: Option<String>,
+}
+impl Filter {
+    fn page(&self) -> Page {
+        Page {
+            page: self.page_number,
+            page_size: self.page_size,
+            status: self.status.clone(),
+            mine: self.mine,
+            kind: self.kind.clone(),
+            ..Page::default()
+        }
+    }
 }
 fn key(h: &HeaderMap) -> &str {
     h.get("idempotency-key")
@@ -38,12 +58,12 @@ async fn platform_capabilities(
                 &actor,
                 None,
                 Resource::Capabilities,
-                f.page.clone(),
-                f.search,
+                f.page(),
+                f.search.clone(),
                 f.device_id,
             )
             .await?,
-        &f.page,
+        &f.page(),
     ))
 }
 async fn create_capability(
@@ -123,12 +143,12 @@ async fn platform_devices(
                 &actor,
                 None,
                 Resource::PlatformDevices,
-                f.page.clone(),
-                f.search,
+                f.page(),
+                f.search.clone(),
                 f.device_id,
             )
             .await?,
-        &f.page,
+        &f.page(),
     ))
 }
 async fn targets(
@@ -144,12 +164,12 @@ async fn targets(
                 &actor,
                 Some(s),
                 Resource::Targets,
-                f.page.clone(),
-                f.search,
+                f.page(),
+                f.search.clone(),
                 f.device_id,
             )
             .await?,
-        &f.page,
+        &f.page(),
     ))
 }
 async fn devices(
@@ -165,12 +185,12 @@ async fn devices(
                 &actor,
                 Some(s),
                 Resource::Devices,
-                f.page.clone(),
-                f.search,
+                f.page(),
+                f.search.clone(),
                 f.device_id,
             )
             .await?,
-        &f.page,
+        &f.page(),
     ))
 }
 async fn bindings(
@@ -186,12 +206,12 @@ async fn bindings(
                 &actor,
                 Some(s),
                 Resource::Bindings,
-                f.page.clone(),
-                f.search,
+                f.page(),
+                f.search.clone(),
                 f.device_id,
             )
             .await?,
-        &f.page,
+        &f.page(),
     ))
 }
 async fn target(
@@ -348,12 +368,12 @@ async fn flows(
                 &actor,
                 Some(s),
                 Resource::Flows,
-                f.page.clone(),
-                f.search,
+                f.page(),
+                f.search.clone(),
                 f.device_id,
             )
             .await?,
-        &f.page,
+        &f.page(),
     ))
 }
 async fn create_flows(
@@ -390,12 +410,12 @@ async fn flow_validations(
                 &actor,
                 Some(s),
                 Resource::Validations,
-                f.page.clone(),
-                f.search,
+                f.page(),
+                f.search.clone(),
                 f.device_id,
             )
             .await?,
-        &f.page,
+        &f.page(),
     ))
 }
 async fn create_flow_validations(
@@ -432,12 +452,12 @@ async fn releases(
                 &actor,
                 Some(s),
                 Resource::Releases,
-                f.page.clone(),
-                f.search,
+                f.page(),
+                f.search.clone(),
                 f.device_id,
             )
             .await?,
-        &f.page,
+        &f.page(),
     ))
 }
 async fn create_releases(
@@ -474,12 +494,12 @@ async fn assignments(
                 &actor,
                 Some(s),
                 Resource::Assignments,
-                f.page.clone(),
-                f.search,
+                f.page(),
+                f.search.clone(),
                 f.device_id,
             )
             .await?,
-        &f.page,
+        &f.page(),
     ))
 }
 async fn create_assignments(
@@ -585,12 +605,12 @@ async fn tasks(
                 &actor,
                 Some(s),
                 Resource::Tasks,
-                f.page.clone(),
-                f.search,
+                f.page(),
+                f.search.clone(),
                 f.device_id,
             )
             .await?,
-        &f.page,
+        &f.page(),
     ))
 }
 async fn task_preview(
@@ -668,12 +688,12 @@ async fn platform_bindings(
                 &actor,
                 None,
                 Resource::PlatformBindings,
-                f.page.clone(),
-                f.search,
+                f.page(),
+                f.search.clone(),
                 f.device_id,
             )
             .await?,
-        &f.page,
+        &f.page(),
     ))
 }
 async fn platform_targets(
@@ -688,12 +708,12 @@ async fn platform_targets(
                 &actor,
                 None,
                 Resource::PlatformTargets,
-                f.page.clone(),
-                f.search,
+                f.page(),
+                f.search.clone(),
                 None,
             )
             .await?,
-        &f.page,
+        &f.page(),
     ))
 }
 async fn update_binding(
@@ -822,4 +842,64 @@ pub fn router() -> Router<Application> {
             "/api/v1/schools/{school}/mobile-execution/target-bindings",
             get(bindings),
         )
+}
+
+#[cfg(test)]
+mod query_tests {
+    use super::*;
+    use axum::http::Uri;
+
+    #[test]
+    fn pagination_and_empty_search_parse_from_client_url() {
+        for resource in [
+            "target-bindings",
+            "device-capabilities",
+            "devices",
+            "targets",
+        ] {
+            let uri: Uri = format!(
+                "/api/v1/platform/mobile-execution/{resource}?page[number]=1&page[size]=30&search="
+            )
+            .parse()
+            .unwrap();
+            let Query(filter) = Query::<Filter>::try_from_uri(&uri).unwrap();
+            assert_eq!(filter.page().bounds().unwrap(), (30, 0), "{resource}");
+            assert!(filter.search.is_empty(), "{resource}");
+            assert!(filter.device_id.is_none(), "{resource}");
+        }
+    }
+
+    #[test]
+    fn encoded_pagination_search_and_device_filter_parse() {
+        let device = Uuid::from_u128(1);
+        let uri: Uri = format!(
+            "/api/query?page%5Bnumber%5D=2&page%5Bsize%5D=10&search=%E7%BE%A4&device_id={device}"
+        )
+        .parse()
+        .unwrap();
+        let Query(filter) = Query::<Filter>::try_from_uri(&uri).unwrap();
+        assert_eq!(filter.page().bounds().unwrap(), (10, 10));
+        assert_eq!(filter.search, "群");
+        assert_eq!(filter.device_id, Some(device));
+    }
+
+    #[test]
+    fn query_defaults_and_validation_are_preserved() {
+        let Query(filter) = Query::<Filter>::try_from_uri(&"/api/query".parse().unwrap()).unwrap();
+        assert_eq!(filter.page().bounds().unwrap(), (30, 0));
+        for query in [
+            "page[number]=abc",
+            "device_id=invalid",
+            "page_size=10",
+            "page=1",
+        ] {
+            let uri = format!("/api/query?{query}").parse().unwrap();
+            assert!(Query::<Filter>::try_from_uri(&uri).is_err(), "{query}");
+        }
+        for query in ["page[number]=0", "page[size]=101", "page[size]=-1"] {
+            let uri = format!("/api/query?{query}").parse().unwrap();
+            let Query(filter) = Query::<Filter>::try_from_uri(&uri).unwrap();
+            assert!(filter.page().bounds().is_err(), "{query}");
+        }
+    }
 }
