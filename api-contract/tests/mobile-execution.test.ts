@@ -337,11 +337,20 @@ test("device control presence and commands use the authenticated platform client
   const fixture = (await import("../fixtures/device-control-frame.json")).default;
   const frame: import("../src/modules/mobile-delivery").DeviceControlFrame = { ...fixture, protocol_version: 1 };
   expect(frame.heartbeat_interval_seconds).toBe(20);
-  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response({ data: { type: "device-control-commands", id: "command", attributes: { kind: "pause_execution", state: "queued" } } }));
+  const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => response({ data: { type: "device-control-commands", id: "command", attributes: { kind: "pause_execution", state: "queued" } } }));
   vi.stubGlobal("fetch", fetcher);
   await mobileDeliveryApi.controlCommand("phone", "pause_execution", "pause-once");
   expect(fetcher.mock.calls[0][0]).toBe("/api/v1/platform/execution-devices/phone/control");
   expect(JSON.parse(fetcher.mock.calls[0][1]?.body as string).data.attributes).toEqual({ kind: "pause_execution" });
+  expect(JSON.parse(fetcher.mock.calls[0][1]?.body as string).data.type).toBe("device-control-commands");
+  for (const kind of ["request_status", "resume_execution"] as const) {
+    await mobileDeliveryApi.controlCommand("phone", kind, `${kind}-once`);
+    const call = fetcher.mock.calls.at(-1)!;
+    expect(call[0]).toBe("/api/v1/platform/execution-devices/phone/control");
+    expect(JSON.parse(call[1]?.body as string)).toEqual({ data: { type: "device-control-commands", attributes: { kind } } });
+    expect(new Headers(call[1]?.headers).get("Idempotency-Key")).toBe(`${kind}-once`);
+  }
+
 });
 
 test("batched device list preserves the shared control presence projection", async () => {

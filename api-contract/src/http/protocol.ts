@@ -151,6 +151,7 @@ export function resourceType(path: string): string {
   if (parts[2] === "platform" && parts[3] === "execution-devices") {
     if (parts[5] === "enrollments") return "device-enrollments";
     if (parts[5] === "account-bindings") return "device-account-bindings";
+    if (parts[5] === "control") return "device-control-commands";
     return "execution-devices";
   }
   if (parts[2] === "platform" && parts[3] === "automation-pacing-profiles")
