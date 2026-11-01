@@ -109,9 +109,10 @@ export function resourceType(path: string): string {
       case "shared-task-previews": return "mobile-shared-previews";
       case "shared-tasks": return parts[7] === "stops" ? "mobile-shared-stops" : "mobile-shared-tasks";
       case "shared-items": return parts[7] === "reassignments" ? "mobile-shared-reassignments" : "mobile-shared-reviews";
+      case "shared-bindings": return "mobile-shared-bindings";
+      case "shared-device-access": return "mobile-shared-access";
       case "shared-inspections": return "mobile-shared-inspections";
       case "shared-send-policies": return "mobile-shared-policies";
-      case "shared-send-openings": return "mobile-shared-openings";
       case "flow-versions": return "mobile-execution-flow-versions";
       case "flow-validations": return "mobile-execution-flow-validations";
       case "flow-releases": return "mobile-execution-flow-releases";

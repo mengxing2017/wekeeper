@@ -31,6 +31,7 @@ export interface SharedBindingInput {
   target_id: string; device_ids: string[]; search_text_override: string | null;
 }
 export interface TargetBinding {
+ source?: 'platform' | 'school_pool';
   id: string; school_id: string; device_id: string; target_id: string;
   search_text_override: string | null; locator_revision: number;
   target_locator_revision?: number;
