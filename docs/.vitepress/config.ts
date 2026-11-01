@@ -77,7 +77,7 @@ export default defineConfig({
               text: "手机设备与发送账号",
               link: "/guide/platform-admin/devices-and-accounts",
             },
-            { text: "学校设备使用授权", link: "/guide/platform-admin/device-school-grants" },
+            { text: "共享手机与目标群", link: "/guide/platform-admin/shared-mobile-resources" },
             {
               text: "流程维护与发布",
               link: "/guide/platform-admin/flow-maintenance",
