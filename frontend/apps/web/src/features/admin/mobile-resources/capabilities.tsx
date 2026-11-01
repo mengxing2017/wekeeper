@@ -1,3 +1,4 @@
+import { SharedSendReadiness } from './shared-send-readiness'
 import { PlatformFieldChecks } from './field-checks'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -39,6 +40,7 @@ export function DeviceCapabilities() {
     setPending(request); save.mutate(request)
   }
   return <Card title="业务能力开通" extra={<Button loading={rows.isFetching} onClick={() => { void rows.refetch() }}>刷新开通进度</Button>}>
+    <SharedSendReadiness />
     <Alert type="info" showIcon title="选择手机，按进度完成业务能力开通" description="系统负责提供适配并核对手机实际应用。开通申请、本机同意、现场检查和任务执行分别核对。手机在线不代表可以发送。" />
     {rows.error && <Alert type="error" title="读取开通进度失败" description={rows.error.message} />}
     <Table<CapabilityOpening> rowKey="id" loading={rows.isFetching} dataSource={rows.data?.items ?? []} pagination={false} columns={[

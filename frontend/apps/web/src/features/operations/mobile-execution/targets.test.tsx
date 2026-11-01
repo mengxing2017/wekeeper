@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MobileTargets } from './targets'
 import { api } from './api'
-vi.mock('./api', () => ({ api: { targets: vi.fn(), bindings: vi.fn(), devices: vi.fn(), fieldInvitations: vi.fn().mockResolvedValue({items:[]}), schoolFieldChecks: vi.fn().mockResolvedValue({items:[]}) } }))
+vi.mock('./api', () => ({sharedSend:{overview:vi.fn().mockResolvedValue({id:'school',tasks:[],drafts:[],inspections:[]})}, api: { targets: vi.fn(), bindings: vi.fn(), devices: vi.fn(), fieldInvitations: vi.fn().mockResolvedValue({items:[]}), schoolFieldChecks: vi.fn().mockResolvedValue({items:[]}) } }))
 beforeEach(()=>{vi.mocked(api.fieldInvitations).mockResolvedValue({items:[]});vi.mocked(api.schoolFieldChecks).mockResolvedValue({items:[]})})
 afterEach(() => { cleanup(); vi.resetAllMocks() })
 it('operators can inspect independent targets without account registration or official resource calls', async () => {

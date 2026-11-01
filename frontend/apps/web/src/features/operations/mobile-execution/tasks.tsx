@@ -1,3 +1,4 @@
+import { SharedSendTasks } from './shared-send-tasks'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Card, Modal, Space, Table } from 'antd'
@@ -8,7 +9,7 @@ import { canCancelTask, taskCounts, taskError, taskItemLabels, taskLabels } from
 
 type Props = { school: string; admin: boolean; onNavigate?: (view: string) => void }
 export function MobileExecutionTasks(props: Props) {
-  return <TaskHistory key={`${props.school}:${props.admin}`} {...props} />
+  return <Space orientation="vertical" style={{ width: '100%' }}><SharedSendTasks key={`shared:${props.school}:${props.admin}`} {...props} /><TaskHistory key={`${props.school}:${props.admin}`} {...props} /></Space>
 }
 function TaskHistory({ school, onNavigate }: Props) {
   const cache = useQueryClient()
@@ -20,7 +21,7 @@ function TaskHistory({ school, onNavigate }: Props) {
   const denied = [tasks.error, cancel.error].find(e => e && 'code' in e && ['forbidden', 'unauthorized'].includes(String(e.code)))
   if (denied) return <Alert type="error" title={taskError(denied)} description="请重新登录或选择学校；旧学校任务不会继续显示。" />
   return <Space orientation="vertical" style={{ width: '100%' }}>
-    <Alert type="warning" showIcon title="共享手机执行升级中，暂不开放新任务确认" description="目标群与共享手机绑定已改为新模型。旧的先选手机、按学校授权及确认即预留流程已停止；新版按群预览与共享调度完成验收后开放。以下保留历史任务及核对依据，不会自动迁移成新发送。企业微信官方客户群群发继续独立使用。" />
+    <Alert type="warning" showIcon title="历史手机任务仅供查询与核对" description="目标群与共享手机绑定已改为新模型。旧的先选手机、按学校授权及确认即预留流程已停止；新建共享任务请使用上方入口；只有逐群检查及发送验收均有效的设备可以确认。以下保留历史任务及核对依据，不会自动迁移成新发送。企业微信官方客户群群发继续独立使用。" />
     {onNavigate && <Button onClick={() => onNavigate('mobile-targets')}>维护本校手机目标群</Button>}
     {(tasks.error || cancel.error) && <Alert type="error" title={taskError(tasks.error || cancel.error)} />}
     <Card title="历史手机任务">

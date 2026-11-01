@@ -1,0 +1,83 @@
+import { useRef, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Alert, Button, Card, Checkbox, Input, Modal, Select, Space, Table } from 'antd'
+import { api, sharedSend, type SharedDraft, type SharedPreview, type SharedTask, type SharedAttempt } from './api'
+import { createIdempotencyKey } from '../../../shared/idempotency-key'
+import { PaginationControls } from '../../../shared/pagination-controls'
+import { taskError } from './task-model'
+
+const stateLabels:Record<string,string>={queued:'排队等待共享手机',leased:'手机已领取，准备中',prepared:'文字准备完成，等待单次许可',invocation_issued:'已发单次许可，等待手机结果',observed_sent:'手机观察到新的已发消息，未证明对方送达',unknown:'结果不确定，必须人工核对，禁止自动重发',failed_before_call:'调用前准备失败，未发出调用许可',invalidated:'执行依据已失效',cancelled:'未执行部分已取消',verified_not_sent:'人工核对确认未发送',manually_confirmed_sent:'人工核对确认已发送'}
+export function SharedSendTasks({ school, admin }: { school: string; admin: boolean }) {
+  const cache = useQueryClient()
+  const requestKeys=useRef(new Map<string,string>())
+  function keyFor(kind:string,input:unknown){const identity=JSON.stringify([kind,input]);let key=requestKeys.current.get(identity);if(!key){key=createIdempotencyKey();requestKeys.current.set(identity,key)}return key}
+  const [action,setAction]=useState<{kind:'stop'|'review'|'reassign';attempt?:SharedAttempt}>()
+  const [reason,setReason]=useState('')
+  const [decision,setDecision]=useState<'still_unknown'|'verified_not_sent'|'manually_confirmed_sent'>('still_unknown')
+  const [device,setDevice]=useState<string>()
+
+  const [targetPage,setTargetPage]=useState(1)
+  const [targetSearch,setTargetSearch]=useState('')
+  const [targetNames,setTargetNames]=useState<Record<string,string>>({})
+  const [message, setMessage] = useState('')
+  const [targets, setTargets] = useState<string[]>([])
+  const [draft, setDraft] = useState<SharedDraft>()
+  const [preview, setPreview] = useState<SharedPreview>()
+  const [confirmed, setConfirmed] = useState(false)
+  const [detail, setDetail] = useState<SharedTask>()
+  const bindings=useQuery({queryKey:['mobile-execution',school,'shared-reassign-bindings'],queryFn:()=>api.bindings(school,1),enabled:action?.kind==='reassign'})
+  const overview = useQuery({ queryKey: ['mobile-execution', school, 'shared-tasks'], queryFn: () => sharedSend.overview(school), refetchInterval: 20_000 })
+  const options = useQuery({ queryKey: ['mobile-execution', school, 'shared-targets',targetPage,targetSearch], queryFn: () => api.targets(school, targetPage,targetSearch) })
+  const refresh = () => cache.invalidateQueries({ queryKey: ['mobile-execution', school] })
+  const save = useMutation({ mutationFn: () => sharedSend.draft(school, { target_ids: targets, message, content_type: 'text/plain', expected_revision: draft?.revision }, keyFor("draft",[draft?.id,draft?.revision,targets,message]), draft?.id), onSuccess: d => { setDraft(d); setPreview(undefined); void refresh() } })
+  const inspect = useMutation({ mutationFn: () => sharedSend.preview(school, draft!.id, draft!.revision, [], keyFor("preview",[draft!.id,draft!.revision])), onSuccess: p => { setPreview(p); setConfirmed(false) } })
+  const confirm = useMutation({ mutationFn: () => sharedSend.confirm(school, preview!, keyFor("confirm",preview!.id)), onSuccess: t => { setDetail(t); setDraft(undefined); setPreview(undefined); setMessage(''); setTargets([]); void refresh() } })
+  const reselect=useMutation({mutationFn:(selections:Array<{target_id:string;device_id:string}>)=>sharedSend.preview(school,draft!.id,draft!.revision,selections,keyFor('preview-selection',[draft!.id,draft!.revision,selections])),onSuccess:p=>{setPreview(p);setConfirmed(false)}})
+  const mutate=useMutation({mutationFn:async()=>{
+    if(action!.kind==='stop')return sharedSend.stop(school,detail!.id,detail!.revision,reason,keyFor('stop',[detail!.id,detail!.revision,reason]))
+    const a=action!.attempt!
+    if(action!.kind==='review'){await sharedSend.review(school,a.id,a.revision,decision,reason,keyFor('review',[a.id,a.revision,decision,reason]));return sharedSend.task(school,detail!.id)}
+    return sharedSend.reassign(school,a.id,a.revision,device!,reason,keyFor('reassign',[a.id,a.revision,device,reason]))
+  },onSuccess:t=>{setDetail(t);setAction(undefined);setReason('');setDevice(undefined);void refresh()}})
+  const read = useMutation({ mutationFn: (id: string) => sharedSend.task(school, id), onSuccess: setDetail })
+  const error = overview.error || options.error || save.error || inspect.error || confirm.error || read.error || reselect.error || mutate.error || bindings.error
+  const dirty = !!draft && (message.replace(/\r\n?/g, '\n') !== draft.message || targets.join() !== draft.target_ids.join())
+  return <Card title="手机共享发送">
+    <Space orientation="vertical" style={{ width: '100%' }}>
+      <Alert type="info" showIcon title="按目标群创建，逐群选择共享手机" description="先保存文字草稿，再预览每个目标群的搜索文字、设备和检查结果。管理员确认后进入队列。结果不确定时停止该设备，核对前不会自动重发。企业微信官方群发独立使用。" />
+      {error && <Alert type="error" title={taskError(error)} />}
+      <Input.Search aria-label="搜索手机目标群" placeholder="搜索本校群名或别名" onSearch={value=>{setTargetSearch(value);setTargetPage(1)}} />
+      <Select labelInValue mode="multiple" aria-label="手机目标群" placeholder="选择本校手机目标群" style={{ width: '100%' }} value={targets.map(value=>({value,label:targetNames[value] ?? value}))} onChange={values=>{setTargets(values.map(v=>v.value));setTargetNames(names=>({...names,...Object.fromEntries(values.map(v=>[v.value,String(v.label)]))}))}} options={(options.data?.items ?? []).filter(t => t.enabled && !t.archived_at).map(t => ({ value: t.id, label: t.alias || t.search_text }))} />
+      <PaginationControls page={targetPage} more={options.data?.page?.has_more} change={setTargetPage} subject="可选手机目标群" />
+      {!!overview.data?.drafts.length && <Select aria-label="恢复共享发送草稿" placeholder="恢复已保存草稿" style={{width:'100%'}} options={overview.data.drafts.map(d=>({value:d.id,label:`${d.message.slice(0,30)}（${d.target_ids.length} 个目标群）`}))} onChange={id=>{const d=overview.data!.drafts.find(x=>x.id===id)!;setDraft(d);setTargets(d.target_ids);setMessage(d.message);setPreview(undefined);setConfirmed(false)}} />}
+      <Input.TextArea aria-label="发送文字" rows={5} value={message} onChange={e => setMessage(e.target.value)} placeholder="输入实际发送的文字；空格与换行会保留" />
+      <Space><Button loading={save.isPending} disabled={!message.trim() || !targets.length} onClick={() => save.mutate()}>保存草稿</Button><Button loading={inspect.isPending} disabled={!draft || dirty} onClick={() => inspect.mutate()}>预览逐群执行计划</Button></Space>
+      {dirty && <Alert type="warning" title="文字或目标群已修改，请先保存草稿并重新预览" />}
+      {preview && !dirty && <>
+        <p>计划有效期：{preview.expires_at}。以下为实际发送文字：</p><pre style={{ whiteSpace: 'pre-wrap' }}>{preview.plan.message}</pre>
+        <Table rowKey="target_id" pagination={false} dataSource={preview.plan.items} columns={[
+          { title: '目标群', render:(_,i)=>i.selected?.target_name || i.target_id }, { title: '共享手机', render: (_, i) => <Select aria-label={`目标群 ${i.target_id} 的共享手机`} style={{minWidth:150}} disabled={reselect.isPending} value={i.selected?.device_id} placeholder="无可用设备" options={i.candidates.map(c=>({value:c.device_id,label:c.device_name}))} onChange={device_id=>reselect.mutate(preview.plan.items.filter(x=>x.selected).map(x=>({target_id:x.target_id,device_id:x.target_id===i.target_id?device_id:x.selected!.device_id})))} /> },
+          { title: '实际搜索文字', render: (_, i) => i.selected?.search_text ?? '—' },
+          { title: '检查', render: (_, i) => i.blocker ? '请先完成设备绑定、手机授权及逐群检查' : '检查有效，确认时还将核验发送验收范围' },
+        ]} />
+        <Checkbox checked={confirmed} onChange={e => setConfirmed(e.target.checked)}>我已核对文字、目标群和逐群设备，确认真实发送</Checkbox>
+        <Button type="primary" loading={confirm.isPending} disabled={!admin || !confirmed || reselect.isPending || inspect.isPending || preview.plan.items.some(i => !i.selected || i.blocker)} onClick={() => confirm.mutate()}>确认进入共享发送队列</Button>
+      </>}
+      <Table<SharedTask> rowKey="id" loading={overview.isFetching} dataSource={overview.data?.tasks ?? []} pagination={{ pageSize: 10 }} columns={[
+        { title: '任务', dataIndex: 'id' }, { title: '创建时间', dataIndex: 'created_at' }, { title: '状态', render: (_, t) => t.stopped ? '已停止领取' : '查看逐群进度' },
+        { title: '操作', render: (_, t) => <Button onClick={() => read.mutate(t.id)}>查看计划与结果</Button> },
+      ]} />
+    </Space>
+    <Modal title="共享任务逐群进度" open={!!detail} footer={null} onCancel={() => setDetail(undefined)}>
+      {detail && admin && !detail.stopped && <Button danger onClick={()=>setAction({kind:'stop'})}>停止尚未发放许可的任务</Button>}
+      {detail?.items?.map(i => <div key={i.id}><p>目标群：{i.target_id}</p>{i.attempts?.map(a => <p key={a.id}>{a.plan.search_text} / {a.plan.device_name || a.plan.device_id} / {stateLabels[a.state]}{admin && a.current && a.state==='unknown' && <Button onClick={()=>setAction({kind:'review',attempt:a})}>人工核对结果</Button>}{admin && a.current && ['failed_before_call','verified_not_sent','invalidated'].includes(a.state) && <Button onClick={()=>setAction({kind:'reassign',attempt:a})}>核对后重新安排设备</Button>}</p>)}</div>)}
+    </Modal>
+    <Modal title={action?.kind==='stop'?'停止新领取':action?.kind==='review'?'人工核对原发送结果':'重新安排原目标群'} open={!!action} confirmLoading={mutate.isPending} onCancel={()=>setAction(undefined)} okButtonProps={{disabled:!reason.trim() || (action?.kind==='reassign'&&!device)}} onOk={()=>mutate.mutate()}>
+      <p>此操作保留原计划和全部尝试记录。停止不会撤回已发出的调用许可；改派还需旧设备已静止且新设备检查、验收范围有效。</p>
+      {action?.kind==='review' && <Select value={decision} onChange={setDecision} style={{width:'100%'}} options={[{value:'still_unknown',label:'仍然无法确定，继续阻断'},{value:'verified_not_sent',label:'已有充分依据确认未发送'},{value:'manually_confirmed_sent',label:'人工核对确认已发送'}]} />}
+      {action?.kind==='reassign' && <Select aria-label="重新安排共享手机" value={device} onChange={setDevice} style={{width:'100%'}} options={(bindings.data?.items??[]).filter(b=>b.enabled && b.target_id===action.attempt?.plan.target_id).map(b=>({value:b.device_id,label:b.device_name||b.device_id}))} />}
+      <Input.TextArea aria-label="核对依据与操作理由" value={reason} onChange={e=>setReason(e.target.value)} maxLength={2000} placeholder="记录实际核对依据，不能仅因等待超时判断未发送" />
+      {mutate.error && <Alert type="error" title={taskError(mutate.error)} />}
+    </Modal>
+  </Card>
+}

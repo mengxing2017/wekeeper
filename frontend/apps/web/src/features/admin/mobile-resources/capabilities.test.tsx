@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { DeviceCapabilities } from './capabilities'
 import { api, type CapabilityOpening } from './api'
+vi.mock('./shared-send-readiness',()=>({SharedSendReadiness:()=>null}))
 vi.mock('./api', () => ({ api: { platformFieldInvitations: vi.fn().mockResolvedValue({items:[]}), fieldChecks: vi.fn().mockResolvedValue({items:[]}), capabilityOpenings: vi.fn(), openCapability: vi.fn(), cancelOpening: vi.fn(), requestAdapterSupport: vi.fn() } }))
 afterEach(() => { cleanup(); vi.resetAllMocks() })
 function mount(row: CapabilityOpening) {
