@@ -40,7 +40,7 @@ export default defineConfig({
             { text: "手机任务预览与确认", link: "/guide/operator/mobile-execution-tasks" },
             { text: "手机执行配置", link: "/guide/operator/mobile-execution-flows" },
             { text: "手机目标群与设备绑定", link: "/guide/operator/mobile-targets" },
-            { text: "手机设备与发送账号", link: "/guide/operator/execution-resources" },
+            { text: "共享手机资源维护", link: "/guide/operator/execution-resources" },
             {
               text: "结果与异常处理",
               link: "/guide/operator/results-and-recovery",
@@ -74,12 +74,12 @@ export default defineConfig({
               link: "/guide/platform-admin/directory-and-assets",
             },
             {
-              text: "手机设备与发送账号",
+              text: "共享手机资源维护",
               link: "/guide/platform-admin/devices-and-accounts",
             },
             { text: "共享手机与目标群", link: "/guide/platform-admin/shared-mobile-resources" },
             {
-              text: "流程维护与发布",
+              text: "共享手机业务能力开通",
               link: "/guide/platform-admin/flow-maintenance",
             },
             {
@@ -98,6 +98,7 @@ export default defineConfig({
             { text: "Web 与小程序", link: "/development/frontend" },
             { text: "Rust 后端", link: "/development/backend" },
             { text: "协议与授权", link: "/development/contracts-and-auth" },
+            { text: "旧手机维护协议退场", link: "/development/legacy-mobile-retirement" },
             { text: "测试与验收", link: "/development/testing" },
             { text: "文档构建与发布", link: "/development/docs-publishing" },
           ],
@@ -116,7 +117,7 @@ export default defineConfig({
             { text: "业务流程", link: "/pipeline/" },
             { text: "业务运行", link: "/runbooks/business" },
             { text: "企业微信接入", link: "/runbooks/wecom" },
-            { text: "当前手机任务 v5", link: "/runbooks/dispatch-v5" },
+            { text: "历史手机任务 v5（已停用）", link: "/runbooks/dispatch-v5" },
             { text: "历史手机接口", link: "/runbooks/mobile-delivery" },
             { text: "历史 v4 工作流", link: "/runbooks/automation-workflows" },
             {

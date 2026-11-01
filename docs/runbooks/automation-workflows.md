@@ -1,7 +1,13 @@
 # 多应用业务配置与安卓应用准备
 
+::: warning 历史协议，已退出新增执行
+本文仅供查询历史配置、证据与在途收尾，不作为当前操作指引。旧创建、接受、发布、启用及发送领取已停用；受权限控制的取消、撤销、固定结果补报和 unknown 核对保留。旧设备轮询返回空队列，已接受作业应停止后续界面动作，原有效期内提交终态，不宣称远端动作已被撤回。
+当前请阅读[共享手机能力开通](../guide/platform-admin/flow-maintenance.md)。共享发送 `execution_ready=false`，不得回退 v5 或复用旧成功资格。
+:::
+
+
 ::: warning 历史协议与维护资料
-本文包含对应历史协议与在途任务的说明。新建手机业务请先阅读[使用手册](../guide/operator/mobile-tasks.md)和[当前 v5 流程](dispatch-v5.md)，不要将旧环境准备要求套用到新任务。
+本文包含对应历史协议与在途任务的说明。新建手机业务请先阅读[使用手册](../guide/operator/mobile-tasks.md)和[共享手机能力开通](../guide/platform-admin/flow-maintenance.md)，不要将旧环境准备要求套用到新任务。
 :::
 
 
