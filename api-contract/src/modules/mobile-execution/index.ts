@@ -1,3 +1,5 @@
+import type { TaskPreviewInput, TaskConfirmationInput, TaskPreview, ExecutionTask, ExecutionTaskDetail } from './tasks'
+export * from './tasks'
 import type { FlowV2, FlowVersion, FlowValidation, FlowRelease, ExecutionAssignment, AssignmentInput } from './flows'
 export * from './flows'
 import { requestCollection, requestResource, type Collection } from '../../http'
@@ -40,6 +42,10 @@ function list<T>(path: string, page = 1, search = '', deviceId?: string): Promis
   return requestCollection<T>(`${path}?page[number]=${page}&page[size]=30&search=${encodeURIComponent(search)}${deviceId ? `&device_id=${encodeURIComponent(deviceId)}` : ''}`)
 }
 export const mobileExecutionApi = {
+  taskPreview: (school: string, input: TaskPreviewInput, key: string) => write<TaskPreview>(`${base(school)}/task-previews`, 'POST', input, key),
+  confirmTask: (school: string, input: TaskConfirmationInput, key: string) => write<ExecutionTask>(`${base(school)}/tasks`, 'POST', input, key),
+  tasks: (school: string, page?: number, deviceId?: string) => list<ExecutionTaskDetail>(`${base(school)}/tasks`, page, '', deviceId),
+  cancelTask: (school: string, id: string, expected_revision: number, reason: string, key: string) => write<ExecutionTask>(`${base(school)}/tasks/${encodeURIComponent(id)}/cancellations`, 'POST', { expected_revision, reason }, key),
   flows: (school: string, page?: number) => list<FlowVersion>(`${base(school)}/flow-versions`, page),
   createFlow: (school: string, input: { name: string; flow: FlowV2 }, key: string) => write<FlowVersion>(`${base(school)}/flow-versions`, 'POST', input, key),
   validations: (school: string, page?: number, deviceId?: string) => list<FlowValidation>(`${base(school)}/flow-validations`, page, '', deviceId),
@@ -47,7 +53,7 @@ export const mobileExecutionApi = {
   releases: (school: string, page?: number) => list<FlowRelease>(`${base(school)}/flow-releases`, page),
   releaseFlow: (school: string, input: { flow_version_id: string; validation_id: string; name: string }, key: string) => write<FlowRelease>(`${base(school)}/flow-releases`, 'POST', input, key),
   revokeRelease: (school: string, id: string, expected_revision: number, reason: string, key: string) => write<FlowRelease>(`${base(school)}/flow-releases/${encodeURIComponent(id)}/revocations`, 'POST', { expected_revision, reason }, key),
-  assignments: (school: string, page?: number) => list<ExecutionAssignment>(`${base(school)}/assignments`, page),
+  assignments: (school: string, page?: number, deviceId?: string) => list<ExecutionAssignment>(`${base(school)}/assignments`, page, '', deviceId),
   assign: (school: string, input: AssignmentInput, key: string) => write<ExecutionAssignment>(`${base(school)}/assignments`, 'POST', input, key),
   updateAssignment: (school: string, id: string, input: AssignmentInput, key: string) => write<ExecutionAssignment>(`${base(school)}/assignments/${encodeURIComponent(id)}`, 'PATCH', input, key),
   target: (school: string, id: string) => requestResource<MobileTarget>(`${base(school)}/targets/${encodeURIComponent(id)}`),

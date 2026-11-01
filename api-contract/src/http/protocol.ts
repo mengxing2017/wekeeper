@@ -105,6 +105,8 @@ export function resourceType(path: string): string {
   if (parts[3] === "mobile-execution" || parts[4] === "mobile-execution") {
     const kind = parts[2] === "platform" ? parts[4] : parts[5];
     switch (kind) {
+      case "task-previews": return "mobile-execution-task-previews";
+      case "tasks": return "mobile-execution-tasks";
       case "flow-versions": return "mobile-execution-flow-versions";
       case "flow-validations": return "mobile-execution-flow-validations";
       case "flow-releases": return "mobile-execution-flow-releases";
