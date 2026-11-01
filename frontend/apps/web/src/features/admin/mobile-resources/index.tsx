@@ -8,7 +8,7 @@ import { createIdempotencyKey } from '../../../shared/idempotency-key'
 import { DeviceCapabilities } from './capabilities'
 
 export function SharedMobileResources() {
-  return <Tabs items={[{ key: 'bindings', label: '手机与目标群绑定', children: <SharedBindings /> }, { key: 'capabilities', label: '设备能力配置', children: <DeviceCapabilities /> }]} />
+  return <Tabs items={[{ key: 'bindings', label: '手机与目标群绑定', children: <SharedBindings /> }, { key: 'capabilities', label: '业务能力开通', children: <DeviceCapabilities /> }]} />
 }
 
 function SharedBindings() {
