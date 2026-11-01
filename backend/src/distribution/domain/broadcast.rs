@@ -10,12 +10,14 @@ pub enum ContentSource {
     #[default]
     Posts,
     Text,
+    Materials,
 }
 impl ContentSource {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Posts => "posts",
             Self::Text => "text",
+            Self::Materials => "materials",
         }
     }
 }
@@ -23,12 +25,16 @@ impl ContentSource {
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DraftInput {
+    #[serde(skip)]
+    pub request_key: Option<String>,
     pub text_content: Option<String>,
     pub template_version_id: Option<Uuid>,
     #[serde(default)]
     pub content_source: ContentSource,
     #[serde(default)]
     pub post_ids: Vec<Uuid>,
+    #[serde(default)]
+    pub materials: Vec<super::content::SourceReference>,
     pub group_ids: Vec<Uuid>,
     pub revision: Option<i64>,
     pub source_task_id: Option<Uuid>,
@@ -38,6 +44,10 @@ pub struct DraftInput {
 }
 impl DraftInput {
     pub fn validate(&self) -> Result<()> {
+        require(self.materials.len() <= 20, "最多选择20条素材")?;
+        if self.content_source != ContentSource::Materials {
+            require(self.materials.is_empty(), "内容形态不能混用")?;
+        }
         match self.content_source {
             ContentSource::Posts => {
                 require(
@@ -47,6 +57,31 @@ impl DraftInput {
                 require(
                     self.text_content.as_deref().is_none_or(str::is_empty),
                     "社区内容模式不能填写直接文本",
+                )?;
+            }
+            ContentSource::Materials => {
+                require(
+                    !self.materials.is_empty()
+                        && self.post_ids.is_empty()
+                        && self.template_version_id.is_none()
+                        && self.text_content.is_none()
+                        && self.source_draft_id.is_none(),
+                    "请选择独立来源素材，不可混入论坛模板或正文",
+                )?;
+                for reference in &self.materials {
+                    require(
+                        !reference.namespace.starts_with("builtin."),
+                        "内置来源须通过对应受控入口",
+                    )?;
+                    reference.validate()?;
+                }
+                require(
+                    self.materials.iter().all(|v| {
+                        v.namespace == self.materials[0].namespace
+                            && v.external_organization_id
+                                == self.materials[0].external_organization_id
+                    }),
+                    "单个任务不能混用来源或组织",
                 )?;
             }
             ContentSource::Text => {
@@ -81,6 +116,8 @@ impl DraftInput {
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Action {
+    #[serde(default)]
+    pub preview_digest: Option<String>,
     pub revision: Option<i64>,
     pub batch_id: Option<Uuid>,
     pub decision: Option<String>,
@@ -96,6 +133,9 @@ pub struct Task {
     pub template_version_id: Option<Uuid>,
     #[serde(default)]
     pub content_source: ContentSource,
+    pub source_namespace: String,
+    #[serde(default)]
+    pub materials: Vec<super::content::SourceReference>,
     pub content: String,
     pub revision: i64,
     pub state: String,

@@ -12,14 +12,21 @@ use crate::{
 use serde_json::Value;
 use uuid::Uuid;
 #[derive(Clone)]
-pub struct Service<R = Repository, C = broadcast_http::Client> {
+pub struct Service<
+    R = Repository,
+    C = broadcast_http::Client,
+    S = crate::distribution::south::adapter::in_process::Sources,
+> {
+    pub sources: S,
     pub store: R,
     pub client: C,
     pub enabled: bool,
     pub management_available: bool,
     pub origin: String,
 }
-impl<R: Store, C: Client> Service<R, C> {
+impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::ContentSource>
+    Service<R, C, S>
+{
     pub async fn list(&self, a: &Actor, s: Uuid, page: Page) -> Result<Vec<Task>> {
         self.store.authorize(a.id, s, false).await?;
         self.store.list(s, page).await
@@ -50,6 +57,22 @@ impl<R: Store, C: Client> Service<R, C> {
             .authorize(a.id, s, input.source_task_id.is_some())
             .await?;
         input.validate()?;
+        if id.is_none()
+            && let Some(task) = self.store.draft_request(a, s, &input).await?
+        {
+            return Ok(task);
+        }
+        let references = if input.content_source == ContentSource::Posts {
+            self.store.source_references(s, &input.post_ids).await?
+        } else {
+            input.materials.clone()
+        };
+        let mut materials = self.sources.read(a, s, &references).await?;
+        for material in &mut materials {
+            if material.detail_url.starts_with('/') {
+                material.detail_url = format!("{}{}", self.origin, material.detail_url);
+            }
+        }
         let (corp, generation) = self.client.generation().await?;
         self.store
             .execute(
@@ -58,12 +81,23 @@ impl<R: Store, C: Client> Service<R, C> {
                 Command::Save {
                     id,
                     input,
-                    origin: self.origin.clone(),
+                    materials,
                     corp,
                     generation,
                 },
             )
             .await
+    }
+    pub async fn preview(
+        &self,
+        a: &Actor,
+        s: Uuid,
+        id: Uuid,
+    ) -> Result<crate::distribution::domain::content::Preview> {
+        self.store.authorize(a.id, s, false).await?;
+        let task = self.store.task(s, id).await?;
+        self.sources.check(s, &task.materials).await?;
+        self.store.preview(a, s, id).await
     }
     pub async fn action(
         &self,
@@ -98,6 +132,7 @@ impl<R: Store, C: Client> Service<R, C> {
             )?;
         }
         if operation == "confirm" && task.state == "draft" {
+            self.sources.check(s, &task.materials).await?;
             require(input.revision == Some(task.revision), "草稿版本冲突")?;
             for w in self.store.work(Some(id)).await? {
                 self.client.verify(&w).await?;
@@ -167,7 +202,16 @@ impl<R: Store, C: Client> Service<R, C> {
                 }
                 continue;
             }
-            if self.client.verify(&w).await.is_err() {
+            let source_ok = if matches!(w.operation.as_str(), "create" | "remind") {
+                let task = self.store.task(w.school_id, w.task_id).await?;
+                self.sources
+                    .check(w.school_id, &task.materials)
+                    .await
+                    .is_ok()
+            } else {
+                true
+            };
+            if !source_ok || self.client.verify(&w).await.is_err() {
                 let preflight = Work {
                     operation: if w.operation == "create" {
                         "preflight".into()
@@ -186,7 +230,7 @@ impl<R: Store, C: Client> Service<R, C> {
                     self.store.finish(&w, self.client.invoke(&w).await).await?;
                 }
                 Ok(false) => {}
-                Err(Error::Forbidden | Error::Conflict | Error::Invalid(_)) => {
+                Err(Error::Forbidden | Error::Conflict | Error::Invalid(_) | Error::Policy(_)) => {
                     self.store
                         .finish(
                             &Work {
@@ -234,6 +278,7 @@ impl crate::bootstrap::Application {
         let enabled = management_available
             && std::env::var("WEKEEPER_WECOM_BROADCAST_ENABLED").is_ok_and(|v| v == "true");
         Service {
+            sources: crate::distribution::south::adapter::in_process::Sources(self.pool.clone()),
             store: Repository(self.pool.clone()),
             client: broadcast_http::Client(self.integrations.clone()),
             enabled,

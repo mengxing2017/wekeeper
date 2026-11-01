@@ -328,3 +328,18 @@ impl crate::community::south::port::Store for Repository {
         Repository::resolve(self, a, s, id, v).await
     }
 }
+
+impl Repository {
+    pub async fn distribution_material(
+        &self,
+        school: Uuid,
+        id: Uuid,
+    ) -> Result<crate::community::domain::DistributionMaterial> {
+        let row=sqlx::query("SELECT title,content,revision FROM posts WHERE school_id=$1 AND id=$2 AND audit_status='approved' AND visibility='visible'").bind(school).bind(id).fetch_optional(&self.0).await?.ok_or(Error::Conflict)?;
+        Ok(crate::community::domain::DistributionMaterial {
+            title: row.get("title"),
+            content: row.get("content"),
+            version: row.get::<i64, _>("revision").to_string(),
+        })
+    }
+}

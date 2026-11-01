@@ -151,6 +151,10 @@ impl IntoResponse for Error {
                 "automation_readiness_required",
                 "等待手机完成当前应用准备和核验".into(),
             ),
+            Self::Policy("source_entry_not_authorized") => (StatusCode::FORBIDDEN,"source_entry_not_authorized","当前入口不能使用该来源身份，请通过受信内容入口操作".into()),
+            Self::Policy("source_content_unavailable") => (StatusCode::CONFLICT,"source_content_unavailable","来源内容已撤回、版本改变或当前无法核实，尚未调用部分不会发送，请重新核对来源和预览".into()),
+            Self::Policy("source_version_conflict") => (StatusCode::CONFLICT,"source_version_conflict","来源内容版本已变化，请重新选取素材并预览确认".into()),
+            Self::Policy("preview_expired") => (StatusCode::CONFLICT,"preview_expired","官方群发预览已过期，请重新检查全部正文和目标后确认".into()),
             Self::Policy(code) => (
                 StatusCode::CONFLICT,
                 code,

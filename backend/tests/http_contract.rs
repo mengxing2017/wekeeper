@@ -514,6 +514,8 @@ async fn broadcast_rust_serialization_matches_shared_fixtures() {
     use wekeeper_api::distribution::domain::broadcast::{Target, Task};
     let id = Uuid::from_u128(1);
     let task = Task {
+        source_namespace: "builtin.forum".into(),
+        materials: vec![],
         id,
         school_id: id,
         creator_id: id,
@@ -557,6 +559,7 @@ async fn broadcast_rust_serialization_matches_shared_fixtures() {
     };
     let mut text_task = task.clone();
     text_task.content_source = wekeeper_api::distribution::domain::broadcast::ContentSource::Text;
+    text_task.source_namespace = "builtin.direct".into();
     text_task.template_version_id = None;
     text_task.post_ids.clear();
     for (kind, value, fixture) in [

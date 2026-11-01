@@ -30,18 +30,21 @@ async fn create(
     State(a): State<Application>,
     actor: Actor,
     Path(s): Path<Uuid>,
+    headers: HeaderMap,
     input: Input,
 ) -> Result<ApiResponse> {
+    let mut body = input.decode::<DraftInput>("broadcast-tasks")?;
+    body.request_key = Some(crate::business::text(
+        headers
+            .get("idempotency-key")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or(""),
+        1,
+        128,
+    )?);
     Ok(resource(
         "broadcast-tasks",
-        a.broadcast()
-            .save(
-                &actor,
-                s,
-                None,
-                input.decode::<DraftInput>("broadcast-tasks")?,
-            )
-            .await?,
+        a.broadcast().save(&actor, s, None, body).await?,
     ))
 }
 async fn task(
@@ -153,8 +156,132 @@ async fn candidates(
         .collect::<Vec<_>>();
     Ok(resource("broadcast-candidates", values))
 }
+
+async fn preview(
+    State(a): State<Application>,
+    actor: Actor,
+    Path((s, id)): Path<(Uuid, Uuid)>,
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "broadcast-previews",
+        a.broadcast().preview(&actor, s, id).await?,
+    ))
+}
+async fn school_senders(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(s): Path<Uuid>,
+    Query(page): Query<Page>,
+) -> Result<ApiResponse> {
+    let rows = crate::distribution::north::local::governance::Service(a.pool.clone())
+        .senders(&actor, Some(s), page.clone())
+        .await?;
+    Ok(collection(
+        "wecom-senders",
+        rows.into_iter().map(|x| json!(x)).collect(),
+        &page,
+    ))
+}
+async fn platform_senders(
+    State(a): State<Application>,
+    actor: Actor,
+    Query(page): Query<Page>,
+) -> Result<ApiResponse> {
+    let rows = crate::distribution::north::local::governance::Service(a.pool.clone())
+        .senders(&actor, None, page.clone())
+        .await?;
+    Ok(collection(
+        "wecom-senders",
+        rows.into_iter().map(|x| json!(x)).collect(),
+        &page,
+    ))
+}
+async fn qualify(
+    State(a): State<Application>,
+    actor: Actor,
+    Path((s, id)): Path<(Uuid, Uuid)>,
+    input: Input,
+) -> Result<ApiResponse> {
+    let body = input.decode::<crate::distribution::domain::content::SenderQualificationInput>(
+        "wecom-senders",
+    )?;
+    crate::distribution::north::local::governance::Service(a.pool.clone())
+        .qualify(&actor, s, id, body)
+        .await?;
+    Ok(singleton(
+        "wecom-sender-qualifications",
+        id,
+        json!({"updated":true}),
+    ))
+}
+
+async fn policies(State(a): State<Application>, actor: Actor) -> Result<ApiResponse> {
+    Ok(singleton(
+        "distribution-policies",
+        "current",
+        crate::distribution::north::local::governance::Service(a.pool.clone())
+            .policies(&actor)
+            .await?,
+    ))
+}
+async fn source_policy(
+    State(a): State<Application>,
+    actor: Actor,
+    input: Input,
+) -> Result<ApiResponse> {
+    let policy = input.decode::<crate::distribution::domain::resource_policy::SourcePolicy>(
+        "distribution-source-policies",
+    )?;
+    crate::distribution::north::local::governance::Service(a.pool.clone())
+        .source_policy(&actor, policy)
+        .await?;
+    Ok(singleton(
+        "distribution-policy-updates",
+        "current",
+        json!({"updated":true}),
+    ))
+}
+async fn resource_policy(
+    State(a): State<Application>,
+    actor: Actor,
+    input: Input,
+) -> Result<ApiResponse> {
+    let policy = input.decode::<crate::distribution::domain::resource_policy::ResourcePolicy>(
+        "distribution-resource-policies",
+    )?;
+    crate::distribution::north::local::governance::Service(a.pool.clone())
+        .resource_policy(&actor, policy)
+        .await?;
+    Ok(singleton(
+        "distribution-policy-updates",
+        "current",
+        json!({"updated":true}),
+    ))
+}
 pub fn router() -> Router<Application> {
     Router::new()
+        .route("/api/v1/platform/distribution-policies", get(policies))
+        .route(
+            "/api/v1/platform/distribution-source-policies",
+            axum::routing::post(source_policy),
+        )
+        .route(
+            "/api/v1/platform/distribution-resource-policies",
+            axum::routing::post(resource_policy),
+        )
+        .route(
+            "/api/v1/schools/{school}/wecom-senders",
+            get(school_senders),
+        )
+        .route("/api/v1/platform/wecom-senders", get(platform_senders))
+        .route(
+            "/api/v1/platform/schools/{school}/wecom-senders/{id}/qualification",
+            axum::routing::post(qualify),
+        )
+        .route(
+            "/api/v1/schools/{school}/broadcast-tasks/{id}/preview",
+            axum::routing::post(preview),
+        )
         .route(
             "/api/v1/schools/{school}/broadcast-tasks",
             get(list).post(create),

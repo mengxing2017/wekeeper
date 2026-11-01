@@ -28,7 +28,11 @@ impl Command {
                     | AutomationCommand::ReportValidation { .. }
                     | AutomationCommand::RevokeRelease { .. }
             ),
-            Self::CreateConfiguration { .. }
+            Self::CreateAccount { .. }
+            | Self::UpdateAccountProfile { .. }
+            | Self::ReviewAccountProfile { .. }
+            | Self::BindDevice { .. }
+            | Self::CreateConfiguration { .. }
             | Self::PublishConfiguration { .. }
             | Self::PreviewRunRevision { .. }
             | Self::ReviseRun { .. }

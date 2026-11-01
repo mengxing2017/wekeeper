@@ -58,6 +58,9 @@ impl Client for Fake {
     }
 }
 async fn setup() -> (PgPool, Actor, Uuid, DraftInput, Fake) {
+    setup_with_forum(true).await
+}
+async fn setup_with_forum(with_forum: bool) -> (PgPool, Actor, Uuid, DraftInput, Fake) {
     let url = std::env::var("WEKEEPER_TEST_DATABASE_URL")
         .expect("explicit isolated test database required");
     let base = PgPool::connect(&url).await.unwrap();
@@ -107,7 +110,9 @@ async fn setup() -> (PgPool, Actor, Uuid, DraftInput, Fake) {
         .await
         .unwrap();
     sqlx::query("INSERT INTO template_versions(id,school_id,template_id,body,published) VALUES($1,$2,$3,'{{post.title}}',true)").bind(version).bind(s).bind(template).execute(&pool).await.unwrap();
-    sqlx::query("INSERT INTO posts(id,school_id,author_id,title,content,audit_status) VALUES($1,$2,$3,'Notice','Body','approved')").bind(post).bind(s).bind(actor).execute(&pool).await.unwrap();
+    if with_forum {
+        sqlx::query("INSERT INTO posts(id,school_id,author_id,title,content,audit_status) VALUES($1,$2,$3,'Notice','Body','approved')").bind(post).bind(s).bind(actor).execute(&pool).await.unwrap();
+    }
     let mut groups = Vec::new();
     for i in 0..2 {
         let group = Uuid::new_v4();
@@ -119,6 +124,8 @@ async fn setup() -> (PgPool, Actor, Uuid, DraftInput, Fake) {
     }
     let a:Actor=serde_json::from_value(json!({"id":actor,"username":"admin","display_name":"Admin","platform_admin":true,"bound_school_id":null,"grants":[{"school_id":s,"role":"admin"}],"wecom_authenticated":false})).unwrap();
     let input = DraftInput {
+        request_key: None,
+        materials: vec![],
         template_version_id: Some(version),
         content_source: ContentSource::Posts,
         text_content: None,
@@ -143,6 +150,7 @@ async fn setup() -> (PgPool, Actor, Uuid, DraftInput, Fake) {
 }
 fn action(revision: Option<i64>) -> Action {
     Action {
+        preview_digest: None,
         revision,
         batch_id: None,
         decision: None,
@@ -155,6 +163,7 @@ fn action(revision: Option<i64>) -> Action {
 async fn broadcast_once_partial_results_and_school_boundaries() {
     let (pool, a, s, input, fake) = setup().await;
     let service = Service {
+        sources: wekeeper_api::distribution::south::adapter::in_process::Sources(pool.clone()),
         store: Repository(pool.clone()),
         client: fake.clone(),
         enabled: true,
@@ -166,7 +175,8 @@ async fn broadcast_once_partial_results_and_school_boundaries() {
     assert_eq!(t.batch_count, 1);
     assert_eq!(fake.calls.load(Ordering::SeqCst), 0);
     assert!(service.task(&a, Uuid::new_v4(), t.id).await.is_err());
-    let confirm = action(Some(t.revision));
+    let mut confirm = action(Some(t.revision));
+    confirm.preview_digest = Some(service.preview(&a, s, t.id).await.unwrap().digest);
     service
         .action(&a, s, t.id, "confirm", "key", confirm.clone())
         .await
@@ -177,7 +187,14 @@ async fn broadcast_once_partial_results_and_school_boundaries() {
         .unwrap();
     assert!(
         service
-            .action(&a, s, t.id, "confirm", "key", action(Some(999)))
+            .action(
+                &a,
+                s,
+                t.id,
+                "confirm",
+                "key",
+                with_preview(&service, &a, s, t.id, action(Some(999))).await
+            )
             .await
             .is_err()
     );
@@ -197,7 +214,14 @@ async fn broadcast_once_partial_results_and_school_boundaries() {
     let duplicate = service.save(&a, s, None, input.clone()).await.unwrap();
     assert!(
         service
-            .action(&a, s, duplicate.id, "confirm", "duplicate", action(Some(1)))
+            .action(
+                &a,
+                s,
+                duplicate.id,
+                "confirm",
+                "duplicate",
+                with_preview(&service, &a, s, duplicate.id, action(Some(1))).await
+            )
             .await
             .is_err()
     );
@@ -228,7 +252,14 @@ async fn broadcast_once_partial_results_and_school_boundaries() {
         .collect();
     let retry = service.save(&a, s, None, retry).await.unwrap();
     service
-        .action(&a, s, retry.id, "confirm", "retry", action(Some(1)))
+        .action(
+            &a,
+            s,
+            retry.id,
+            "confirm",
+            "retry",
+            with_preview(&service, &a, s, retry.id, action(Some(1))).await,
+        )
         .await
         .unwrap();
     // Platform administration alone is never a school sending grant.
@@ -247,6 +278,7 @@ async fn lost_response_and_crash_never_requeue_a_create() {
     let (pool, a, s, input, mut fake) = setup().await;
     fake.unknown = true;
     let service = Service {
+        sources: wekeeper_api::distribution::south::adapter::in_process::Sources(pool.clone()),
         store: Repository(pool.clone()),
         client: fake.clone(),
         enabled: true,
@@ -255,7 +287,14 @@ async fn lost_response_and_crash_never_requeue_a_create() {
     };
     let t = service.save(&a, s, None, input.clone()).await.unwrap();
     service
-        .action(&a, s, t.id, "confirm", "confirm", action(Some(1)))
+        .action(
+            &a,
+            s,
+            t.id,
+            "confirm",
+            "confirm",
+            with_preview(&service, &a, s, t.id, action(Some(1))).await,
+        )
         .await
         .unwrap();
     service.run_once().await.unwrap();
@@ -265,7 +304,14 @@ async fn lost_response_and_crash_never_requeue_a_create() {
     let duplicate = service.save(&a, s, None, input).await.unwrap();
     assert!(
         service
-            .action(&a, s, duplicate.id, "confirm", "dup", action(Some(1)))
+            .action(
+                &a,
+                s,
+                duplicate.id,
+                "confirm",
+                "dup",
+                with_preview(&service, &a, s, duplicate.id, action(Some(1))).await
+            )
             .await
             .is_err()
     );
@@ -293,6 +339,7 @@ async fn lost_response_and_crash_never_requeue_a_create() {
 async fn drafts_are_revisioned_and_preflight_rechecks_content() {
     let (pool, a, s, input, fake) = setup().await;
     let service = Service {
+        sources: wekeeper_api::distribution::south::adapter::in_process::Sources(pool.clone()),
         store: Repository(pool.clone()),
         client: fake.clone(),
         enabled: true,
@@ -312,7 +359,14 @@ async fn drafts_are_revisioned_and_preflight_rechecks_content() {
         .unwrap();
     assert!(
         service
-            .action(&a, s, t.id, "confirm", "c", action(Some(2)))
+            .action(
+                &a,
+                s,
+                t.id,
+                "confirm",
+                "c",
+                with_preview(&service, &a, s, t.id, action(Some(2))).await
+            )
             .await
             .is_err()
     );
@@ -325,7 +379,14 @@ async fn drafts_are_revisioned_and_preflight_rechecks_content() {
     let fresh = disabled.save(&a, s, None, input).await.unwrap();
     assert!(
         disabled
-            .action(&a, s, fresh.id, "confirm", "c", action(Some(1)))
+            .action(
+                &a,
+                s,
+                fresh.id,
+                "confirm",
+                "c",
+                with_preview(&service, &a, s, fresh.id, action(Some(1))).await
+            )
             .await
             .is_err()
     );
@@ -355,6 +416,7 @@ async fn drafts_are_revisioned_and_preflight_rechecks_content() {
 async fn stopping_during_creation_covers_late_created_task() {
     let (pool, a, s, input, fake) = setup().await;
     let service = Service {
+        sources: wekeeper_api::distribution::south::adapter::in_process::Sources(pool.clone()),
         store: Repository(pool),
         client: fake.clone(),
         enabled: true,
@@ -363,7 +425,14 @@ async fn stopping_during_creation_covers_late_created_task() {
     };
     let t = service.save(&a, s, None, input).await.unwrap();
     service
-        .action(&a, s, t.id, "confirm", "confirm", action(Some(1)))
+        .action(
+            &a,
+            s,
+            t.id,
+            "confirm",
+            "confirm",
+            with_preview(&service, &a, s, t.id, action(Some(1))).await,
+        )
         .await
         .unwrap();
     let w = service.store.work(Some(t.id)).await.unwrap().remove(0);
@@ -497,6 +566,7 @@ async fn http_scope_csrf_retirement_and_real_task_contract() {
     use tower::ServiceExt;
     let (pool, a, s, input, fake) = setup().await;
     let service = Service {
+        sources: wekeeper_api::distribution::south::adapter::in_process::Sources(pool.clone()),
         store: Repository(pool.clone()),
         client: fake,
         enabled: true,
@@ -601,6 +671,7 @@ async fn http_scope_csrf_retirement_and_real_task_contract() {
 async fn reminders_are_limited_and_stop_unknown_requires_evidence() {
     let (pool, a, s, input, fake) = setup().await;
     let service = Service {
+        sources: wekeeper_api::distribution::south::adapter::in_process::Sources(pool.clone()),
         store: Repository(pool),
         client: fake,
         enabled: true,
@@ -609,7 +680,14 @@ async fn reminders_are_limited_and_stop_unknown_requires_evidence() {
     };
     let t = service.save(&a, s, None, input).await.unwrap();
     service
-        .action(&a, s, t.id, "confirm", "confirm", action(Some(1)))
+        .action(
+            &a,
+            s,
+            t.id,
+            "confirm",
+            "confirm",
+            with_preview(&service, &a, s, t.id, action(Some(1))).await,
+        )
         .await
         .unwrap();
     let w = service.store.work(Some(t.id)).await.unwrap().remove(0);
@@ -708,6 +786,7 @@ async fn direct_text_without_posts_admin_confirmation_and_revocation() {
         .await
         .unwrap();
     let service = Service {
+        sources: wekeeper_api::distribution::south::adapter::in_process::Sources(pool.clone()),
         store: Repository(pool.clone()),
         client: fake.clone(),
         enabled: true,
@@ -731,7 +810,14 @@ async fn direct_text_without_posts_admin_confirmation_and_revocation() {
     assert_eq!(fake.calls.load(Ordering::SeqCst), 0);
     assert!(
         service
-            .action(&a, s, t.id, "confirm", "operator", action(Some(t.revision)))
+            .action(
+                &a,
+                s,
+                t.id,
+                "confirm",
+                "operator",
+                with_preview(&service, &a, s, t.id, action(Some(t.revision))).await
+            )
             .await
             .is_err()
     );
@@ -758,7 +844,14 @@ async fn direct_text_without_posts_admin_confirmation_and_revocation() {
         .await
         .unwrap();
     service
-        .action(&a, s, t.id, "confirm", "admin", action(Some(t.revision)))
+        .action(
+            &a,
+            s,
+            t.id,
+            "confirm",
+            "admin",
+            with_preview(&service, &a, s, t.id, action(Some(t.revision))).await,
+        )
         .await
         .unwrap();
     let work = service.store.work(Some(t.id)).await.unwrap();
@@ -784,6 +877,7 @@ async fn direct_text_without_posts_admin_confirmation_and_revocation() {
 async fn content_source_switch_and_cross_source_duplicate_guard() {
     let (pool, a, s, posts, fake) = setup().await;
     let service = Service {
+        sources: wekeeper_api::distribution::south::adapter::in_process::Sources(pool.clone()),
         store: Repository(pool.clone()),
         client: fake,
         enabled: true,
@@ -811,7 +905,7 @@ async fn content_source_switch_and_cross_source_duplicate_guard() {
                 changed.id,
                 "confirm",
                 "stale",
-                action(Some(first.revision))
+                with_preview(&service, &a, s, changed.id, action(Some(first.revision))).await
             )
             .await
             .is_err()
@@ -828,7 +922,14 @@ async fn content_source_switch_and_cross_source_duplicate_guard() {
             restored.id,
             "confirm",
             "posts",
-            action(Some(restored.revision)),
+            with_preview(
+                &service,
+                &a,
+                s,
+                restored.id,
+                action(Some(restored.revision)),
+            )
+            .await,
         )
         .await
         .unwrap();
@@ -842,7 +943,14 @@ async fn content_source_switch_and_cross_source_duplicate_guard() {
                 duplicate.id,
                 "confirm",
                 "text",
-                action(Some(duplicate.revision))
+                with_preview(
+                    &service,
+                    &a,
+                    s,
+                    duplicate.id,
+                    action(Some(duplicate.revision))
+                )
+                .await
             )
             .await
             .is_err()
@@ -856,6 +964,7 @@ async fn official_broadcast_ignores_mobile_switch_and_mobile_transaction_lock() 
     sqlx::query("INSERT INTO mobile_delivery_settings(school_id,enabled,history_reviewed) VALUES($1,true,true)")
         .bind(s).execute(&pool).await.unwrap();
     let service = Service {
+        sources: wekeeper_api::distribution::south::adapter::in_process::Sources(pool.clone()),
         store: Repository(pool.clone()),
         client: fake.clone(),
         enabled: true,
@@ -882,7 +991,7 @@ async fn official_broadcast_ignores_mobile_switch_and_mobile_transaction_lock() 
             task.id,
             "confirm",
             "isolated",
-            action(Some(task.revision)),
+            with_preview(&service, &a, s, task.id, action(Some(task.revision))).await,
         )
         .await
         .unwrap();
@@ -904,4 +1013,319 @@ async fn official_broadcast_ignores_mobile_switch_and_mobile_transaction_lock() 
         2
     );
     mobile_tx.rollback().await.unwrap();
+}
+
+async fn with_preview<S: wekeeper_api::distribution::south::port::content_source::ContentSource>(
+    service: &Service<Repository, Fake, S>,
+    actor: &Actor,
+    school: Uuid,
+    id: Uuid,
+    mut input: Action,
+) -> Action {
+    if let Ok(preview) = service.preview(actor, school, id).await {
+        input.preview_digest = Some(preview.digest);
+    }
+    input
+}
+
+#[derive(Clone)]
+struct NoticeSource;
+impl wekeeper_api::distribution::south::port::content_source::ContentSource for NoticeSource {
+    async fn check(
+        &self,
+        _: Uuid,
+        _: &[wekeeper_api::distribution::domain::content::SourceReference],
+    ) -> Result<()> {
+        Ok(())
+    }
+    async fn read(
+        &self,
+        _: &Actor,
+        _: Uuid,
+        refs: &[wekeeper_api::distribution::domain::content::SourceReference],
+    ) -> Result<Vec<wekeeper_api::distribution::domain::content::Material>> {
+        Ok(refs
+            .iter()
+            .map(|r| wekeeper_api::distribution::domain::content::Material {
+                reference: r.clone(),
+                title: "独立通知".into(),
+                content: format!("来源 {} 的通知", r.namespace),
+                detail_url: String::new(),
+            })
+            .collect())
+    }
+}
+async fn notice(
+    pool: &PgPool,
+    s: Uuid,
+    namespace: &str,
+) -> wekeeper_api::distribution::domain::content::SourceReference {
+    sqlx::query("INSERT INTO distribution_sources(namespace) VALUES($1)")
+        .bind(namespace)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO distribution_source_organizations VALUES($1,'1',$2,true)")
+        .bind(namespace)
+        .bind(s)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO distribution_materials VALUES($1,'1','1',$2,'v1','独立通知',$3,true,now())",
+    )
+    .bind(namespace)
+    .bind(s)
+    .bind(format!("来源 {namespace} 的通知"))
+    .execute(pool)
+    .await
+    .unwrap();
+    wekeeper_api::distribution::domain::content::SourceReference {
+        namespace: namespace.into(),
+        external_organization_id: "1".into(),
+        external_content_id: "1".into(),
+        version: "v1".into(),
+    }
+}
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn non_forum_source_replacement_idempotency_and_frozen_confirmation() {
+    let (pool, a, s, mut input, fake) = setup_with_forum(false).await;
+    let reference = notice(&pool, s, "test.notices").await;
+    input.content_source = ContentSource::Materials;
+    input.template_version_id = None;
+    input.post_ids.clear();
+    input.materials = vec![reference.clone()];
+    input.request_key = Some("one-draft".into());
+    let service = Service {
+        store: Repository(pool.clone()),
+        sources: NoticeSource,
+        client: fake.clone(),
+        enabled: true,
+        management_available: true,
+        origin: String::new(),
+    };
+    let task = service.save(&a, s, None, input.clone()).await.unwrap();
+    assert_eq!(
+        task.id,
+        service.save(&a, s, None, input.clone()).await.unwrap().id
+    );
+    assert_eq!(task.materials, vec![reference]);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM posts")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0
+    );
+    let mut changed = input.clone();
+    changed.group_ids.pop();
+    assert!(service.save(&a, s, None, changed).await.is_err());
+    assert!(
+        service
+            .action(&a, s, task.id, "confirm", "no-preview", action(Some(1)))
+            .await
+            .is_err()
+    );
+    let preview = service.preview(&a, s, task.id).await.unwrap();
+    assert_eq!(preview.content, task.content);
+    let mut confirm = action(Some(task.revision));
+    confirm.preview_digest = Some(preview.digest);
+    service
+        .action(&a, s, task.id, "confirm", "confirmed", confirm.clone())
+        .await
+        .unwrap();
+    service
+        .action(&a, s, task.id, "confirm", "confirmed", confirm)
+        .await
+        .unwrap();
+    service.run_once().await.unwrap();
+    assert_eq!(fake.calls.load(Ordering::SeqCst), 1);
+    sqlx::query("DELETE FROM distribution_materials WHERE namespace='test.notices'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        service.task(&a, s, task.id).await.unwrap().content,
+        task.content
+    );
+}
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn two_sources_share_official_resource_budget_and_unknown_does_not_release() {
+    let (pool, a, s, mut input, mut fake) = setup_with_forum(false).await;
+    fake.unknown = true;
+    let first = notice(&pool, s, "test.one").await;
+    let second = notice(&pool, s, "test.two").await;
+    input.content_source = ContentSource::Materials;
+    input.template_version_id = None;
+    input.post_ids.clear();
+    let service = Service {
+        store: Repository(pool.clone()),
+        sources: NoticeSource,
+        client: fake.clone(),
+        enabled: true,
+        management_available: true,
+        origin: String::new(),
+    };
+    let mut tasks = Vec::new();
+    for reference in [first, second] {
+        input.materials = vec![reference];
+        let t = service.save(&a, s, None, input.clone()).await.unwrap();
+        let body = with_preview(&service, &a, s, t.id, action(Some(t.revision))).await;
+        service
+            .action(&a, s, t.id, "confirm", &format!("confirm-{}", t.id), body)
+            .await
+            .unwrap();
+        tasks.push(t);
+    }
+    sqlx::query("INSERT INTO distribution_resource_policies(resource_key,window_seconds,max_calls) VALUES($1,3600,1)").bind(format!("wecom:{}:owner",fake.corp)).execute(&pool).await.unwrap();
+    let w1 = service
+        .store
+        .work(Some(tasks[0].id))
+        .await
+        .unwrap()
+        .remove(0);
+    let w2 = service
+        .store
+        .work(Some(tasks[1].id))
+        .await
+        .unwrap()
+        .remove(0);
+    let (r1, r2) = tokio::join!(service.store.claim(&w1), service.store.claim(&w2));
+    assert_ne!(r1.unwrap(), r2.unwrap());
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM distribution_resource_usage")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        1
+    );
+    let state: String = sqlx::query_scalar("SELECT state FROM broadcast_batches WHERE id=$1")
+        .bind(w1.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let claimed = if state == "submitting" { w1 } else { w2 };
+    service
+        .store
+        .finish(&claimed, Outcome::Unknown)
+        .await
+        .unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM distribution_resource_usage")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        1
+    );
+}
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn forum_withdrawal_is_transactional_and_preserves_snapshot_and_history() {
+    let (pool, a, s, input, fake) = setup().await;
+    let service = Service {
+        store: Repository(pool.clone()),
+        sources: wekeeper_api::distribution::south::adapter::in_process::Sources(pool.clone()),
+        client: fake.clone(),
+        enabled: true,
+        management_available: true,
+        origin: "https://school.test".into(),
+    };
+    let task = service.save(&a, s, None, input.clone()).await.unwrap();
+    let body = with_preview(&service, &a, s, task.id, action(Some(1))).await;
+    service
+        .action(&a, s, task.id, "confirm", "confirm", body)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE posts SET visibility='deleted',revision=revision+1 WHERE id=$1")
+        .bind(input.post_ids[0])
+        .execute(&pool)
+        .await
+        .unwrap();
+    let pending: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM distribution_source_events WHERE processed_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(pending > 0);
+    service.run_once().await.unwrap();
+    assert_eq!(fake.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        service.task(&a, s, task.id).await.unwrap().content,
+        task.content
+    );
+    assert!(
+        sqlx::query("UPDATE distribution_message_snapshots SET content='changed'")
+            .execute(&pool)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM broadcast_batches WHERE state='cancelled'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        1
+    );
+}
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn sender_qualification_is_platform_only_and_blocks_final_call() {
+    let (pool, mut a, s, input, fake) = setup().await;
+    let senders =
+        wekeeper_api::distribution::south::adapter::postgres::senders::Repository(pool.clone());
+    let sender = senders
+        .list(&a, Some(s), Page::default())
+        .await
+        .unwrap()
+        .remove(0);
+    let service = Service {
+        store: Repository(pool.clone()),
+        sources: wekeeper_api::distribution::south::adapter::in_process::Sources(pool.clone()),
+        client: fake.clone(),
+        enabled: true,
+        management_available: true,
+        origin: "https://school.test".into(),
+    };
+    let task = service.save(&a, s, None, input).await.unwrap();
+    let body = with_preview(&service, &a, s, task.id, action(Some(1))).await;
+    service
+        .action(&a, s, task.id, "confirm", "confirm", body)
+        .await
+        .unwrap();
+    use wekeeper_api::distribution::domain::content::SenderQualificationInput;
+    a.platform_admin = false;
+    assert!(
+        senders
+            .qualify(
+                &a,
+                s,
+                sender.id,
+                SenderQualificationInput {
+                    enabled: false,
+                    revision: 0
+                }
+            )
+            .await
+            .is_err()
+    );
+    a.platform_admin = true;
+    senders
+        .qualify(
+            &a,
+            s,
+            sender.id,
+            SenderQualificationInput {
+                enabled: false,
+                revision: 0,
+            },
+        )
+        .await
+        .unwrap();
+    service.run_once().await.unwrap();
+    assert_eq!(fake.calls.load(Ordering::SeqCst), 0);
 }

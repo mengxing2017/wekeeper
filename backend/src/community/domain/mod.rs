@@ -36,3 +36,11 @@ pub struct CommentInput {
     pub content: String,
     pub parent_id: Option<Uuid>,
 }
+
+/// Minimal controlled material; no author, comments or credentials cross the boundary.
+#[derive(Clone)]
+pub struct DistributionMaterial {
+    pub title: String,
+    pub content: String,
+    pub version: String,
+}

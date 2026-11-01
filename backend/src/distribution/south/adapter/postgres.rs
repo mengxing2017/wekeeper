@@ -14,7 +14,7 @@ impl Repository {
 
         sqlx::query("SELECT g.id FROM delivery_attempts a JOIN delivery_drafts d ON d.id=a.draft_id JOIN wecom_groups g ON g.id=d.group_id WHERE a.school_id=$1 AND a.id=$2 AND a.actor_id=$3 FOR SHARE OF g").bind(s).bind(id).bind(a.id).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
         let draft:Uuid=sqlx::query_scalar("SELECT d.id FROM delivery_attempts a JOIN delivery_drafts d ON d.id=a.draft_id JOIN wecom_groups g ON g.id=d.group_id JOIN schools s ON s.id=d.school_id WHERE a.school_id=$1 AND a.id=$2 AND a.actor_id=$3 AND d.state='ready' AND g.active AND s.active FOR UPDATE OF a FOR SHARE OF d,g,s").bind(s).bind(id).bind(a.id).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
-        let posts=sqlx::query("SELECT p.revision,dp.post_revision,p.audit_status,p.visibility FROM delivery_draft_posts dp JOIN posts p ON p.id=dp.post_id WHERE dp.draft_id=$1 FOR SHARE OF p").bind(draft).fetch_all(&mut *tx).await?;
+        let posts=sqlx::query("SELECT p.revision,dp.post_revision,p.audit_status,p.visibility FROM delivery_draft_posts dp JOIN distribution_forum_materials p ON p.id=dp.post_id WHERE dp.draft_id=$1 FOR SHARE OF p").bind(draft).fetch_all(&mut *tx).await?;
         require(
             !posts.is_empty()
                 && posts.iter().all(|p| {
@@ -108,7 +108,7 @@ impl Repository {
         let mut snippets = Vec::new();
         let mut revisions = Vec::new();
         for id in &ids {
-            let row=sqlx::query("SELECT title,content,revision FROM posts WHERE school_id=$1 AND id=$2 AND audit_status='approved' AND visibility='visible' FOR SHARE").bind(s).bind(id).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
+            let row=sqlx::query("SELECT title,content,revision FROM distribution_forum_materials WHERE school_id=$1 AND id=$2 AND audit_status='approved' AND visibility='visible' FOR SHARE").bind(s).bind(id).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
             let content: String = row.get("content");
             let values = BTreeMap::from([
                 ("school.name", name.clone()),
@@ -184,7 +184,7 @@ impl Repository {
                 && row.get::<String, _>("chat_id") == chat,
             "草稿或目标群已变化",
         )?;
-        let posts=sqlx::query("SELECT p.revision,p.audit_status,p.visibility,dp.post_revision FROM delivery_draft_posts dp JOIN posts p ON p.id=dp.post_id AND p.school_id=dp.school_id WHERE dp.draft_id=$1 FOR SHARE OF p").bind(draft).fetch_all(&mut *tx).await?;
+        let posts=sqlx::query("SELECT p.revision,p.audit_status,p.visibility,dp.post_revision FROM delivery_draft_posts dp JOIN distribution_forum_materials p ON p.id=dp.post_id AND p.school_id=dp.school_id WHERE dp.draft_id=$1 FOR SHARE OF p").bind(draft).fetch_all(&mut *tx).await?;
         require(
             !posts.is_empty()
                 && posts.iter().all(|p| {
@@ -342,3 +342,9 @@ pub mod mobile_delivery;
 pub mod device_control;
 
 pub mod mobile_execution;
+
+pub mod content;
+
+pub mod senders;
+
+pub mod resource_policy;

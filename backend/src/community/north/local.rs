@@ -135,3 +135,31 @@ impl<R: Store> Service<R> {
         self.0.resolve(a, s, id, v).await
     }
 }
+
+impl Service<Repository> {
+    pub async fn distribution_material(
+        &self,
+        a: &Actor,
+        school: Uuid,
+        id: Uuid,
+    ) -> Result<crate::community::domain::DistributionMaterial> {
+        a.authorize(school, "operator")?;
+        self.0.distribution_material(school, id).await
+    }
+}
+
+impl Service<Repository> {
+    /// Internal source qualification only. Platform authorization remains with the distribution caller.
+    pub(crate) async fn distribution_eligibility(
+        &self,
+        school: Uuid,
+        id: Uuid,
+        version: &str,
+    ) -> Result<()> {
+        let material = self.0.distribution_material(school, id).await?;
+        if material.version != version {
+            return Err(crate::business::Error::Policy("source_version_conflict"));
+        }
+        Ok(())
+    }
+}
