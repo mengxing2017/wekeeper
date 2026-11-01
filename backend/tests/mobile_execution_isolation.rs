@@ -365,7 +365,8 @@ async fn batch_bind_is_atomic_and_never_infers_school_from_client() {
 #[ignore = "requires WEKEEPER_TEST_DATABASE_URL pointing to an isolated PostgreSQL"]
 async fn shared_capability_consent_is_device_scoped_versioned_and_never_execution_ready() {
     use wekeeper_api::distribution::domain::{
-        device_control::Credential, mobile_execution::shared_capability::DecisionInput,
+        device_control::Credential,
+        mobile_execution::{onboarding::Environment, shared_capability::DecisionInput},
     };
     let (pool, actor, school, device) = setup().await;
     let service = Service(Repository(pool.clone()));
@@ -374,48 +375,40 @@ async fn shared_capability_consent_is_device_scoped_versioned_and_never_executio
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO device_credentials(token_hash,device_id,generation,expires_at) VALUES('cap-test', $1,1,clock_timestamp()+interval '1 hour')").bind(device).execute(&pool).await.unwrap();
-    let credential = Credential {
+    sqlx::query("INSERT INTO device_credentials(token_hash,device_id,generation,expires_at) VALUES('opening-test',$1,1,clock_timestamp()+interval '1 hour')").bind(device).execute(&pool).await.unwrap();
+    let c = Credential {
         device_id: device,
         generation: 1,
-        token_hash: "cap-test".into(),
+        token_hash: "opening-test".into(),
     };
-    assert!(
-        service
-            .capability_context(&credential)
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    // This release is isolated test data. Production migrations never seed the fixture.
+    let env:Environment=serde_json::from_value(json!({"android_api":36,"engine_version":"otter-ui/2","application_status":"confirmed","package_name":"com.tencent.wework","version_name":"test","version_code":1,"instance_ref":"instance-a","launcher_package":"test.home","launcher_version":1})).unwrap();
+    let snapshot = service
+        .environment(&c, "env-one", env.clone())
+        .await
+        .unwrap();
+    let mut matrix = serde_json::to_value(&env).unwrap();
+    matrix.as_object_mut().unwrap().remove("instance_ref");
     let flow: serde_json::Value = serde_json::from_str(include_str!(
         "../../api-contract/fixtures/shared-mobile-flow-v7.json"
     ))
     .unwrap();
-    let config = json!({"device_id":device,"expected_revision":0,"name":"全局配置","enabled":true,"flow":flow});
+    let release = Uuid::new_v4();
+    sqlx::query("INSERT INTO mobile_adapter_releases(id,name,version,owner,source_revision,evidence,environment,flow,content_digest) VALUES($1,'TEST ONLY','test','test','isolated-test',jsonb_build_array('test-only'),$2,$3,$4)")
+        .bind(release).bind(matrix).bind(&flow).bind(wekeeper_api::business::hash(&flow.to_string())).execute(&pool).await.unwrap();
+    let input = json!({"device_id":device,"profile_release_id":release,"environment_snapshot_id":snapshot["id"],"expected_revision":0});
     assert!(
         service
             .write(
                 &actor,
                 Some(school),
-                "capability",
+                "open-capability",
                 None,
-                "school-forbidden",
-                config.clone()
+                "school-denied",
+                input.clone()
             )
             .await
             .is_err()
-    );
-    let result = service
-        .write(&actor, None, "capability", None, "create", config.clone())
-        .await
-        .unwrap();
-    assert_eq!(result["execution_ready"], false);
-    assert_eq!(
-        service
-            .write(&actor, None, "capability", None, "create", config.clone())
-            .await
-            .unwrap(),
-        result
     );
     assert!(
         service
@@ -424,181 +417,141 @@ async fn shared_capability_consent_is_device_scoped_versioned_and_never_executio
                 None,
                 "capability",
                 None,
-                "duplicate",
-                config.clone()
+                "old-denied",
+                json!({"flow":flow})
             )
             .await
             .is_err()
     );
-    let cap: Uuid = serde_json::from_value(result["id"].clone()).unwrap();
-    let scope = service
-        .capability_context(&credential)
-        .await
-        .unwrap()
-        .remove(0);
-    assert!(scope["scope"].get("school_id").is_none());
-    let input:DecisionInput=serde_json::from_value(json!({"capability_id":cap,"configuration_revision":1,"scope_digest":scope["scope_digest"],"expected_revision":0,"accepted":true})).unwrap();
-    let saved = service
-        .capability_decision(&credential, "accept", input.clone())
-        .await
-        .unwrap();
-    assert_eq!(saved["accepted"], true);
-    assert_eq!(
-        service
-            .capability_decision(&credential, "accept", input.clone())
-            .await
-            .unwrap(),
-        saved
-    );
-    let mut different = input.clone();
-    different.accepted = false;
-    assert!(
-        service
-            .capability_decision(&credential, "accept", different)
-            .await
-            .is_err()
-    );
-    assert!(
-        service
-            .capability_decision(&credential, "stale", input.clone())
-            .await
-            .is_err()
-    );
-    let mut next = input.clone();
-    next.expected_revision = 1;
-    next.accepted = false;
     let (a, b) = tokio::join!(
-        service.capability_decision(&credential, "race-a", next.clone()),
-        service.capability_decision(&credential, "race-b", next)
+        service.write(&actor, None, "open-capability", None, "one", input.clone()),
+        service.write(&actor, None, "open-capability", None, "two", input.clone())
+    );
+    let opening = a.unwrap();
+    assert_eq!(opening, b.unwrap());
+    let offers = service.capability_context(&c).await.unwrap();
+    assert_eq!(offers.len(), 1);
+    let enabled: bool =
+        sqlx::query_scalar("SELECT enabled FROM mobile_device_capabilities WHERE device_id=$1")
+            .bind(device)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(!enabled); // disabled candidate is visible
+    let decision:DecisionInput=serde_json::from_value(json!({"capability_id":offers[0]["id"],"configuration_revision":1,"scope_digest":offers[0]["scope_digest"],"expected_revision":0,"accepted":true})).unwrap();
+    let (a, b) = tokio::join!(
+        service.capability_decision(&c, "accept-a", decision.clone()),
+        service.capability_decision(&c, "accept-b", decision.clone())
     );
     assert_ne!(a.is_ok(), b.is_ok());
     assert_eq!(
-        service.capability_context(&credential).await.unwrap()[0]["accepted"],
-        false
-    );
-    // Another valid device cannot query this consent by copying a capability UUID or idempotency key.
-    let other = Uuid::new_v4();
-    sqlx::query("INSERT INTO execution_devices(id,name,enabled,credential_generation) VALUES($1,'Other',true,1)").bind(other).execute(&pool).await.unwrap();
-    sqlx::query("INSERT INTO device_credentials(token_hash,device_id,generation,expires_at) VALUES('cap-other',$1,1,clock_timestamp()+interval '1 hour')").bind(other).execute(&pool).await.unwrap();
-    let other = Credential {
-        device_id: other,
-        generation: 1,
-        token_hash: "cap-other".into(),
-    };
-    assert!(service.capability_context(&other).await.unwrap().is_empty());
-    assert!(
-        service
-            .capability_decision(&other, "accept", input.clone())
-            .await
-            .is_err()
-    );
-    let mut updated = config;
-    updated["expected_revision"] = json!(1);
-    updated["name"] = json!("配置二");
-    service
-        .write(
-            &actor,
-            None,
-            "update-capability",
-            Some(cap),
-            "update",
-            updated.clone(),
-        )
-        .await
-        .unwrap();
-    assert!(
-        service
-            .write(
-                &actor,
-                None,
-                "update-capability",
-                Some(cap),
-                "stale-update",
-                updated.clone()
-            )
-            .await
-            .is_err()
-    );
-    assert!(
-        service
-            .capability_decision(&credential, "old-config", input)
-            .await
-            .is_err()
-    );
-    let offers = service.capability_context(&credential).await.unwrap();
-    assert_eq!(offers[0]["accepted"], false);
-    assert_eq!(offers[0]["scope"]["configuration_revision"], 2);
-    // Rotation cannot replay an agreement from the prior credential generation.
-    sqlx::query("UPDATE execution_devices SET credential_generation=2 WHERE id=$1")
-        .bind(device)
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("INSERT INTO device_credentials(token_hash,device_id,generation,expires_at) VALUES('cap-rotated',$1,2,clock_timestamp()+interval '1 hour')").bind(device).execute(&pool).await.unwrap();
-    assert!(service.capability_context(&credential).await.is_err());
-    let rotated = Credential {
-        device_id: device,
-        generation: 2,
-        token_hash: "cap-rotated".into(),
-    };
-    let mut new_input:DecisionInput=serde_json::from_value(json!({"capability_id":cap,"configuration_revision":2,"scope_digest":offers[0]["scope_digest"],"expected_revision":2,"accepted":true})).unwrap();
-    assert!(
-        service
-            .capability_decision(&rotated, "accept", new_input.clone())
-            .await
-            .is_err()
-    );
-    let current = service.capability_context(&rotated).await.unwrap();
-    new_input.scope_digest = current[0]["scope_digest"].as_str().unwrap().into();
-    service
-        .capability_decision(&rotated, "accept", new_input)
-        .await
-        .unwrap();
-    assert_eq!(
-        service.capability_context(&rotated).await.unwrap()[0]["accepted"],
+        service.capability_context(&c).await.unwrap()[0]["accepted"],
         true
     );
-    assert!(
-        sqlx::query(
-            "UPDATE mobile_device_capability_versions SET name='changed' WHERE capability_id=$1"
-        )
-        .bind(cap)
-        .execute(&pool)
-        .await
-        .is_err()
-    );
-    updated["expected_revision"] = json!(2);
-    updated["enabled"] = json!(false);
-    service
-        .write(
-            &actor,
-            None,
-            "update-capability",
-            Some(cap),
-            "disable",
-            updated,
-        )
-        .await
-        .unwrap();
-    assert!(
-        service
-            .capability_context(&rotated)
-            .await
-            .unwrap()
-            .is_empty()
-    );
-    let list = service
+    let status = service
         .list(
             &actor,
             None,
-            Resource::Capabilities,
+            Resource::Openings,
             Page::default(),
             String::new(),
             Some(device),
         )
         .await
         .unwrap();
-    assert_eq!(list.len(), 1);
-    assert_eq!(list[0]["execution_ready"], false);
+    assert_eq!(status[0]["execution_ready"], false);
+    assert_eq!(status[0]["consent_current"], true);
+    // The same supported version on a different instance is a different immutable dependency.
+    let mut changed = env.clone();
+    changed.instance_ref = Some("instance-b".into());
+    service.environment(&c, "env-two", changed).await.unwrap();
+    assert!(service.capability_context(&c).await.unwrap().is_empty());
+    assert!(
+        service
+            .capability_decision(&c, "stale", decision)
+            .await
+            .is_err()
+    );
+    let reverted = service.environment(&c, "env-reverted", env).await.unwrap();
+    assert_ne!(reverted["id"], snapshot["id"]); // A -> B -> A cannot revive an old agreement.
+    assert!(service.capability_context(&c).await.unwrap().is_empty());
+    let id: Uuid = serde_json::from_value(opening["id"].clone()).unwrap();
+    service
+        .write(
+            &actor,
+            None,
+            "cancel-opening",
+            Some(id),
+            "cancel",
+            json!({"expected_revision":1}),
+        )
+        .await
+        .unwrap();
+    assert!(service.capability_context(&c).await.unwrap().is_empty());
+    // Support requests are resumed across different keys and different browser sessions.
+    let support = json!({"device_id":device,"note":"请支持实际应用"});
+    let one = service
+        .write(
+            &actor,
+            None,
+            "adapter-support",
+            None,
+            "support-one",
+            support.clone(),
+        )
+        .await
+        .unwrap();
+    let two = service
+        .write(
+            &actor,
+            None,
+            "adapter-support",
+            None,
+            "support-two",
+            support,
+        )
+        .await
+        .unwrap();
+    assert_eq!(one, two);
+    let support_id: Uuid = serde_json::from_value(one["id"].clone()).unwrap();
+    let update = json!({"expected_revision":1,"state":"investigating","response":"已分派研发核对"});
+    let updated = service
+        .write(
+            &actor,
+            None,
+            "update-adapter-support",
+            Some(support_id),
+            "triage",
+            update.clone(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated["revision"], 2);
+    assert!(
+        service
+            .write(
+                &actor,
+                None,
+                "update-adapter-support",
+                Some(support_id),
+                "stale-triage",
+                update
+            )
+            .await
+            .is_err()
+    );
+
+    assert!(
+        sqlx::query("UPDATE mobile_device_capability_versions SET name='changed'")
+            .execute(&pool)
+            .await
+            .is_err()
+    );
+    assert!(
+        sqlx::query("UPDATE mobile_adapter_releases SET name='changed'")
+            .execute(&pool)
+            .await
+            .is_err()
+    );
     pool.close().await;
 }

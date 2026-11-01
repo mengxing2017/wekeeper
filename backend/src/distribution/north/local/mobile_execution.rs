@@ -10,6 +10,21 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct Service<R = Repository>(pub R);
 impl<R: Store> Service<R> {
+    pub async fn opening_context(
+        &self,
+        c: &crate::distribution::domain::device_control::Credential,
+    ) -> Result<Value> {
+        self.0.opening_context(c).await
+    }
+    pub async fn environment(
+        &self,
+        c: &crate::distribution::domain::device_control::Credential,
+        key: &str,
+        input: crate::distribution::domain::mobile_execution::onboarding::Environment,
+    ) -> Result<Value> {
+        input.validate()?;
+        self.0.environment(c, &text(key, 1, 128)?, input).await
+    }
     pub async fn capability_context(
         &self,
         c: &crate::distribution::domain::device_control::Credential,

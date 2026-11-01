@@ -1,29 +1,10 @@
 //! v7 device capability agreement. No school, sender account or inferred identity.
-use super::{FlowV2, validate_text};
+
 use crate::business::{Result, require};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ConfigurationInput {
-    pub device_id: Uuid,
-    pub expected_revision: i64,
-    pub name: String,
-    pub enabled: bool,
-    pub flow: FlowV2,
-}
-impl ConfigurationInput {
-    pub fn validate(&self) -> Result<()> {
-        require(
-            !self.device_id.is_nil() && self.expected_revision >= 0,
-            "设备或配置版本无效",
-        )?;
-        validate_text(&self.name, 1, 128, 512)?;
-        self.flow.validate_shared()
-    }
-}
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionInput {
@@ -68,29 +49,6 @@ pub fn scope(
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn v7_flow_is_explicit_and_school_fields_are_rejected() {
-        let flow: FlowV2 = serde_json::from_str(include_str!(
-            "../../../../../api-contract/fixtures/shared-mobile-flow-v7.json"
-        ))
-        .unwrap();
-        flow.validate_shared().unwrap();
-        assert!(flow.validate().is_err());
-        let input = ConfigurationInput {
-            device_id: Uuid::from_u128(1),
-            expected_revision: 0,
-            name: "共享配置".into(),
-            enabled: true,
-            flow,
-        };
-        input.validate().unwrap();
-        let mut bad = serde_json::to_value(&input).unwrap();
-        bad["school_id"] = json!(Uuid::from_u128(4));
-        assert!(serde_json::from_value::<ConfigurationInput>(bad).is_err());
-        let mut old = input;
-        old.flow.protocol_version = 6;
-        assert!(old.validate().is_err());
-    }
     #[test]
     fn shared_scope_matches_native_fixture_and_binds_all_execution_dependencies() {
         let fixture: Value = serde_json::from_str(include_str!(

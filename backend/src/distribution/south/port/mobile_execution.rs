@@ -12,12 +12,24 @@ pub enum Resource {
     Targets,
     Devices,
     PlatformDevices,
-    Capabilities,
+    Openings,
+    AdapterReleases,
+    AdapterSupport,
     Bindings,
     PlatformBindings,
     PlatformTargets,
 }
 pub trait Store: Clone + Send + Sync + 'static {
+    fn opening_context(
+        &self,
+        c: &crate::distribution::domain::device_control::Credential,
+    ) -> impl std::future::Future<Output = Result<Value>> + Send;
+    fn environment(
+        &self,
+        c: &crate::distribution::domain::device_control::Credential,
+        key: &str,
+        input: crate::distribution::domain::mobile_execution::onboarding::Environment,
+    ) -> impl std::future::Future<Output = Result<Value>> + Send;
     fn capability_context(
         &self,
         c: &crate::distribution::domain::device_control::Credential,

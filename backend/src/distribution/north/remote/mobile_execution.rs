@@ -46,18 +46,18 @@ fn key(h: &HeaderMap) -> &str {
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
 }
-async fn platform_capabilities(
+async fn platform_openings(
     State(a): State<Application>,
     actor: Actor,
     Query(f): Query<Filter>,
 ) -> Result<ApiResponse> {
     Ok(collection(
-        "mobile-device-capabilities",
+        "mobile-capability-openings",
         a.mobile_execution()
             .list(
                 &actor,
                 None,
-                Resource::Capabilities,
+                Resource::Openings,
                 f.page(),
                 f.search.clone(),
                 f.device_id,
@@ -66,27 +66,67 @@ async fn platform_capabilities(
         &f.page(),
     ))
 }
-async fn create_capability(
+async fn adapter_releases(
+    State(a): State<Application>,
+    actor: Actor,
+    Query(f): Query<Filter>,
+) -> Result<ApiResponse> {
+    Ok(collection(
+        "mobile-adapter-releases",
+        a.mobile_execution()
+            .list(
+                &actor,
+                None,
+                Resource::AdapterReleases,
+                f.page(),
+                f.search.clone(),
+                None,
+            )
+            .await?,
+        &f.page(),
+    ))
+}
+async fn adapter_support(
+    State(a): State<Application>,
+    actor: Actor,
+    Query(f): Query<Filter>,
+) -> Result<ApiResponse> {
+    Ok(collection(
+        "mobile-adapter-support-requests",
+        a.mobile_execution()
+            .list(
+                &actor,
+                None,
+                Resource::AdapterSupport,
+                f.page(),
+                f.search.clone(),
+                f.device_id,
+            )
+            .await?,
+        &f.page(),
+    ))
+}
+async fn open_capability(
     State(a): State<Application>,
     actor: Actor,
     h: HeaderMap,
     input: Input,
 ) -> Result<ApiResponse> {
     Ok(resource(
-        "mobile-device-capabilities",
+        "mobile-capability-openings",
         a.mobile_execution()
             .write(
                 &actor,
                 None,
-                "capability",
+                "open-capability",
                 None,
                 key(&h),
-                input.decode::<Value>("mobile-device-capabilities")?,
+                input.decode::<Value>("mobile-capability-openings")?,
             )
             .await?,
     ))
 }
-async fn update_capability(
+async fn cancel_opening(
     State(a): State<Application>,
     actor: Actor,
     Path(id): Path<Uuid>,
@@ -94,16 +134,77 @@ async fn update_capability(
     input: Input,
 ) -> Result<ApiResponse> {
     Ok(resource(
-        "mobile-device-capabilities",
+        "mobile-capability-openings",
         a.mobile_execution()
             .write(
                 &actor,
                 None,
-                "update-capability",
+                "cancel-opening",
                 Some(id),
                 key(&h),
-                input.decode::<Value>("mobile-device-capabilities")?,
+                input.decode::<Value>("mobile-capability-openings")?,
             )
+            .await?,
+    ))
+}
+async fn request_support(
+    State(a): State<Application>,
+    actor: Actor,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "mobile-adapter-support-requests",
+        a.mobile_execution()
+            .write(
+                &actor,
+                None,
+                "adapter-support",
+                None,
+                key(&h),
+                input.decode::<Value>("mobile-adapter-support-requests")?,
+            )
+            .await?,
+    ))
+}
+async fn update_support(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(id): Path<Uuid>,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "mobile-adapter-support-requests",
+        a.mobile_execution()
+            .write(
+                &actor,
+                None,
+                "update-adapter-support",
+                Some(id),
+                key(&h),
+                input.decode::<Value>("mobile-adapter-support-requests")?,
+            )
+            .await?,
+    ))
+}
+async fn opening_context(State(a): State<Application>, h: HeaderMap) -> Result<ApiResponse> {
+    let c = device_credential(&a, &h).await?;
+    Ok(resource(
+        "mobile-device-opening-contexts",
+        a.mobile_execution().opening_context(&c).await?,
+    ))
+}
+async fn report_environment(
+    State(a): State<Application>,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    let c = device_credential(&a, &h).await?;
+    Ok(resource(
+        "mobile-device-environments",
+        a.mobile_execution()
+            .environment(&c, key(&h), input.decode("mobile-device-environments")?)
             .await?,
     ))
 }
@@ -740,12 +841,32 @@ async fn update_binding(
 pub fn router() -> Router<Application> {
     Router::new()
         .route(
-            "/api/v1/platform/mobile-execution/device-capabilities",
-            get(platform_capabilities).post(create_capability),
+            "/api/v1/platform/mobile-execution/capability-openings",
+            get(platform_openings).post(open_capability),
         )
         .route(
-            "/api/v1/platform/mobile-execution/device-capabilities/{id}",
-            axum::routing::patch(update_capability),
+            "/api/v1/platform/mobile-execution/capability-openings/{id}/cancellations",
+            post(cancel_opening),
+        )
+        .route(
+            "/api/v1/platform/mobile-execution/adapter-releases",
+            get(adapter_releases),
+        )
+        .route(
+            "/api/v1/platform/mobile-execution/adapter-support-requests",
+            get(adapter_support).post(request_support),
+        )
+        .route(
+            "/api/v7/device-execution/environment-reports",
+            post(report_environment),
+        )
+        .route(
+            "/api/v7/device-execution/opening-context",
+            get(opening_context),
+        )
+        .route(
+            "/api/v1/platform/mobile-execution/adapter-support-requests/{id}",
+            axum::routing::patch(update_support),
         )
         .route(
             "/api/v7/device-execution/capability-context",
@@ -853,7 +974,7 @@ mod query_tests {
     fn pagination_and_empty_search_parse_from_client_url() {
         for resource in [
             "target-bindings",
-            "device-capabilities",
+            "capability-openings",
             "devices",
             "targets",
         ] {

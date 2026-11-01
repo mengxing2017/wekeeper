@@ -1179,7 +1179,7 @@ async fn v7_capability_routes_require_device_credentials_and_platform_identity()
     for (method,path,body) in [
         ("GET","/api/v7/device-execution/capability-context",String::new()),
         ("POST","/api/v7/device-execution/capability-consents",json!({"data":{"type":"mobile-device-capability-consents","attributes":{"capability_id":"00000000-0000-0000-0000-000000000002","configuration_revision":1,"scope_digest":"a".repeat(64),"expected_revision":0,"accepted":true}}}).to_string()),
-        ("GET","/api/v1/platform/mobile-execution/device-capabilities",String::new()),
+        ("GET","/api/v1/platform/mobile-execution/capability-openings",String::new()),
     ] {
         let response=app().oneshot(Request::builder().method(method).uri(path)
             .header("cookie","session=browser-session").header("content-type","application/vnd.api+json")
@@ -1201,4 +1201,47 @@ async fn v7_capability_context_uses_the_shared_native_wire_fixture() {
             .into_response();
     let body = to_bytes(response.into_body(), 1_048_576).await.unwrap();
     assert_eq!(serde_json::from_slice::<Value>(&body).unwrap(), fixture);
+}
+
+#[tokio::test]
+async fn opening_catalog_support_and_environment_require_their_own_identity() {
+    for (method, path) in [
+        ("GET", "/api/v1/platform/mobile-execution/adapter-releases"),
+        (
+            "GET",
+            "/api/v1/platform/mobile-execution/adapter-support-requests",
+        ),
+        ("POST", "/api/v7/device-execution/environment-reports"),
+        ("GET", "/api/v7/device-execution/opening-context"),
+    ] {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .header("cookie", "session=browser-session")
+                    .header("content-type", "application/vnd.api+json")
+                    .body(Body::from(
+                        json!({"data":{"type":"mobile-device-environments","attributes":{}}})
+                            .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+    for method in ["POST", "PATCH"] {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri("/api/v1/platform/mobile-execution/device-capabilities")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
 }

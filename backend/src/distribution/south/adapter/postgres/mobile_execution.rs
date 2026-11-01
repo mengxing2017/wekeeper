@@ -33,6 +33,20 @@ async fn object(tx: &mut Tx<'_>, table: &str, id: Uuid) -> Result<Value> {
         .ok_or(Error::NotFound)
 }
 impl Store for Repository {
+    async fn opening_context(
+        &self,
+        c: &crate::distribution::domain::device_control::Credential,
+    ) -> Result<Value> {
+        self.device_opening_context(c).await
+    }
+    async fn environment(
+        &self,
+        c: &crate::distribution::domain::device_control::Credential,
+        key: &str,
+        input: crate::distribution::domain::mobile_execution::onboarding::Environment,
+    ) -> Result<Value> {
+        Repository::environment(self, c, key, input).await
+    }
     async fn capability_context(
         &self,
         c: &crate::distribution::domain::device_control::Credential,
@@ -99,7 +113,9 @@ impl Store for Repository {
     ) -> Result<Vec<Value>> {
         if matches!(
             resource,
-            Resource::Capabilities
+            Resource::Openings
+                | Resource::AdapterReleases
+                | Resource::AdapterSupport
                 | Resource::PlatformDevices
                 | Resource::PlatformBindings
                 | Resource::PlatformTargets
@@ -111,8 +127,12 @@ impl Store for Repository {
         authorize(&mut tx, actor.id, school, false).await?;
         let (limit, offset) = page.fetch_bounds()?;
         let sql = match resource {
-            Resource::Capabilities => {
-                "SELECT to_jsonb(k)||jsonb_build_object('flow',v.flow,'execution_ready',false,'execution_block_reason','shared_execution_upgrade_required') FROM mobile_device_capabilities k JOIN mobile_device_capability_versions v ON v.capability_id=k.id AND v.revision=k.revision WHERE $1::uuid IS NULL AND strpos(lower(k.name),lower($2))>0 AND ($3::uuid IS NULL OR k.device_id=$3) ORDER BY k.created_at,k.id LIMIT $4 OFFSET $5"
+            Resource::Openings => onboarding::OPENINGS_QUERY,
+            Resource::AdapterReleases => {
+                "SELECT to_jsonb(r)-'flow' FROM mobile_adapter_releases r WHERE $1::uuid IS NULL AND strpos(lower(r.name),lower($2))>0 AND $3::uuid IS NULL AND NOT EXISTS(SELECT 1 FROM mobile_adapter_withdrawals w WHERE w.release_id=r.id) ORDER BY r.published_at,r.id LIMIT $4 OFFSET $5"
+            }
+            Resource::AdapterSupport => {
+                "SELECT to_jsonb(s) FROM mobile_adapter_support_requests s WHERE $1::uuid IS NULL AND strpos(lower(s.note),lower($2))>0 AND ($3::uuid IS NULL OR s.device_id=$3) ORDER BY s.created_at DESC,s.id DESC LIMIT $4 OFFSET $5"
             }
 
             Resource::Tasks => {
@@ -154,6 +174,11 @@ impl Store for Repository {
             .bind(offset)
             .fetch_all(&mut *tx)
             .await?;
+        let rows = if matches!(resource, Resource::Openings) {
+            onboarding::enrich(&mut tx, rows).await?
+        } else {
+            rows
+        };
         tx.commit().await?;
         Ok(rows)
     }
@@ -211,18 +236,11 @@ impl Store for Repository {
         }
         let resource = id.unwrap_or_else(Uuid::now_v7);
         let result = match action {
-            "capability" | "update-capability" => {
+            "open-capability" | "cancel-opening" | "adapter-support" | "update-adapter-support" => {
                 if school.is_some() {
                     return Err(Error::Forbidden);
                 }
-                capabilities::configuration(
-                    &mut tx,
-                    actor.id,
-                    resource,
-                    &input,
-                    action == "capability",
-                )
-                .await?
+                onboarding::write(&mut tx, actor.id, resource, action, &input).await?
             }
 
             "task-preview" | "confirm-task" | "cancel-task" => {
@@ -366,3 +384,5 @@ mod flows;
 mod tasks;
 
 mod capabilities;
+
+mod onboarding;
