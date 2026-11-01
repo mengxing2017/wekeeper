@@ -33,6 +33,22 @@ async fn object(tx: &mut Tx<'_>, table: &str, id: Uuid) -> Result<Value> {
         .ok_or(Error::NotFound)
 }
 impl Store for Repository {
+    async fn field_check_jobs(
+        &self,
+        c: &crate::distribution::domain::device_control::Credential,
+    ) -> Result<Vec<Value>> {
+        Repository::field_check_jobs(self, c).await
+    }
+    async fn field_check_device_write(
+        &self,
+        c: &crate::distribution::domain::device_control::Credential,
+        id: Uuid,
+        key: &str,
+        action: &str,
+        input: Value,
+    ) -> Result<Value> {
+        Repository::field_check_device_write(self, c, id, key, action, input).await
+    }
     async fn opening_context(
         &self,
         c: &crate::distribution::domain::device_control::Credential,
@@ -127,6 +143,12 @@ impl Store for Repository {
         authorize(&mut tx, actor.id, school, false).await?;
         let (limit, offset) = page.fetch_bounds()?;
         let sql = match resource {
+            Resource::FieldInvitations => {
+                "SELECT to_jsonb(i)||jsonb_build_object('school_name',s.name) FROM mobile_field_check_invitations i JOIN schools s ON s.id=i.school_id WHERE ($1::uuid IS NULL OR i.school_id=$1) AND strpos(lower(i.search_text),lower($2))>0 AND ($3::uuid IS NULL OR i.device_id=$3) ORDER BY i.created_at DESC,i.id DESC LIMIT $4 OFFSET $5"
+            }
+            Resource::FieldChecks => {
+                "SELECT to_jsonb(j)-'challenge' FROM mobile_field_checks j WHERE ($1::uuid IS NULL OR school_id=$1) AND $2::text IS NOT NULL AND ($3::uuid IS NULL OR device_id=$3) ORDER BY created_at DESC,id DESC LIMIT $4 OFFSET $5"
+            }
             Resource::Openings => onboarding::OPENINGS_QUERY,
             Resource::AdapterReleases => {
                 "SELECT to_jsonb(r)-'flow' FROM mobile_adapter_releases r WHERE $1::uuid IS NULL AND strpos(lower(r.name),lower($2))>0 AND $3::uuid IS NULL AND NOT EXISTS(SELECT 1 FROM mobile_adapter_withdrawals w WHERE w.release_id=r.id) ORDER BY r.published_at,r.id LIMIT $4 OFFSET $5"
@@ -160,7 +182,7 @@ impl Store for Repository {
                 "SELECT jsonb_build_object('id',d.id,'name',d.name,'enabled',d.enabled,'last_seen_at',d.last_seen_at,'control_state',p.state,'last_control_heartbeat_at',p.last_control_heartbeat_at) FROM execution_devices d LEFT JOIN device_control_presence p ON p.id=d.id WHERE EXISTS(SELECT 1 FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id AND t.school_id=b.school_id WHERE b.device_id=d.id AND b.school_id=$1 AND b.enabled AND t.enabled AND t.archived_at IS NULL) AND strpos(lower(d.name),lower($2))>0 AND ($3::uuid IS NULL OR d.id=$3) ORDER BY d.created_at,d.id LIMIT $4 OFFSET $5"
             }
             Resource::Bindings | Resource::PlatformBindings => {
-                "SELECT to_jsonb(b)||jsonb_build_object('school_name',s.name,'device_name',d.name,'search_text',COALESCE(b.search_text_override,t.search_text),'search_source',CASE WHEN b.search_text_override IS NULL THEN 'target_default' ELSE 'binding_override' END,'source_locator_revision',CASE WHEN b.search_text_override IS NULL THEN t.locator_revision ELSE b.locator_revision END,'target_alias',t.alias,'available',b.enabled AND d.enabled AND t.enabled AND t.archived_at IS NULL) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id AND t.school_id=b.school_id JOIN schools s ON s.id=t.school_id WHERE ($1::uuid IS NULL OR b.school_id=$1) AND (strpos(lower(t.search_text),lower($2))>0 OR strpos(lower(d.name),lower($2))>0 OR strpos(lower(t.alias),lower($2))>0 OR strpos(lower(COALESCE(b.search_text_override,'')),lower($2))>0) AND ($3::uuid IS NULL OR b.device_id=$3) ORDER BY b.created_at,b.id LIMIT $4 OFFSET $5"
+                "SELECT to_jsonb(b)||jsonb_build_object('school_name',s.name,'device_name',d.name,'search_text',COALESCE(b.search_text_override,t.search_text),'search_source',CASE WHEN b.search_text_override IS NULL THEN 'target_default' ELSE 'binding_override' END,'target_locator_revision',t.locator_revision,'source_locator_revision',CASE WHEN b.search_text_override IS NULL THEN t.locator_revision ELSE b.locator_revision END,'target_alias',t.alias,'available',b.enabled AND d.enabled AND t.enabled AND t.archived_at IS NULL) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id AND t.school_id=b.school_id JOIN schools s ON s.id=t.school_id WHERE ($1::uuid IS NULL OR b.school_id=$1) AND (strpos(lower(t.search_text),lower($2))>0 OR strpos(lower(d.name),lower($2))>0 OR strpos(lower(t.alias),lower($2))>0 OR strpos(lower(COALESCE(b.search_text_override,'')),lower($2))>0) AND ($3::uuid IS NULL OR b.device_id=$3) ORDER BY b.created_at,b.id LIMIT $4 OFFSET $5"
             }
             Resource::PlatformTargets => {
                 "SELECT jsonb_build_object('id',t.id,'school_id',t.school_id,'school_name',s.name,'search_text',t.search_text,'alias',t.alias,'enabled',t.enabled) FROM mobile_targets t JOIN schools s ON s.id=t.school_id WHERE $1::uuid IS NULL AND s.active AND t.archived_at IS NULL AND (strpos(lower(t.search_text),lower($2))>0 OR strpos(lower(t.alias),lower($2))>0 OR strpos(lower(s.name),lower($2))>0) AND $3::uuid IS NULL ORDER BY t.created_at,t.id LIMIT $4 OFFSET $5"
@@ -176,6 +198,19 @@ impl Store for Repository {
             .await?;
         let rows = if matches!(resource, Resource::Openings) {
             onboarding::enrich(&mut tx, rows).await?
+        } else if matches!(resource, Resource::FieldInvitations | Resource::FieldChecks) {
+            let mut out = Vec::new();
+            for row in rows {
+                out.push(
+                    field_checks::inspect(
+                        &mut tx,
+                        row,
+                        matches!(resource, Resource::FieldInvitations),
+                    )
+                    .await?,
+                );
+            }
+            out
         } else {
             rows
         };
@@ -236,6 +271,9 @@ impl Store for Repository {
         }
         let resource = id.unwrap_or_else(Uuid::now_v7);
         let result = match action {
+            "field-invitation" | "revoke-field-invitation" | "request-field-check" => {
+                field_checks::write(&mut tx, actor.id, school, resource, action, &input).await?
+            }
             "open-capability" | "cancel-opening" | "adapter-support" | "update-adapter-support" => {
                 if school.is_some() {
                     return Err(Error::Forbidden);
@@ -385,4 +423,5 @@ mod tasks;
 
 mod capabilities;
 
+mod field_checks;
 mod onboarding;

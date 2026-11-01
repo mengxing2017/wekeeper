@@ -10,6 +10,24 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct Service<R = Repository>(pub R);
 impl<R: Store> Service<R> {
+    pub async fn field_check_jobs(
+        &self,
+        c: &crate::distribution::domain::device_control::Credential,
+    ) -> Result<Vec<Value>> {
+        self.0.field_check_jobs(c).await
+    }
+    pub async fn field_check_device_write(
+        &self,
+        c: &crate::distribution::domain::device_control::Credential,
+        id: Uuid,
+        key: &str,
+        action: &str,
+        input: Value,
+    ) -> Result<Value> {
+        self.0
+            .field_check_device_write(c, id, &text(key, 1, 128)?, action, input)
+            .await
+    }
     pub async fn opening_context(
         &self,
         c: &crate::distribution::domain::device_control::Credential,

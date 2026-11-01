@@ -216,3 +216,5 @@ mod shared_binding_tests {
 pub mod shared_capability;
 
 pub mod onboarding;
+
+pub mod field_check;

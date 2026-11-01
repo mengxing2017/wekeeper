@@ -15,11 +15,25 @@ pub enum Resource {
     Openings,
     AdapterReleases,
     AdapterSupport,
+    FieldInvitations,
+    FieldChecks,
     Bindings,
     PlatformBindings,
     PlatformTargets,
 }
 pub trait Store: Clone + Send + Sync + 'static {
+    fn field_check_jobs(
+        &self,
+        c: &crate::distribution::domain::device_control::Credential,
+    ) -> impl std::future::Future<Output = Result<Vec<Value>>> + Send;
+    fn field_check_device_write(
+        &self,
+        c: &crate::distribution::domain::device_control::Credential,
+        id: Uuid,
+        key: &str,
+        action: &str,
+        input: Value,
+    ) -> impl std::future::Future<Output = Result<Value>> + Send;
     fn opening_context(
         &self,
         c: &crate::distribution::domain::device_control::Credential,

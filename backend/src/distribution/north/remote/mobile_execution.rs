@@ -838,8 +838,231 @@ async fn update_binding(
             .await?,
     ))
 }
+async fn platform_field_invitations(
+    State(a): State<Application>,
+    actor: Actor,
+    Query(f): Query<Filter>,
+) -> Result<ApiResponse> {
+    Ok(collection(
+        "mobile-field-check-invitations",
+        a.mobile_execution()
+            .list(
+                &actor,
+                None,
+                Resource::FieldInvitations,
+                f.page(),
+                f.search.clone(),
+                f.device_id,
+            )
+            .await?,
+        &f.page(),
+    ))
+}
+async fn school_field_invitations(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(school): Path<Uuid>,
+    Query(f): Query<Filter>,
+) -> Result<ApiResponse> {
+    Ok(collection(
+        "mobile-field-check-invitations",
+        a.mobile_execution()
+            .list(
+                &actor,
+                Some(school),
+                Resource::FieldInvitations,
+                f.page(),
+                f.search.clone(),
+                f.device_id,
+            )
+            .await?,
+        &f.page(),
+    ))
+}
+async fn platform_field_checks(
+    State(a): State<Application>,
+    actor: Actor,
+    Query(f): Query<Filter>,
+) -> Result<ApiResponse> {
+    Ok(collection(
+        "mobile-field-checks",
+        a.mobile_execution()
+            .list(
+                &actor,
+                None,
+                Resource::FieldChecks,
+                f.page(),
+                f.search.clone(),
+                f.device_id,
+            )
+            .await?,
+        &f.page(),
+    ))
+}
+async fn school_field_checks(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(school): Path<Uuid>,
+    Query(f): Query<Filter>,
+) -> Result<ApiResponse> {
+    Ok(collection(
+        "mobile-field-checks",
+        a.mobile_execution()
+            .list(
+                &actor,
+                Some(school),
+                Resource::FieldChecks,
+                f.page(),
+                f.search.clone(),
+                f.device_id,
+            )
+            .await?,
+        &f.page(),
+    ))
+}
+async fn create_field_invitation(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(school): Path<Uuid>,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "mobile-field-check-invitations",
+        a.mobile_execution()
+            .write(
+                &actor,
+                Some(school),
+                "field-invitation",
+                None,
+                key(&h),
+                input.decode::<Value>("mobile-field-check-invitations")?,
+            )
+            .await?,
+    ))
+}
+async fn revoke_field_invitation(
+    State(a): State<Application>,
+    actor: Actor,
+    Path((school, id)): Path<(Uuid, Uuid)>,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "mobile-field-check-invitations",
+        a.mobile_execution()
+            .write(
+                &actor,
+                Some(school),
+                "revoke-field-invitation",
+                Some(id),
+                key(&h),
+                input.decode::<Value>("mobile-field-check-invitations")?,
+            )
+            .await?,
+    ))
+}
+async fn request_field_check(
+    State(a): State<Application>,
+    actor: Actor,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "mobile-field-checks",
+        a.mobile_execution()
+            .write(
+                &actor,
+                None,
+                "request-field-check",
+                None,
+                key(&h),
+                input.decode::<Value>("mobile-field-checks")?,
+            )
+            .await?,
+    ))
+}
+async fn device_field_checks(State(a): State<Application>, h: HeaderMap) -> Result<ApiResponse> {
+    let c = device_credential(&a, &h).await?;
+    Ok(resource(
+        "mobile-field-check-contexts",
+        serde_json::json!({"id":c.device_id,"jobs":a.mobile_execution().field_check_jobs(&c).await?}),
+    ))
+}
+async fn field_check_claim(
+    State(a): State<Application>,
+    Path(id): Path<Uuid>,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    let c = device_credential(&a, &h).await?;
+    Ok(resource(
+        "mobile-field-check-claims",
+        a.mobile_execution()
+            .field_check_device_write(
+                &c,
+                id,
+                key(&h),
+                "claim",
+                input.decode::<Value>("mobile-field-check-claims")?,
+            )
+            .await?,
+    ))
+}
+async fn field_check_result(
+    State(a): State<Application>,
+    Path(id): Path<Uuid>,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    let c = device_credential(&a, &h).await?;
+    Ok(resource(
+        "mobile-field-check-results",
+        a.mobile_execution()
+            .field_check_device_write(
+                &c,
+                id,
+                key(&h),
+                "result",
+                input.decode::<Value>("mobile-field-check-results")?,
+            )
+            .await?,
+    ))
+}
 pub fn router() -> Router<Application> {
     Router::new()
+        .route(
+            "/api/v1/schools/{school}/mobile-execution/field-check-invitations",
+            get(school_field_invitations).post(create_field_invitation),
+        )
+        .route(
+            "/api/v1/schools/{school}/mobile-execution/field-check-invitations/{id}/revocations",
+            post(revoke_field_invitation),
+        )
+        .route(
+            "/api/v1/schools/{school}/mobile-execution/field-checks",
+            get(school_field_checks),
+        )
+        .route(
+            "/api/v1/platform/mobile-execution/field-check-invitations",
+            get(platform_field_invitations),
+        )
+        .route(
+            "/api/v1/platform/mobile-execution/field-checks",
+            get(platform_field_checks).post(request_field_check),
+        )
+        .route(
+            "/api/v7/device-execution/field-checks",
+            get(device_field_checks),
+        )
+        .route(
+            "/api/v7/device-execution/field-checks/{id}/claims",
+            post(field_check_claim),
+        )
+        .route(
+            "/api/v7/device-execution/field-checks/{id}/results",
+            post(field_check_result),
+        )
         .route(
             "/api/v1/platform/mobile-execution/capability-openings",
             get(platform_openings).post(open_capability),

@@ -9,7 +9,7 @@ use crate::distribution::domain::{
 pub(super) const OPENINGS_QUERY: &str = "SELECT jsonb_build_object('id',d.id,'device_name',d.name,'device_enabled',d.enabled,'online',d.enabled AND p.state='online' AND p.last_control_heartbeat_at>clock_timestamp()-interval '90 seconds','environment',to_jsonb(e),'observed_at',obs.observed_at,'environment_fresh',COALESCE(e.credential_generation=d.credential_generation AND obs.observed_at>clock_timestamp()-interval '5 minutes',false),'configuration_revision',COALESCE(k.revision,0),'opening',to_jsonb(o),'consent_current',COALESCE(c.accepted AND c.configuration_revision=k.revision AND c.credential_generation=d.credential_generation,false),'support_request',(SELECT to_jsonb(s) FROM mobile_adapter_support_requests s WHERE s.device_id=d.id ORDER BY s.created_at DESC,s.id DESC LIMIT 1)) FROM execution_devices d LEFT JOIN device_control_presence p ON p.id=d.id LEFT JOIN mobile_device_environment_observations obs ON obs.device_id=d.id LEFT JOIN mobile_device_environments e ON e.id=obs.snapshot_id LEFT JOIN mobile_device_capabilities k ON k.device_id=d.id LEFT JOIN mobile_device_capability_consents c ON c.capability_id=k.id LEFT JOIN mobile_capability_openings o ON o.device_id=d.id AND o.state='awaiting_consent' WHERE $1::uuid IS NULL AND strpos(lower(d.name),lower($2))>0 AND ($3::uuid IS NULL OR d.id=$3) ORDER BY d.created_at,d.id LIMIT $4 OFFSET $5";
 pub(super) async fn enrich(tx: &mut Tx<'_>, rows: Vec<Value>) -> Result<Vec<Value>> {
     let releases: Vec<Value> = sqlx::query_scalar("SELECT to_jsonb(r)-'flow' FROM mobile_adapter_releases r WHERE NOT EXISTS(SELECT 1 FROM mobile_adapter_withdrawals w WHERE w.release_id=r.id) ORDER BY r.id").fetch_all(&mut **tx).await?;
-    Ok(rows
+    let mut enriched: Vec<Value> = rows
         .into_iter()
         .map(|mut row| {
             let env =
@@ -33,9 +33,23 @@ pub(super) async fn enrich(tx: &mut Tx<'_>, rows: Vec<Value>) -> Result<Vec<Valu
             {
                 row["consent_current"] = json!(false);
             }
-            onboarding::progress(row)
+            row
         })
-        .collect())
+        .collect();
+    for row in &mut enriched {
+        let latest = if let Ok(id) = serde_json::from_value::<Uuid>(row["opening"]["id"].clone()) {
+            super::field_checks::latest(tx, id).await?
+        } else {
+            None
+        };
+        row["field_check_current_passed"] = json!(
+            latest
+                .as_ref()
+                .is_some_and(|j| j["state"] == "passed" && j["dependencies_current"] == true)
+        );
+        *row = onboarding::progress(row.clone());
+    }
+    Ok(enriched)
 }
 pub(super) async fn write(
     tx: &mut Tx<'_>,

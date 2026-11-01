@@ -161,12 +161,14 @@ pub fn progress(mut row: Value) -> Value {
                 "在本机业务能力页面查看范围并确认",
             ));
         }
-        blockers.push(blocker(
-            "field_check_not_delivered",
-            "现场不发送检查尚未交付",
-            "产品研发",
-            "等待现场检查模块与获准检查目标交付",
-        ));
+        if row["field_check_current_passed"] != true {
+            blockers.push(blocker(
+                "field_check_required",
+                "现场无发送检查尚未通过或依据已变化",
+                "学校管理员与手机现场人员",
+                "学校邀请已绑定目标，平台发起检查后由手机原生确认开始",
+            ));
+        }
     }
     blockers.push(blocker(
         "execution_not_delivered",
@@ -206,6 +208,28 @@ mod tests {
             bad[key] = json!(true);
             assert!(serde_json::from_value::<OpeningInput>(bad).is_err());
         }
+    }
+    #[test]
+    fn current_field_check_does_not_promote_execution_and_old_check_remains_blocked() {
+        let row = json!({"release_count":1,"online":true,"device_enabled":true,"environment_fresh":true,"opening":{"id":"opening","environment_snapshot_id":"env"},"environment":{"id":"env"},"matching_releases":[{}],"release_available":true,"consent_current":true,"field_check_current_passed":true});
+        let ready = progress(row.clone());
+        assert_eq!(ready["execution_ready"], false);
+        assert!(
+            !ready["blockers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|b| b["code"] == "field_check_required")
+        );
+        let mut stale = row;
+        stale["field_check_current_passed"] = json!(false);
+        assert!(
+            progress(stale)["blockers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|b| b["code"] == "field_check_required")
+        );
     }
     #[test]
     fn no_product_has_an_owner_and_cannot_open() {

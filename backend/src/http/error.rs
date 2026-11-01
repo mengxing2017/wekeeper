@@ -104,6 +104,12 @@ impl IntoResponse for Error {
                 "school_device_grant_required",
                 "设备尚未获得本校使用授权，或设备/目标已停用；请联系平台管理员核对学校设备授权，并刷新可用设备后重试".into(),
             ),
+            Self::Policy("field_check_dependencies_changed") => (StatusCode::CONFLICT,"field_check_dependencies_changed","检查依据已变化或过期，请刷新手机环境与授权，由学校重新邀请检查".into()),
+            Self::Policy("field_invitation_invalid") => (StatusCode::CONFLICT,"field_invitation_invalid","学校检查邀请已过期、撤销或绑定已变化，请联系该校管理员重新邀请".into()),
+            Self::Policy("field_invitation_consumed") => (StatusCode::CONFLICT,"field_invitation_consumed","该邀请已用于一次检查，请由学校管理员重新发出邀请".into()),
+            Self::Policy("field_check_already_pending") => (StatusCode::CONFLICT,"field_check_already_pending","该手机已有待处理检查，请先核对已有检查或等待其过期".into()),
+            Self::Policy("physical_device_busy") => (StatusCode::CONFLICT,"physical_device_busy","该手机正在执行其他操作或存在待核对结果，请先处理原任务，不能强制解锁".into()),
+            Self::Policy("field_check_permit_mismatch") => (StatusCode::CONFLICT,"field_check_permit_mismatch","检查结果与原领取许可不一致，请保留本机记录并联系维护人员核对".into()),
             Self::Policy("revision_conflict") => (
                 StatusCode::CONFLICT,
                 "revision_conflict",
