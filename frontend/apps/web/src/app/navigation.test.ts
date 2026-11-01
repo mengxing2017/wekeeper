@@ -27,3 +27,12 @@ test('历史入口兼容，未知入口保留给显式错误页处理', () => {
   expect(resolveNavigation('unknown', null)).toBe('unknown')
   expect(new Set(navigation.map(n => n.key)).size).toBe(navigation.length)
 })
+
+test('独立手机任务属于学校业务，平台管理员不能代替学校成员权限', () => {
+  const item = navigation.find(n => n.key === 'mobile-execution-tasks')!
+  expect(item.domain).toBe('business')
+  expect(item.scope).toBe('school')
+  expect(canNavigate(item, false, 'operator')).toBe(true)
+  expect(canNavigate(item, false, 'admin')).toBe(true)
+  expect(canNavigate(item, true)).toBe(false)
+})
