@@ -41,3 +41,20 @@ it('草稿响应不明时重试保持相同内容与幂等键', async () => {
   await waitFor(() => expect(sharedSend.draft).toHaveBeenCalledTimes(2))
   expect(vi.mocked(sharedSend.draft).mock.calls[0]).toEqual(vi.mocked(sharedSend.draft).mock.calls[1])
 })
+
+it('已绑定但未授权的手机显示本机操作路径并保持禁止发送', async () => {
+ const pending:SharedPreview=structuredClone(preview)
+ pending.plan.items[0].readiness=[{binding_id:'binding',device_id:'bound-phone',target_id:'target',state:'waiting_initial_consent',ready:false,automatic:true,inspection:null,blockers:[{code:'waiting_initial_consent',message:'等待首次授权',owner:'device',automatic:false},{code:'acceptance_missing',message:'该范围尚未完成真机验收放行',owner:'engineering',automatic:false}]}]
+ vi.mocked(sharedSend.preview).mockResolvedValue(pending)
+ await compose()
+ fireEvent.click(screen.getByRole('button',{name:'保存草稿'}))
+ await waitFor(()=>expect((screen.getByRole('button',{name:'预览逐群执行计划'}) as HTMLButtonElement).disabled).toBe(false))
+ fireEvent.click(screen.getByRole('button',{name:'预览逐群执行计划'}))
+ expect(await screen.findByText(/不会因 Web 预览自动弹窗/)).toBeTruthy()
+ expect(screen.getByText('已绑定手机：bound-phone')).toBeTruthy()
+ expect(screen.getByText('平台维护人员：该范围尚未完成真机验收放行')).toBeTruthy()
+ expect(screen.queryByText('无可用设备')).toBeNull()
+ fireEvent.click(screen.getByRole('checkbox'))
+ expect((screen.getByRole('button',{name:'确认进入共享发送队列'}) as HTMLButtonElement).disabled).toBe(true)
+ expect(sharedSend.confirm).not.toHaveBeenCalled()
+})
