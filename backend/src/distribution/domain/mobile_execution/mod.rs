@@ -218,3 +218,5 @@ pub mod shared_capability;
 pub mod onboarding;
 
 pub mod field_check;
+
+pub mod shared_send;

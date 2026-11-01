@@ -122,6 +122,38 @@ impl FlowV2 {
     pub fn validate_shared(&self) -> Result<()> {
         self.validate_protocol(7)
     }
+    pub fn validate_shared_send(&self) -> Result<()> {
+        self.validate_protocol(8)?;
+        let mut reached: BTreeSet<&str> = ["chat"].into();
+        loop {
+            let before = reached.len();
+            for t in &self.navigation {
+                if reached.contains(t.from.as_str())
+                    && !matches!(t.to.as_str(), "chat" | "results")
+                    && !matches!(
+                        t.control.as_str(),
+                        "input"
+                            | "send"
+                            | "group_result_row"
+                            | "search_input"
+                            | "message_row"
+                            | "outgoing"
+                            | "failed"
+                            | "pending"
+                    )
+                {
+                    reached.insert(&t.to);
+                }
+            }
+            if reached.len() == before {
+                break;
+            }
+        }
+        require(
+            reached.contains("search"),
+            "v8 必须提供聊天页安全返回搜索页的真实导航路径",
+        )
+    }
     fn validate_protocol(&self, protocol: u8) -> Result<()> {
         require(
             self.schema_version == 2

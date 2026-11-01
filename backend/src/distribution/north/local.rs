@@ -158,3 +158,5 @@ pub mod device_control;
 pub mod mobile_execution;
 
 pub mod governance;
+
+pub mod shared_send;

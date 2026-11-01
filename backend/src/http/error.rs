@@ -155,6 +155,20 @@ impl IntoResponse for Error {
             Self::Policy("source_content_unavailable") => (StatusCode::CONFLICT,"source_content_unavailable","来源内容已撤回、版本改变或当前无法核实，尚未调用部分不会发送，请重新核对来源和预览".into()),
             Self::Policy("source_version_conflict") => (StatusCode::CONFLICT,"source_version_conflict","来源内容版本已变化，请重新选取素材并预览确认".into()),
             Self::Policy("preview_expired") => (StatusCode::CONFLICT,"preview_expired","官方群发预览已过期，请重新检查全部正文和目标后确认".into()),
+            Self::Policy(code) if code.starts_with("shared_send_") => (
+                StatusCode::CONFLICT,code,match code {
+                    "shared_send_key_required" => "平台尚未配置共享发送密钥，请联系部署维护人员配置后再开放发送",
+                    "shared_send_not_released" => "当前政策尚未放行共享发送，请联系平台管理员核对发送阶段",
+                    "shared_send_scope_not_accepted" => "该手机、学校、目标群与实际应用环境尚无有效真机验收记录，请联系产品验收人员完成测试",
+                    "shared_send_runtime_required" => "等待手机上线、解锁并报告可执行状态；请检查长期托管、通知和无障碍权限",
+                    "shared_send_review_required" => "原尝试必须先完成未发送核对并确认设备已停止，不能直接改派或重发",
+                    "shared_send_consent_or_binding_required" => "缺少有效目标绑定或独立发送同意，请平台配置绑定并由手机使用者确认发送范围",
+                    "shared_send_environment_required" | "shared_send_environment_unsupported" => "等待手机刷新实际环境或由产品研发完成该环境适配",
+                    "shared_send_flow_invalid" => "发送适配发行不符合 v8 契约，请产品研发重新核对发行",
+                    "shared_send_policy_invalid" => "发送政策的额度、时区或允许时段不完整，请平台管理员核对后保存",
+                    _ => "共享发送依据不满足，请刷新逐群预览并核对绑定、发送同意及检查结果",
+                }.into(),
+            ),
             Self::Policy(code) => (
                 StatusCode::CONFLICT,
                 code,

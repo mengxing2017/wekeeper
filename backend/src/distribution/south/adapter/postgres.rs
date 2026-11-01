@@ -348,3 +348,5 @@ pub mod content;
 pub mod senders;
 
 pub mod resource_policy;
+
+pub mod shared_send;
