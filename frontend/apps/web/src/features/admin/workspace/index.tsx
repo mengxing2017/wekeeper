@@ -1,6 +1,6 @@
 import { MobileExecutionTasks } from '../../operations/mobile-execution/tasks'
 import { MobileExecutionFlows } from '../../operations/mobile-execution/flows'
-import { MobileDeviceGrants } from '../../operations/mobile-execution/grants'
+import { SharedMobileResources } from '../mobile-resources'
 import { MobileTargets } from '../../operations/mobile-execution/targets'
 import { navigation, visibleNavigationKeys, resolveNavigation } from '../../../app/navigation'
 import { SchoolExecutionResources } from '../../operations/mobile-delivery/school-resources'
@@ -141,7 +141,7 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
       : denied ? <Alert type="warning" title="当前账号没有此功能的访问权限" description={<>请核对当前学校与角色，或从导航选择已授权功能。<Button onClick={() => navigate(allowedKeys[0] ?? 'posts')}>返回可用功能</Button></>} />
       : resourcePage && globalScope && user.platform_admin ? (
         <ExecutionDevices key={tab} view={tab === 'execution-accounts' ? 'accounts' : params.get('subview') === 'rules' ? 'rules' : 'devices'} onViewChange={setSubview} />
-      ) : tab === 'mobile-device-grants' && user.platform_admin ? <MobileDeviceGrants schools={visibleSchools ?? []} /> : tab === 'wecom-assets' && user.platform_admin ? (
+      ) : tab === 'shared-mobile-resources' && user.platform_admin ? <SharedMobileResources /> : tab === 'wecom-assets' && user.platform_admin ? (
         <Assets />
       ) : tab === 'wecom-directory' && user.platform_admin ? (
         <Directory />

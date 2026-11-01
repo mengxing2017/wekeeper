@@ -36,3 +36,12 @@ test('独立手机任务属于学校业务，平台管理员不能代替学校�
   expect(canNavigate(item, false, 'admin')).toBe(true)
   expect(canNavigate(item, true)).toBe(false)
 })
+
+test('共享手机目标绑定属于平台资源，学校不保留旧设备授权入口', () => {
+  const item = navigation.find(n => n.key === 'shared-mobile-resources')!
+  expect(item.domain).toBe('platform')
+  expect(item.scope).toBe('global')
+  expect(canNavigate(item, false, 'admin')).toBe(false)
+  expect(canNavigate(item, true)).toBe(true)
+  expect(navigation.find(n => n.key === 'mobile-device-grants')).toBeUndefined()
+})

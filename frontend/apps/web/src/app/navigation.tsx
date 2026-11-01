@@ -113,7 +113,7 @@ export const navigation: NavigationItem[] = [
     scope: 'selectable',
     capability: 'resources.read',
   },
-  { key: 'mobile-device-grants', icon: <MobileOutlined />, label: '学校设备授权', description: '平台明确授予或撤销学校使用手机设备的权利。', domain: 'platform', scope: 'global', capability: 'global.manage' },
+  { key: 'shared-mobile-resources', icon: <MobileOutlined />, label: '共享手机与目标群', description: '平台维护跨学校共享手机与具体目标群的绑定和搜索名。', domain: 'platform', scope: 'global', capability: 'global.manage' },
   { key: 'mobile-execution-tasks', icon: <MessageOutlined />, label: '手机任务', description: '选择手机与独立目标群，预览、人工确认和查看任务记录。', domain: 'business', scope: 'school', capability: 'school.operate' },
   { key: 'mobile-execution-flows', icon: <MessageOutlined />, label: '手机执行配置', description: '登记、验证和发布手机流程，为本校授权设备配置执行流程。', domain: 'business', scope: 'school', capability: 'school.operate' },
   { key: 'mobile-targets', icon: <MessageOutlined />, label: '手机目标群', description: '管理独立手机搜索目标和设备绑定，与官方客户群隔离。', domain: 'business', scope: 'school', capability: 'school.operate' },

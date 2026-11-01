@@ -19,7 +19,7 @@ export const pageHelp: Record<string, string> = {
   'mobile-execution-tasks': 'operator/mobile-execution-tasks',
   'mobile-execution-flows': 'operator/mobile-execution-flows',
   'mobile-targets': 'operator/mobile-targets',
-  'mobile-device-grants': 'platform-admin/device-school-grants',
+  'shared-mobile-resources': 'platform-admin/shared-mobile-resources',
   'execution-devices': 'operator/execution-resources',
   'execution-accounts': 'operator/execution-resources#sending-accounts',
   'platform-resources': 'platform-admin/audit-and-resources',
