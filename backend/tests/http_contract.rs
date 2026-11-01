@@ -1245,3 +1245,58 @@ async fn opening_catalog_support_and_environment_require_their_own_identity() {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }
+
+#[test]
+fn shared_field_check_result_fixture_is_strict_and_complete() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/shared-mobile-field-check-result.json"
+    ))
+    .unwrap();
+    let input: wekeeper_api::distribution::domain::mobile_execution::field_check::FieldResultInput =
+        serde_json::from_value(fixture["data"]["attributes"].clone()).unwrap();
+    input.validate().unwrap();
+    assert!(input.passed());
+    assert_eq!(
+        serde_json::to_value(&input).unwrap(),
+        fixture["data"]["attributes"]
+    );
+}
+#[tokio::test]
+async fn shared_field_check_routes_require_their_own_identity() {
+    for (method, path) in [
+        ("GET", "/api/v7/device-execution/field-checks"),
+        (
+            "POST",
+            "/api/v7/device-execution/field-checks/00000000-0000-0000-0000-000000000081/claims",
+        ),
+        (
+            "POST",
+            "/api/v7/device-execution/field-checks/00000000-0000-0000-0000-000000000081/results",
+        ),
+        ("GET", "/api/v1/platform/mobile-execution/field-checks"),
+        ("POST", "/api/v1/platform/mobile-execution/field-checks"),
+        (
+            "POST",
+            "/api/v1/schools/00000000-0000-0000-0000-000000000001/mobile-execution/field-check-invitations",
+        ),
+    ] {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .header("content-type", "application/vnd.api+json")
+                    .body(Body::from(
+                        json!({"data":{"type":"mobile-field-checks","attributes":{}}}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::UNAUTHORIZED,
+            "{method} {path}"
+        );
+    }
+}
