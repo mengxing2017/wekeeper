@@ -1,0 +1,34 @@
+{
+  "message": "  第一行\n第二行🙂  ",
+  "event": {
+    "schema": "shared_mobile_send/1",
+    "event_id": "00000000-0000-4000-8000-000000000001",
+    "claim_id": "00000000-0000-4000-8000-000000000002",
+    "attempt_id": "00000000-0000-4000-8000-000000000003",
+    "invocation_id": "00000000-0000-4000-8000-000000000004",
+    "credential_generation": 1,
+    "lease_fence": 9,
+    "plan_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "content_digest": "6a6d2976ec38e2ecd8c70d5d5585f21bc9d6b70ac517f4ddc1b1e1491b491aa8",
+    "outcome": "observed_sent",
+    "reason": "new_outgoing_observed",
+    "consumed": true,
+    "calling_marked": true,
+    "evidence": "native-observation-digest",
+    "result_credential": "1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "receipt": {
+    "event_id": "00000000-0000-4000-8000-000000000001",
+    "claim_id": "00000000-0000-4000-8000-000000000002",
+    "attempt_id": "00000000-0000-4000-8000-000000000003",
+    "invocation_id": "00000000-0000-4000-8000-000000000004",
+    "credential_generation": 1,
+    "lease_fence": 9,
+    "plan_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "content_digest": "6a6d2976ec38e2ecd8c70d5d5585f21bc9d6b70ac517f4ddc1b1e1491b491aa8",
+    "id": "00000000-0000-4000-8000-000000000005",
+    "device_id": "00000000-0000-4000-8000-000000000006",
+    "body_hash": "e99c9ad2cb88b15215294fac0cfbe0f41c72aed6b28f0ae36868c3c054e60672",
+    "disposition": "observed_sent"
+  }
+}
