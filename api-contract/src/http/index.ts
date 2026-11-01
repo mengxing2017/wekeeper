@@ -2,6 +2,13 @@
 import { createClient, type Cancellation, type Transport } from './client'
 export * from './client'
 
+const unauthorizedListeners = new Set<() => void>()
+/** Browser session lifecycle; native clients keep their own authentication. */
+export function subscribeUnauthorized(listener: () => void) {
+  unauthorizedListeners.add(listener)
+  return () => { unauthorizedListeners.delete(listener) }
+}
+
 export const browserTransport: Transport = async (request) => {
   const controller = new AbortController()
   const cancel = () => controller.abort()
@@ -20,6 +27,10 @@ export const browserTransport: Transport = async (request) => {
       body = request.binary && response.ok ? await response.arrayBuffer() : await response.json()
     } catch {
       body = undefined
+    }
+    if (response.status === 401 && !controller.signal.aborted) {
+      client.setCsrf('')
+      unauthorizedListeners.forEach((listener) => listener())
     }
     return {
       status: response.status,
