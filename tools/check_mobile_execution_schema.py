@@ -81,7 +81,7 @@ END $$;
     for key, value in {'$1': "'00000000-0000-0000-0000-000000000001'::uuid", '$2': "''::text", '$3': 'NULL::uuid', '$4': '31', '$5': '0'}.items():
         query = query.replace(key, value)
     def check(expected, message):
-        return f"DO $$ DECLARE found jsonb; BEGIN SELECT value INTO found FROM ({query}) q(value); IF found IS NULL OR (found->>'available')::boolean IS DISTINCT FROM {str(expected).lower()} THEN RAISE EXCEPTION '{message}'; END IF; END $$;"
+        return f"DO $$ DECLARE found jsonb; BEGIN SELECT value INTO found FROM ({query}) q(value); IF found IS NULL OR (found->>'historical_configuration_valid')::boolean IS DISTINCT FROM {str(expected).lower()} THEN RAISE EXCEPTION '{message}'; END IF; END $$;"
     verify = seed + check(True, 'valid current assignment not available')
     verify += "UPDATE mobile_execution_flow_releases SET enabled=false;" + check(False, 'revoked release available')
     verify += "UPDATE mobile_execution_flow_releases SET enabled=true; UPDATE mobile_device_school_grants SET revision=3;" + check(False, 'stale consent available')
@@ -91,85 +91,90 @@ END $$;
     run(command, input=verify + "\n\n")
 
 
-def verify_tasks(command):
-    """Exercise durable identity/immutability/physical reservation constraints."""
-    source = (ROOT / 'backend/src/distribution/south/adapter/postgres/mobile_execution/tasks.rs').read_text()
-    configuration = re.search(r'"(SELECT jsonb_build_object\(\'device_id[^"\n]+)"', source).group(1)
-    for key,value in {'$1': "'00000000-0000-0000-0000-000000000001'::uuid", '$2': "'00000000-0000-0000-0000-000000000006'::uuid"}.items():
-        configuration = configuration.replace(key,value)
-    def config_check(expected, message):
-        return f"DO $$ DECLARE found jsonb; BEGIN SELECT value INTO found FROM ({configuration}) q(value); IF (found IS NOT NULL) IS DISTINCT FROM {str(expected).lower()} THEN RAISE EXCEPTION '{message}'; END IF; END $$;"
-    config_sql = "UPDATE execution_devices SET credential_generation=0;" + config_check(True, 'valid task configuration rejected')
-    config_sql += "UPDATE mobile_device_consents SET accepted=false;" + config_check(False, 'withdrawn consent accepted for task')
-    config_sql += "UPDATE mobile_device_consents SET accepted=true; UPDATE mobile_execution_flow_releases SET enabled=false;" + config_check(False, 'revoked release accepted for task')
-    config_sql += "UPDATE mobile_execution_flow_releases SET enabled=true; UPDATE mobile_device_school_grants SET revision=4;" + config_check(False, 'stale grant accepted for task')
-    config_sql += "UPDATE mobile_device_school_grants SET revision=2;"
-    run(command, input=config_sql + "\n\n")
-    uid = lambda n: f"'00000000-0000-0000-0000-{n:012d}'"
-    a,b,actor,device,target,binding = (uid(n) for n in (1,2,3,6,7,9))
-    p,t,intent,plan,item = (uid(n) for n in (40,41,42,43,44))
-    sql = f"""
-INSERT INTO mobile_execution_task_previews(id,school_id,device_id,input,snapshot,digest,created_by) VALUES({p},{a},{device},'{{}}','{{"message":"原文"}}',repeat('c',64),{actor});
-INSERT INTO mobile_execution_tasks(id,school_id,intent_id,device_id,preview_id,created_by,confirmed_by) VALUES({t},{a},{intent},{device},{p},{actor},{actor});
-INSERT INTO mobile_execution_plans(id,school_id,task_id,snapshot,digest) VALUES({plan},{a},{t},'{{"message":"原文"}}',repeat('c',64));
-INSERT INTO mobile_execution_task_items(id,school_id,task_id,intent_id,device_id,target_id,binding_id,position,snapshot) VALUES({item},{a},{t},{intent},{device},{target},{binding},1,'{{"search_text":"原始群名"}}');
-INSERT INTO mobile_execution_device_reservations(device_id,school_id,task_id) VALUES({device},{a},{t});
-INSERT INTO mobile_execution_task_previews(id,school_id,device_id,input,snapshot,digest,created_by) VALUES({uid(50)},{b},{device},'{{}}','{{}}',repeat('c',64),{actor});
-INSERT INTO mobile_execution_tasks(id,school_id,intent_id,device_id,preview_id,created_by,confirmed_by) VALUES({uid(51)},{b},{uid(52)},{device},{uid(50)},{actor},{actor});
+def verify_shared(command, repository):
+    """Check migrated shared relations, real SQL projections and privacy."""
+    sql = """
+DO $$ BEGIN
+ IF EXISTS(SELECT 1 FROM mobile_device_target_bindings WHERE enabled) THEN RAISE EXCEPTION 'old binding automatically granted shared scope'; END IF;
+ IF EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='mobile_device_target_bindings' AND column_name='grant_id') THEN RAISE EXCEPTION 'binding still depends on school grant'; END IF;
+END $$;
+UPDATE execution_devices SET enabled=true,remark='private-account-note';
+UPDATE mobile_device_target_bindings SET enabled=true,search_text_override='手机  覆盖名',revision=revision+1,locator_revision=locator_revision+1;
+INSERT INTO mobile_targets(id,school_id,search_text,created_by,updated_by) VALUES('00000000-0000-0000-0000-000000000040','00000000-0000-0000-0000-000000000002','Other school group','00000000-0000-0000-0000-000000000003','00000000-0000-0000-0000-000000000003');
+INSERT INTO mobile_device_target_bindings(id,school_id,device_id,target_id,created_by,updated_by) VALUES('00000000-0000-0000-0000-000000000041','00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000006','00000000-0000-0000-0000-000000000040','00000000-0000-0000-0000-000000000003','00000000-0000-0000-0000-000000000003');
 DO $$ BEGIN
  BEGIN
-  INSERT INTO mobile_execution_device_reservations(device_id,school_id,task_id) VALUES({device},{b},{uid(51)});
-  RAISE EXCEPTION 'another school reserved occupied physical device';
+  INSERT INTO mobile_device_target_bindings(id,school_id,device_id,target_id,created_by,updated_by) SELECT gen_random_uuid(),school_id,device_id,target_id,created_by,updated_by FROM mobile_device_target_bindings LIMIT 1;
+  RAISE EXCEPTION 'duplicate device target accepted';
  EXCEPTION WHEN unique_violation THEN NULL; END;
  BEGIN
-  UPDATE mobile_execution_plans SET snapshot='{{}}' WHERE id={plan};
-  RAISE EXCEPTION 'plan rewritten';
+  UPDATE mobile_device_target_bindings SET search_text_override='';
+  RAISE EXCEPTION 'empty override accepted';
  EXCEPTION WHEN check_violation THEN NULL; END;
+END $$;
+"""
+    source = repository.read_text()
+    def projection(kind, school):
+        pattern = r'Resource::' + kind + r' => \{\s*"([^"\n]+)"'
+        query = re.search(pattern, source).group(1)
+        for key,value in {'$1': f"'{school}'::uuid", '$2': "''::text", '$3': 'NULL::uuid', '$4':'31', '$5':'0'}.items():
+            query = query.replace(key,value)
+        return query
+    school='00000000-0000-0000-0000-000000000001'
+    devices=projection('Devices',school)
+    bindings=projection(r'Bindings \| Resource::PlatformBindings',school)
+    def check(query, condition, message):
+        return f"DO $$ DECLARE found jsonb; total integer; BEGIN SELECT count(*) INTO total FROM ({query}) q; SELECT value INTO found FROM ({query}) q(value); IF total<>1 OR NOT ({condition}) THEN RAISE EXCEPTION '{message}'; END IF; END $$;"
+    sql += check(devices, "NOT (found ?| ARRAY['remark','custodian_actor_id','grant_id','school_id'])", 'school device privacy or derived query failed')
+    sql += check(bindings,"found->>'search_text'='手机  覆盖名' AND found->>'search_source'='binding_override' AND found->>'source_locator_revision'='2'",'override projection failed')
+    sql += "UPDATE mobile_targets SET search_text='new default',locator_revision=locator_revision+1 WHERE school_id='" + school + "';"
+    sql += check(bindings,"found->>'search_text'='手机  覆盖名' AND found->>'source_locator_revision'='2'",'default rename invalidated override')
+    sql += "UPDATE mobile_device_target_bindings SET enabled=false WHERE school_id='" + school + "';"
+    other=projection('Devices','00000000-0000-0000-0000-000000000002')
+    sql += check(other,"found->>'name'='Phone'",'unbind affected another school')
+    sql += "DO $$ BEGIN IF (SELECT content FROM broadcast_tasks LIMIT 1)<>'Original content' THEN RAISE EXCEPTION 'official business changed'; END IF; END $$;"
+    upsert = re.search(r'"(INSERT INTO mobile_device_target_bindings[^"\n]+)"',source).group(1)
+    sql += "PREPARE current_shared_bind AS " + upsert + ";"
+    arguments = "'00000000-0000-0000-0000-000000000050','00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000006','00000000-0000-0000-0000-000000000007',NULL,'00000000-0000-0000-0000-000000000003'"
+    sql += f"EXECUTE current_shared_bind({arguments}); EXECUTE current_shared_bind({arguments});"
+    sql += "DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM mobile_device_target_bindings WHERE id='00000000-0000-0000-0000-000000000009' AND enabled AND search_text_override IS NULL AND revision=4 AND locator_revision=3) THEN RAISE EXCEPTION 'actual upsert did not clear override or changed no-op versions'; END IF; END $$;"
+    run(command,input=sql+"\n\n")
+
+
+def verify_capabilities(command):
+    """v7 starts empty; versions/consents cannot infer a school or bypass evidence constraints."""
+    flow = json.loads((ROOT / "api-contract/fixtures/shared-mobile-flow-v7.json").read_text())
+    artifact = json.dumps(flow, ensure_ascii=False).replace("'", "''")
+    sql = f"""
+DO $$ BEGIN
+ IF EXISTS(SELECT 1 FROM mobile_device_capabilities) OR EXISTS(SELECT 1 FROM mobile_device_capability_consents) THEN RAISE EXCEPTION 'school evidence auto-promoted to shared capability'; END IF;
+ IF EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name IN ('mobile_device_capabilities','mobile_device_capability_versions','mobile_device_capability_consents') AND column_name IN ('school_id','grant_id','sender_account_id')) THEN RAISE EXCEPTION 'shared capability carries old business identity'; END IF;
+END $$;
+BEGIN;
+INSERT INTO mobile_device_capabilities(id,device_id,app_key,capability,name,revision,configuration_digest,enabled,created_by,updated_by) VALUES('00000000-0000-0000-0000-000000000060','00000000-0000-0000-0000-000000000006','wecom','group_text','Shared',1,repeat('a',64),true,'00000000-0000-0000-0000-000000000003','00000000-0000-0000-0000-000000000003');
+INSERT INTO mobile_device_capability_versions(capability_id,revision,name,enabled,flow,configuration_digest,created_by) VALUES('00000000-0000-0000-0000-000000000060',1,'Shared',true,'{artifact}',repeat('a',64),'00000000-0000-0000-0000-000000000003');
+COMMIT;
+INSERT INTO mobile_device_capability_consents(id,device_id,capability_id,configuration_revision,credential_generation,scope_digest,scope,revision,accepted) VALUES('00000000-0000-0000-0000-000000000061','00000000-0000-0000-0000-000000000006','00000000-0000-0000-0000-000000000060',1,1,repeat('a',64),'{{}}',1,true);
+DO $$ BEGIN
  BEGIN
-  UPDATE mobile_execution_task_previews SET digest=repeat('d',64) WHERE id={p};
-  RAISE EXCEPTION 'preview rewritten';
- EXCEPTION WHEN check_violation THEN NULL; END;
- BEGIN
-  UPDATE mobile_execution_task_items SET snapshot='{{}}' WHERE id={item};
-  RAISE EXCEPTION 'target snapshot rewritten';
- EXCEPTION WHEN check_violation THEN NULL; END;
- BEGIN
-  INSERT INTO mobile_execution_device_reservations(device_id,school_id,task_id) VALUES({device},{a},{t});
-  RAISE EXCEPTION 'duplicate physical reservation accepted';
- EXCEPTION WHEN unique_violation THEN NULL; END;
- BEGIN
-  UPDATE mobile_execution_tasks SET school_id={b} WHERE id={t};
-  RAISE EXCEPTION 'cross school task accepted';
+  UPDATE mobile_device_capability_consents SET device_id='00000000-0000-0000-0000-000000000001';
+  RAISE EXCEPTION 'cross-device consent permitted' USING ERRCODE='XX000';
  EXCEPTION WHEN foreign_key_violation THEN NULL; END;
  BEGIN
-  INSERT INTO mobile_execution_task_items(id,school_id,task_id,intent_id,device_id,target_id,binding_id,position,snapshot) VALUES({uid(45)},{a},{t},{intent},{device},{target},{binding},2,'{{}}');
-  RAISE EXCEPTION 'intent repeated target accepted';
- EXCEPTION WHEN unique_violation THEN NULL; END;
+  UPDATE mobile_device_capability_versions SET name='changed';
+  RAISE EXCEPTION 'configuration evidence mutable' USING ERRCODE='XX000';
+ EXCEPTION WHEN raise_exception THEN NULL; END;
+ BEGIN
+  UPDATE mobile_device_capability_consents SET configuration_revision=2;
+  RAISE EXCEPTION 'consent to nonexistent configuration' USING ERRCODE='XX000';
+ EXCEPTION WHEN foreign_key_violation THEN NULL; END;
+ BEGIN
+  INSERT INTO mobile_device_capability_versions(capability_id,revision,name,enabled,flow,configuration_digest,created_by) VALUES('00000000-0000-0000-0000-000000000060',2,'Legacy',true,jsonb_set('{artifact}'::jsonb,'{{protocol_version}}','6'::jsonb),repeat('a',64),'00000000-0000-0000-0000-000000000003');
+  RAISE EXCEPTION 'v6 configuration promoted' USING ERRCODE='XX000';
+ EXCEPTION WHEN check_violation THEN NULL; END;
 END $$;
-UPDATE mobile_execution_task_items SET state='unknown' WHERE id={item};
 """
-    repository = ROOT / 'backend/src/distribution/south/adapter/postgres/mobile_execution.rs'
-    task_query = re.search(r'Resource::Tasks => \{\s*"([^"\n]+)"', repository.read_text()).group(1)
-    for key,value in {'$1': a+'::uuid', '$2': "''::text", '$3': 'NULL::uuid', '$4': '31', '$5': '0'}.items():
-        task_query = task_query.replace(key,value)
-    sql += f"""DO $$ DECLARE found jsonb; BEGIN SELECT value INTO found FROM ({task_query}) q(value);
- IF found->>'device_name' IS DISTINCT FROM 'Phone' OR found->'items'->0->'snapshot'->>'search_text' IS DISTINCT FROM '原始群名' THEN RAISE EXCEPTION 'task projection lost device name or target snapshot'; END IF;
-END $$;"""
-    # Execute the exact cancellation predicate used by the repository: unknown must keep its reservation.
-    source = (ROOT / 'backend/src/distribution/south/adapter/postgres/mobile_execution/tasks.rs').read_text()
-    cancel = re.search(r'"(UPDATE mobile_execution_tasks t SET [^"\n]+)"', source).group(1)
-    for key,value in {'$1': a+'::uuid', '$2': t+'::uuid', '$3': '1::bigint'}.items():
-        cancel = cancel.replace(key,value)
-    sql += cancel + ";"
-    sql += f"""DO $$ BEGIN
- IF NOT EXISTS(SELECT 1 FROM mobile_execution_tasks WHERE id={t} AND state='queued') OR NOT EXISTS(SELECT 1 FROM mobile_execution_device_reservations WHERE device_id={device}) THEN RAISE EXCEPTION 'unknown released physical reservation'; END IF;
-END $$;
-UPDATE mobile_execution_task_items SET state='pending' WHERE id={item};
-""" + cancel + ";"
-    sql += f"""DO $$ BEGIN
- IF NOT EXISTS(SELECT 1 FROM mobile_execution_tasks WHERE id={t} AND state='cancelled') THEN RAISE EXCEPTION 'certainly unclaimed work cannot cancel'; END IF;
-END $$;"""
-    run(command, input=sql + "\n\n")
+    run(command, input=sql+"\n\n")
 
 
 def run(command, **kwargs):
@@ -192,15 +197,17 @@ def main():
         baseline = "\n".join(p.read_text() for p in migrations if p.name < MIGRATION)
         run(command, input=baseline + "\n\n")
         run(command, input=SEED + "\n\n")
-        run(command, input="\n".join(p.read_text() for p in migrations if p.name >= MIGRATION) + "\n\n")
+        run(command, input="\n".join(p.read_text() for p in migrations if MIGRATION <= p.name < "202611010106") + "\n\n")
         run(command, input=VERIFY + CONSENT_VERIFY + "\n\n")
         repository = ROOT / "backend/src/distribution/south/adapter/postgres/mobile_execution.rs"
+        verify_flows(command, repository)
+        run(command, input="\n".join(p.read_text() for p in migrations if p.name >= "202611010106") + "\n\n")
+        verify_shared(command, repository)
+        verify_capabilities(command)
         queries = re.findall(r'"((?:SELECT|INSERT|UPDATE) [^"\n]*)"', "\n".join(p.read_text() for p in [repository, *repository.with_suffix("").glob("*.rs")]))
         static_queries = [json.loads('"' + query + '"') for query in queries if "{table}" not in query]
         run(command, input="\n".join(f"PREPARE phone_query_{i} AS {query};" for i, query in enumerate(static_queries)) + "\n\n")
-        verify_flows(command, repository)
-        verify_tasks(command)
-    print("PASS: upgrade preserves official data; phone resources/flow assignments reject cross-school/device bindings, stale consent, revoked releases and invalid validation; task snapshots/intents/reservations remain constrained; repository SQL prepares successfully")
+    print("PASS: upgrade preserves official data; historical consent/release checks pass; shared bindings require manual re-enable, enforce unique device-target and school scope, preserve override source versions and school privacy; v7 starts empty and enforces immutable configuration, v7-only flow and device-bound consent; current repository SQL prepares successfully")
 
 
 if __name__ == "__main__":
