@@ -5,8 +5,27 @@ use serde_json::Value;
 use std::collections::BTreeSet;
 use uuid::Uuid;
 pub const SCHEMA: &str = "shared_mobile_send/1";
-pub const SCOPE: &str = "shared_mobile_execution_scope/2";
+pub const SCOPE: &str = "shared_mobile_device_delegation/1";
+pub fn delegation_scope(platform: Uuid, device: Uuid, generation: i64) -> Value {
+    serde_json::json!({"schema":SCOPE,"platform_id":platform,"device_id":device,"credential_generation":generation,
+        "package_name":"com.tencent.wework","capability":"group_text","resource_policy":"platform_managed_school_targets",
+        "background_collection":true,"automatic_inspection":true,"text_input":true,"single_use_send":true})
+}
 pub const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
+/// No-op decisions keep checks stable; stale accepts must not undo a later withdrawal.
+pub fn next_decision_revision(
+    current: i64,
+    expected: i64,
+    accepted: Option<bool>,
+    requested: bool,
+) -> Result<Option<i64>> {
+    require(current == expected, "revision_conflict")?;
+    Ok(if accepted == Some(requested) {
+        None
+    } else {
+        Some(current + 1)
+    })
+}
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DraftInput {
@@ -314,15 +333,8 @@ impl PolicyInput {
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct OpeningInput {
-    pub device_id: Uuid,
-    pub release_id: Uuid,
-    pub environment_snapshot_id: Uuid,
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct ConsentInput {
-    pub opening_id: Uuid,
+    pub delegation_id: Uuid,
     pub scope_digest: String,
     pub expected_revision: i64,
     pub accepted: bool,
@@ -417,4 +429,65 @@ mod wire_tests {
 pub struct ClaimRecovery {
     pub claim_id: Uuid,
     pub recovery_credential: String,
+}
+
+#[cfg(test)]
+mod delegation_tests {
+    use super::*;
+    #[test]
+    fn stable_scope_and_strict_decision_match_wire_fixture() {
+        let f: Value = serde_json::from_str(include_str!(
+            "../../../../../../api-contract/fixtures/shared-mobile-delegation.json"
+        ))
+        .unwrap();
+        let scope = delegation_scope(
+            "00000000-0000-0000-0000-000000000001".parse().unwrap(),
+            "00000000-0000-0000-0000-000000000002".parse().unwrap(),
+            1,
+        );
+        assert_eq!(scope, f["scope"]);
+        assert_eq!(digest(&scope).unwrap(), f["scope_digest"]);
+        assert!(
+            scope.get("release_id").is_none() && scope.get("environment_snapshot_id").is_none()
+        );
+        let input: ConsentInput = serde_json::from_value(f["decision"].clone()).unwrap();
+        assert_eq!(serde_json::to_value(input).unwrap(), f["decision"]);
+        let mut legacy = f["decision"].clone();
+        legacy["opening_id"] = legacy["delegation_id"].clone();
+        assert!(serde_json::from_value::<ConsentInput>(legacy).is_err());
+    }
+    #[test]
+    fn repeat_accept_is_stable_and_stale_accept_cannot_undo_withdrawal() {
+        assert_eq!(next_decision_revision(0, 0, None, true).unwrap(), Some(1));
+        assert_eq!(
+            next_decision_revision(1, 1, Some(true), true).unwrap(),
+            None
+        );
+        assert_eq!(
+            next_decision_revision(1, 1, Some(true), false).unwrap(),
+            Some(2)
+        );
+        assert!(next_decision_revision(2, 1, Some(false), true).is_err());
+        assert_eq!(
+            next_decision_revision(2, 2, Some(false), true).unwrap(),
+            Some(3)
+        );
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SchoolAccessInput {
+    pub device_id: Uuid,
+    pub school_id: Uuid,
+    pub expected_revision: i64,
+    pub enabled: bool,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PoolBindingInput {
+    pub target_id: Uuid,
+    pub device_id: Uuid,
+    pub expected_access_revision: i64,
+    pub search_text_override: Option<String>,
 }

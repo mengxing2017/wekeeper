@@ -6,6 +6,8 @@ use serde_json::Value;
 use uuid::Uuid;
 #[derive(Clone, Debug)]
 pub enum SchoolCommand {
+    PoolBinding(PoolBindingInput),
+    Unbind(Uuid, Mutation),
     Draft(Option<Uuid>, DraftInput),
     Inspection(InspectionInput),
     Preview(PreviewInput),
@@ -17,7 +19,7 @@ pub enum SchoolCommand {
 #[derive(Clone, Debug)]
 pub enum PlatformCommand {
     Policy(PolicyInput),
-    Opening(OpeningInput),
+    Access(SchoolAccessInput),
 }
 #[derive(Clone, Debug)]
 pub enum DeviceCommand {

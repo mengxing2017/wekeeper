@@ -190,23 +190,6 @@ async fn policy(
             .await?,
     ))
 }
-async fn opening(
-    State(a): State<Application>,
-    actor: Actor,
-    h: HeaderMap,
-    input: Input,
-) -> Result<ApiResponse> {
-    Ok(resource(
-        "mobile-shared-openings",
-        service(&a)
-            .platform_write(
-                &actor,
-                key(&h),
-                PlatformCommand::Opening(input.decode("mobile-shared-openings")?),
-            )
-            .await?,
-    ))
-}
 async fn context(State(a): State<Application>, h: HeaderMap) -> Result<ApiResponse> {
     let c = credential(&a, &h).await?;
     Ok(resource(
@@ -293,17 +276,72 @@ async fn result(State(a): State<Application>, h: HeaderMap, input: Input) -> Res
 async fn consent(State(a): State<Application>, h: HeaderMap, input: Input) -> Result<ApiResponse> {
     let c = credential(&a, &h).await?;
     Ok(resource(
-        "mobile-shared-consents",
+        "mobile-shared-delegation-decisions",
         service(&a)
             .device_write(
                 &c,
                 key(&h),
-                DeviceCommand::Consent(input.decode("mobile-shared-consents")?),
+                DeviceCommand::Consent(input.decode("mobile-shared-delegation-decisions")?),
             )
             .await?,
     ))
 }
 
+async fn pool_binding(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(s): Path<Uuid>,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "mobile-shared-bindings",
+        service(&a)
+            .school_write(
+                &actor,
+                s,
+                key(&h),
+                SchoolCommand::PoolBinding(input.decode("mobile-shared-bindings")?),
+            )
+            .await?,
+    ))
+}
+async fn pool_unbind(
+    State(a): State<Application>,
+    actor: Actor,
+    Path((s, id)): Path<(Uuid, Uuid)>,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "mobile-shared-bindings",
+        service(&a)
+            .school_write(
+                &actor,
+                s,
+                key(&h),
+                SchoolCommand::Unbind(id, input.decode("mobile-shared-bindings")?),
+            )
+            .await?,
+    ))
+}
+async fn school_access(
+    State(a): State<Application>,
+    actor: Actor,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "mobile-shared-access",
+        service(&a)
+            .platform_write(
+                &actor,
+                key(&h),
+                PlatformCommand::Access(input.decode("mobile-shared-access")?),
+            )
+            .await?,
+    ))
+}
 async fn inspection(
     State(a): State<Application>,
     actor: Actor,
@@ -423,6 +461,18 @@ async fn recover_claim(State(a): State<Application>, input: Input) -> Result<Api
 pub fn router() -> Router<Application> {
     Router::new()
         .route(
+            "/api/v1/platform/mobile-execution/shared-device-access",
+            post(school_access),
+        )
+        .route(
+            "/api/v1/schools/{school}/mobile-execution/shared-bindings",
+            post(pool_binding),
+        )
+        .route(
+            "/api/v1/schools/{school}/mobile-execution/shared-bindings/{id}/revocations",
+            post(pool_unbind),
+        )
+        .route(
             "/api/v8/device-execution/send-recoveries",
             post(recover_claim),
         )
@@ -487,10 +537,6 @@ pub fn router() -> Router<Application> {
             post(policy),
         )
         .route(
-            "/api/v1/platform/mobile-execution/shared-send-openings",
-            post(opening),
-        )
-        .route(
             "/api/v8/device-execution/protocol-capabilities",
             get(context),
         )
@@ -504,7 +550,7 @@ pub fn router() -> Router<Application> {
         )
         .route("/api/v8/device-execution/runtime-reports", post(runtime))
         .route(
-            "/api/v8/device-execution/send-capability-consents",
+            "/api/v8/device-execution/send-delegation-decisions",
             post(consent),
         )
         .route("/api/v8/device-execution/send-claims", post(claim))

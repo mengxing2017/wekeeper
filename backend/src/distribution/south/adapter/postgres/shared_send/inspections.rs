@@ -6,24 +6,60 @@ pub(super) async fn request(
     s: Uuid,
     v: InspectionInput,
 ) -> Result<Value> {
-    let candidate = tasks::raw_candidates(tx, s, v.target_id)
+    let exists:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_device_target_bindings WHERE school_id=$1 AND target_id=$2 AND device_id=$3 AND enabled)").bind(s).bind(v.target_id).bind(v.device_id).fetch_one(&mut **tx).await?;
+    require(exists, "shared_binding_missing")?;
+    let _ = a;
+    let binding:Uuid=sqlx::query_scalar("SELECT id FROM mobile_device_target_bindings WHERE school_id=$1 AND target_id=$2 AND device_id=$3 AND enabled").bind(s).bind(v.target_id).bind(v.device_id).fetch_one(&mut **tx).await?;
+    reconcile(tx, Some(v.device_id), Some(binding)).await?;
+    let status = readiness::school(tx, s)
         .await?
         .into_iter()
-        .find(|x| x["device_id"] == json!(v.device_id))
-        .ok_or(Error::Policy("shared_send_consent_or_binding_required"))?;
-    let id = Uuid::now_v7();
-    let challenge = Uuid::new_v4().simple().to_string();
-    let deps = tasks::dependencies(&candidate);
-    sqlx::query("INSERT INTO mobile_shared_send_inspections(id,school_id,device_id,target_id,binding_id,opening_id,consent_id,dependencies,requested_by,challenge,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,clock_timestamp()+interval '10 minutes')").bind(id).bind(s).bind(v.device_id).bind(v.target_id).bind(uid(&candidate,"binding_id")?).bind(uid(&candidate,"opening_id")?).bind(uid(&candidate,"consent_id")?).bind(deps).bind(a.id).bind(challenge).execute(&mut **tx).await?;
-    Ok(json!({"id":id,"state":"pending","device_id":v.device_id,"target_id":v.target_id}))
+        .find(|r| r["device_id"] == json!(v.device_id) && r["target_id"] == json!(v.target_id))
+        .ok_or(Error::NotFound)?;
+    Ok(json!({"id":status["binding_id"],"state":status["state"],"readiness":status}))
 }
+// Enabled bindings are durable desired checks, including while offline or awaiting consent.
+pub(super) async fn reconcile(
+    tx: &mut Tx<'_>,
+    device: Option<Uuid>,
+    force: Option<Uuid>,
+) -> Result<()> {
+    // Revoke queued work immediately, including bindings excluded from the active scan.
+    sqlx::query("UPDATE mobile_shared_send_inspections i SET state='stale' WHERE i.automatic AND i.state='pending' AND ($1::uuid IS NULL OR i.device_id=$1) AND NOT EXISTS(SELECT 1 FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id JOIN schools s ON s.id=b.school_id JOIN execution_devices d ON d.id=b.device_id JOIN mobile_shared_delegations m ON m.id=i.delegation_id WHERE b.id=i.binding_id AND b.enabled AND t.enabled AND t.archived_at IS NULL AND s.active AND d.enabled AND m.credential_generation=d.credential_generation AND (b.source='platform' OR EXISTS(SELECT 1 FROM mobile_shared_school_access a WHERE a.device_id=b.device_id AND a.school_id=b.school_id AND a.enabled)))").bind(device).execute(&mut **tx).await?;
+    let bindings:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(b) FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id JOIN schools s ON s.id=b.school_id WHERE b.enabled AND t.enabled AND t.archived_at IS NULL AND s.active AND ($1::uuid IS NULL OR b.device_id=$1) ORDER BY b.id").bind(device).fetch_all(&mut **tx).await?;
+    for b in bindings {
+        let candidate = tasks::raw_candidates(tx, uid(&b, "school_id")?, uid(&b, "target_id")?)
+            .await?
+            .into_iter()
+            .find(|c| c["device_id"] == b["device_id"]);
+        let Some(c) = candidate else {
+            sqlx::query("UPDATE mobile_shared_send_inspections SET state='stale' WHERE binding_id=$1 AND automatic AND state='pending'").bind(uid(&b,"id")?).execute(&mut **tx).await?;
+            continue;
+        };
+        let deps = tasks::dependencies(&c);
+        sqlx::query("UPDATE mobile_shared_send_inspections SET state='stale' WHERE binding_id=$1 AND state='pending' AND dependencies<>$2").bind(uid(&b,"id")?).bind(&deps).execute(&mut **tx).await?;
+        let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_shared_send_inspections WHERE binding_id=$1 AND dependencies=$2 AND ((state='passed' AND expires_at>clock_timestamp()+interval '5 minutes') OR (state IN ('pending','leased') AND expires_at>clock_timestamp())))").bind(uid(&b,"id")?).bind(&deps).fetch_one(&mut **tx).await?;
+        if valid {
+            continue;
+        }
+        let (failures,recent):(i64,bool)=sqlx::query_as("SELECT count(*),coalesce(bool_or(created_at>clock_timestamp()-interval '5 minutes'),false) FROM mobile_shared_send_inspections WHERE binding_id=$1 AND dependencies=$2 AND state IN ('failed','stale','pending','leased') AND created_at>clock_timestamp()-interval '24 hours'").bind(uid(&b,"id")?).bind(&deps).fetch_one(&mut **tx).await?;
+        if force != Some(uid(&b, "id")?) && (failures >= 3 || recent) {
+            continue;
+        }
+        sqlx::query("INSERT INTO mobile_shared_send_inspections(id,school_id,device_id,target_id,binding_id,delegation_id,dependencies,requested_by,challenge,automatic,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,true,clock_timestamp()+interval '24 hours')").bind(Uuid::now_v7()).bind(uid(&b,"school_id")?).bind(uid(&b,"device_id")?).bind(uid(&b,"target_id")?).bind(uid(&b,"id")?).bind(uid(&c,"delegation_id")?).bind(deps).bind(uid(&b,"updated_by")?).bind(Uuid::new_v4().simple().to_string()).execute(&mut **tx).await?;
+    }
+    Ok(())
+}
+
 pub(super) async fn busy(tx: &mut Tx<'_>, device: Uuid) -> Result<bool> {
     Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_shared_send_claims WHERE device_id=$1 AND state='active') OR EXISTS(SELECT 1 FROM mobile_shared_invocations WHERE device_id=$1 AND state='risk_held') OR EXISTS(SELECT 1 FROM mobile_shared_device_leases WHERE device_id=$1 AND expires_at>clock_timestamp()) OR EXISTS(SELECT 1 FROM mobile_shared_runtime WHERE device_id=$1 AND NOT quiescent) OR EXISTS(SELECT 1 FROM mobile_execution_claims c JOIN mobile_delivery_items i ON i.id=c.item_id WHERE c.device_id=$1 AND (c.state IN ('claimed','prepared','permit_issued') OR i.state='unknown')) OR EXISTS(SELECT 1 FROM automation_flow_validations WHERE device_id=$1 AND state='accepted' AND expires_at>clock_timestamp()) OR EXISTS(SELECT 1 FROM device_validation_jobs WHERE device_id=$1 AND state IN ('accepted','running') AND expires_at>clock_timestamp())").bind(device).fetch_one(&mut **tx).await?)
 }
 pub(super) async fn claim(tx: &mut Tx<'_>, c: &Credential, v: InspectionClaim) -> Result<Value> {
     let row:Value=sqlx::query_scalar("SELECT to_jsonb(i) FROM mobile_shared_send_inspections i WHERE id=$1 AND device_id=$2 AND state='pending' AND expires_at>clock_timestamp()").bind(v.inspection_id).bind(c.device_id).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("inspection_expired"))?;
     let s = uid(&row, "school_id")?;
-    authorize(tx, uid(&row, "requested_by")?, Some(s), true).await?;
+    if row["automatic"] != true {
+        authorize(tx, uid(&row, "requested_by")?, Some(s), true).await?;
+    }
     let candidate = tasks::raw_candidates(tx, s, uid(&row, "target_id")?)
         .await?
         .into_iter()
@@ -53,7 +89,9 @@ pub(super) async fn finish(tx: &mut Tx<'_>, c: &Credential, v: InspectionResult)
         "result_identity_mismatch",
     )?;
     let s = uid(&row, "school_id")?;
-    authorize(tx, uid(&row, "requested_by")?, Some(s), true).await?;
+    if row["automatic"] != true {
+        authorize(tx, uid(&row, "requested_by")?, Some(s), true).await?;
+    }
     let current = tasks::raw_candidates(tx, s, uid(&row, "target_id")?)
         .await?
         .iter()

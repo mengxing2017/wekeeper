@@ -10,6 +10,7 @@ DO $$
 DECLARE s uuid=gen_random_uuid(); other uuid=gen_random_uuid(); actor uuid=gen_random_uuid();
  draft uuid=gen_random_uuid(); preview uuid=gen_random_uuid(); intent uuid=gen_random_uuid(); task uuid=gen_random_uuid(); policy uuid=gen_random_uuid();
  device uuid=gen_random_uuid(); environment uuid=gen_random_uuid(); release uuid=gen_random_uuid(); target uuid=gen_random_uuid(); acceptance uuid=gen_random_uuid();
+ stable_grant uuid=gen_random_uuid();
 BEGIN
  IF to_regclass('mobile_execution_tasks') IS NOT NULL OR to_regclass('mobile_execution_task_items') IS NOT NULL OR to_regclass('mobile_execution_plans') IS NOT NULL OR to_regclass('mobile_execution_task_previews') IS NOT NULL OR to_regclass('mobile_execution_device_reservations') IS NOT NULL THEN RAISE EXCEPTION 'retired phone task tables remain'; END IF;
  INSERT INTO schools(id,name) VALUES(s,'shared-test'),(other,'other-test');
@@ -41,6 +42,27 @@ BEGIN
  EXCEPTION WHEN unique_violation THEN NULL;
  END;
  INSERT INTO execution_devices(id,name,credential_generation) VALUES(device,'synthetic isolated device',1);
+ INSERT INTO mobile_shared_delegations(id,device_id,credential_generation,scope,scope_digest) VALUES(stable_grant,device,1,'{"schema":"isolated-constraint-test"}',repeat('c',64));
+ IF EXISTS(SELECT 1 FROM mobile_shared_delegation_decisions WHERE delegation_id=stable_grant) THEN RAISE EXCEPTION 'delegation implicitly accepted'; END IF;
+ INSERT INTO mobile_shared_delegation_decisions(id,delegation_id,accepted,revision) VALUES(gen_random_uuid(),stable_grant,true,1),(gen_random_uuid(),stable_grant,false,2);
+ IF (SELECT accepted FROM mobile_shared_delegation_decisions WHERE delegation_id=stable_grant ORDER BY revision DESC LIMIT 1) THEN RAISE EXCEPTION 'latest withdrawal ignored'; END IF;
+ BEGIN
+  INSERT INTO mobile_shared_delegation_decisions(id,delegation_id,accepted,revision) VALUES(gen_random_uuid(),stable_grant,true,2);
+  RAISE EXCEPTION 'duplicate decision revision accepted';
+ EXCEPTION WHEN unique_violation THEN NULL;
+ END;
+ BEGIN
+  UPDATE mobile_shared_delegation_decisions SET accepted=true WHERE delegation_id=stable_grant AND revision=2;
+  RAISE EXCEPTION 'withdrawal mutated' USING ERRCODE='22000';
+ EXCEPTION WHEN raise_exception THEN NULL;
+ END;
+ INSERT INTO mobile_shared_school_access(device_id,school_id,enabled,revision,updated_by) VALUES(device,s,true,1,actor);
+ INSERT INTO mobile_shared_access_events(id,device_id,school_id,revision,enabled,actor_id) VALUES(gen_random_uuid(),device,s,1,true,actor);
+ BEGIN
+  DELETE FROM mobile_shared_access_events WHERE device_id=device;
+  RAISE EXCEPTION 'school access audit deleted' USING ERRCODE='22000';
+ EXCEPTION WHEN raise_exception THEN NULL;
+ END;
  INSERT INTO mobile_targets(id,school_id,search_text,created_by,updated_by) VALUES(target,s,'synthetic target',actor,actor);
  INSERT INTO mobile_device_environments(id,device_id,credential_generation,snapshot,digest) VALUES(environment,device,1,'{}',repeat('a',64));
  INSERT INTO mobile_send_adapter_releases(id,name,version,environment,flow,content_digest,source_revision,evidence) VALUES(release,'synthetic-rollback-only','test','{}','{}',repeat('a',64),'test','[{"isolated_fixture":true}]');

@@ -5,21 +5,34 @@ pub(super) async fn raw_candidates(tx: &mut Tx<'_>, s: Uuid, target: Uuid) -> Re
  'target_id',t.id,'target_name',coalesce(nullif(t.alias,''),t.search_text),'device_name',d.name,'device_id',d.id,'binding_id',b.id,'binding_locator_revision',b.locator_revision,
  'target_locator_revision',CASE WHEN b.search_text_override IS NULL THEN t.locator_revision ELSE NULL END,
  'search_text',coalesce(b.search_text_override,t.search_text),'search_source',CASE WHEN b.search_text_override IS NULL THEN 'default' ELSE 'override' END,
- 'credential_generation',d.credential_generation,'opening_id',o.id,'consent_id',c.id,'consent_revision',c.revision,
- 'environment_snapshot_id',o.environment_snapshot_id,'release_id',r.id,'flow_digest',r.content_digest,
- 'flow',r.flow,'environment',e.snapshot,'scope_digest',o.scope_digest)
+ 'access_revision',CASE WHEN b.source='school_pool' THEN (SELECT revision FROM mobile_shared_school_access WHERE school_id=b.school_id AND device_id=b.device_id) ELSE NULL END,'credential_generation',d.credential_generation,'delegation_id',m.id,'decision_id',c.id,'decision_revision',c.revision,
+ 'environment_snapshot_id',e.id,'release_id',r.id,'flow_digest',r.content_digest,
+ 'flow',r.flow,'environment',e.snapshot,'scope_digest',m.scope_digest)
  FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id AND t.school_id=b.school_id
- JOIN execution_devices d ON d.id=b.device_id
- JOIN mobile_shared_send_openings o ON o.device_id=d.id AND o.credential_generation=d.credential_generation
- JOIN mobile_device_environment_observations obs ON obs.device_id=d.id AND obs.snapshot_id=o.environment_snapshot_id
- JOIN mobile_device_environments e ON e.id=o.environment_snapshot_id AND e.device_id=d.id
- JOIN mobile_send_adapter_releases r ON r.id=o.release_id
- JOIN LATERAL(SELECT * FROM mobile_shared_send_consents c WHERE c.opening_id=o.id ORDER BY revision DESC LIMIT 1)c ON c.accepted AND c.scope_digest=o.scope_digest
+ JOIN schools s ON s.id=t.school_id AND s.active JOIN execution_devices d ON d.id=b.device_id
+ JOIN mobile_shared_delegations m ON m.device_id=d.id AND m.credential_generation=d.credential_generation
+ JOIN mobile_device_environment_observations obs ON obs.device_id=d.id
+ JOIN mobile_device_environments e ON e.id=obs.snapshot_id AND e.device_id=d.id AND e.credential_generation=d.credential_generation
+ JOIN mobile_send_adapter_releases r ON r.environment=e.snapshot-'instance_ref'
+ JOIN LATERAL(SELECT * FROM mobile_shared_delegation_decisions c WHERE c.delegation_id=m.id ORDER BY revision DESC LIMIT 1)c ON c.accepted
  WHERE t.school_id=$1 AND t.id=$2 AND t.enabled AND t.archived_at IS NULL AND b.enabled AND d.enabled
+ AND (b.source='platform' OR EXISTS(SELECT 1 FROM mobile_shared_school_access a WHERE a.school_id=b.school_id AND a.device_id=b.device_id AND a.enabled))
  AND obs.observed_at>clock_timestamp()-interval '5 minutes'
  AND NOT EXISTS(SELECT 1 FROM mobile_send_adapter_withdrawals w WHERE w.release_id=r.id)
- ORDER BY d.id,o.created_at DESC"#).bind(s).bind(target).fetch_all(&mut **tx).await?;
-    Ok(rows)
+ AND (SELECT count(*) FROM mobile_send_adapter_releases r2 WHERE r2.environment=r.environment AND NOT EXISTS(SELECT 1 FROM mobile_send_adapter_withdrawals w WHERE w.release_id=r2.id))=1
+ ORDER BY d.id"#).bind(s).bind(target).fetch_all(&mut **tx).await?;
+    let mut valid = Vec::new();
+    for row in rows {
+        let flow: crate::distribution::domain::mobile_execution::FlowV2 =
+            match serde_json::from_value(row["flow"].clone()) {
+                Ok(f) => f,
+                Err(_) => continue,
+            };
+        if flow.validate_shared_send().is_ok() && digest(&row["flow"])? == row["flow_digest"] {
+            valid.push(row)
+        }
+    }
+    Ok(valid)
 }
 pub(super) async fn candidates(tx: &mut Tx<'_>, s: Uuid, target: Uuid) -> Result<Vec<Value>> {
     let rows = raw_candidates(tx, s, target).await?;
@@ -44,13 +57,14 @@ pub(super) fn dependencies(row: &Value) -> Value {
         "device_id",
         "binding_id",
         "binding_locator_revision",
+        "access_revision",
         "target_locator_revision",
         "search_text",
         "search_source",
         "credential_generation",
-        "opening_id",
-        "consent_id",
-        "consent_revision",
+        "delegation_id",
+        "decision_id",
+        "decision_revision",
         "environment_snapshot_id",
         "release_id",
         "flow_digest",
@@ -88,6 +102,22 @@ pub(super) async fn write(
     command: SchoolCommand,
 ) -> Result<Value> {
     match command {
+        SchoolCommand::PoolBinding(v) => {
+            if let Some(ref text) = v.search_text_override {
+                crate::distribution::domain::mobile_execution::validate_text(text, 1, 256, 1024)?;
+            }
+            let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_shared_school_access a JOIN schools s ON s.id=a.school_id JOIN execution_devices d ON d.id=a.device_id JOIN mobile_targets t ON t.school_id=a.school_id WHERE a.school_id=$1 AND a.device_id=$2 AND a.enabled AND a.revision=$3 AND s.active AND d.enabled AND t.id=$4 AND t.enabled AND t.archived_at IS NULL)").bind(s).bind(v.device_id).bind(v.expected_access_revision).bind(v.target_id).fetch_one(&mut **tx).await?;
+            require(allowed, "shared_pool_access_required")?;
+            let id:Option<Uuid>=sqlx::query_scalar("INSERT INTO mobile_device_target_bindings(id,school_id,device_id,target_id,search_text_override,created_by,updated_by,source) VALUES($1,$2,$3,$4,$5,$6,$6,'school_pool') ON CONFLICT(device_id,target_id) DO UPDATE SET enabled=true,search_text_override=$5,updated_by=$6,revision=mobile_device_target_bindings.revision+1,locator_revision=mobile_device_target_bindings.locator_revision+1 WHERE mobile_device_target_bindings.source='school_pool' RETURNING id").bind(Uuid::now_v7()).bind(s).bind(v.device_id).bind(v.target_id).bind(v.search_text_override).bind(a.id).fetch_optional(&mut **tx).await?;
+            let id = id.ok_or(Error::Policy("shared_binding_platform_managed"))?;
+            inspections::reconcile(tx, Some(v.device_id), None).await?;
+            Ok(json!({"id":id,"state":"automatic_check_queued"}))
+        }
+        SchoolCommand::Unbind(id, v) => {
+            let n=sqlx::query("UPDATE mobile_device_target_bindings SET enabled=false,revision=revision+1,locator_revision=locator_revision+1,updated_by=$4,updated_at=clock_timestamp() WHERE id=$1 AND school_id=$2 AND revision=$3 AND source='school_pool'").bind(id).bind(s).bind(v.expected_revision).bind(a.id).execute(&mut **tx).await?.rows_affected();
+            require(n == 1, "revision_conflict")?;
+            Ok(json!({"id":id,"enabled":false}))
+        }
         SchoolCommand::Inspection(v) => inspections::request(tx, a, s, v).await,
         SchoolCommand::Draft(id, input) => {
             let input = input.normalized()?;
@@ -132,6 +162,7 @@ pub(super) async fn write(
                         == input.selections.len(),
                 "shared_send_selection_invalid",
             )?;
+            let status = readiness::school(tx, s).await?;
             let mut items = Vec::new();
             for (position, target) in targets.iter().enumerate() {
                 let choices = candidates(tx, s, *target).await?;
@@ -143,7 +174,7 @@ pub(super) async fn write(
                 } else {
                     choices.first()
                 };
-                items.push(json!({"position":position,"target_id":target,"selected":chosen,"candidates":choices,"blocker":if chosen.is_none(){Some("target_inspection_or_binding_required")}else{None}}));
+                items.push(json!({"position":position,"target_id":target,"selected":chosen,"candidates":choices,"readiness":status.iter().filter(|r|r["target_id"]==json!(target)).collect::<Vec<_>>(),"blocker":if chosen.is_none(){Some("target_inspection_or_binding_required")}else{None}}));
             }
             let p = policy(tx).await?;
             let id = Uuid::now_v7();

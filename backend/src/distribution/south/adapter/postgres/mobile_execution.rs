@@ -351,7 +351,7 @@ impl Store for Repository {
                     .fetch_optional(&mut *tx)
                     .await?
                     .ok_or(Error::NotFound)?;
-                    let binding: Uuid = sqlx::query_scalar("INSERT INTO mobile_device_target_bindings(id,school_id,device_id,target_id,search_text_override,created_by,updated_by) VALUES($1,$2,$3,$4,$5,$6,$6) ON CONFLICT(device_id,target_id) DO UPDATE SET enabled=true,search_text_override=$5,revision=mobile_device_target_bindings.revision+CASE WHEN NOT mobile_device_target_bindings.enabled OR mobile_device_target_bindings.search_text_override IS DISTINCT FROM $5 THEN 1 ELSE 0 END,locator_revision=mobile_device_target_bindings.locator_revision+CASE WHEN mobile_device_target_bindings.search_text_override IS DISTINCT FROM $5 THEN 1 ELSE 0 END,updated_by=$6,updated_at=clock_timestamp() RETURNING id")
+                    let binding: Uuid = sqlx::query_scalar("INSERT INTO mobile_device_target_bindings(id,school_id,device_id,target_id,search_text_override,created_by,updated_by) VALUES($1,$2,$3,$4,$5,$6,$6) ON CONFLICT(device_id,target_id) DO UPDATE SET source='platform',enabled=true,search_text_override=$5,revision=mobile_device_target_bindings.revision+CASE WHEN NOT mobile_device_target_bindings.enabled OR mobile_device_target_bindings.search_text_override IS DISTINCT FROM $5 THEN 1 ELSE 0 END,locator_revision=mobile_device_target_bindings.locator_revision+CASE WHEN NOT mobile_device_target_bindings.enabled OR mobile_device_target_bindings.search_text_override IS DISTINCT FROM $5 THEN 1 ELSE 0 END,updated_by=$6,updated_at=clock_timestamp() RETURNING id")
                         .bind(Uuid::now_v7()).bind(target_school).bind(device).bind(v.target_id).bind(&v.search_text_override).bind(actor.id).fetch_one(&mut *tx).await?;
                     bindings.push(object(&mut tx, "mobile_device_target_bindings", binding).await?);
                 }
@@ -363,7 +363,7 @@ impl Store for Repository {
                 if let Some(value) = &v.search_text_override {
                     validate_text(value, 1, 256, 1024)?;
                 }
-                let n=sqlx::query("UPDATE mobile_device_target_bindings b SET enabled=$3,search_text_override=$4,revision=revision+CASE WHEN enabled<>$3 OR search_text_override IS DISTINCT FROM $4 THEN 1 ELSE 0 END,locator_revision=locator_revision+CASE WHEN search_text_override IS DISTINCT FROM $4 THEN 1 ELSE 0 END,updated_by=$5,updated_at=clock_timestamp() WHERE id=$1 AND revision=$2 AND (NOT $3 OR EXISTS(SELECT 1 FROM mobile_targets t JOIN schools s ON s.id=t.school_id JOIN execution_devices d ON d.id=b.device_id WHERE t.id=b.target_id AND t.enabled AND t.archived_at IS NULL AND s.active AND d.enabled))")
+                let n=sqlx::query("UPDATE mobile_device_target_bindings b SET source='platform',enabled=$3,search_text_override=$4,revision=revision+CASE WHEN enabled<>$3 OR search_text_override IS DISTINCT FROM $4 THEN 1 ELSE 0 END,locator_revision=locator_revision+CASE WHEN enabled<>$3 OR search_text_override IS DISTINCT FROM $4 THEN 1 ELSE 0 END,updated_by=$5,updated_at=clock_timestamp() WHERE id=$1 AND revision=$2 AND (NOT $3 OR EXISTS(SELECT 1 FROM mobile_targets t JOIN schools s ON s.id=t.school_id JOIN execution_devices d ON d.id=b.device_id WHERE t.id=b.target_id AND t.enabled AND t.archived_at IS NULL AND s.active AND d.enabled))")
                     .bind(resource).bind(v.expected_revision).bind(v.enabled).bind(v.search_text_override).bind(actor.id).execute(&mut *tx).await?.rows_affected();
                 if n != 1 {
                     return Err(Error::Policy("revision_conflict"));
@@ -374,7 +374,7 @@ impl Store for Repository {
                 let v: RevisionInput = serde_json::from_value(input.clone())
                     .map_err(|_| Error::Invalid("解绑字段无效".into()))?;
                 validate_text(&v.reason, 1, 2000, 8000)?;
-                let n=sqlx::query("UPDATE mobile_device_target_bindings SET enabled=false,revision=revision+1,updated_by=$3,updated_at=clock_timestamp() WHERE id=$1 AND revision=$2")
+                let n=sqlx::query("UPDATE mobile_device_target_bindings SET enabled=false,revision=revision+1,locator_revision=locator_revision+1,updated_by=$3,updated_at=clock_timestamp() WHERE id=$1 AND revision=$2")
                     .bind(resource).bind(v.expected_revision).bind(actor.id).execute(&mut *tx).await?.rows_affected();
                 if n != 1 {
                     return Err(Error::Policy("revision_conflict"));
@@ -388,6 +388,12 @@ impl Store for Repository {
             .bind(result["id"].as_str().and_then(|s|s.parse::<Uuid>().ok()).unwrap_or(resource)).bind(actor.id).bind(action).bind(json!({"input":input,"result":result})).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO mobile_execution_operations(actor_id,scope,idempotency_key,payload_hash,result) VALUES($1,$2,$3,$4,$5)")
             .bind(actor.id).bind(scope).bind(key).bind(digest).bind(&result).execute(&mut *tx).await?;
+        if matches!(
+            action,
+            "bind" | "update-binding" | "revoke-binding" | "update-target" | "archive-target"
+        ) {
+            super::shared_send::reconcile_resources(&mut tx).await?;
+        }
         tx.commit().await?;
         Ok(result)
     }

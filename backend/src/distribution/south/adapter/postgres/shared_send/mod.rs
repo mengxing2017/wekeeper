@@ -12,8 +12,10 @@ use uuid::Uuid;
 type Tx<'a> = Transaction<'a, Postgres>;
 #[derive(Clone)]
 pub struct Repository(pub PgPool);
+mod delegation;
 mod device;
 mod inspections;
+mod readiness;
 mod secrets;
 mod tasks;
 async fn expire(tx: &mut Tx<'_>) -> Result<()> {
@@ -156,6 +158,8 @@ impl Store for Repository {
         )
         .await?;
         let (scope, body) = match &command {
+            SchoolCommand::PoolBinding(v) => (format!("{s}:pool-binding"), json!(v)),
+            SchoolCommand::Unbind(id, v) => (format!("{s}:unbind:{id}"), json!(v)),
             SchoolCommand::Draft(id, v) => (format!("{s}:draft:{id:?}"), json!(v)),
             SchoolCommand::Inspection(v) => (format!("{s}:inspection"), json!(v)),
             SchoolCommand::Preview(v) => (format!("{s}:preview"), json!(v)),
@@ -183,7 +187,7 @@ impl Store for Repository {
             let tasks:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(t) FROM mobile_shared_tasks t WHERE school_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100").bind(s).fetch_all(&mut *tx).await?;
             let drafts:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(d) FROM mobile_shared_task_drafts d WHERE school_id=$1 AND NOT EXISTS(SELECT 1 FROM mobile_shared_tasks t WHERE t.draft_id=d.id) ORDER BY created_at DESC LIMIT 100").bind(s).fetch_all(&mut *tx).await?;
             let inspections:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(i)-'challenge' FROM mobile_shared_send_inspections i WHERE school_id=$1 ORDER BY id DESC LIMIT 100").bind(s).fetch_all(&mut *tx).await?;
-            json!({"id":s,"tasks":tasks,"drafts":drafts,"inspections":inspections})
+            json!({"id":s,"tasks":tasks,"drafts":drafts,"inspections":inspections,"readiness":readiness::school(&mut tx,s).await?,"pool":readiness::pool(&mut tx,s).await?})
         };
         tx.commit().await?;
         Ok(v)
@@ -199,12 +203,31 @@ impl Store for Repository {
         authorize(&mut tx, a.id, None, true).await?;
         let (scope, body) = match &command {
             PlatformCommand::Policy(v) => ("policy", json!(v)),
-            PlatformCommand::Opening(v) => ("opening", json!(v)),
+            PlatformCommand::Access(v) => ("school-access", json!(v)),
         };
         if let Some(v) = replay(&mut tx, a.id, 0, scope, key, &body).await? {
             return Ok(v);
         }
         let v = match command {
+            PlatformCommand::Access(v) => {
+                let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM schools s,execution_devices d WHERE s.id=$1 AND d.id=$2 AND (NOT $3 OR (s.active AND d.enabled)))").bind(v.school_id).bind(v.device_id).bind(v.enabled).fetch_one(&mut *tx).await?;
+                require(valid, "shared_access_invalid")?;
+                let old:Option<(i64,bool)>=sqlx::query_as("SELECT revision,enabled FROM mobile_shared_school_access WHERE device_id=$1 AND school_id=$2").bind(v.device_id).bind(v.school_id).fetch_optional(&mut *tx).await?;
+                require(
+                    old.map(|r| r.0).unwrap_or(0) == v.expected_revision,
+                    "revision_conflict",
+                )?;
+                let revision = if old.is_some_and(|r| r.1 == v.enabled) {
+                    v.expected_revision
+                } else {
+                    let next = v.expected_revision + 1;
+                    sqlx::query("INSERT INTO mobile_shared_school_access(device_id,school_id,enabled,revision,updated_by) VALUES($1,$2,$3,$4,$5) ON CONFLICT(device_id,school_id) DO UPDATE SET enabled=$3,revision=$4,updated_by=$5").bind(v.device_id).bind(v.school_id).bind(v.enabled).bind(next).bind(a.id).execute(&mut *tx).await?;
+                    sqlx::query("INSERT INTO mobile_shared_access_events(id,device_id,school_id,revision,enabled,actor_id) VALUES($1,$2,$3,$4,$5,$6)").bind(Uuid::now_v7()).bind(v.device_id).bind(v.school_id).bind(next).bind(v.enabled).bind(a.id).execute(&mut *tx).await?;
+                    next
+                };
+                inspections::reconcile(&mut tx, Some(v.device_id), None).await?;
+                json!({"id":v.device_id,"school_id":v.school_id,"revision":revision,"enabled":v.enabled})
+            }
             PlatformCommand::Policy(v) => {
                 v.validate()?;
                 if matches!(v.mode.as_str(), "test_send" | "production_allowlist") {
@@ -226,7 +249,6 @@ impl Store for Repository {
                 sqlx::query("INSERT INTO mobile_shared_send_policy_versions(id,revision,mode,limits,created_by,reason,timezone,allowed_windows) VALUES($1,$2,$3,$4,$5,$6,$7,$8)").bind(id).bind(rev+1).bind(v.mode).bind(json!(v.limits)).bind(a.id).bind(v.reason).bind(v.timezone).bind(json!(v.allowed_windows)).execute(&mut *tx).await?;
                 json!({"id":id,"revision":rev+1})
             }
-            PlatformCommand::Opening(v) => device::open(&mut tx, a, v).await?,
         };
         remember(&mut tx, a.id, 0, scope, key, &body, &v).await?;
         tx.commit().await?;
@@ -238,8 +260,10 @@ impl Store for Repository {
         authorize(&mut tx, a.id, None, true).await?;
         expire(&mut tx).await?;
         let releases:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(r)-'flow' FROM mobile_send_adapter_releases r WHERE NOT EXISTS(SELECT 1 FROM mobile_send_adapter_withdrawals w WHERE w.release_id=r.id)").fetch_all(&mut *tx).await?;
-        let devices:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('device_id',d.id,'name',d.name,'runtime',to_jsonb(rt),'environment_snapshot_id',obs.snapshot_id,'environment_fresh',obs.observed_at>clock_timestamp()-interval '5 minutes','matching_releases',coalesce((SELECT jsonb_agg(jsonb_build_object('id',r.id,'name',r.name,'version',r.version)) FROM mobile_send_adapter_releases r WHERE r.environment=e.snapshot-'instance_ref' AND NOT EXISTS(SELECT 1 FROM mobile_send_adapter_withdrawals w WHERE w.release_id=r.id)),'[]'::jsonb),'risk_count',(SELECT count(*) FROM mobile_shared_invocations i WHERE i.device_id=d.id AND i.state='risk_held'),'acceptance_count',(SELECT count(*) FROM mobile_shared_release_scopes sc WHERE sc.device_id=d.id AND sc.environment_snapshot_id=obs.snapshot_id AND sc.expires_at>clock_timestamp())) FROM execution_devices d LEFT JOIN mobile_shared_runtime rt ON rt.device_id=d.id LEFT JOIN mobile_device_environment_observations obs ON obs.device_id=d.id LEFT JOIN mobile_device_environments e ON e.id=obs.snapshot_id AND e.device_id=d.id WHERE d.enabled ORDER BY d.name,d.id LIMIT 100").fetch_all(&mut *tx).await?;
-        let v = json!({"id":"current","policy":policy(&mut tx).await?,"releases":releases,"devices":devices});
+        let devices:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('device_id',d.id,'name',d.name,'delegation_accepted',coalesce((SELECT v.accepted FROM mobile_shared_delegations m JOIN mobile_shared_delegation_decisions v ON v.delegation_id=m.id WHERE m.device_id=d.id AND m.credential_generation=d.credential_generation ORDER BY v.revision DESC LIMIT 1),false),'runtime',to_jsonb(rt),'environment_snapshot_id',obs.snapshot_id,'environment_fresh',obs.observed_at>clock_timestamp()-interval '5 minutes','matching_releases',coalesce((SELECT jsonb_agg(jsonb_build_object('id',r.id,'name',r.name,'version',r.version)) FROM mobile_send_adapter_releases r WHERE r.environment=e.snapshot-'instance_ref' AND NOT EXISTS(SELECT 1 FROM mobile_send_adapter_withdrawals w WHERE w.release_id=r.id)),'[]'::jsonb),'risk_count',(SELECT count(*) FROM mobile_shared_invocations i WHERE i.device_id=d.id AND i.state='risk_held'),'acceptance_count',(SELECT count(*) FROM mobile_shared_release_scopes sc WHERE sc.device_id=d.id AND sc.environment_snapshot_id=obs.snapshot_id AND sc.expires_at>clock_timestamp())) FROM execution_devices d LEFT JOIN mobile_shared_runtime rt ON rt.device_id=d.id LEFT JOIN mobile_device_environment_observations obs ON obs.device_id=d.id LEFT JOIN mobile_device_environments e ON e.id=obs.snapshot_id AND e.device_id=d.id WHERE d.enabled ORDER BY d.name,d.id LIMIT 100").fetch_all(&mut *tx).await?;
+        let schools:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',id,'name',name) FROM schools WHERE active ORDER BY name,id").fetch_all(&mut *tx).await?;
+        let access:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(a)||jsonb_build_object('id',a.device_id::text||':'||a.school_id::text,'device_name',d.name,'school_name',s.name) FROM mobile_shared_school_access a JOIN execution_devices d ON d.id=a.device_id JOIN schools s ON s.id=a.school_id ORDER BY s.name,d.name").fetch_all(&mut *tx).await?;
+        let v = json!({"id":"current","policy":policy(&mut tx).await?,"releases":releases,"devices":devices,"schools":schools,"access":access});
         tx.commit().await?;
         Ok(v)
     }
@@ -254,4 +278,9 @@ impl Store for Repository {
     async fn device_read(&self, c: &Credential) -> Result<Value> {
         device::read(self, c).await
     }
+}
+
+/// Resource mutation callers already hold the shared transaction guard.
+pub(super) async fn reconcile_resources(tx: &mut Transaction<'_, Postgres>) -> Result<()> {
+    inspections::reconcile(tx, None, None).await
 }

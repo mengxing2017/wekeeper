@@ -1,37 +1,13 @@
 use super::*;
-pub(super) async fn open(tx: &mut Tx<'_>, a: &Actor, v: OpeningInput) -> Result<Value> {
-    let row=sqlx::query("SELECT d.credential_generation,e.snapshot,r.environment,r.content_digest,r.flow FROM execution_devices d JOIN mobile_device_environments e ON e.device_id=d.id AND e.id=$2 AND e.credential_generation=d.credential_generation JOIN mobile_device_environment_observations o ON o.device_id=d.id AND o.snapshot_id=e.id JOIN mobile_send_adapter_releases r ON r.id=$3 WHERE d.id=$1 AND d.enabled AND o.observed_at>clock_timestamp()-interval '5 minutes' AND NOT EXISTS(SELECT 1 FROM mobile_send_adapter_withdrawals w WHERE w.release_id=r.id) FOR SHARE OF d,e,o,r").bind(v.device_id).bind(v.environment_snapshot_id).bind(v.release_id).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("shared_send_environment_required"))?;
-    let flow: crate::distribution::domain::mobile_execution::FlowV2 =
-        serde_json::from_value(row.get("flow"))
-            .map_err(|_| Error::Policy("shared_send_flow_invalid"))?;
-    flow.validate_shared_send()?;
-    require(
-        digest(&row.get::<Value, _>("flow"))? == row.get::<String, _>("content_digest"),
-        "shared_send_flow_invalid",
-    )?;
-    let mut actual: Value = row.get("snapshot");
-    actual
-        .as_object_mut()
-        .ok_or(Error::Conflict)?
-        .remove("instance_ref");
-    require(
-        actual == row.get::<Value, _>("environment"),
-        "shared_send_environment_unsupported",
-    )?;
-    let id = Uuid::now_v7();
-    let generation: i64 = row.get("credential_generation");
-    let scope = json!({"schema":SCOPE,"device_id":v.device_id,"credential_generation":generation,"opening_id":id,"release_id":v.release_id,"environment_snapshot_id":v.environment_snapshot_id,"flow_digest":row.get::<String,_>("content_digest"),"capability":"group_text","background_collection":true,"text_input":true,"single_use_send":true});
-    let h = digest(&scope)?;
-    sqlx::query("INSERT INTO mobile_shared_send_openings(id,device_id,credential_generation,release_id,environment_snapshot_id,scope,scope_digest,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8)").bind(id).bind(v.device_id).bind(generation).bind(v.release_id).bind(v.environment_snapshot_id).bind(&scope).bind(&h).bind(a.id).execute(&mut **tx).await?;
-    Ok(json!({"id":id,"scope":scope,"scope_digest":h}))
-}
 pub(super) async fn read(repo: &Repository, c: &Credential) -> Result<Value> {
     let mut tx = repo.0.begin().await?;
+    guard(&mut tx).await?;
     authenticate(&mut tx, c, false).await?;
-    let scopes:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(o)||jsonb_build_object('consent',(SELECT to_jsonb(c) FROM mobile_shared_send_consents c WHERE c.opening_id=o.id ORDER BY revision DESC LIMIT 1)) FROM mobile_shared_send_openings o WHERE o.device_id=$1 AND o.credential_generation=$2 AND NOT EXISTS(SELECT 1 FROM mobile_send_adapter_withdrawals w WHERE w.release_id=o.release_id) ORDER BY o.created_at DESC LIMIT 30").bind(c.device_id).bind(c.generation).fetch_all(&mut *tx).await?;
+    let delegation = delegation::context(&mut tx, c).await?;
+    inspections::reconcile(&mut tx, Some(c.device_id), None).await?;
     let work:Vec<Value>=sqlx::query_scalar("SELECT (to_jsonb(c)-'recovery_credential_hash'-'encrypted_response')||jsonb_build_object('attempt_state',a.state,'invocation_id',i.id,'execute_before',i.execute_before) FROM mobile_shared_send_claims c JOIN mobile_shared_attempts a ON a.id=c.attempt_id LEFT JOIN mobile_shared_invocations i ON i.claim_id=c.id WHERE c.device_id=$1 AND (c.state='active' OR a.state='unknown') ORDER BY c.created_at LIMIT 100").bind(c.device_id).fetch_all(&mut *tx).await?;
-    let inspections:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',id,'target_id',target_id,'state',state,'expires_at',expires_at) FROM mobile_shared_send_inspections WHERE device_id=$1 AND state='pending' AND expires_at>clock_timestamp()").bind(c.device_id).fetch_all(&mut *tx).await?;
-    let v = json!({"inspections":inspections,"id":c.device_id,"schema":SCHEMA,"protocol_version":8,"single_use_supported":true,"result_recovery_supported":true,"scopes":scopes,"recovery":work});
+    let inspections:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',id,'target_id',target_id,'state',state,'expires_at',expires_at) FROM mobile_shared_send_inspections WHERE device_id=$1 AND automatic AND delegation_id=$2 AND state='pending' AND expires_at>clock_timestamp() ORDER BY created_at,id").bind(c.device_id).bind(uid(&delegation,"id")?).fetch_all(&mut *tx).await?;
+    let v = json!({"inspections":inspections,"id":c.device_id,"schema":SCHEMA,"authorization_schema":SCOPE,"protocol_version":8,"single_use_supported":true,"result_recovery_supported":true,"delegation":delegation,"recovery":work});
     tx.commit().await?;
     Ok(v)
 }
@@ -113,7 +89,7 @@ pub(super) async fn write(
         DeviceCommand::Prepare(id, v) => (format!("prepare:{id}"), json!(v)),
         DeviceCommand::Invoke(id, v) => (format!("invoke:{id}"), json!(v)),
         DeviceCommand::Result(v) => ("result".into(), json!(v)),
-        DeviceCommand::Consent(v) => ("consent".into(), json!(v)),
+        DeviceCommand::Consent(v) => ("delegation-decision".into(), json!(v)),
         DeviceCommand::InspectionClaim(v) => ("inspection-claim".into(), json!(v)),
         DeviceCommand::InspectionResult(v) => ("inspection-result".into(), json!(v)),
         DeviceCommand::Renew(id, v) => (format!("renew:{id}"), json!(v)),
@@ -154,6 +130,7 @@ pub(super) async fn write(
             // A vanished runtime never resumes an old UI session. Issued calls stay at risk.
             sqlx::query("UPDATE mobile_shared_attempts a SET state='unknown',revision=revision+1 FROM mobile_shared_invocations i JOIN mobile_shared_send_claims cl ON cl.id=i.claim_id WHERE a.id=i.attempt_id AND i.device_id=$1 AND i.state='risk_held' AND a.state='invocation_issued' AND (cl.runtime_epoch<>$2 OR (i.execute_before<clock_timestamp() AND $3))").bind(c.device_id).bind(v.runtime_epoch).bind(v.quiescent).execute(&mut *tx).await?;
             if v.quiescent {
+                sqlx::query("UPDATE mobile_shared_device_leases l SET expires_at=clock_timestamp() FROM mobile_shared_send_inspections i WHERE l.device_id=$1 AND l.purpose='field_check' AND l.holder_id=i.id AND l.fence=i.lease_fence AND i.runtime_epoch=$2 AND i.state IN ('passed','failed','stale')").bind(c.device_id).bind(v.runtime_epoch).execute(&mut *tx).await?;
                 let expired:Vec<Uuid>=sqlx::query_scalar("UPDATE mobile_shared_send_claims c SET state='closed' WHERE c.device_id=$1 AND c.state='active' AND c.expires_at<clock_timestamp() AND NOT EXISTS(SELECT 1 FROM mobile_shared_invocations i WHERE i.claim_id=c.id AND i.state='risk_held') RETURNING attempt_id").bind(c.device_id).fetch_all(&mut *tx).await?;
                 for id in expired {
                     sqlx::query("UPDATE mobile_shared_attempts SET state='failed_before_call',revision=revision+1 WHERE id=$1 AND state IN ('leased','prepared')").bind(id).execute(&mut *tx).await?;
@@ -162,18 +139,7 @@ pub(super) async fn write(
             }
             json!({"id":c.device_id,"runtime_epoch":v.runtime_epoch,"recorded":true})
         }
-        DeviceCommand::Consent(v) => {
-            let opening:Value=sqlx::query_scalar("SELECT to_jsonb(o) FROM mobile_shared_send_openings o WHERE id=$1 AND device_id=$2 AND credential_generation=$3").bind(v.opening_id).bind(c.device_id).bind(c.generation).fetch_optional(&mut *tx).await?.ok_or(Error::Forbidden)?;
-            require(
-                opening["scope_digest"] == v.scope_digest,
-                "plan_dependency_changed",
-            )?;
-            let rev:i64=sqlx::query_scalar("SELECT coalesce(max(revision),0) FROM mobile_shared_send_consents WHERE opening_id=$1").bind(v.opening_id).fetch_one(&mut *tx).await?;
-            require(rev == v.expected_revision, "revision_conflict")?;
-            let id = Uuid::now_v7();
-            sqlx::query("INSERT INTO mobile_shared_send_consents(id,opening_id,device_id,credential_generation,scope_digest,accepted,revision) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(id).bind(v.opening_id).bind(c.device_id).bind(c.generation).bind(v.scope_digest).bind(v.accepted).bind(rev+1).execute(&mut *tx).await?;
-            json!({"id":id,"opening_id":v.opening_id,"revision":rev+1,"accepted":v.accepted})
-        }
+        DeviceCommand::Consent(v) => delegation::decide(&mut tx, c, v).await?,
         DeviceCommand::Claim(v) => claim(&mut tx, c, v).await?,
         DeviceCommand::Prepare(id, v) => {
             let cl = live_claim(&mut tx, c, id).await?;

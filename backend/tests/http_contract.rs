@@ -1316,3 +1316,28 @@ async fn legacy_mobile_retirement_has_a_shared_error_contract() {
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }
+
+#[tokio::test]
+async fn stable_delegation_and_school_pool_writes_require_identity() {
+    for path in [
+        "/api/v8/device-execution/send-delegation-decisions",
+        "/api/v1/platform/mobile-execution/shared-device-access",
+        "/api/v1/schools/00000000-0000-0000-0000-000000000001/mobile-execution/shared-bindings",
+        "/api/v1/schools/00000000-0000-0000-0000-000000000001/mobile-execution/shared-bindings/00000000-0000-0000-0000-000000000002/revocations",
+    ] {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(path)
+                    .header("content-type", "application/vnd.api+json")
+                    .body(Body::from(
+                        r#"{"data":{"type":"mobile-shared-delegation-decisions","attributes":{}}}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
+    }
+}
