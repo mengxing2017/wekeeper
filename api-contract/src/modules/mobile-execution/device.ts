@@ -1,3 +1,4 @@
+import type { FieldCheck, FieldCheckClaim, FieldCheckResultInput, FieldCheckReceipt } from './capabilities'
 import type { FlowValidation, FlowValidationResultInput } from './flows'
 /** Device-only v7 capability agreement. Historical v6 results use an explicit evidence-only route. */
 import { ApiError, decodeData, type ResourceDocument } from '../../http/client'
@@ -27,6 +28,9 @@ export function createMobileExecutionDeviceClient(options: { baseUrl: string; to
     return decodeData<T>(doc)
   }
   return {
+    fieldChecks: () => one<{id: string; jobs: Array<FieldCheck & {search_text: string}>}>('field-checks', 'mobile-field-check-contexts'),
+    claimFieldCheck: (id: string, expected_revision: number, key: string) => one<FieldCheckClaim>(`field-checks/${encodeURIComponent(id)}/claims`, 'mobile-field-check-claims', {expected_revision}, key),
+    fieldCheckResult: (id: string, input: FieldCheckResultInput, key: string) => one<FieldCheckReceipt>(`field-checks/${encodeURIComponent(id)}/results`, 'mobile-field-check-results', input, key),
     openingContext: () => one<{id: string; progress: CapabilityOpening}>('opening-context', 'mobile-device-opening-contexts'),
     reportEnvironment: (input: DeviceEnvironment['snapshot'], key: string) => one<DeviceEnvironment>('environment-reports', 'mobile-device-environments', input, key),
     capabilityContext: async () => {

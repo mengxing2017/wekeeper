@@ -1,3 +1,4 @@
+import type { FieldCheckInvitation, FieldCheckRequest, FieldCheck } from './capabilities'
 import type { CapabilityOpening, CapabilityOpeningInput, CapabilityOpeningApplication, AdapterRelease, AdapterSupportRequest } from './capabilities'
 export * from './capabilities'
 import type { TaskPreviewInput, TaskConfirmationInput, TaskPreview, ExecutionTask, ExecutionTaskDetail } from './tasks'
@@ -34,6 +35,7 @@ export interface SharedBindingInput {
 export interface TargetBinding {
   id: string; school_id: string; device_id: string; target_id: string;
   search_text_override: string | null; locator_revision: number;
+  target_locator_revision?: number;
   search_source?: 'target_default' | 'binding_override'; source_locator_revision?: number;
   enabled: boolean; revision: number;
   school_name?: string; device_name?: string; search_text?: string; target_alias?: string; available?: boolean;
@@ -47,6 +49,13 @@ function list<T>(path: string, page = 1, search = '', deviceId?: string): Promis
   return requestCollection<T>(`${path}?page[number]=${page}&page[size]=30&search=${encodeURIComponent(search)}${deviceId ? `&device_id=${encodeURIComponent(deviceId)}` : ''}`)
 }
 export const mobileExecutionApi = {
+  fieldInvitations: (school: string, page?: number, deviceId?: string) => list<FieldCheckInvitation>(`${base(school)}/field-check-invitations`, page, '', deviceId),
+  inviteFieldCheck: (school: string, input: {binding_id: string; expected_binding_revision: number; expected_target_locator_revision: number}, key: string) => write<FieldCheckInvitation>(`${base(school)}/field-check-invitations`, 'POST', input, key),
+  revokeFieldInvitation: (school: string, id: string, expected_revision: number, key: string) => write<FieldCheckInvitation>(`${base(school)}/field-check-invitations/${encodeURIComponent(id)}/revocations`, 'POST', {expected_revision}, key),
+  schoolFieldChecks: (school: string, page?: number, deviceId?: string) => list<FieldCheck>(`${base(school)}/field-checks`, page, '', deviceId),
+  platformFieldInvitations: (page?: number, deviceId?: string) => list<FieldCheckInvitation>('/api/v1/platform/mobile-execution/field-check-invitations', page, '', deviceId),
+  fieldChecks: (page?: number, deviceId?: string) => list<FieldCheck>('/api/v1/platform/mobile-execution/field-checks', page, '', deviceId),
+  requestFieldCheck: (input: FieldCheckRequest, key: string) => write<FieldCheck>('/api/v1/platform/mobile-execution/field-checks', 'POST', input, key),
   capabilityOpenings: (page?: number, deviceId?: string) => list<CapabilityOpening>('/api/v1/platform/mobile-execution/capability-openings', page, '', deviceId),
   adapterReleases: (page?: number) => list<AdapterRelease>('/api/v1/platform/mobile-execution/adapter-releases', page),
   openCapability: (input: CapabilityOpeningInput, key: string) => write<CapabilityOpeningApplication>('/api/v1/platform/mobile-execution/capability-openings', 'POST', input, key),
