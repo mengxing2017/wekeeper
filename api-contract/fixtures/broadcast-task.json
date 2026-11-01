@@ -23,7 +23,9 @@
       "source_task_id": null,
       "source_draft_id": null,
       "resend_reason": "",
-      "content_source": "posts"
+      "content_source": "posts",
+      "source_namespace": "builtin.forum",
+      "materials": []
     }
   }
 }

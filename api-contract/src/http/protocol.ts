@@ -218,6 +218,9 @@ export function resourceType(path: string): string {
     return parts[6] === "resend-drafts"
       ? "mobile-delivery-tasks"
       : "mobile-delivery-items";
+  if (parts[2] === "platform" && parts[3] === "schools" && parts[5] === "wecom-senders") return "wecom-senders";
+  if (parts[2] === "platform" && ["distribution-source-policies", "distribution-resource-policies"].includes(parts[3])) return parts[3];
+  if (parts[2] === "schools" && parts[4] === "broadcast-tasks" && parts[6] === "preview") return "broadcast-previews";
   if (parts[2] === "auth") return "sessions";
   if (
     parts[2] === "platform" &&

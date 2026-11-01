@@ -17,7 +17,10 @@
     "./community": "./src/modules/community/index.ts",
     "./media": "./src/modules/media/index.ts",
     "./mobile-execution": "./src/modules/mobile-execution/index.ts",
-    "./mobile-execution/device": "./src/modules/mobile-execution/device.ts"
+    "./mobile-execution/device": "./src/modules/mobile-execution/device.ts",
+    "./wecom-distribution": "./src/modules/wecom-distribution/index.ts",
+    "./distribution-content": "./src/modules/distribution-content/index.ts",
+    "./wecom-distribution/client": "./src/modules/wecom-distribution/client.ts"
   },
   "scripts": {
     "build": "tsc --noEmit && tsc -p tsconfig.platform.json",
