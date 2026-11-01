@@ -1,0 +1,21 @@
+{
+  "data": {
+    "type": "mobile-field-check-results",
+    "id": "00000000-0000-0000-0000-000000000081",
+    "attributes": {
+      "challenge": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "lease_fence": 7,
+      "checks": {
+        "application_opened": true,
+        "group_container_only": true,
+        "first_group_visual_order": true,
+        "results_stable": true,
+        "chat_opened": true,
+        "send_control_unique": true,
+        "human_pacing": true,
+        "no_send_performed": true
+      },
+      "evidence": "native_shared_no_send_check_completed"
+    }
+  }
+}
