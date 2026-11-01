@@ -20,33 +20,31 @@ export default defineConfig({
           text: "开始使用",
           items: [
             { text: "选择你的角色", link: "/guide/" },
+            { text: "三个业务域", link: "/guide/business-domains" },
             { text: "第一次登录", link: "/guide/quick-start" },
             { text: "角色与学校", link: "/guide/roles-and-schools" },
             { text: "术语与状态", link: "/guide/glossary" },
             { text: "常见问题", link: "/guide/troubleshooting" },
           ],
         },
-        {
-          text: "业务人员",
-          items: [
-            { text: "每日工作清单", link: "/guide/operator/" },
-            { text: "内容、评论与举报", link: "/guide/operator/moderation" },
-            {
-              text: "客户群与模板",
-              link: "/guide/operator/groups-and-templates",
-            },
-            { text: "官方群发任务", link: "/guide/operator/broadcast-tasks" },
-            { text: "手机发送任务", link: "/guide/operator/mobile-tasks" },
-            { text: "手机任务预览与确认", link: "/guide/operator/mobile-execution-tasks" },
-            { text: "手机执行配置", link: "/guide/operator/mobile-execution-flows" },
-            { text: "手机目标群与设备绑定", link: "/guide/operator/mobile-targets" },
-            { text: "共享手机资源维护", link: "/guide/operator/execution-resources" },
-            {
-              text: "结果与异常处理",
-              link: "/guide/operator/results-and-recovery",
-            },
-          ],
-        },
+        { text: "论坛管理", items: [
+          { text: "内容、评论与举报", link: "/guide/operator/moderation" },
+        ] },
+        { text: "企业微信分发管理", items: [
+          { text: "客户群与模板", link: "/guide/operator/groups-and-templates" },
+          { text: "官方发送账号", link: "/guide/operator/official-senders" },
+          { text: "官方群发任务", link: "/guide/operator/broadcast-tasks" },
+          { text: "通讯录与客户群目录", link: "/guide/platform-admin/directory-and-assets" },
+        ] },
+        { text: "移动端分发管理", items: [
+          { text: "手机任务（共享发送未开放）", link: "/guide/operator/mobile-execution-tasks" },
+          { text: "手机目标群与设备绑定", link: "/guide/operator/mobile-targets" },
+          { text: "共享手机资源维护", link: "/guide/platform-admin/shared-mobile-resources" },
+          { text: "手机执行能力开通", link: "/guide/platform-admin/flow-maintenance" },
+          { text: "历史手机发送任务", link: "/guide/operator/mobile-tasks" },
+          { text: "历史学校配置", link: "/guide/operator/mobile-execution-flows" },
+          { text: "结果与异常处理", link: "/guide/operator/results-and-recovery" },
+        ] },
         {
           text: "学校管理员",
           items: [
