@@ -58,7 +58,7 @@ export function SharedSendTasks({ school, admin }: { school: string; admin: bool
         <Table rowKey="target_id" pagination={false} dataSource={preview.plan.items} columns={[
           { title: '目标群', render:(_,i)=>i.selected?.target_name || i.target_id }, { title: '共享手机', render: (_, i) => <Select aria-label={`目标群 ${i.target_id} 的共享手机`} style={{minWidth:150}} disabled={reselect.isPending} value={i.selected?.device_id} placeholder="无可用设备" options={i.candidates.map(c=>({value:c.device_id,label:c.device_name}))} onChange={device_id=>reselect.mutate(preview.plan.items.filter(x=>x.selected).map(x=>({target_id:x.target_id,device_id:x.target_id===i.target_id?device_id:x.selected!.device_id})))} /> },
           { title: '实际搜索文字', render: (_, i) => i.selected?.search_text ?? '—' },
-          { title: '检查', render: (_, i) => i.blocker ? '请先完成设备绑定、手机授权及逐群检查' : '检查有效，确认时还将核验发送验收范围' },
+          { title: '检查', render: (_, i) => i.blocker ? i.readiness?.flatMap(r=>r.blockers.map(b=>b.message)).join('；') || '等待绑定及自动检查就绪，请查看目标群的具体状态' : '检查有效，确认时还将核验发送验收范围' },
         ]} />
         <Checkbox checked={confirmed} onChange={e => setConfirmed(e.target.checked)}>我已核对文字、目标群和逐群设备，确认真实发送</Checkbox>
         <Button type="primary" loading={confirm.isPending} disabled={!admin || !confirmed || reselect.isPending || inspect.isPending || preview.plan.items.some(i => !i.selected || i.blocker)} onClick={() => confirm.mutate()}>确认进入共享发送队列</Button>

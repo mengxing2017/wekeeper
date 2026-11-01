@@ -2,9 +2,9 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MobileTargets } from './targets'
-import { api } from './api'
-vi.mock('./api', () => ({sharedSend:{overview:vi.fn().mockResolvedValue({id:'school',tasks:[],drafts:[],inspections:[]})}, api: { targets: vi.fn(), bindings: vi.fn(), devices: vi.fn(), fieldInvitations: vi.fn().mockResolvedValue({items:[]}), schoolFieldChecks: vi.fn().mockResolvedValue({items:[]}) } }))
-beforeEach(()=>{vi.mocked(api.fieldInvitations).mockResolvedValue({items:[]});vi.mocked(api.schoolFieldChecks).mockResolvedValue({items:[]})})
+import { api, sharedSend } from './api'
+vi.mock('./api', () => ({sharedSend:{overview:vi.fn().mockResolvedValue({id:'school',tasks:[],drafts:[],readiness:[],pool:[],inspections:[]})}, api: { targets: vi.fn(), bindings: vi.fn(), devices: vi.fn(), fieldInvitations: vi.fn().mockResolvedValue({items:[]}), schoolFieldChecks: vi.fn().mockResolvedValue({items:[]}) } }))
+beforeEach(()=>{vi.mocked(sharedSend.overview).mockResolvedValue({id:'school',tasks:[],drafts:[],readiness:[],pool:[],inspections:[]});vi.mocked(api.fieldInvitations).mockResolvedValue({items:[]});vi.mocked(api.schoolFieldChecks).mockResolvedValue({items:[]})})
 afterEach(() => { cleanup(); vi.resetAllMocks() })
 it('operators can inspect independent targets without account registration or official resource calls', async () => {
   vi.mocked(api.targets).mockResolvedValue({ items: [{ id: 'target', school_id: 'school', search_text: '手机备注  家长群', alias: '通知群', remark: '', enabled: true, metadata_revision: 1, locator_revision: 1, archived_at: null }] })

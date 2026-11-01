@@ -10,7 +10,7 @@ const preview: SharedPreview = { id: 'preview', digest: 'digest', expires_at: '2
 beforeEach(() => {
   vi.resetAllMocks()
   vi.mocked(api.targets).mockResolvedValue({ items: [{ id: 'target', school_id: 'school', alias: '家长通知', search_text: '实际搜索文字', remark: '', enabled: true, archived_at: null, metadata_revision: 1, locator_revision: 1 }] })
-  vi.mocked(sharedSend.overview).mockResolvedValue({ id: 'school', tasks: [], drafts: [], inspections: [] })
+  vi.mocked(sharedSend.overview).mockResolvedValue({ id: 'school', tasks: [], drafts: [], readiness: [], pool: [], inspections: [] })
   vi.mocked(sharedSend.draft).mockResolvedValue({ id: 'draft', school_id: 'school', intent_id: 'intent', target_ids: ['target'], message, content_type: 'text/plain', revision: 1, content_digest: 'hash' })
   vi.mocked(sharedSend.preview).mockResolvedValue(preview)
 })
@@ -26,7 +26,7 @@ it('正文保持空格与换行，未检查目标不能确认发送', async () =
   await waitFor(() => expect((screen.getByRole('button', { name: '预览逐群执行计划' }) as HTMLButtonElement).disabled).toBe(false))
   expect(vi.mocked(sharedSend.draft).mock.calls[0][1].message).toBe(message)
   fireEvent.click(screen.getByRole('button', { name: '预览逐群执行计划' }))
-  await screen.findByText('请先完成设备绑定、手机授权及逐群检查')
+  await screen.findByText('等待绑定及自动检查就绪，请查看目标群的具体状态')
   fireEvent.click(screen.getByRole('checkbox'))
   expect((screen.getByRole('button', { name: '确认进入共享发送队列' }) as HTMLButtonElement).disabled).toBe(true)
   expect(sharedSend.confirm).not.toHaveBeenCalled()
