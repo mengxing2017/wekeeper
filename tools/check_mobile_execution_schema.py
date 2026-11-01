@@ -204,6 +204,69 @@ INSERT INTO mobile_adapter_support_requests(id,device_id,note,created_by,updated
 """+"\n\n")
 
 
+def verify_field_checks(command):
+    """Real SQL boundaries and fencing, in this script's disposable cluster only."""
+    source = (ROOT / 'backend/src/distribution/south/adapter/postgres/mobile_execution/field_checks.rs').read_text()
+    valid = re.search(r'"(SELECT EXISTS\(SELECT 1 FROM mobile_field_check_invitations[^"\n]+)"', source).group(1)
+    current = re.search(r'"(SELECT to_jsonb\(o\)[^"\n]+)"', source).group(1)
+    lease = re.search(r'"(INSERT INTO mobile_shared_device_leases[^"\n]+)"', source).group(1)
+    sql = """
+INSERT INTO school_memberships(school_id,account_id,role) VALUES('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000003','admin');
+INSERT INTO mobile_adapter_releases(id,name,version,owner,source_revision,evidence,environment,flow,content_digest) SELECT '00000000-0000-0000-0000-000000000080','TEST ONLY','test','test','test','["test-only"]','{}',flow,repeat('a',64) FROM mobile_device_capability_versions WHERE capability_id='00000000-0000-0000-0000-000000000060';
+INSERT INTO mobile_capability_openings(id,device_id,capability_id,configuration_revision,release_id,environment_snapshot_id,state,created_by) VALUES('00000000-0000-0000-0000-000000000081','00000000-0000-0000-0000-000000000006','00000000-0000-0000-0000-000000000060',1,'00000000-0000-0000-0000-000000000080','00000000-0000-0000-0000-000000000070','awaiting_consent','00000000-0000-0000-0000-000000000003');
+INSERT INTO mobile_field_check_invitations(id,school_id,device_id,target_id,binding_id,binding_revision,target_locator_revision,search_text,created_by) SELECT '00000000-0000-0000-0000-000000000082',b.school_id,b.device_id,b.target_id,b.id,b.revision,t.locator_revision,COALESCE(b.search_text_override,t.search_text),'00000000-0000-0000-0000-000000000003' FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id WHERE b.id='00000000-0000-0000-0000-000000000009';
+INSERT INTO mobile_field_checks(id,device_id,opening_id,school_id,invitation_id,invitation_revision,configuration_revision,environment_snapshot_id,consent_revision,credential_generation,challenge,created_by) VALUES('00000000-0000-0000-0000-000000000083','00000000-0000-0000-0000-000000000006','00000000-0000-0000-0000-000000000081','00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000082',1,1,'00000000-0000-0000-0000-000000000070',1,1,repeat('a',32),'00000000-0000-0000-0000-000000000003');
+"""
+    invitation = valid.replace('$1', "'00000000-0000-0000-0000-000000000082'::uuid")
+    opening = current.replace('$1', "'00000000-0000-0000-0000-000000000081'::uuid")
+    def expect_invitation(expected):
+        return f"DO $$ BEGIN IF ({invitation}) IS DISTINCT FROM {str(expected).lower()} THEN RAISE EXCEPTION 'invitation dependency validation failed'; END IF; END $$;"
+    def expect_opening(expected):
+        return f"DO $$ BEGIN IF EXISTS({opening}) IS DISTINCT FROM {str(expected).lower()} THEN RAISE EXCEPTION 'opening dependency validation failed'; END IF; END $$;"
+    sql += expect_invitation(True) + expect_opening(True)
+    sql += "UPDATE school_memberships SET role='revoked';" + expect_invitation(False)
+    sql += "UPDATE school_memberships SET role='admin'; UPDATE mobile_device_target_bindings SET revision=revision+1;" + expect_invitation(False)
+    sql += "UPDATE mobile_device_target_bindings SET revision=revision-1;" + expect_invitation(True)
+    sql += "UPDATE mobile_device_capability_consents SET accepted=false;" + expect_opening(False)
+    sql += "UPDATE mobile_device_capability_consents SET accepted=true; UPDATE mobile_device_environment_observations SET observed_at=clock_timestamp()-interval '6 minutes';" + expect_opening(False)
+    sql += "UPDATE mobile_device_environment_observations SET observed_at=clock_timestamp();" + expect_opening(True)
+    sql += """
+DO $$ BEGIN
+ BEGIN
+  UPDATE mobile_field_check_invitations SET search_text='forged';
+  RAISE EXCEPTION 'invitation mutable' USING ERRCODE='XX000';
+ EXCEPTION WHEN check_violation THEN NULL; END;
+ BEGIN
+  UPDATE mobile_field_checks SET consent_revision=99;
+  RAISE EXCEPTION 'check dependencies mutable' USING ERRCODE='XX000';
+ EXCEPTION WHEN check_violation THEN NULL; END;
+ BEGIN
+  INSERT INTO mobile_field_checks SELECT gen_random_uuid(),device_id,opening_id,school_id,invitation_id,invitation_revision,configuration_revision,environment_snapshot_id,consent_revision,credential_generation,challenge,state,revision,lease_fence,created_by,created_at,expires_at FROM mobile_field_checks;
+  RAISE EXCEPTION 'invitation reused or concurrent pending allowed' USING ERRCODE='XX000';
+ EXCEPTION WHEN unique_violation THEN NULL; END;
+END $$;
+"""
+    args = "'00000000-0000-0000-0000-000000000006','00000000-0000-0000-0000-000000000083'"
+    sql += f"PREPARE acquire_test_lease AS {lease}; EXECUTE acquire_test_lease({args});"
+    sql += "UPDATE mobile_shared_device_leases SET expires_at=clock_timestamp()-interval '1 second';"
+    sql += f"EXECUTE acquire_test_lease({args});"
+    sql += """
+DO $$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM mobile_shared_device_leases WHERE fence=2 AND expires_at<=(SELECT expires_at FROM mobile_field_checks LIMIT 1)) THEN RAISE EXCEPTION 'lease fence or expiry invalid'; END IF;
+END $$;
+UPDATE mobile_shared_device_leases SET expires_at=LEAST(expires_at,clock_timestamp()) WHERE holder_id='00000000-0000-0000-0000-000000000083' AND fence=1;
+DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM mobile_shared_device_leases WHERE fence=2 AND expires_at>clock_timestamp()) THEN RAISE EXCEPTION 'late result unlocked successor lease'; END IF; END $$;
+INSERT INTO mobile_field_check_results(id,device_id,body,disposition) SELECT id,device_id,'{}','stale' FROM mobile_field_checks;
+DO $$ BEGIN
+ BEGIN
+  UPDATE mobile_field_check_results SET disposition='passed';
+  RAISE EXCEPTION 'result evidence mutable' USING ERRCODE='XX000';
+ EXCEPTION WHEN raise_exception THEN NULL; END;
+END $$;
+"""
+    run(command, input=sql+'\n\n')
+
+
 def run(command, **kwargs):
     result = subprocess.run(command, text=True, capture_output=True, **kwargs)
     errors = [line for line in result.stderr.splitlines() if "ERROR:" in line or "FATAL:" in line or "PANIC:" in line]
@@ -233,10 +296,11 @@ def main():
         verify_capabilities(command)
         run(command, input="\n".join(p.read_text() for p in migrations if p.name >= "202611010108") + "\n\n")
         verify_onboarding(command)
+        verify_field_checks(command)
         queries = re.findall(r'"((?:SELECT|INSERT|UPDATE) [^"\n]*)"', "\n".join(p.read_text() for p in [repository, *repository.with_suffix("").glob("*.rs")]))
         static_queries = [json.loads('"' + query + '"') for query in queries if "{table}" not in query]
         run(command, input="\n".join(f"PREPARE phone_query_{i} AS {query};" for i, query in enumerate(static_queries)) + "\n\n")
-    print("PASS: upgrade preserves official data; historical consent/release checks pass; shared bindings require manual re-enable, enforce unique device-target and school scope, preserve override source versions and school privacy; v7 starts empty and enforces immutable configuration, v7-only flow and device-bound consent; onboarding has no fixture releases or promoted manual configurations, immutable native environment evidence and unique unresolved support; current repository SQL prepares successfully")
+    print("PASS: upgrade preserves official data; historical consent/release checks pass; shared bindings require manual re-enable, enforce unique device-target and school scope, preserve override source versions and school privacy; v7 starts empty and enforces immutable configuration, v7-only flow and device-bound consent; onboarding has no fixture releases or promoted manual configurations, immutable native environment evidence and unique unresolved support; field checks enforce invitation dependencies, immutable evidence, one-use invitations and monotonic lease acquisition; current repository SQL prepares successfully")
 
 
 if __name__ == "__main__":
