@@ -1300,3 +1300,35 @@ async fn shared_field_check_routes_require_their_own_identity() {
         );
     }
 }
+
+#[tokio::test]
+async fn legacy_mobile_retirement_has_a_shared_error_contract() {
+    use axum::response::IntoResponse;
+    let response =
+        wekeeper_api::business::Error::Policy("legacy_mobile_maintenance_retired").into_response();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let actual: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+    let expected: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/legacy-mobile-maintenance-retired.json"
+    ))
+    .unwrap();
+    assert_eq!(actual, expected);
+    for path in [
+        "/api/v1/schools/00000000-0000-4000-8000-000000000001/automation-flow-validations",
+        "/api/v1/platform/automation-flows",
+    ] {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(path)
+                    .header("content-type", "application/vnd.api+json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+}
