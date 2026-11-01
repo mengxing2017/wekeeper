@@ -105,6 +105,13 @@ export function resourceType(path: string): string {
   if (parts[3] === "mobile-execution" || parts[4] === "mobile-execution") {
     const kind = parts[2] === "platform" ? parts[4] : parts[5];
     switch (kind) {
+      case "shared-task-drafts": return "mobile-shared-drafts";
+      case "shared-task-previews": return "mobile-shared-previews";
+      case "shared-tasks": return parts[7] === "stops" ? "mobile-shared-stops" : "mobile-shared-tasks";
+      case "shared-items": return parts[7] === "reassignments" ? "mobile-shared-reassignments" : "mobile-shared-reviews";
+      case "shared-inspections": return "mobile-shared-inspections";
+      case "shared-send-policies": return "mobile-shared-policies";
+      case "shared-send-openings": return "mobile-shared-openings";
       case "task-previews": return "mobile-execution-task-previews";
       case "tasks": return "mobile-execution-tasks";
       case "flow-versions": return "mobile-execution-flow-versions";
