@@ -520,7 +520,7 @@ pub(super) async fn apply(
             .fetch_one(&mut **tx)
             .await?;
             require(live, "维护验证已过期")?;
-            if event.outcome == "succeeded" {
+            if event.outcome == "succeeded" && j["retired_at"].is_null() {
                 platform(tx, &Principal::Actor(uid(&j, "created_by")?)).await?;
                 let b = scoped_device(tx, uid(&j, "school_id")?, d).await?;
                 let auth =
@@ -1232,8 +1232,14 @@ async fn validation_document(tx: &mut Tx<'_>, j: &Value) -> Result<Value> {
         j["application"] = j["manual_application"].clone();
         j["components"] = json!([]);
         j["protocol_version"] = json!(5);
-        let b = binding(tx, uid(&j, "device_id")?).await?;
-        j["sender_account_id"] = b["sender_account_id"].clone();
+        j["sender_account_id"] = json!(
+            sqlx::query_scalar::<_, Uuid>(
+                "SELECT sender_account_id FROM device_account_bindings WHERE device_id=$1"
+            )
+            .bind(uid(&j, "device_id")?)
+            .fetch_optional(&mut **tx)
+            .await?
+        );
         return Ok(j);
     }
     let f = object(tx, "automation_flow_versions", uid(&j, "flow_id")?).await?;
@@ -1254,8 +1260,14 @@ async fn validation_document(tx: &mut Tx<'_>, j: &Value) -> Result<Value> {
     j["flow"] = f["body"].clone();
     j["protocol_version"] = json!(5);
     j["application"] = json!({"client":rules["client"],"label":flow.application_label});
-    let b = binding(tx, uid(&j, "device_id")?).await?;
-    j["sender_account_id"] = b["sender_account_id"].clone();
+    j["sender_account_id"] = json!(
+        sqlx::query_scalar::<_, Uuid>(
+            "SELECT sender_account_id FROM device_account_bindings WHERE device_id=$1"
+        )
+        .bind(uid(&j, "device_id")?)
+        .fetch_optional(&mut **tx)
+        .await?
+    );
     Ok(j)
 }
 pub(super) async fn query(
@@ -1275,9 +1287,14 @@ pub(super) async fn query(
         )
         .await?;
     }
+    if matches!(q, DispatchQuery::DeviceValidations | DispatchQuery::Inbox) {
+        device(tx, p).await?;
+        require(p.protocol() == 5, "旧查询要求 v5")?;
+        return Ok(json!([]));
+    }
     match q {
         DispatchQuery::Resources => {
-            let rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',a.id,'device_id',d.id,'device_name',d.name,'sender_account_id',s.id,'account_name',coalesce(s.visible_profile->>'account_name','未命名账号'),'company_name',coalesce(s.visible_profile->>'company_name',''),'control_state',p.state,'last_control_heartbeat_at',p.last_control_heartbeat_at,'available',d.enabled AND s.enabled AND r.active AND NOT r.revoked,'block_reason',CASE WHEN NOT d.enabled THEN 'device_disabled' WHEN NOT s.enabled THEN 'account_disabled' WHEN NOT r.active OR r.revoked THEN 'configuration_unavailable' ELSE NULL END) FROM automation_execution_assignments a JOIN execution_devices d ON d.id=a.device_id JOIN device_control_presence p ON p.id=d.id JOIN sending_accounts s ON s.id=a.sender_account_id JOIN device_account_bindings b ON b.device_id=d.id AND b.sender_account_id=s.id AND b.revision=a.account_binding_revision JOIN automation_flow_releases r ON r.id=a.release_id AND r.school_id=a.school_id WHERE a.school_id=$1 AND a.enabled AND EXISTS(SELECT 1 FROM school_memberships m JOIN accounts actor ON actor.id=m.account_id WHERE m.school_id=a.school_id AND m.account_id=s.responsible_actor_id AND m.role='admin' AND actor.active) ORDER BY a.id LIMIT $2 OFFSET $3")
+            let rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',a.id,'device_id',d.id,'device_name',d.name,'sender_account_id',s.id,'account_name',coalesce(s.visible_profile->>'account_name','未命名账号'),'company_name',coalesce(s.visible_profile->>'company_name',''),'control_state',p.state,'last_control_heartbeat_at',p.last_control_heartbeat_at,'available',false,'block_reason','legacy_mobile_maintenance_retired') FROM automation_execution_assignments a JOIN execution_devices d ON d.id=a.device_id JOIN device_control_presence p ON p.id=d.id JOIN sending_accounts s ON s.id=a.sender_account_id JOIN device_account_bindings b ON b.device_id=d.id AND b.sender_account_id=s.id AND b.revision=a.account_binding_revision JOIN automation_flow_releases r ON r.id=a.release_id AND r.school_id=a.school_id WHERE a.school_id=$1 AND a.enabled AND EXISTS(SELECT 1 FROM school_memberships m JOIN accounts actor ON actor.id=m.account_id WHERE m.school_id=a.school_id AND m.account_id=s.responsible_actor_id AND m.role='admin' AND actor.active) ORDER BY a.id LIMIT $2 OFFSET $3")
                 .bind(school(s)?).bind(limit).bind(offset).fetch_all(&mut **tx).await?;
             let rows:Vec<SchoolExecutionResource> = rows.into_iter().map(serde_json::from_value).collect::<std::result::Result<_,_>>().map_err(|e|Error::Database(e.to_string()))?;
             Ok(json!(rows))

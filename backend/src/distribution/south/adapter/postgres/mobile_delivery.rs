@@ -1670,6 +1670,7 @@ impl Store for Repository {
                 }
             }
         }
+        c.require_not_retired()?;
         let value = json!(c);
         let operation = value["operation"]
             .as_str()
@@ -1938,20 +1939,9 @@ impl Store for Repository {
             Query::Capabilities => {
                 p.actor()?;
                 let setting = settings(&mut tx, school(&s)?).await?;
-                let server =
-                    std::env::var("WEKEEPER_MOBILE_EXECUTION_ENABLED").is_ok_and(|s| s == "true");
-                let reason = if !server {
-                    Some("server_disabled")
-                } else if setting["enabled"] != true {
-                    Some("school_disabled")
-                } else if setting["history_reviewed"] != true {
-                    Some("history_review_required")
-                } else {
-                    None
-                };
                 let quotas:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('group_id',g.id,'daily_limit',g.daily_limit,'used',(SELECT count(*) FROM delivery_usage u WHERE u.group_id=g.id AND (u.state IN ('pending','unknown') OR (u.state='sent' AND u.observed_at>clock_timestamp()-interval '24 hours'))),'unknown',(SELECT count(*) FROM delivery_usage u WHERE u.group_id=g.id AND u.state IN ('pending','unknown'))) FROM delivery_groups g WHERE school_id=$1 ORDER BY id LIMIT 100").bind(school(&s)?).fetch_all(&mut *tx).await?;
                 let visible:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM delivery_groups WHERE school_id=$1 AND identity_mode='ui_visible')").bind(school(&s)?).fetch_one(&mut *tx).await?;
-                json!({"id":school(&s)?,"create":true,"confirm":true,"claim_enabled":reason.is_none(),"reason":reason,"quota_summary":quotas,"quota_summary_limit":100,"settings":setting,"minimum_protocol_version":PROTOCOL_VERSION,"account_default_limit":30,"account_max_limit":if visible{i32::MAX}else{50},"group_default_limit":10,"group_max_limit":if visible{i32::MAX}else{30}})
+                json!({"id":school(&s)?,"create":false,"confirm":false,"claim_enabled":false,"reason":"legacy_mobile_maintenance_retired","quota_summary":quotas,"quota_summary_limit":100,"settings":setting,"minimum_protocol_version":PROTOCOL_VERSION,"account_default_limit":30,"account_max_limit":if visible{i32::MAX}else{50},"group_default_limit":10,"group_max_limit":if visible{i32::MAX}else{30}})
             }
             Query::Items | Query::Events => {
                 p.actor()?;

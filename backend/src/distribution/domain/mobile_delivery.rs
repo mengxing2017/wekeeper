@@ -7,6 +7,7 @@ use uuid::Uuid;
 pub const PROTOCOL_VERSION: u32 = 1;
 pub const VISIBLE_PROTOCOL_VERSION: u32 = 2;
 
+mod retirement;
 mod visible;
 pub use visible::*;
 pub mod dispatch;

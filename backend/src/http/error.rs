@@ -63,6 +63,7 @@ pub async fn normalize_errors(
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
         let (status, code, message): (StatusCode, &str, String) = match self {
+            Self::Policy("legacy_mobile_maintenance_retired") => (StatusCode::CONFLICT,"legacy_mobile_maintenance_retired","旧学校/账号维护与执行流程已停用，请使用共享手机业务能力开通；历史记录可查看，取消、撤销、结果补报及未决核对继续保留".into()),
             Self::Policy("mobile_device_reserved") => (StatusCode::CONFLICT,"mobile_device_reserved","该手机已有任务占用，请处理原任务；跨学校占用请联系平台管理员协调".into()),
             Self::Policy("mobile_target_unresolved") => (StatusCode::CONFLICT,"mobile_target_unresolved","目标已有待执行或待核对项，请先处理原任务，不要换设备重复安排".into()),
             Self::Policy("mobile_execution_configuration_required") => (StatusCode::CONFLICT,"mobile_execution_configuration_required","手机执行配置尚不可用，请检查学校授权、手机同意、流程发布及现场验证".into()),

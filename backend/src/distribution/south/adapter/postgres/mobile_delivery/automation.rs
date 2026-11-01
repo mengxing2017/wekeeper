@@ -1151,6 +1151,11 @@ pub(super) async fn query(
     limit: i64,
     offset: i64,
 ) -> Result<Value> {
+    if matches!(q, AutomationQuery::ValidationJobs) {
+        device(tx, p).await?;
+        require(p.protocol() == 4, "旧查询要求 v4")?;
+        return Ok(json!([]));
+    }
     match q {
         AutomationQuery::AuthorizationContext => authorization_context(tx,p).await,
         AutomationQuery::Apps => {
