@@ -1,3 +1,4 @@
+import { MobileExecutionTasks } from '../../operations/mobile-execution/tasks'
 import { MobileExecutionFlows } from '../../operations/mobile-execution/flows'
 import { MobileDeviceGrants } from '../../operations/mobile-execution/grants'
 import { MobileTargets } from '../../operations/mobile-execution/targets'
@@ -185,7 +186,7 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
         <div className="business-panel" key={`${school.id}-${tab}`}>
           {resourcePage ? (role === 'admin' || role === 'operator' ? <SchoolExecutionResources key={`${school.id}-${tab}`} school={school.id} accounts={tab === 'execution-accounts'} admin={role === 'admin'} /> : <Alert type="warning" title="查看学校执行资源需要本校运营或管理员授权" />) : tab === 'mobile-delivery' ? (
             <MobileDelivery key={school.id} school={school.id} role={role} subview={params.get('subview') ?? undefined} onSubviewChange={setSubview} />
-          ) : tab === 'mobile-execution-flows' ? <MobileExecutionFlows key={school.id} school={school.id} admin={role === 'admin'} /> : tab === 'mobile-targets' ? <MobileTargets key={school.id} school={school.id} admin={role === 'admin'} /> : tab === 'broadcast-tasks' ? (
+          ) : tab === 'mobile-execution-tasks' ? <MobileExecutionTasks school={school.id} admin={role === 'admin'} onNavigate={navigate} /> : tab === 'mobile-execution-flows' ? <MobileExecutionFlows key={school.id} school={school.id} admin={role === 'admin'} /> : tab === 'mobile-targets' ? <MobileTargets key={school.id} school={school.id} admin={role === 'admin'} /> : tab === 'broadcast-tasks' ? (
             <BroadcastTasks
               key={school.id}
               school={school.id}

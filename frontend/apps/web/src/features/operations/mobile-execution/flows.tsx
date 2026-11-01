@@ -49,7 +49,7 @@ export function MobileExecutionFlows({ school, admin }: { school: string; admin:
       <PaginationControls page={flowPage} more={flows.data?.page?.has_more} change={setFlowPage} subject="执行流程" />
     </Card>
     <Card title="2. 手机现场验证" extra={admin && <Button onClick={() => setValidateOpen(true)}>创建手机验证</Button>}>
-      <Alert type="info" title="先在手机上接受本校用途授权，再创建验证" description="验证只观察界面与首群定位，不点击发送。设备报告通过后 24 小时内可发布；过期或授权变化需重新验证。新版手机验证功能尚在接入，旧手机端不会执行这些验证。" />
+      <Alert type="info" title="先在手机上接受本校用途授权，再创建验证" description="验证只观察界面与首群定位，不点击发送。设备报告通过后 24 小时内可发布；过期或授权变化需重新验证。请在新版手机授权页刷新并明确开始验证，旧手机端不会执行这些验证。" />
       <Table<FlowValidation> rowKey="id" loading={validations.isFetching} dataSource={validations.data?.items ?? []} pagination={false} columns={[
         { title: '流程', dataIndex: 'flow_name' }, { title: '设备', dataIndex: 'device_name' }, { title: '状态', render: (_, v) => validationLabel(v) },
         { title: '设备说明', render: (_, v) => v.result?.evidence || '尚无设备回报' },
@@ -67,7 +67,7 @@ export function MobileExecutionFlows({ school, admin }: { school: string; admin:
     <Card title="4. 本校设备执行配置" extra={admin && <Button onClick={() => { setEditing(undefined); assignmentForm.resetFields(); setAssignOpen(true) }}>配置设备流程</Button>}>
       <Table<ExecutionAssignment> rowKey="id" dataSource={assignments.data?.items ?? []} pagination={false} columns={[
         { title: '设备', dataIndex: 'device_name' }, { title: '执行流程', dataIndex: 'release_name' },
-        { title: '准备状态', render: (_, v) => !v.enabled ? '配置已停用' : v.consent_required ? '请在手机接受当前学校授权' : v.device_validation_required ? '请为此设备验证当前流程' : v.available ? '配置准备完成，任务链路待接入' : '设备授权或流程发布已失效' },
+        { title: '准备状态', render: (_, v) => !v.enabled ? '配置已停用' : v.consent_required ? '请在手机接受当前学校授权' : v.device_validation_required ? '请为此设备验证当前流程' : v.available ? '配置准备完成，可前往手机任务预览' : '设备授权或流程发布已失效' },
         ...(admin ? [{ title: '操作', render: (_: unknown, v: ExecutionAssignment) => <Space><Button onClick={() => { setEditing(v); assignmentForm.setFieldsValue(v); setAssignOpen(true) }}>更换流程/启用</Button><Button disabled={!v.enabled} onClick={() => Modal.confirm({ title: '停用设备执行配置？', content: '后续新执行将被阻止。', onOk: () => disable.mutateAsync(v) })}>停用</Button></Space> }] : []),
       ]} />
       <PaginationControls page={assignmentPage} more={assignments.data?.page?.has_more} change={setAssignmentPage} subject="执行配置" />

@@ -28,7 +28,7 @@ export interface NavigationItem {
   description: string
   domain: NavigationDomain
   scope: 'school' | 'global' | 'selectable'
-  capability: 'school.read' | 'school.admin' | 'global.manage' | 'resources.read'
+  capability: 'school.operate' | 'school.read' | 'school.admin' | 'global.manage' | 'resources.read'
   icon: ReactNode
 }
 export const navigation: NavigationItem[] = [
@@ -114,8 +114,9 @@ export const navigation: NavigationItem[] = [
     capability: 'resources.read',
   },
   { key: 'mobile-device-grants', icon: <MobileOutlined />, label: '学校设备授权', description: '平台明确授予或撤销学校使用手机设备的权利。', domain: 'platform', scope: 'global', capability: 'global.manage' },
-  { key: 'mobile-execution-flows', icon: <MessageOutlined />, label: '手机执行配置', description: '登记、验证和发布手机流程，为本校授权设备配置执行流程。', domain: 'business', scope: 'school', capability: 'school.read' },
-  { key: 'mobile-targets', icon: <MessageOutlined />, label: '手机目标群', description: '管理独立手机搜索目标和设备绑定，与官方客户群隔离。', domain: 'business', scope: 'school', capability: 'school.read' },
+  { key: 'mobile-execution-tasks', icon: <MessageOutlined />, label: '手机任务', description: '选择手机与独立目标群，预览、人工确认和查看任务记录。', domain: 'business', scope: 'school', capability: 'school.operate' },
+  { key: 'mobile-execution-flows', icon: <MessageOutlined />, label: '手机执行配置', description: '登记、验证和发布手机流程，为本校授权设备配置执行流程。', domain: 'business', scope: 'school', capability: 'school.operate' },
+  { key: 'mobile-targets', icon: <MessageOutlined />, label: '手机目标群', description: '管理独立手机搜索目标和设备绑定，与官方客户群隔离。', domain: 'business', scope: 'school', capability: 'school.operate' },
   { key: 'execution-accounts', icon: <UserOutlined />, label: '发送账号', description: '查看本校可使用的业务发送身份，或维护全平台发送账号。', domain: 'business', scope: 'selectable', capability: 'resources.read' },
   {
     key: 'members',
@@ -202,6 +203,7 @@ export const navigation: NavigationItem[] = [
 
 export function canNavigate(item: NavigationItem, platformAdmin: boolean, schoolRole?: string): boolean {
   switch (item.capability) {
+    case 'school.operate': return schoolRole === 'admin' || schoolRole === 'operator'
     case 'global.manage': return platformAdmin
     case 'resources.read': return platformAdmin || schoolRole === 'admin' || schoolRole === 'operator'
     case 'school.admin': return platformAdmin || schoolRole === 'admin'
