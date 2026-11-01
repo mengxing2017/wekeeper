@@ -52,7 +52,7 @@ it('shows role-appropriate navigation and routes business selections', () => {
   )
   fireEvent.click(screen.getByRole('menuitem', { name: '群发任务' }))
   expect(onNavigate).toHaveBeenCalledWith('broadcast-tasks')
-  fireEvent.click(screen.getByRole('menuitem', { name: '手机发送任务' }))
+  fireEvent.click(screen.getByRole('menuitem', { name: '历史手机发送任务' }))
   expect(onNavigate).toHaveBeenCalledWith('mobile-delivery')
   expect(screen.getByRole('menuitem', { name: '手机设备' })).toBeTruthy()
   expect(screen.getByRole('menuitem', { name: '发送账号' })).toBeTruthy()

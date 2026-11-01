@@ -1,8 +1,7 @@
 import { ControlStatus, useControlFreshness } from './control-status'
 import { DeviceControlPanel } from './device-control'
-import { DeviceAccountBinding } from './device-account-binding'
 import { createIdempotencyKey as key } from '../../../shared/idempotency-key'
-import { AccountRegistrationForm, ResponsibleActorDisplay } from './account-registration'
+import { ResponsibleActorDisplay } from './account-registration'
 import { DeviceStateEditor } from './device-state'
 import { DispatchWorkspace } from './dispatch'
 import { ConfigurationWorkbench } from './configuration'
@@ -28,8 +27,6 @@ import { PaginationControls } from '../../../shared/pagination-controls'
 import { api, type Preview, type ItemInput } from './api'
 
 import {
-  VisibleAccountCreate,
-  VisibleAccountReview,
   VisibleGroupCreate,
   VisibleGroupReview,
 } from './visible'
@@ -144,7 +141,7 @@ export function ExecutionDevices({ view, onViewChange }: { view?: string; onView
         onChange={setListTab}
         items={[
           { key: 'devices', label: '手机设备' },
-          { key: 'accounts', label: '发送账号' },
+          { key: 'accounts', label: '历史手机账号资料' },
           { key: 'rules', label: '业务能力开通' },
         ]}
       />}
@@ -247,12 +244,7 @@ export function ExecutionDevices({ view, onViewChange }: { view?: string; onView
                     description="可以配对，但连接验证和执行会被拒绝。请确认管理意图，需要恢复时在下方启用设备。" />}
                   <DeviceControlPanel deviceId={d.id} />
                   <DeviceStateEditor key={`state-${d.id}`} device={d} refresh={refresh} />
-                  <DeviceAccountBinding
-                    key={`bind-${d.revision}`}
-                    device={d}
-                    accounts={accounts.data?.items ?? []}
-                    refresh={refresh}
-                  />
+
                   <Editor
                     key={`revoke-${d.revision}`}
                     submit="撤销设备凭据"
@@ -274,15 +266,7 @@ export function ExecutionDevices({ view, onViewChange }: { view?: string; onView
         <>
           <Card
             className="data-panel"
-            title="真实发送账号"
-            extra={
-              <Space>
-                <VisibleAccountCreate saved={refresh} />
-                <ActionDrawer title="登记旧模式发送账号" primary>
-                  <AccountRegistrationForm legacy saved={refresh} />
-                </ActionDrawer>
-              </Space>
-            }
+            title="历史手机人工登记资料"
           >
             <Table
               rowKey="id"
@@ -321,7 +305,7 @@ export function ExecutionDevices({ view, onViewChange }: { view?: string; onView
                   title: '操作',
                   render: (_, a) => (
                     <Button type="link" onClick={() => setSenderId(a.id)}>
-                      账号配置
+                      资料详情
                     </Button>
                   ),
                 },
@@ -345,38 +329,12 @@ export function ExecutionDevices({ view, onViewChange }: { view?: string; onView
                 onClose={() => setSenderId('')}
               >
                 <Card key={a.id} title={a.visible_profile?.account_name ?? a.external_key}>
-                  <VisibleAccountReview account={a} saved={refresh} />
+                  <Alert type="info" title="历史资料只读" description="人工备注不认证手机实际登录身份，不转换为官方发送资格。" />
                   <p>
                     责任人：
                     <ResponsibleActorDisplay account={a} /> · {a.enabled ? '启用' : '停用'}
                   </p>
-                  <Editor
-                    key={a.revision}
-                    fields={[
-                      {
-                        name: 'daily_limit',
-                        title:
-                          a.identity_mode === 'ui_visible'
-                            ? '账号独立限额（0 暂停，与发布政策取较小值）'
-                            : '滚动 24 小时限额（0 暂停，最高 50）',
-                        type: 'number',
-                        value: a.daily_limit,
-                      },
-                      { name: 'reason', title: '限额变更原因' },
-                    ]}
-                    onSave={async (v) => {
-                      await api.updateAccountPolicy(
-                        a.id,
-                        {
-                          expected_revision: a.revision,
-                          daily_limit: Number(v.daily_limit),
-                          reason: v.reason,
-                        },
-                        key(),
-                      )
-                      await refresh()
-                    }}
-                  />
+
                 </Card>
               </Drawer>
             ))}

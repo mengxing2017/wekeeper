@@ -1,3 +1,4 @@
+import { OfficialSenders } from '../../operations/wecom-senders'
 import { MobileExecutionTasks } from '../../operations/mobile-execution/tasks'
 import { MobileExecutionFlows } from '../../operations/mobile-execution/flows'
 import { SharedMobileResources } from '../mobile-resources'
@@ -82,7 +83,7 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
   const knownPage = navigation.find(n => n.key === requestedTab)
   const tab = requestedTab
   const denied = !allowedKeys.includes(tab)
-  const resourcePage = ['execution-devices', 'execution-accounts'].includes(tab)
+  const resourcePage = ['execution-devices', 'wecom-senders', 'mobile-execution-flows'].includes(tab)
   const globalScope = knownPage?.scope === 'global' || (knownPage?.scope === 'selectable' && user.platform_admin && params.get('scope') !== 'school')
   const setSubview = (view: string) => setParams(previous => { const next = new URLSearchParams(previous); next.set('subview', view); return next })
   const navigate = (key: string) =>
@@ -119,9 +120,11 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
                 options={visibleSchools?.map((s) => ({ value: s.id, label: s.name }))}
                 placeholder="选择学校"
                 onChange={async (s) => {
-                  await Promise.all([cache.cancelQueries({ queryKey: ['business'] }), cache.cancelQueries({ queryKey: ['mobile'] })])
+                  await cache.cancelQueries()
                   cache.removeQueries({ queryKey: ['business'] })
                   cache.removeQueries({ queryKey: ['mobile'] })
+                  cache.removeQueries({ queryKey: ['wecom'] })
+                  cache.removeQueries({ queryKey: ['source'] })
                   setParams((previous) => {
                     const next = new URLSearchParams(previous)
                     next.set('school', s)
@@ -139,8 +142,11 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
       {!tab ? (q.isPending ? <Empty className="empty-state" description="正在加载学校…" /> : <Alert type="info" title="当前账号没有该学校的后台管理权限，请联系平台管理员。" />)
       : !knownPage ? <Alert type="warning" title="页面不存在或已迁移" description={<Button onClick={() => navigate(allowedKeys[0] ?? 'posts')}>返回可用功能</Button>} />
       : denied ? <Alert type="warning" title="当前账号没有此功能的访问权限" description={<>请核对当前学校与角色，或从导航选择已授权功能。<Button onClick={() => navigate(allowedKeys[0] ?? 'posts')}>返回可用功能</Button></>} />
+      : tab === 'execution-accounts' ? <Card title="发送账号入口已拆分"><p>原入口属于旧手机人工登记资料，不是企业微信官方发送身份。请按用途选择。</p><Space><Button onClick={() => navigate('wecom-senders')}>官方发送账号</Button><Button onClick={() => setParams(previous => { const next = new URLSearchParams(previous); next.set('view', 'execution-devices'); next.set('subview', 'historical-accounts'); return next })}>历史手机账号资料</Button></Space></Card>
+      : tab === 'wecom-senders' ? <OfficialSenders school={school?.id} global={globalScope && user.platform_admin} />
+      : tab === 'mobile-execution-flows' && globalScope && user.platform_admin ? <Card title="平台手机执行能力"><p>能力开通按共享设备维护；历史学校配置不产生当前发送资格。</p><Button onClick={() => setParams(previous => { const next = new URLSearchParams(previous); next.set('view', 'execution-devices'); next.set('subview', 'rules'); return next })}>管理共享设备能力开通</Button></Card>
       : resourcePage && globalScope && user.platform_admin ? (
-        <ExecutionDevices key={tab} view={tab === 'execution-accounts' ? 'accounts' : params.get('subview') === 'rules' ? 'rules' : 'devices'} onViewChange={setSubview} />
+        <ExecutionDevices key={tab} view={params.get('subview') === 'historical-accounts' ? 'accounts' : params.get('subview') === 'rules' ? 'rules' : 'devices'} onViewChange={setSubview} />
       ) : tab === 'shared-mobile-resources' && user.platform_admin ? <SharedMobileResources /> : tab === 'wecom-assets' && user.platform_admin ? (
         <Assets />
       ) : tab === 'wecom-directory' && user.platform_admin ? (
@@ -184,7 +190,7 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
         />
       ) : (
         <div className="business-panel" key={`${school.id}-${tab}`}>
-          {resourcePage ? (role === 'admin' || role === 'operator' ? <SchoolExecutionResources key={`${school.id}-${tab}`} school={school.id} accounts={tab === 'execution-accounts'} admin={role === 'admin'} /> : <Alert type="warning" title="查看学校执行资源需要本校运营或管理员授权" />) : tab === 'mobile-delivery' ? (
+          {resourcePage && tab !== 'mobile-execution-flows' ? (role === 'admin' || role === 'operator' ? <SchoolExecutionResources key={`${school.id}-${tab}`} school={school.id} accounts={params.get('subview') === 'historical-accounts'} admin={role === 'admin'} /> : <Alert type="warning" title="查看学校执行资源需要本校运营或管理员授权" />) : tab === 'mobile-delivery' ? (
             <MobileDelivery key={school.id} school={school.id} role={role} subview={params.get('subview') ?? undefined} onSubviewChange={setSubview} />
           ) : tab === 'mobile-execution-tasks' ? <MobileExecutionTasks school={school.id} admin={role === 'admin'} onNavigate={navigate} /> : tab === 'mobile-execution-flows' ? <MobileExecutionFlows key={school.id} school={school.id} admin={role === 'admin'} /> : tab === 'mobile-targets' ? <MobileTargets key={school.id} school={school.id} admin={role === 'admin'} /> : tab === 'broadcast-tasks' ? (
             <BroadcastTasks

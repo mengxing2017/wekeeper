@@ -94,6 +94,7 @@ export default function BroadcastTasks({
   }
   return (
     <section>
+      <Alert type="info" title="企业微信分发管理 · 官方接口" description="客户群、模板、官方发送身份和结果属于官方渠道；失败不会自动改用手机。" />
       {capability.data && !capability.data.broadcast_available && (
         <Alert type="warning" title={capability.data.reason} />
       )}
@@ -222,7 +223,7 @@ export default function BroadcastTasks({
                 },
                 {
                   title: '内容来源',
-                  render: (_, t) => (t.content_source === 'text' ? '直接填写' : '社区内容'),
+                  render: (_, t) => (t.content_source === 'text' ? '直接填写' : t.content_source === 'materials' ? '独立来源素材' : '论坛内容'),
                 },
                 {
                   title: '目标群 / 批次',
@@ -276,7 +277,7 @@ function DraftEditor({
   saved: (task: BroadcastTask) => Promise<void>
   cancel: () => void
 }) {
-  const [source, setSource] = useState<'posts' | 'text'>(
+  const [source, setSource] = useState<'posts' | 'text' | 'materials'>(
     initial ? (initial.content_source ?? 'posts') : 'text',
   )
   const [text, setText] = useState(initial?.content_source === 'text' ? initial.text_content : '')
@@ -299,6 +300,7 @@ function DraftEditor({
   const [error, setError] = useState(''),
     [busy, setBusy] = useState(false)
   const lock = useRef(false)
+  const saveIntent = useRef<{ payload: string; key: string } | null>(null)
   const posts = useQuery({
     enabled: source === 'posts',
     queryKey: ['business', school, 'broadcast-posts', search, page],
@@ -342,8 +344,11 @@ function DraftEditor({
       const input: BroadcastDraftInput =
         source === 'text'
           ? { ...common, content_source: 'text', text_content: normalized }
+          : source === 'materials' && initial?.content_source === 'materials' ? { ...common, content_source: 'materials', materials: initial.materials }
           : { ...common, content_source: 'posts', template_version_id: version, post_ids: chosen }
-      await saved(await broadcast.save(school, input, id))
+      const payload = JSON.stringify(input)
+      if (saveIntent.current?.payload !== payload) saveIntent.current = { payload, key: createIdempotencyKey() }
+      await saved(await broadcast.save(school, input, id, saveIntent.current.key))
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -379,6 +384,7 @@ function DraftEditor({
           }
         />
       </Field>
+      {source === 'materials' && <Alert type="info" title="独立来源素材" description="修改目标后需要重新预览；素材内容与版本由受控来源提供。" />}
       {source === 'text' && (
         <>
           <Field label="群发正文">
@@ -485,7 +491,7 @@ function DraftEditor({
         <Button
           type="primary"
           loading={busy}
-          disabled={!groups.length || (source === 'text' ? !textValid : !chosen.length || !version)}
+          disabled={!groups.length || (source === 'text' ? !textValid : source === 'materials' ? initial?.content_source !== 'materials' : !chosen.length || !version)}
           onClick={() => void save()}
         >
           保存并预览
@@ -498,6 +504,7 @@ function DraftEditor({
   )
 }
 function taskContent(t: BroadcastTask) {
+  if (t.content_source === 'materials') return { content_source: 'materials' as const, materials: t.materials }
   return t.content_source === 'text'
     ? { content_source: 'text' as const, text_content: t.content }
     : {
@@ -618,7 +625,7 @@ function Detail({
           title="已确认提交，后台正在创建或跟踪企业微信任务。取得官方任务 ID 后，请执行成员到企业微信群发助手确认发送；逐群结果见下方。"
         />
       )}
-      <Tag>{t.content_source === 'text' ? '直接填写' : '社区内容'}</Tag>
+      <Tag>{t.content_source === 'text' ? '直接填写' : t.content_source === 'materials' ? '独立来源素材' : '论坛内容'}</Tag>
       {t.state === 'draft' && t.content_source === 'text' && !admin && (
         <p>直接文本草稿需本校管理员检查并确认提交。</p>
       )}
@@ -654,12 +661,14 @@ function Detail({
               disabled={!enabled || busy || (t.content_source === 'text' && !admin)}
               onClick={() =>
                 void run(async () => {
+                  const preview = await broadcast.preview(school, t.id)
+                  if (preview.revision !== t.revision || preview.content !== t.content || preview.target_count !== t.total) throw new Error('任务内容或目标已变化，请刷新后重新预览')
                   if (
                     await dialogs.confirm(
                       `确认正文和全部 ${t.total} 个客户群，创建企业微信任务？成员仍需确认发送。`,
                     )
                   )
-                    await act('confirm', { revision: t.revision })
+                    await act('confirm', { revision: preview.revision, preview_digest: preview.digest })
                 })
               }
             >
