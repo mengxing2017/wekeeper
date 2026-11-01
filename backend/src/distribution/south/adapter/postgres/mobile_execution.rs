@@ -157,9 +157,6 @@ impl Store for Repository {
                 "SELECT to_jsonb(s) FROM mobile_adapter_support_requests s WHERE $1::uuid IS NULL AND strpos(lower(s.note),lower($2))>0 AND ($3::uuid IS NULL OR s.device_id=$3) ORDER BY s.created_at DESC,s.id DESC LIMIT $4 OFFSET $5"
             }
 
-            Resource::Tasks => {
-                "SELECT to_jsonb(t)||jsonb_build_object('device_name',d.name,'plan',p.snapshot,'plan_digest',p.digest,'items',(SELECT COALESCE(jsonb_agg(to_jsonb(i) ORDER BY i.position),'[]'::jsonb) FROM mobile_execution_task_items i WHERE i.school_id=t.school_id AND i.task_id=t.id)) FROM mobile_execution_tasks t JOIN execution_devices d ON d.id=t.device_id JOIN mobile_execution_plans p ON p.task_id=t.id AND p.school_id=t.school_id WHERE t.school_id=$1 AND $2::text IS NOT NULL AND ($3::uuid IS NULL OR t.device_id=$3) ORDER BY t.created_at DESC,t.id DESC LIMIT $4 OFFSET $5"
-            }
             Resource::Flows => {
                 "SELECT to_jsonb(f) FROM mobile_execution_flow_versions f WHERE school_id=$1 AND strpos(lower(name),lower($2))>0 AND $3::uuid IS NULL ORDER BY created_at DESC,id DESC LIMIT $4 OFFSET $5"
             }
@@ -228,16 +225,14 @@ impl Store for Repository {
     ) -> Result<Value> {
         if matches!(
             action,
-            "task-preview"
-                | "confirm-task"
-                | "flow"
+            "flow"
                 | "validation"
                 | "release"
                 | "revoke-release"
                 | "assignment"
                 | "update-assignment"
         ) {
-            return Err(Error::Invalid("共享手机执行链路正在升级，暂不能登记或启用旧学校设备执行计划；已有记录仍可查看和取消未领取任务".into()));
+            return Err(Error::Invalid("共享手机执行链路正在升级，暂不能登记或启用旧学校设备执行计划；请使用共享手机发送任务".into()));
         }
         if matches!(action, "bind" | "update-binding" | "revoke-binding") && school.is_some() {
             return Err(Error::Forbidden);
@@ -247,13 +242,7 @@ impl Store for Repository {
         sqlx::query("SELECT pg_advisory_xact_lock(78234610243)")
             .execute(&mut *tx)
             .await?;
-        authorize(
-            &mut tx,
-            actor.id,
-            school,
-            !matches!(action, "task-preview" | "cancel-task"),
-        )
-        .await?;
+        authorize(&mut tx, actor.id, school, true).await?;
         let scope = format!(
             "{}:{action}:{}",
             school.map(|s| s.to_string()).unwrap_or_default(),
@@ -281,17 +270,6 @@ impl Store for Repository {
                 onboarding::write(&mut tx, actor.id, resource, action, &input).await?
             }
 
-            "task-preview" | "confirm-task" | "cancel-task" => {
-                tasks::write(
-                    &mut tx,
-                    school.ok_or(Error::Forbidden)?,
-                    actor.id,
-                    action,
-                    resource,
-                    &input,
-                )
-                .await?
-            }
             "flow" | "validation" | "release" | "revoke-release" | "assignment"
             | "update-assignment" => {
                 flows::write(
@@ -347,7 +325,7 @@ impl Store for Repository {
                 let v: RevisionInput = serde_json::from_value(input.clone())
                     .map_err(|_| Error::Invalid("归档字段无效".into()))?;
                 validate_text(&v.reason, 1, 2000, 8000)?;
-                let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_execution_task_items WHERE school_id=$1 AND target_id=$2 AND state IN ('pending','claimed','prepared','invocation_issued','unknown'))").bind(school).bind(resource).fetch_one(&mut *tx).await?;
+                let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_shared_task_items i JOIN mobile_shared_attempts a ON a.item_id=i.id WHERE i.school_id=$1 AND i.target_id=$2 AND a.current AND a.state IN ('queued','leased','prepared','invocation_issued','unknown'))").bind(school).bind(resource).fetch_one(&mut *tx).await?;
                 if active {
                     return Err(Error::Policy("mobile_target_unresolved"));
                 }
@@ -418,8 +396,6 @@ impl Store for Repository {
 mod consent;
 
 mod flows;
-
-mod tasks;
 
 mod capabilities;
 

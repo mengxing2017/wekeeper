@@ -1,10 +1,17 @@
 -- Isolated, rolled-back checks. Never run with production credentials.
 BEGIN;
+PREPARE active_shared_target(uuid,uuid) AS SELECT EXISTS(
+ SELECT 1 FROM mobile_shared_task_items i JOIN mobile_shared_attempts a ON a.item_id=i.id
+ WHERE i.school_id=$1 AND i.target_id=$2 AND a.current
+ AND a.state IN ('queued','leased','prepared','invocation_issued','unknown')
+);
+DEALLOCATE active_shared_target;
 DO $$
 DECLARE s uuid=gen_random_uuid(); other uuid=gen_random_uuid(); actor uuid=gen_random_uuid();
  draft uuid=gen_random_uuid(); preview uuid=gen_random_uuid(); intent uuid=gen_random_uuid(); task uuid=gen_random_uuid(); policy uuid=gen_random_uuid();
  device uuid=gen_random_uuid(); environment uuid=gen_random_uuid(); release uuid=gen_random_uuid(); target uuid=gen_random_uuid(); acceptance uuid=gen_random_uuid();
 BEGIN
+ IF to_regclass('mobile_execution_tasks') IS NOT NULL OR to_regclass('mobile_execution_task_items') IS NOT NULL OR to_regclass('mobile_execution_plans') IS NOT NULL OR to_regclass('mobile_execution_task_previews') IS NOT NULL OR to_regclass('mobile_execution_device_reservations') IS NOT NULL THEN RAISE EXCEPTION 'retired phone task tables remain'; END IF;
  INSERT INTO schools(id,name) VALUES(s,'shared-test'),(other,'other-test');
  INSERT INTO accounts(id,username,display_name) VALUES(actor,actor::text,'Shared test');
  IF EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='mobile_shared_tasks' AND column_name='device_id') THEN RAISE EXCEPTION 'shared root must not own a physical device'; END IF;

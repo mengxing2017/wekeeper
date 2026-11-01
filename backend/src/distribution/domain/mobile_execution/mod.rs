@@ -163,9 +163,6 @@ mod consent_tests {
 mod flow;
 pub use flow::*;
 
-mod task;
-pub use task::*;
-
 #[cfg(test)]
 mod shared_binding_tests {
     use super::*;
