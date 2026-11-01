@@ -5,15 +5,38 @@ afterEach(() => { vi.unstubAllGlobals(); setCsrf('') })
 test('independent phone targets use JSON:API and preserve exact search text without official identities', async () => {
   const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ data: { type: 'mobile-targets', id: 'target', attributes: { search_text: '备注  群🦦' } } }), { headers: { 'Content-Type': 'application/vnd.api+json' } }))
   vi.stubGlobal('fetch', fetcher)
-  await mobileExecutionApi.createTarget('school', { search_text: '备注  群🦦', device_ids: ['phone'] }, 'stable-key')
-  expect(fetcher.mock.calls[0][0]).toBe('/api/v1/schools/school/mobile-execution/targets-with-bindings')
+  await mobileExecutionApi.createTarget('school', { search_text: '备注  群🦦' }, 'stable-key')
+  expect(fetcher.mock.calls[0][0]).toBe('/api/v1/schools/school/mobile-execution/targets')
   const request = fetcher.mock.calls[0][1]
-  expect(JSON.parse(String(request?.body))).toEqual({ data: { type: 'mobile-targets', attributes: { search_text: '备注  群🦦', device_ids: ['phone'] } } })
+  expect(JSON.parse(String(request?.body))).toEqual({ data: { type: 'mobile-targets', attributes: { search_text: '备注  群🦦' } } })
   expect(request?.headers).toMatchObject({ 'Idempotency-Key': 'stable-key' })
 })
-test('device grants have their own platform resource namespace', async () => {
-  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ data: { type: 'mobile-device-school-grants', id: 'grant', attributes: {} } }), { headers: { 'Content-Type': 'application/vnd.api+json' } }))
+test('shared binding uses platform namespace and exact per-device search text without school grants', async () => {
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ data: { type: 'mobile-target-bindings', id: 'binding', attributes: {} } }), { headers: { 'Content-Type': 'application/vnd.api+json' } }))
   vi.stubGlobal('fetch', fetcher)
-  await mobileExecutionApi.grant({ school_id: 'school', device_id: 'phone', purpose: '通知' }, 'key')
-  expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body)).data.type).toBe('mobile-device-school-grants')
+  await mobileExecutionApi.bind({ target_id: 'target', device_ids: ['phone'], search_text_override: '备注  群🦦' }, 'key')
+  expect(fetcher.mock.calls[0][0]).toBe('/api/v1/platform/mobile-execution/target-bindings')
+  expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body))).toEqual({ data: { type: 'mobile-target-bindings', attributes: { target_id: 'target', device_ids: ['phone'], search_text_override: '备注  群🦦' } } })
+})
+test('clearing an override and disabling a binding use revisioned platform writes', async () => {
+  const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => new Response(JSON.stringify({ data: { type: 'mobile-target-bindings', id: 'binding', attributes: {} } }), { headers: { 'Content-Type': 'application/vnd.api+json' } }))
+  vi.stubGlobal('fetch', fetcher)
+  await mobileExecutionApi.updateBinding('binding', { expected_revision: 3, enabled: true, search_text_override: null }, 'edit')
+  await mobileExecutionApi.unbind('binding', 4, '维护', 'disable')
+  expect(fetcher.mock.calls[0][0]).toBe('/api/v1/platform/mobile-execution/target-bindings/binding')
+  expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body)).data.attributes).toEqual({ expected_revision: 3, enabled: true, search_text_override: null })
+  expect(fetcher.mock.calls[1][0]).toBe('/api/v1/platform/mobile-execution/target-bindings/binding/revocations')
+})
+
+test('global device capability configuration uses platform authority and v7 flow without school fields', async () => {
+  const transport=vi.fn<typeof fetch>().mockImplementation(async () => new Response(JSON.stringify({data:{type:'mobile-device-capabilities',id:'cap',attributes:{execution_ready:false}}}),{headers:{'Content-Type':'application/vnd.api+json'}}))
+  vi.stubGlobal('fetch',transport)
+  const flow=(await import('../fixtures/shared-mobile-flow-v7.json')).default
+  const input={device_id:'device',expected_revision:0,name:'全局配置',enabled:true,flow:flow as import('../src/modules/mobile-execution').SharedFlowV2}
+  await mobileExecutionApi.createCapability(input,'create')
+  await mobileExecutionApi.updateCapability('cap',{...input,expected_revision:1,enabled:false},'disable')
+  expect(transport.mock.calls[0][0]).toBe('/api/v1/platform/mobile-execution/device-capabilities')
+  expect(JSON.parse(String(transport.mock.calls[0][1]?.body))).toEqual({data:{type:'mobile-device-capabilities',attributes:input}})
+  expect(transport.mock.calls[1][1]?.method).toBe('PATCH')
+  expect(input).not.toHaveProperty('school_id')
 })

@@ -1,0 +1,29 @@
+{
+  "data": {
+    "type": "mobile-device-capability-contexts",
+    "id": "00000000-0000-0000-0000-000000000001",
+    "attributes": {
+      "protocol_version": 7,
+      "scopes": [
+        {
+          "id": "00000000-0000-0000-0000-000000000002",
+          "scope": {
+            "schema": "shared_mobile_execution_scope/1",
+            "platform_source": "wekeeper",
+            "device_id": "00000000-0000-0000-0000-000000000001",
+            "credential_generation": 1,
+            "capability_id": "00000000-0000-0000-0000-000000000002",
+            "configuration_revision": 1,
+            "configuration_digest": "7f55f829df99159e635d40c7127756337d8468966f3d59155a3b55d3a7625ba1",
+            "configuration_name": "共享群文字配置🦦",
+            "app_key": "wecom",
+            "capability": "group_text"
+          },
+          "scope_digest": "ddf329fced6ca77fb9dc2f751f1c50ef5d32ae01f68d9d4e0096d2e568a533b9",
+          "consent": null,
+          "accepted": false
+        }
+      ]
+    }
+  }
+}

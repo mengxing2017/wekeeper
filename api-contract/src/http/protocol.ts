@@ -111,10 +111,10 @@ export function resourceType(path: string): string {
       case "flow-validations": return "mobile-execution-flow-validations";
       case "flow-releases": return "mobile-execution-flow-releases";
       case "assignments": return "mobile-execution-assignments";
-      case "targets": case "targets-with-bindings": return "mobile-targets";
+      case "targets": return "mobile-targets";
       case "target-bindings": return "mobile-target-bindings";
-      case "device-school-grants": return "mobile-device-school-grants";
       case "devices": return "mobile-devices";
+      case "device-capabilities": return "mobile-device-capabilities";
       default: throw new Error("Unknown mobile execution resource path");
     }
   }

@@ -25,13 +25,11 @@ test('validation, publication and assignment writes use their own resource types
   expect(transport.mock.calls[3][1]?.method).toBe('PATCH')
   expect(JSON.parse(String(transport.mock.calls[3][1]?.body)).data.attributes.expected_revision).toBe(3)
 })
-test('device validation inbox and receipts are fixed v6 operations authenticated by device', async () => {
-  const transport = vi.fn<typeof fetch>().mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ type: 'mobile-execution-flow-validations', id: 'job', attributes: { challenge: 'nonce', flow: flowFixture } }] }), { headers: { 'Content-Type': 'application/vnd.api+json' } })).mockResolvedValueOnce(response('mobile-execution-flow-validations', { state: 'failed' }))
+test('historical validation receipt uses v6 without exposing the retired inbox', async () => {
+  const transport = vi.fn<typeof fetch>().mockResolvedValue(response('mobile-execution-flow-validations', { state: 'failed' }))
   const client = createMobileExecutionDeviceClient({ baseUrl: 'https://keeper.example', token: 'wk_device_validation', fetch: transport })
-  const jobs = await client.validations()
-  expect(jobs[0].challenge).toBe('nonce')
   await client.validationResult('job', { challenge: 'nonce', flow_digest: 'a'.repeat(64), protocol_version: 6, engine_version: 'otter-ui/2', package_name: 'com.tencent.wework', version_code: 1, evidence: '群分类验证失败，未发送', checks: { application_opened: true, group_container_only: false, first_group_visual_order: false, results_stable: true, chat_opened: false, send_control_unique: false, human_pacing: true, no_send_performed: true } }, 'result')
-  expect(transport.mock.calls[0][0]).toBe('https://keeper.example/api/v6/device-execution/flow-validations')
-  expect(transport.mock.calls[1][1]).toMatchObject({ credentials: 'omit', headers: { Authorization: 'Bearer wk_device_validation', 'Idempotency-Key': 'result' } })
-  expect(JSON.parse(String(transport.mock.calls[1][1]?.body)).data.type).toBe('mobile-execution-flow-validations')
+  expect(transport.mock.calls[0][0]).toBe('https://keeper.example/api/v6/device-execution/flow-validations/job/results')
+  expect(transport.mock.calls[0][1]).toMatchObject({ credentials: 'omit', headers: { Authorization: 'Bearer wk_device_validation', 'Idempotency-Key': 'result' } })
+  expect(JSON.parse(String(transport.mock.calls[0][1]?.body)).data.type).toBe('mobile-execution-flow-validations')
 })

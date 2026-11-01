@@ -1,3 +1,5 @@
+import type { DeviceCapabilityConfiguration, DeviceCapabilityConfigurationInput } from './capabilities'
+export * from './capabilities'
 import type { TaskPreviewInput, TaskConfirmationInput, TaskPreview, ExecutionTask, ExecutionTaskDetail } from './tasks'
 export * from './tasks'
 import type { FlowV2, FlowVersion, FlowValidation, FlowRelease, ExecutionAssignment, AssignmentInput } from './flows'
@@ -8,7 +10,7 @@ export interface MobileTarget {
   enabled: boolean; metadata_revision: number; locator_revision: number; archived_at: string | null;
 }
 export interface TargetInput {
-  search_text: string; alias?: string; remark?: string; device_ids?: string[];
+  search_text: string; alias?: string; remark?: string;
   duplicate_confirmation?: string;
 }
 export interface DuplicateConfirmation {
@@ -16,22 +18,25 @@ export interface DuplicateConfirmation {
 }
 export interface MobileDevice {
   id: string; name: string; enabled: boolean; last_seen_at: string | null;
-  grant_id: string; grant_revision: number; school_alias: string; school_remark: string;
-  control_state: 'online' | 'connecting' | 'suspect' | 'offline' | 'unauthorized' | 'disabled';
+  control_state: 'online' | 'connecting' | 'suspect' | 'offline' | 'unauthorized' | 'disabled' | null;
   last_control_heartbeat_at: string | null;
 }
 export interface PlatformDevice {
   id: string; name: string; enabled: boolean; last_seen_at: string | null;
   remark: string; custodian_actor_id: string | null; metadata_revision: number;
 }
-export interface DeviceGrant {
-  id: string; school_id: string; device_id: string; purpose: string; enabled: boolean; revision: number;
-  device_name?: string; school_name?: string;
+export interface PlatformTarget {
+  id: string; school_id: string; school_name: string; search_text: string; alias: string; enabled: boolean;
+}
+export interface SharedBindingInput {
+  target_id: string; device_ids: string[]; search_text_override: string | null;
 }
 export interface TargetBinding {
-  id: string; school_id: string; device_id: string; target_id: string; grant_id: string;
+  id: string; school_id: string; device_id: string; target_id: string;
+  search_text_override: string | null; locator_revision: number;
+  search_source?: 'target_default' | 'binding_override'; source_locator_revision?: number;
   enabled: boolean; revision: number;
-  device_name?: string; search_text?: string; target_alias?: string; available?: boolean;
+  school_name?: string; device_name?: string; search_text?: string; target_alias?: string; available?: boolean;
 }
 const base = (school: string) => `/api/v1/schools/${encodeURIComponent(school)}/mobile-execution`
 function write<T>(path: string, method: string, attributes: unknown, key: string): Promise<T> {
@@ -42,6 +47,9 @@ function list<T>(path: string, page = 1, search = '', deviceId?: string): Promis
   return requestCollection<T>(`${path}?page[number]=${page}&page[size]=30&search=${encodeURIComponent(search)}${deviceId ? `&device_id=${encodeURIComponent(deviceId)}` : ''}`)
 }
 export const mobileExecutionApi = {
+  platformCapabilities: (page?: number, deviceId?: string) => list<DeviceCapabilityConfiguration>('/api/v1/platform/mobile-execution/device-capabilities', page, '', deviceId),
+  createCapability: (input: DeviceCapabilityConfigurationInput, key: string) => write<DeviceCapabilityConfiguration>('/api/v1/platform/mobile-execution/device-capabilities', 'POST', input, key),
+  updateCapability: (id: string, input: DeviceCapabilityConfigurationInput, key: string) => write<DeviceCapabilityConfiguration>(`/api/v1/platform/mobile-execution/device-capabilities/${encodeURIComponent(id)}`, 'PATCH', input, key),
   taskPreview: (school: string, input: TaskPreviewInput, key: string) => write<TaskPreview>(`${base(school)}/task-previews`, 'POST', input, key),
   confirmTask: (school: string, input: TaskConfirmationInput, key: string) => write<ExecutionTask>(`${base(school)}/tasks`, 'POST', input, key),
   tasks: (school: string, page?: number, deviceId?: string) => list<ExecutionTaskDetail>(`${base(school)}/tasks`, page, '', deviceId),
@@ -61,12 +69,12 @@ export const mobileExecutionApi = {
   targets: (school: string, page?: number, search?: string, deviceId?: string) => list<MobileTarget>(`${base(school)}/targets`, page, search, deviceId),
   devices: (school: string, page?: number) => list<MobileDevice>(`${base(school)}/devices`, page),
   bindings: (school: string, page?: number, deviceId?: string) => list<TargetBinding>(`${base(school)}/target-bindings`, page, '', deviceId),
-  createTarget: (school: string, input: TargetInput, key: string) => write<MobileTarget | DuplicateConfirmation>(`${base(school)}/targets-with-bindings`, 'POST', input, key),
+  createTarget: (school: string, input: TargetInput, key: string) => write<MobileTarget | DuplicateConfirmation>(`${base(school)}/targets`, 'POST', input, key),
   updateTarget: (school: string, id: string, input: Pick<MobileTarget, 'search_text' | 'alias' | 'remark' | 'enabled'> & { expected_revision: number }, key: string) => write<MobileTarget>(`${base(school)}/targets/${encodeURIComponent(id)}`, 'PATCH', input, key),
   archiveTarget: (school: string, id: string, expected_revision: number, reason: string, key: string) => write<MobileTarget>(`${base(school)}/targets/${encodeURIComponent(id)}`, 'DELETE', { expected_revision, reason }, key),
-  bind: (school: string, target_id: string, device_ids: string[], key: string) => write<{ id: string }>(`${base(school)}/target-bindings`, 'POST', { target_id, device_ids }, key),
-  unbind: (school: string, id: string, expected_revision: number, reason: string, key: string) => write<TargetBinding>(`${base(school)}/target-bindings/${encodeURIComponent(id)}/revocations`, 'POST', { expected_revision, reason }, key),
-  grants: (page?: number) => list<DeviceGrant>('/api/v1/platform/mobile-execution/device-school-grants', page),
-  grant: (input: Pick<DeviceGrant, 'school_id' | 'device_id' | 'purpose'>, key: string) => write<DeviceGrant>('/api/v1/platform/mobile-execution/device-school-grants', 'POST', input, key),
-  revokeGrant: (id: string, expected_revision: number, reason: string, key: string) => write<DeviceGrant>(`/api/v1/platform/mobile-execution/device-school-grants/${encodeURIComponent(id)}/revocations`, 'POST', { expected_revision, reason }, key),
+  platformTargets: (page?: number, search?: string) => list<PlatformTarget>('/api/v1/platform/mobile-execution/targets', page, search),
+  platformBindings: (page?: number, search?: string, deviceId?: string) => list<TargetBinding>('/api/v1/platform/mobile-execution/target-bindings', page, search, deviceId),
+  bind: (input: SharedBindingInput, key: string) => write<{ id: string; school_id: string; target_id: string; bindings: TargetBinding[] }>('/api/v1/platform/mobile-execution/target-bindings', 'POST', input, key),
+  updateBinding: (id: string, input: { expected_revision: number; enabled: boolean; search_text_override: string | null }, key: string) => write<TargetBinding>(`/api/v1/platform/mobile-execution/target-bindings/${encodeURIComponent(id)}`, 'PATCH', input, key),
+  unbind: (id: string, expected_revision: number, reason: string, key: string) => write<TargetBinding>(`/api/v1/platform/mobile-execution/target-bindings/${encodeURIComponent(id)}/revocations`, 'POST', { expected_revision, reason }, key),
 }
