@@ -104,6 +104,9 @@ impl Store for Repository {
         authorize(&mut tx, actor.id, school, false).await?;
         let (limit, offset) = page.fetch_bounds()?;
         let sql = match resource {
+            Resource::Tasks => {
+                "SELECT to_jsonb(t)||jsonb_build_object('device_name',d.name,'plan',p.snapshot,'plan_digest',p.digest,'items',(SELECT COALESCE(jsonb_agg(to_jsonb(i) ORDER BY i.position),'[]'::jsonb) FROM mobile_execution_task_items i WHERE i.school_id=t.school_id AND i.task_id=t.id)) FROM mobile_execution_tasks t JOIN execution_devices d ON d.id=t.device_id JOIN mobile_execution_plans p ON p.task_id=t.id AND p.school_id=t.school_id WHERE t.school_id=$1 AND $2::text IS NOT NULL AND ($3::uuid IS NULL OR t.device_id=$3) ORDER BY t.created_at DESC,t.id DESC LIMIT $4 OFFSET $5"
+            }
             Resource::Flows => {
                 "SELECT to_jsonb(f) FROM mobile_execution_flow_versions f WHERE school_id=$1 AND strpos(lower(name),lower($2))>0 AND $3::uuid IS NULL ORDER BY created_at DESC,id DESC LIMIT $4 OFFSET $5"
             }
@@ -157,7 +160,13 @@ impl Store for Repository {
         sqlx::query("SELECT pg_advisory_xact_lock(78234610243)")
             .execute(&mut *tx)
             .await?;
-        authorize(&mut tx, actor.id, school, true).await?;
+        authorize(
+            &mut tx,
+            actor.id,
+            school,
+            !matches!(action, "task-preview" | "cancel-task"),
+        )
+        .await?;
         let scope = format!(
             "{}:{action}:{}",
             school.map(|s| s.to_string()).unwrap_or_default(),
@@ -175,6 +184,17 @@ impl Store for Repository {
         }
         let resource = id.unwrap_or_else(Uuid::now_v7);
         let result = match action {
+            "task-preview" | "confirm-task" | "cancel-task" => {
+                tasks::write(
+                    &mut tx,
+                    school.ok_or(Error::Forbidden)?,
+                    actor.id,
+                    action,
+                    resource,
+                    &input,
+                )
+                .await?
+            }
             "flow" | "validation" | "release" | "revoke-release" | "assignment"
             | "update-assignment" => {
                 flows::write(
@@ -268,6 +288,10 @@ impl Store for Repository {
                 let v: RevisionInput = serde_json::from_value(input.clone())
                     .map_err(|_| Error::Invalid("归档字段无效".into()))?;
                 validate_text(&v.reason, 1, 2000, 8000)?;
+                let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_execution_task_items WHERE school_id=$1 AND target_id=$2 AND state IN ('pending','claimed','prepared','invocation_issued','unknown'))").bind(school).bind(resource).fetch_one(&mut *tx).await?;
+                if active {
+                    return Err(Error::Policy("mobile_target_unresolved"));
+                }
                 let n=sqlx::query("UPDATE mobile_targets SET enabled=false,archived_at=clock_timestamp(),metadata_revision=metadata_revision+1,locator_revision=locator_revision+1,updated_by=$4 WHERE school_id=$1 AND id=$2 AND metadata_revision=$3 AND archived_at IS NULL")
                     .bind(school).bind(resource).bind(v.expected_revision).bind(actor.id).execute(&mut *tx).await?.rows_affected();
                 if n != 1 {
@@ -318,3 +342,5 @@ impl Store for Repository {
 mod consent;
 
 mod flows;
+
+mod tasks;

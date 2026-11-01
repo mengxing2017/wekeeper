@@ -549,8 +549,104 @@ async fn device_validation_result(
             .await?,
     ))
 }
+async fn tasks(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(s): Path<Uuid>,
+    Query(f): Query<Filter>,
+) -> Result<ApiResponse> {
+    Ok(collection(
+        "mobile-execution-tasks",
+        a.mobile_execution()
+            .list(
+                &actor,
+                Some(s),
+                Resource::Tasks,
+                f.page.clone(),
+                f.search,
+                f.device_id,
+            )
+            .await?,
+        &f.page,
+    ))
+}
+async fn task_preview(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(s): Path<Uuid>,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "mobile-execution-task-previews",
+        a.mobile_execution()
+            .write(
+                &actor,
+                Some(s),
+                "task-preview",
+                None,
+                key(&h),
+                input.decode::<Value>("mobile-execution-task-previews")?,
+            )
+            .await?,
+    ))
+}
+async fn confirm_task(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(s): Path<Uuid>,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "mobile-execution-tasks",
+        a.mobile_execution()
+            .write(
+                &actor,
+                Some(s),
+                "confirm-task",
+                None,
+                key(&h),
+                input.decode::<Value>("mobile-execution-tasks")?,
+            )
+            .await?,
+    ))
+}
+async fn cancel_task(
+    State(a): State<Application>,
+    actor: Actor,
+    Path((s, id)): Path<(Uuid, Uuid)>,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "mobile-execution-tasks",
+        a.mobile_execution()
+            .write(
+                &actor,
+                Some(s),
+                "cancel-task",
+                Some(id),
+                key(&h),
+                input.decode::<Value>("mobile-execution-tasks")?,
+            )
+            .await?,
+    ))
+}
 pub fn router() -> Router<Application> {
     Router::new()
+        .route(
+            "/api/v1/schools/{school}/mobile-execution/task-previews",
+            post(task_preview),
+        )
+        .route(
+            "/api/v1/schools/{school}/mobile-execution/tasks",
+            get(tasks).post(confirm_task),
+        )
+        .route(
+            "/api/v1/schools/{school}/mobile-execution/tasks/{id}/cancellations",
+            post(cancel_task),
+        )
         .route(
             "/api/v6/device-execution/flow-validations",
             get(device_validations),

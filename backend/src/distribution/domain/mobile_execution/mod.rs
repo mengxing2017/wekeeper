@@ -148,3 +148,6 @@ mod consent_tests {
 
 mod flow;
 pub use flow::*;
+
+mod task;
+pub use task::*;

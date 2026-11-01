@@ -63,6 +63,12 @@ pub async fn normalize_errors(
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
         let (status, code, message): (StatusCode, &str, String) = match self {
+            Self::Policy("mobile_device_reserved") => (StatusCode::CONFLICT,"mobile_device_reserved","该手机已有任务占用，请处理原任务；跨学校占用请联系平台管理员协调".into()),
+            Self::Policy("mobile_target_unresolved") => (StatusCode::CONFLICT,"mobile_target_unresolved","目标已有待执行或待核对项，请先处理原任务，不要换设备重复安排".into()),
+            Self::Policy("mobile_execution_configuration_required") => (StatusCode::CONFLICT,"mobile_execution_configuration_required","手机执行配置尚不可用，请检查学校授权、手机同意、流程发布及现场验证".into()),
+            Self::Policy("mobile_target_binding_required") => (StatusCode::CONFLICT,"mobile_target_binding_required","目标已停用、解绑或不属于所选手机，请刷新并检查手机目标群绑定".into()),
+            Self::Policy("mobile_preview_expired") => (StatusCode::CONFLICT,"mobile_preview_expired","任务预览已过期，请重新预览全部目标和消息后确认".into()),
+            Self::Policy("mobile_task_not_cancellable") => (StatusCode::CONFLICT,"mobile_task_not_cancellable","任务版本或状态已变化，不能按未领取任务取消，请刷新任务并核对结果".into()),
             Self::Policy("device_consent_required") => (StatusCode::CONFLICT,"device_consent_required","请在手机上接受该学校当前用途的设备授权后重试".into()),
             Self::Policy("device_validation_required") => (StatusCode::CONFLICT,"device_validation_required","请先由已授权设备完成当前流程验证，验证通过后 24 小时内发布".into()),
             Self::Policy("flow_release_required") => (StatusCode::CONFLICT,"flow_release_required","请选择本校尚未撤销的已发布手机流程".into()),

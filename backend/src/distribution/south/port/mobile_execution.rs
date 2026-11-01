@@ -4,6 +4,7 @@ use uuid::Uuid;
 
 #[derive(Clone, Copy)]
 pub enum Resource {
+    Tasks,
     Flows,
     Validations,
     Releases,

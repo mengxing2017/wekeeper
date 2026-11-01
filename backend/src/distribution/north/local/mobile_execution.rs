@@ -85,7 +85,14 @@ impl<R: Store> Service<R> {
         input: Value,
     ) -> Result<Value> {
         if let Some(s) = school {
-            actor.authorize(s, "admin")?;
+            actor.authorize(
+                s,
+                if matches!(action, "task-preview" | "cancel-task") {
+                    "operator"
+                } else {
+                    "admin"
+                },
+            )?;
         } else if !actor.platform_admin {
             return Err(crate::business::Error::Forbidden);
         }
