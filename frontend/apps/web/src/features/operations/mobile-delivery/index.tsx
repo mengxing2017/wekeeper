@@ -5,9 +5,6 @@ import { createIdempotencyKey as key } from '../../../shared/idempotency-key'
 import { AccountRegistrationForm, ResponsibleActorDisplay } from './account-registration'
 import { DeviceStateEditor } from './device-state'
 import { DispatchWorkspace } from './dispatch'
-import { ApplicationSetup } from './setup'
-import { BusinessWizard } from './flows'
-import { AutomationRuns } from './runs'
 import { ConfigurationWorkbench } from './configuration'
 import { ActionDrawer } from '../../../shared/action-drawer'
 import { useRef, useState } from 'react'
@@ -35,7 +32,6 @@ import {
   VisibleAccountReview,
   VisibleGroupCreate,
   VisibleGroupReview,
-  VisibleStrategies,
 } from './visible'
 
 const clients = [
@@ -101,6 +97,7 @@ export function ExecutionDevices({ view, onViewChange }: { view?: string; onView
   const devices = useQuery({
     queryKey: ['mobile', 'platform', 'devices', page],
     queryFn: () => api.devices(page),
+    enabled: listTab !== 'rules',
     refetchInterval: listTab === 'devices' ? 5000 : false,
     refetchOnWindowFocus: 'always',
   })
@@ -108,6 +105,7 @@ export function ExecutionDevices({ view, onViewChange }: { view?: string; onView
   const accounts = useQuery({
     queryKey: ['mobile', 'platform', 'accounts', accountPage],
     queryFn: () => api.accounts(accountPage),
+    enabled: listTab !== 'rules',
   })
   const cache = useQueryClient(),
     actions = useActions('platform')
@@ -141,13 +139,13 @@ export function ExecutionDevices({ view, onViewChange }: { view?: string; onView
         />
       )}
 
-      {view ? <Space><Tag>全平台资源维护</Tag>{view !== 'accounts' && <Button onClick={() => setListTab(view === 'rules' ? 'devices' : 'rules')}>{view === 'rules' ? '返回手机设备' : '高级适配'}</Button>}</Space> : <Tabs
+      {view ? <Space><Tag>全平台资源维护</Tag>{view !== 'accounts' && <Button onClick={() => setListTab(view === 'rules' ? 'devices' : 'rules')}>{view === 'rules' ? '返回手机设备' : '业务能力开通'}</Button>}</Space> : <Tabs
         activeKey={listTab}
         onChange={setListTab}
         items={[
           { key: 'devices', label: '手机设备' },
           { key: 'accounts', label: '发送账号' },
-          { key: 'rules', label: '适配管理' },
+          { key: 'rules', label: '业务能力开通' },
         ]}
       />}
       {listTab === 'rules' ? (
@@ -474,32 +472,8 @@ export default function MobileDelivery({ school, role, subview, onSubviewChange 
             setListTab('tasks')
           }}
         />
-      ) : listTab === 'legacy-applications' && admin ? (
-        <ApplicationSetup school={school} />
-      ) : listTab === 'legacy-flows' && admin ? (
-        <BusinessWizard
-          school={school}
-          openTask={(id) => {
-            setSelected(id)
-            setListTab('tasks')
-          }}
-        />
-      ) : listTab === 'legacy-runs' && admin ? (
-        <AutomationRuns
-          school={school}
-          openTask={(id) => {
-            setSelected(id)
-            setListTab('tasks')
-          }}
-        />
-      ) : listTab === 'strategies' && admin ? (
-        <VisibleStrategies
-          school={school}
-          openTask={(id) => {
-            setSelected(id)
-            setListTab('tasks')
-          }}
-        />
+      ) : ['legacy-applications', 'legacy-flows', 'legacy-runs', 'strategies'].includes(listTab) && admin ? (
+        <Alert type="warning" title="旧学校维护工具已退出" description="此书签不能恢复创建、采样、发布或执行表单。历史任务仍可查看结果并进行未决核对。新业务请使用共享手机与学校目标群。" />
       ) : listTab === 'groups' ? (
         <>
           <Card
