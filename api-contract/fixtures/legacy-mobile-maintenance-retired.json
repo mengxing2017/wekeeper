@@ -1,0 +1,10 @@
+{
+  "errors": [
+    {
+      "status": "409",
+      "code": "legacy_mobile_maintenance_retired",
+      "title": "Conflict",
+      "detail": "旧学校/账号维护与执行流程已停用，请使用共享手机业务能力开通；历史记录可查看，取消、撤销、结果补报及未决核对继续保留"
+    }
+  ]
+}
