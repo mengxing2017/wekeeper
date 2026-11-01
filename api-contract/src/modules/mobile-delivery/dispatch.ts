@@ -76,6 +76,7 @@ export interface ExecutionAssignment extends Row {
   sender_account_id: UUID;
   account_binding_revision: number;
   release_id: UUID;
+  /** @deprecated Enabling is retired; disabling remains a governance action. */
   enabled: boolean;
   device_name: string;
   account_name: string;
@@ -238,10 +239,15 @@ export interface SchoolExecutionResource {
   control_state: import('./index').DeviceControlSnapshot['state'];
   last_control_heartbeat_at: string | null; available: boolean; block_reason: string | null;
 }
+/** Historical v5 API. Reads are evidence only, never current execution eligibility.
+ * Retired writes return HTTP 409 legacy_mobile_maintenance_retired after authorization.
+ * Cancellation, revocation and fixed result settlement remain supported.
+ */
 export const dispatchApi = {
   resources: (s: UUID, page = 1) => list<SchoolExecutionResource>(`${school(s)}/execution-resources`, page),
   validations: (s: UUID, page = 1) =>
     list<FlowValidation>(`${school(s)}/automation-flow-validations`, page),
+  /** @deprecated Retired: legacy_mobile_maintenance_retired. Use shared capability opening. */
   validate: (
     s: UUID,
     input: {
@@ -266,6 +272,7 @@ export const dispatchApi = {
       key,
     ),
   flows: (page = 1) => list<FlowVersion>(`${platform}/automation-flows`, page),
+  /** @deprecated Retired: legacy_mobile_maintenance_retired. Use shared capability opening. */
   createFlow: (flow: DispatchFlowV1, pacing_profile_id: UUID, key: string) =>
     write<FlowVersion>(
       `${platform}/automation-flows`,
@@ -274,6 +281,7 @@ export const dispatchApi = {
     ),
   pacing: (page = 1) =>
     list<PacingProfile>(`${platform}/automation-pacing-profiles`, page),
+  /** @deprecated Retired: legacy_mobile_maintenance_retired. Use shared capability opening. */
   createPacing: (
     name: string,
     school_id: UUID,
@@ -285,6 +293,7 @@ export const dispatchApi = {
       { name, school_id, validation_ids },
       key,
     ),
+  /** @deprecated Retired: legacy_mobile_maintenance_retired. Use shared capability opening. */
   publish: (flow: UUID, school_id: UUID, validation_id: UUID, key: string) =>
     write<FlowRelease>(
       `${platform}/automation-flows/${id(flow)}/releases`,
@@ -304,6 +313,7 @@ export const dispatchApi = {
     ),
   groups: (s: UUID, page = 1) =>
     list<AutomationDeviceGroup>(`${school(s)}/automation-device-groups`, page),
+  /** @deprecated Retired: legacy_mobile_maintenance_retired. Use shared capability opening. */
   saveGroup: (s: UUID, name: string, device_ids: UUID[], key: string) =>
     write<AutomationDeviceGroup>(
       `${school(s)}/automation-device-groups`,
@@ -315,6 +325,7 @@ export const dispatchApi = {
       `${school(s)}/automation-execution-assignments`,
       page,
     ),
+  /** @deprecated Retired: legacy_mobile_maintenance_retired. Use shared capability opening. */
   assign: (
     s: UUID,
     device_ids: UUID[],
@@ -327,18 +338,21 @@ export const dispatchApi = {
       { device_ids, group_id, release_id },
       key,
     ),
+  /** @deprecated Enabling is retired; disabling remains a governance action. */
   enabled: (s: UUID, enabled: boolean, key: string) =>
     write<Row>(
       `${school(s)}/automation-dispatch-settings`,
       { enabled, reviewed_history: enabled },
       key,
     ),
+  /** @deprecated Retired: legacy_mobile_maintenance_retired. Use shared capability opening. */
   preview: (s: UUID, input: DispatchInput, key: string) =>
     write<DispatchBatch>(
       `${school(s)}/automation-dispatch-previews`,
       { input },
       key,
     ),
+  /** @deprecated Retired: legacy_mobile_maintenance_retired. Use shared capability opening. */
   confirm: (s: UUID, batch: DispatchBatch, key: string) =>
     write<DispatchBatch>(
       `${school(s)}/automation-dispatch-previews/${id(batch.id)}/confirmations`,
@@ -362,6 +376,7 @@ export const dispatchApi = {
       { expected_revision: b.revision, command },
       key,
     ),
+  /** @deprecated Retired: legacy_mobile_maintenance_retired. Use shared capability opening. */
   remaining: (s: UUID, b: DispatchBatch, release_id: UUID, key: string) =>
     write<DispatchBatch>(
       `${school(s)}/automation-dispatch-batches/${id(b.id)}/remaining-previews`,
