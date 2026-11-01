@@ -240,6 +240,7 @@ React 使用同源 `/api/...` 请求，由 Web 容器的 Caddy 转发到 API。�
 | `WEKEEPER_DATABASE_PASSWORD` | 必填实际密码 | 分项密码，无需 URL 编码 |
 | `WEKEEPER_DATABASE_SSL_MODE` | 同机容器示例 `disable`；程序默认 `prefer` | 远程生产数据库按证书条件使用 `verify-full` 并配置受信任 CA |
 | `WEKEEPER_DATABASE_MAX_CONNECTIONS` | `10` | 连接池上限，允许 1–100 |
+| `WEKEEPER_SHARED_SEND_KEY` | 32 字节随机密钥的 64 个十六进制字符 | 仅注入 API，保护共享发送许可与恢复材料；生成、首次配置和更新见下文；跨实例、重启和恢复保持一致 |
 | `WEKEEPER_DATABASE_URL` | 可选，默认不设置 | 完整连接 URL；设置后优先于分项连接字段。不使用时删除该变量，不要填空值 |
 | `WEKEEPER_PUBLIC_ORIGIN` | `https://keeper.example.com` | 浏览器实际访问的协议、域名、端口，不带路径和末尾斜杠；不能写 `api:8080` |
 | `WEKEEPER_INSECURE_LOCAL_AUTH` | `false` | 本机 HTTP 调试设 `true`，生产 HTTPS 保持 `false` |
@@ -274,6 +275,8 @@ WEKEEPER_WEB_LISTEN=:80
 WEKEEPER_PUBLIC_ORIGIN=http://127.0.0.1:8088
 WEKEEPER_INSECURE_LOCAL_AUTH=true
 WEKEEPER_DATABASE_MAX_CONNECTIONS=10
+# 使用共享手机发送前生成并填写；后续重启保持原值
+WEKEEPER_SHARED_SEND_KEY=
 RUST_LOG=wekeeper_api=info,tower_http=info
 
 # 后端 API：企业微信（需要时填写）
@@ -298,6 +301,50 @@ Compose 已固定注入 API 监听 `0.0.0.0:8080`、数据库地址 `postgres:54
 
 Shell 已 export 的同名变量优先于 Compose `.env`；部署前核对 `API_IMAGE`、`WEB_IMAGE` 等，避免沿用构建终端的旧标签。密码可用 `openssl rand -hex 32` 生成；Compose `.env` 中含 `$` 等字符时注意引号和插值规则。`POSTGRES_DEV_PORT`、`API_DEV_PORT` 仅在叠加 `compose.dev.yaml` 时生效。
 
+### 共享手机发送密钥：首次配置与已有部署更新
+
+使用共享手机发送前，必须配置 `WEKEEPER_SHARED_SEND_KEY`。此值是后端静态加密密钥，不是数据库密码、企业微信 Secret 或设备登录令牌，不需要填入 Web、手机或 PostgreSQL 容器。没有使用共享手机发送的部署可以暂留空；API 健康不代表共享发送已经具备资格。配置密钥也不等于完成手机同意、适配发行和真机验收。
+
+**首次配置：** 在服务器终端运行一次，复制完整输出：
+
+```sh
+openssl rand -hex 32
+```
+
+没有 OpenSSL 时可改用：
+
+```sh
+python3 -c 'import secrets; print(secrets.token_hex(32))'
+```
+
+两种方式任选其一，输出均为 64 个十六进制字符。Compose 部署将其保存到部署目录的 `.env`：
+
+```dotenv
+WEKEEPER_SHARED_SEND_KEY=<替换为生成的完整输出，不保留尖括号>
+```
+
+不要覆盖已有 `.env` 或把真实密钥写回 `env.example`。限制配置文件权限：
+
+```sh
+chmod 600 .env
+```
+
+**已有 Compose 部署补充变量后：** 在部署目录执行以下命令。确保当前 Shell 没有同名变量覆盖 `.env`；使用自定义项目名或其他编排文件时，沿用原部署参数。
+
+```sh
+docker compose --env-file .env -f compose.yaml config --quiet
+docker compose --env-file .env -f compose.yaml up --no-build -d --no-deps --force-recreate --wait --wait-timeout 180 api
+docker compose --env-file .env -f compose.yaml ps api
+```
+
+这会重建 API 容器并重新注入变量，不删除数据库卷；安排在已停止新任务并核对在途风险的维护窗口执行。首次安装仍按第 6 节启动完整栈。仅执行 `docker restart` 或 `docker compose restart` 不会加载新的容器环境。若需要新版镜像，先按第 9 节完成配套升级，不要仅配置变量继续运行不支持该功能的旧 API。
+
+**独立 Docker / 1Panel：** 将同名变量加入 API 专用 `.env.api` 或 API 容器环境配置，设置文件权限为 `600`，沿用第 5.5 节参数重新创建 API 容器；不要只在容器终端临时 export。不要复制整份 Compose `.env` 给所有容器。
+
+**备份和故障处理：** 密钥与数据库配套受控备份，所有 API 实例使用相同值，后续重启、迁移或换服务器继续使用原值。丢失或换错密钥会导致已有加密材料无法恢复，重新生成不能解开旧密文。当前没有在线轮换机制，存在未结算任务或需要恢复的历史响应时不得直接替换。缺失/格式错误可能出现 `shared_send_key_required`，解密失败可能出现 `shared_send_secret_invalid`；先核对原部署密钥和实例配置，不清表、不重发消息。日常使用 `config --quiet`，不要分享包含完整环境变量的配置输出。
+
+完整执行与验收流程见[手机共享发送运行手册](shared-mobile-send.md)。
+
 ### 5.5 独立 Docker / 1Panel：分别配置三个容器
 
 以下是本机 HTTP 的可执行示例，镜像需已构建或拉取。1Panel 可按相同文件内容分别填写各容器的环境变量，使用同一自定义网络 `wekeeper-standalone`。文件中的值填写实际内容，`docker run --env-file` 不会展开 `$变量`，也不要照搬 Compose 的引号写法。
@@ -321,6 +368,8 @@ WEKEEPER_DATABASE_USER=wekeeper
 WEKEEPER_DATABASE_PASSWORD=replace-with-a-long-random-password
 WEKEEPER_DATABASE_SSL_MODE=disable
 WEKEEPER_DATABASE_MAX_CONNECTIONS=10
+# 使用共享手机发送前生成并填写；后续重启保持原值
+WEKEEPER_SHARED_SEND_KEY=
 WEKEEPER_PUBLIC_ORIGIN=http://127.0.0.1:8088
 WEKEEPER_INSECURE_LOCAL_AUTH=true
 WEKEEPER_WECOM_CORP_ID=
@@ -515,7 +564,7 @@ test -s "$WK_BACKUP"
 sha256sum "$WK_BACKUP" > "$WK_BACKUP.sha256"
 ```
 
-同时保存环境配置的受控副本、镜像 digest 和 migration 版本；备份移出单机并限制访问。
+同时保存环境配置的受控副本、镜像 digest 和 migration 版本；备份移出单机并限制访问。使用共享手机发送时，必须同时保管对应的 `WEKEEPER_SHARED_SEND_KEY`，数据库 dump 不包含该运行环境密钥。隔离恢复使用原密钥且保持新执行关闭；仅恢复数据库并生成新密钥不能恢复旧许可与结果材料。
 校验文件非空不等于可恢复，定期在新建隔离库演练：
 
 ```bash
