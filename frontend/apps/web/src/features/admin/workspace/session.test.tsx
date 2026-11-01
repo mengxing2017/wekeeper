@@ -6,6 +6,7 @@ import { identity } from '../../identity/api'
 
 vi.mock('../../identity/api', () => ({
   identity: { session: vi.fn(), login: vi.fn() },
+  subscribeUnauthorized: () => () => {},
   workspace: {},
 }))
 afterEach(cleanup)

@@ -1,8 +1,8 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Form, Input } from 'antd'
 import { Field } from '../../shared/field'
-import { identity, type User } from './api'
+import { identity, subscribeUnauthorized, type User } from './api'
 export function SessionGate({
   children,
   wecom = false,
@@ -16,7 +16,17 @@ export function SessionGate({
   const q = useQuery({ queryKey: ['session'], queryFn: identity.session, retry: false })
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  useEffect(() => subscribeUnauthorized(() => {
+    // Initial login failures already render the form. Expiry must also discard
+    // cached session data and protected results, including background requests.
+    if (!cache.getQueryData(['session'])) return
+    void cache.cancelQueries()
+    cache.clear()
+    cache.setQueryData(['session'], null)
+    setError('登录已失效，请重新登录')
+  }), [cache])
   async function login(values: { username: string; password: string }) {
+    setError('')
     setBusy(true)
     try {
       const s = await identity.login(values.username, values.password)
