@@ -1,4 +1,4 @@
-use serde_json::{Value, json};
+use serde_json::json;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 use wekeeper_api::{
@@ -59,95 +59,193 @@ async fn setup() -> (PgPool, Actor, Uuid, Uuid) {
 }
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn targets_work_without_official_config_and_bind_atomically() {
+async fn shared_bindings_require_platform_authority_and_preserve_effective_locator() {
     let (pool, a, school, device) = setup().await;
     let service = Service(Repository(pool.clone()));
-    let input = json!({"search_text":"手机备注  群🦦","device_ids":[device]});
-    assert!(
-        service
-            .write(
-                &a,
-                Some(school),
-                "target",
-                None,
-                "before-grant",
-                input.clone()
-            )
-            .await
-            .is_err()
-    );
-    let targets = service
-        .list(
-            &a,
-            Some(school),
-            Resource::Targets,
-            Page::default(),
-            String::new(),
-            None,
-        )
-        .await
-        .unwrap();
-    assert!(
-        targets.is_empty(),
-        "failed bind must roll back target insert"
-    );
-    let grant = service
+    let target = service
         .write(
             &a,
+            Some(school),
+            "target",
             None,
-            "grant",
-            None,
-            "grant",
-            json!({"school_id":school,"device_id":device,"purpose":"校园通知"}),
+            "target",
+            json!({"search_text":"默认  群🦦"}),
         )
         .await
         .unwrap();
-    let target = service
-        .write(&a, Some(school), "target", None, "create", input.clone())
-        .await
-        .unwrap();
-    assert_eq!(target["search_text"], input["search_text"]);
-    assert_eq!(
-        service
-            .write(&a, Some(school), "target", None, "create", input)
-            .await
-            .unwrap(),
-        target
-    );
+    let target_id: Uuid = serde_json::from_value(target["id"].clone()).unwrap();
     assert!(
         service
             .write(
                 &a,
                 Some(school),
-                "target",
+                "bind",
                 None,
-                "create",
-                json!({"search_text":"different"})
+                "school-bind",
+                json!({"target_id":target_id,"device_ids":[device],"search_text_override":null})
             )
             .await
             .is_err()
     );
-    let targets = service
+    let input =
+        json!({"target_id":target_id,"device_ids":[device],"search_text_override":"手机  备注🦦"});
+    let bound = service
+        .write(&a, None, "bind", None, "bind", input.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        service
+            .write(&a, None, "bind", None, "bind", input)
+            .await
+            .unwrap(),
+        bound
+    );
+    let rows = service
         .list(
             &a,
             Some(school),
-            Resource::Targets,
+            Resource::Bindings,
             Page::default(),
             String::new(),
-            Some(device),
+            None,
         )
         .await
         .unwrap();
-    assert_eq!(targets.len(), 1);
-    let grant_id = grant["id"].as_str().unwrap().parse().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["search_text"], "手机  备注🦦");
+    assert_eq!(rows[0]["search_source"], "binding_override");
+    let source_revision = rows[0]["source_locator_revision"].clone();
+    service.write(&a,Some(school),"update-target",Some(target_id),"rename",json!({"expected_revision":1,"search_text":"新默认名","alias":"别名","remark":"备注","enabled":true})).await.unwrap();
+    let rows = service
+        .list(
+            &a,
+            Some(school),
+            Resource::Bindings,
+            Page::default(),
+            String::new(),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(rows[0]["search_text"], "手机  备注🦦");
+    assert_eq!(rows[0]["source_locator_revision"], source_revision);
+    let binding: Uuid = serde_json::from_value(rows[0]["id"].clone()).unwrap();
     service
         .write(
             &a,
             None,
-            "revoke-grant",
-            Some(grant_id),
-            "revoke",
-            json!({"expected_revision":1,"reason":"停用"}),
+            "update-binding",
+            Some(binding),
+            "inherit",
+            json!({"expected_revision":1,"enabled":true,"search_text_override":null}),
+        )
+        .await
+        .unwrap();
+    let rows = service
+        .list(
+            &a,
+            Some(school),
+            Resource::Bindings,
+            Page::default(),
+            String::new(),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(rows[0]["search_text"], "新默认名");
+    assert_eq!(rows[0]["search_source"], "target_default");
+    assert_eq!(rows[0]["revision"], 2);
+    assert!(rows[0].get("grant_id").is_none());
+    pool.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn one_shared_device_serves_two_schools_without_leaking_global_notes() {
+    let (pool, a, school, device) = setup().await;
+    let other = Uuid::now_v7();
+    sqlx::query("INSERT INTO schools(id,name) VALUES($1,'Other')")
+        .bind(other)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO school_memberships(school_id,account_id,role) VALUES($1,$2,'admin')")
+        .bind(other)
+        .bind(a.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE execution_devices SET remark='private-account-hint' WHERE id=$1")
+        .bind(device)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let service = Service(Repository(pool.clone()));
+    let mut bindings = Vec::new();
+    for (index, s) in [school, other].iter().enumerate() {
+        let target = service
+            .write(
+                &a,
+                Some(*s),
+                "target",
+                None,
+                &format!("target-{index}"),
+                json!({"search_text":format!("群{index}")}),
+            )
+            .await
+            .unwrap();
+        let result = service
+            .write(
+                &a,
+                None,
+                "bind",
+                None,
+                &format!("bind-{index}"),
+                json!({"target_id":target["id"],"device_ids":[device],"search_text_override":null}),
+            )
+            .await
+            .unwrap();
+        bindings.push(result["bindings"][0].clone());
+    }
+    for s in [school, other] {
+        let devices = service
+            .list(
+                &a,
+                Some(s),
+                Resource::Devices,
+                Page::default(),
+                String::new(),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(devices.len(), 1);
+        for private in ["remark", "custodian_actor_id", "school_id", "grant_id"] {
+            assert!(devices[0].get(private).is_none());
+        }
+        let rows = service
+            .list(
+                &a,
+                Some(s),
+                Resource::Bindings,
+                Page::default(),
+                String::new(),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["school_id"], s.to_string());
+    }
+    let id: Uuid = serde_json::from_value(bindings[0]["id"].clone()).unwrap();
+    service
+        .write(
+            &a,
+            None,
+            "revoke-binding",
+            Some(id),
+            "unbind",
+            json!({"expected_revision":1,"reason":"停用甲群"}),
         )
         .await
         .unwrap();
@@ -156,89 +254,21 @@ async fn targets_work_without_official_config_and_bind_atomically() {
             .list(
                 &a,
                 Some(school),
-                Resource::Targets,
+                Resource::Devices,
                 Page::default(),
                 String::new(),
-                Some(device)
+                None
             )
             .await
             .unwrap()
             .is_empty()
     );
     assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM broadcast_tasks")
-            .fetch_one(&pool)
-            .await
-            .unwrap(),
-        0
-    );
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM wecom_groups")
-            .fetch_one(&pool)
-            .await
-            .unwrap(),
-        0
-    );
-}
-#[tokio::test]
-#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn platform_role_does_not_replace_school_authority_and_duplicate_text_needs_confirmation() {
-    let (pool, a, school, _) = setup().await;
-    let service = Service(Repository(pool.clone()));
-    service
-        .write(
-            &a,
-            Some(school),
-            "target",
-            None,
-            "one",
-            json!({"search_text":"群"}),
-        )
-        .await
-        .unwrap();
-    let second = service
-        .write(
-            &a,
-            Some(school),
-            "target",
-            None,
-            "two",
-            json!({"search_text":"群"}),
-        )
-        .await
-        .unwrap();
-    assert_eq!(second["confirmation_required"], true);
-    assert_eq!(
-        service
-            .write(
-                &a,
-                Some(school),
-                "target",
-                None,
-                "two",
-                json!({"search_text":"群"})
-            )
-            .await
-            .unwrap(),
-        second
-    );
-    service
-        .write(
-            &a,
-            Some(school),
-            "target",
-            None,
-            "two-confirmed",
-            json!({"search_text":"群","duplicate_confirmation":second["duplicate_confirmation"]}),
-        )
-        .await
-        .unwrap();
-    assert_eq!(
         service
             .list(
                 &a,
-                Some(school),
-                Resource::Targets,
+                Some(other),
+                Resource::Devices,
                 Page::default(),
                 String::new(),
                 None
@@ -246,13 +276,49 @@ async fn platform_role_does_not_replace_school_authority_and_duplicate_text_need
             .await
             .unwrap()
             .len(),
-        2
+        1
     );
-    sqlx::query("DELETE FROM school_memberships WHERE account_id=$1")
-        .bind(a.id)
-        .execute(&pool)
+    pool.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn batch_bind_is_atomic_and_never_infers_school_from_client() {
+    let (pool, a, school, device) = setup().await;
+    let service = Service(Repository(pool.clone()));
+    let target = service
+        .write(
+            &a,
+            Some(school),
+            "target",
+            None,
+            "target",
+            json!({"search_text":"群"}),
+        )
         .await
         .unwrap();
+    for (key, input) in [
+        (
+            "missing-device",
+            json!({"target_id":target["id"],"device_ids":[device,Uuid::now_v7()],"search_text_override":null}),
+        ),
+        (
+            "spoof-school",
+            json!({"target_id":target["id"],"device_ids":[device],"search_text_override":null,"school_id":Uuid::now_v7()}),
+        ),
+    ] {
+        assert!(
+            service
+                .write(&a, None, "bind", None, key, input)
+                .await
+                .is_err()
+        );
+    }
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM mobile_device_target_bindings")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
     assert!(
         service
             .write(
@@ -260,342 +326,21 @@ async fn platform_role_does_not_replace_school_authority_and_duplicate_text_need
                 Some(school),
                 "target",
                 None,
-                "forbidden",
-                json!({"search_text":"其他"})
+                "old-target",
+                json!({"search_text":"群","device_ids":[device]})
             )
             .await
             .is_err()
     );
-    assert!(
-        service
-            .list(
-                &a,
-                Some(school),
-                Resource::Targets,
-                Page::default(),
-                String::new(),
-                None
-            )
-            .await
-            .is_err()
-    );
-}
-
-#[tokio::test]
-#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn device_consent_requires_live_device_and_exact_current_school_scope() {
-    use wekeeper_api::distribution::domain::{
-        device_control::Credential, mobile_execution::ConsentInput,
-    };
-    let (pool, a, school, device) = setup().await;
-    let service = Service(Repository(pool.clone()));
-    let grant = service
-        .write(
-            &a,
-            None,
-            "grant",
-            None,
-            "grant",
-            json!({"school_id":school,"device_id":device,"purpose":"通知"}),
-        )
-        .await
-        .unwrap();
-    let token_hash = wekeeper_api::business::hash("wk_device_test_consent");
-    sqlx::query("INSERT INTO device_credentials(token_hash,device_id,generation,expires_at) VALUES($1,$2,0,clock_timestamp()+interval '1 hour')").bind(&token_hash).bind(device).execute(&pool).await.unwrap();
-    let c = Credential {
-        device_id: device,
-        generation: 0,
-        token_hash,
-    };
-    let context = service.consent_context(&c).await.unwrap();
-    assert_eq!(context.len(), 1);
-    assert_eq!(context[0]["accepted"], false);
-    let input = ConsentInput {
-        grant_id: grant["id"].as_str().unwrap().parse().unwrap(),
-        grant_revision: 1,
-        scope_digest: context[0]["scope_digest"].as_str().unwrap().into(),
-        expected_revision: 0,
-        accepted: true,
-    };
-    let accepted = service.consent(&c, "accept", input.clone()).await.unwrap();
-    assert_eq!(accepted["revision"], 1);
-    assert_eq!(
-        service.consent(&c, "accept", input.clone()).await.unwrap(),
-        accepted
-    );
-    assert_eq!(
-        service.consent_context(&c).await.unwrap()[0]["accepted"],
-        true
-    );
-    let mut revoke = input.clone();
-    revoke.accepted = false;
-    revoke.expected_revision = 1;
-    assert!(service.consent(&c, "accept", revoke.clone()).await.is_err());
-    service.consent(&c, "revoke", revoke).await.unwrap();
-    assert_eq!(
-        service.consent_context(&c).await.unwrap()[0]["accepted"],
-        false
-    );
-    service
-        .write(
-            &a,
-            None,
-            "grant",
-            None,
-            "new-purpose",
-            json!({"school_id":school,"device_id":device,"purpose":"变更用途"}),
-        )
-        .await
-        .unwrap();
-    assert!(service.consent(&c, "stale", input).await.is_err());
-    let changed = service.consent_context(&c).await.unwrap();
-    assert_eq!(changed[0]["accepted"], false);
-    assert_eq!(changed[0]["scope"]["grant_revision"], 2);
-    let mut forged = c.clone();
-    forged.device_id = Uuid::new_v4();
-    assert!(service.consent_context(&forged).await.is_err());
-    sqlx::query("UPDATE device_credentials SET revoked_at=clock_timestamp() WHERE token_hash=$1")
-        .bind(&c.token_hash)
-        .execute(&pool)
-        .await
-        .unwrap();
-    assert!(service.consent_context(&c).await.is_err());
-}
-
-#[tokio::test]
-#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn flow_release_and_assignment_require_current_device_validation_without_official_configuration()
- {
-    use wekeeper_api::distribution::domain::{
-        device_control::Credential,
-        mobile_execution::{ConsentInput, FLOW_CHECKS, ValidationResultInput},
-    };
-    let (pool, a, school, device) = setup().await;
-    let service = Service(Repository(pool.clone()));
-    service
-        .write(
-            &a,
-            None,
-            "grant",
-            None,
-            "flow-grant",
-            json!({"school_id":school,"device_id":device,"purpose":"通知"}),
-        )
-        .await
-        .unwrap();
-    let flow: Value = serde_json::from_str(include_str!(
-        "../../api-contract/fixtures/mobile-execution-flow-v2.json"
-    ))
-    .unwrap();
-    let version = service
-        .write(
-            &a,
-            Some(school),
-            "flow",
-            None,
-            "register",
-            json!({"name":"独立手机流程","flow":flow}),
-        )
-        .await
-        .unwrap();
-    let fid: Uuid = version["id"].as_str().unwrap().parse().unwrap();
     assert!(
         service
             .write(
                 &a,
-                Some(school),
-                "validation",
                 None,
-                "without-consent",
-                json!({"device_id":device,"flow_version_id":fid,"search_text":"现场验证群"})
-            )
-            .await
-            .is_err()
-    );
-    let token_hash = wekeeper_api::business::hash("wk_device_flow_test");
-    sqlx::query("INSERT INTO device_credentials(token_hash,device_id,generation,expires_at) VALUES($1,$2,0,clock_timestamp()+interval '1 hour')").bind(&token_hash).bind(device).execute(&pool).await.unwrap();
-    let c = Credential {
-        device_id: device,
-        generation: 0,
-        token_hash,
-    };
-    let context = service.consent_context(&c).await.unwrap();
-    service
-        .consent(
-            &c,
-            "flow-consent",
-            ConsentInput {
-                grant_id: context[0]["id"].as_str().unwrap().parse().unwrap(),
-                grant_revision: 1,
-                scope_digest: context[0]["scope_digest"].as_str().unwrap().into(),
-                expected_revision: 0,
-                accepted: true,
-            },
-        )
-        .await
-        .unwrap();
-    let validation = service
-        .write(
-            &a,
-            Some(school),
-            "validation",
-            None,
-            "validate",
-            json!({"device_id":device,"flow_version_id":fid,"search_text":"现场验证群"}),
-        )
-        .await
-        .unwrap();
-    assert!(validation.get("challenge").is_none());
-    let vid: Uuid = validation["id"].as_str().unwrap().parse().unwrap();
-    assert!(
-        service
-            .write(
-                &a,
-                Some(school),
-                "release",
+                "grant",
                 None,
-                "before-pass",
-                json!({"flow_version_id":fid,"validation_id":vid,"name":"发布"})
-            )
-            .await
-            .is_err()
-    );
-    let jobs = service.validations(&c).await.unwrap();
-    assert_eq!(jobs.len(), 1);
-    let result = ValidationResultInput {
-        challenge: jobs[0]["challenge"].as_str().unwrap().into(),
-        flow_digest: version["content_digest"].as_str().unwrap().into(),
-        protocol_version: 6,
-        engine_version: "otter-ui/2".into(),
-        package_name: "com.tencent.wework".into(),
-        version_code: 100,
-        checks: FLOW_CHECKS.iter().map(|v| (v.to_string(), true)).collect(),
-        evidence: "仅观察首群和发送控件，未点击发送".into(),
-    };
-    let passed = service
-        .validation_result(&c, vid, "result", result.clone())
-        .await
-        .unwrap();
-    assert_eq!(passed["state"], "passed");
-    assert!(passed["result"].get("challenge").is_none());
-    assert_eq!(
-        passed,
-        service
-            .validation_result(&c, vid, "result", result)
-            .await
-            .unwrap()
-    );
-    let release = service
-        .write(
-            &a,
-            Some(school),
-            "release",
-            None,
-            "release",
-            json!({"flow_version_id":fid,"validation_id":vid,"name":"已验证发布"}),
-        )
-        .await
-        .unwrap();
-    let rid: Uuid = release["id"].as_str().unwrap().parse().unwrap();
-    let assignment = service
-        .write(
-            &a,
-            Some(school),
-            "assignment",
-            None,
-            "assign",
-            json!({"device_id":device,"release_id":rid,"expected_revision":0,"enabled":true}),
-        )
-        .await
-        .unwrap();
-    let aid: Uuid = assignment["id"].as_str().unwrap().parse().unwrap();
-    let list = service
-        .list(
-            &a,
-            Some(school),
-            Resource::Assignments,
-            Page::default(),
-            String::new(),
-            None,
-        )
-        .await
-        .unwrap();
-    assert_eq!(list[0]["available"], true);
-    assert!(
-        service
-            .write(
-                &a,
-                Some(school),
-                "update-assignment",
-                Some(aid),
-                "stale",
-                json!({"device_id":device,"release_id":rid,"expected_revision":0,"enabled":false})
-            )
-            .await
-            .is_err()
-    );
-    // Preview/confirm must remain independent of the old phone/official model.
-    let target = service
-        .write(
-            &a,
-            Some(school),
-            "target",
-            None,
-            "task-target",
-            json!({"search_text":"独立目标  原文","device_ids":[device]}),
-        )
-        .await
-        .unwrap();
-    let target_id = target["id"].clone();
-    let preview_input =
-        json!({"device_id":device,"target_ids":[target_id],"message":" 原文\n正文 "});
-    let preview = service
-        .write(
-            &a,
-            Some(school),
-            "task-preview",
-            None,
-            "preview-task",
-            preview_input.clone(),
-        )
-        .await
-        .unwrap();
-    // Metadata does not invalidate execution versions or rewrite snapshots.
-    service.write(&a, Some(school), "update-target", Some(target_id.as_str().unwrap().parse().unwrap()), "remark-only", json!({"expected_revision":1,"search_text":"独立目标  原文","alias":"展示别名","remark":"改备注","enabled":true})).await.unwrap();
-    let confirmation =
-        json!({"preview_id":preview["id"],"preview_digest":preview["digest"],"confirmed":true});
-    let task = service
-        .write(
-            &a,
-            Some(school),
-            "confirm-task",
-            None,
-            "confirm-task",
-            confirmation.clone(),
-        )
-        .await
-        .unwrap();
-    let replay = service
-        .write(
-            &a,
-            Some(school),
-            "confirm-task",
-            None,
-            "confirm-task",
-            confirmation.clone(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(replay, task);
-    assert!(
-        service
-            .write(
-                &a,
-                Some(school),
-                "confirm-task",
-                None,
-                "second-confirm-key",
-                confirmation
+                "old-grant",
+                json!({"school_id":school,"device_id":device,"purpose":"old"})
             )
             .await
             .is_err()
@@ -607,112 +352,253 @@ async fn flow_release_and_assignment_require_current_device_validation_without_o
                 Some(school),
                 "task-preview",
                 None,
-                "occupied-preview",
-                preview_input.clone()
+                "old-preview",
+                json!({"device_id":device,"target_ids":[target["id"]],"message":"消息"})
             )
             .await
             .is_err()
     );
-    let tasks = service
-        .list(
-            &a,
-            Some(school),
-            Resource::Tasks,
-            Page::default(),
-            String::new(),
-            None,
-        )
+    pool.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires WEKEEPER_TEST_DATABASE_URL pointing to an isolated PostgreSQL"]
+async fn shared_capability_consent_is_device_scoped_versioned_and_never_execution_ready() {
+    use wekeeper_api::distribution::domain::{
+        device_control::Credential, mobile_execution::shared_capability::DecisionInput,
+    };
+    let (pool, actor, school, device) = setup().await;
+    let service = Service(Repository(pool.clone()));
+    sqlx::query("UPDATE execution_devices SET credential_generation=1 WHERE id=$1")
+        .bind(device)
+        .execute(&pool)
         .await
         .unwrap();
-    assert_eq!(tasks[0]["plan"]["message"], " 原文\n正文 ");
-    assert_eq!(
-        tasks[0]["items"][0]["snapshot"]["search_text"],
-        "独立目标  原文"
+    sqlx::query("INSERT INTO device_credentials(token_hash,device_id,generation,expires_at) VALUES('cap-test', $1,1,clock_timestamp()+interval '1 hour')").bind(device).execute(&pool).await.unwrap();
+    let credential = Credential {
+        device_id: device,
+        generation: 1,
+        token_hash: "cap-test".into(),
+    };
+    assert!(
+        service
+            .capability_context(&credential)
+            .await
+            .unwrap()
+            .is_empty()
     );
-    let tid = task["id"].as_str().unwrap().parse().unwrap();
+    let flow: serde_json::Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/shared-mobile-flow-v7.json"
+    ))
+    .unwrap();
+    let config = json!({"device_id":device,"expected_revision":0,"name":"全局配置","enabled":true,"flow":flow});
     assert!(
         service
             .write(
-                &a,
+                &actor,
                 Some(school),
-                "archive-target",
-                Some(target_id.as_str().unwrap().parse().unwrap()),
-                "archive-active",
-                json!({"expected_revision":2,"reason":"归档"})
+                "capability",
+                None,
+                "school-forbidden",
+                config.clone()
             )
             .await
             .is_err()
     );
-    service
-        .write(
-            &a,
-            Some(school),
-            "cancel-task",
-            Some(tid),
-            "cancel-task",
-            json!({"expected_revision":1,"reason":"取消未领取任务"}),
-        )
+    let result = service
+        .write(&actor, None, "capability", None, "create", config.clone())
         .await
         .unwrap();
-    let changed = service
+    assert_eq!(result["execution_ready"], false);
+    assert_eq!(
+        service
+            .write(&actor, None, "capability", None, "create", config.clone())
+            .await
+            .unwrap(),
+        result
+    );
+    assert!(
+        service
+            .write(
+                &actor,
+                None,
+                "capability",
+                None,
+                "duplicate",
+                config.clone()
+            )
+            .await
+            .is_err()
+    );
+    let cap: Uuid = serde_json::from_value(result["id"].clone()).unwrap();
+    let scope = service
+        .capability_context(&credential)
+        .await
+        .unwrap()
+        .remove(0);
+    assert!(scope["scope"].get("school_id").is_none());
+    let input:DecisionInput=serde_json::from_value(json!({"capability_id":cap,"configuration_revision":1,"scope_digest":scope["scope_digest"],"expected_revision":0,"accepted":true})).unwrap();
+    let saved = service
+        .capability_decision(&credential, "accept", input.clone())
+        .await
+        .unwrap();
+    assert_eq!(saved["accepted"], true);
+    assert_eq!(
+        service
+            .capability_decision(&credential, "accept", input.clone())
+            .await
+            .unwrap(),
+        saved
+    );
+    let mut different = input.clone();
+    different.accepted = false;
+    assert!(
+        service
+            .capability_decision(&credential, "accept", different)
+            .await
+            .is_err()
+    );
+    assert!(
+        service
+            .capability_decision(&credential, "stale", input.clone())
+            .await
+            .is_err()
+    );
+    let mut next = input.clone();
+    next.expected_revision = 1;
+    next.accepted = false;
+    let (a, b) = tokio::join!(
+        service.capability_decision(&credential, "race-a", next.clone()),
+        service.capability_decision(&credential, "race-b", next)
+    );
+    assert_ne!(a.is_ok(), b.is_ok());
+    assert_eq!(
+        service.capability_context(&credential).await.unwrap()[0]["accepted"],
+        false
+    );
+    // Another valid device cannot query this consent by copying a capability UUID or idempotency key.
+    let other = Uuid::new_v4();
+    sqlx::query("INSERT INTO execution_devices(id,name,enabled,credential_generation) VALUES($1,'Other',true,1)").bind(other).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO device_credentials(token_hash,device_id,generation,expires_at) VALUES('cap-other',$1,1,clock_timestamp()+interval '1 hour')").bind(other).execute(&pool).await.unwrap();
+    let other = Credential {
+        device_id: other,
+        generation: 1,
+        token_hash: "cap-other".into(),
+    };
+    assert!(service.capability_context(&other).await.unwrap().is_empty());
+    assert!(
+        service
+            .capability_decision(&other, "accept", input.clone())
+            .await
+            .is_err()
+    );
+    let mut updated = config;
+    updated["expected_revision"] = json!(1);
+    updated["name"] = json!("配置二");
+    service
         .write(
-            &a,
-            Some(school),
-            "task-preview",
+            &actor,
             None,
-            "new-preview",
-            preview_input,
+            "update-capability",
+            Some(cap),
+            "update",
+            updated.clone(),
         )
         .await
         .unwrap();
-    service.write(&a, Some(school), "update-target", Some(target_id.as_str().unwrap().parse().unwrap()), "locator-change", json!({"expected_revision":2,"search_text":"已改名","alias":"展示别名","remark":"改备注","enabled":true})).await.unwrap();
-    assert!(service.write(&a, Some(school), "confirm-task", None, "stale-locator-confirm", json!({"preview_id":changed["id"],"preview_digest":changed["digest"],"confirmed":true})).await.is_err());
+    assert!(
+        service
+            .write(
+                &actor,
+                None,
+                "update-capability",
+                Some(cap),
+                "stale-update",
+                updated.clone()
+            )
+            .await
+            .is_err()
+    );
+    assert!(
+        service
+            .capability_decision(&credential, "old-config", input)
+            .await
+            .is_err()
+    );
+    let offers = service.capability_context(&credential).await.unwrap();
+    assert_eq!(offers[0]["accepted"], false);
+    assert_eq!(offers[0]["scope"]["configuration_revision"], 2);
+    // Rotation cannot replay an agreement from the prior credential generation.
+    sqlx::query("UPDATE execution_devices SET credential_generation=2 WHERE id=$1")
+        .bind(device)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO device_credentials(token_hash,device_id,generation,expires_at) VALUES('cap-rotated',$1,2,clock_timestamp()+interval '1 hour')").bind(device).execute(&pool).await.unwrap();
+    assert!(service.capability_context(&credential).await.is_err());
+    let rotated = Credential {
+        device_id: device,
+        generation: 2,
+        token_hash: "cap-rotated".into(),
+    };
+    let mut new_input:DecisionInput=serde_json::from_value(json!({"capability_id":cap,"configuration_revision":2,"scope_digest":offers[0]["scope_digest"],"expected_revision":2,"accepted":true})).unwrap();
+    assert!(
+        service
+            .capability_decision(&rotated, "accept", new_input.clone())
+            .await
+            .is_err()
+    );
+    let current = service.capability_context(&rotated).await.unwrap();
+    new_input.scope_digest = current[0]["scope_digest"].as_str().unwrap().into();
+    service
+        .capability_decision(&rotated, "accept", new_input)
+        .await
+        .unwrap();
+    assert_eq!(
+        service.capability_context(&rotated).await.unwrap()[0]["accepted"],
+        true
+    );
+    assert!(
+        sqlx::query(
+            "UPDATE mobile_device_capability_versions SET name='changed' WHERE capability_id=$1"
+        )
+        .bind(cap)
+        .execute(&pool)
+        .await
+        .is_err()
+    );
+    updated["expected_revision"] = json!(2);
+    updated["enabled"] = json!(false);
     service
         .write(
-            &a,
-            Some(school),
-            "revoke-release",
-            Some(rid),
-            "revoke-flow",
-            json!({"expected_revision":1,"reason":"停用发布"}),
+            &actor,
+            None,
+            "update-capability",
+            Some(cap),
+            "disable",
+            updated,
         )
         .await
         .unwrap();
+    assert!(
+        service
+            .capability_context(&rotated)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     let list = service
         .list(
-            &a,
-            Some(school),
-            Resource::Assignments,
+            &actor,
+            None,
+            Resource::Capabilities,
             Page::default(),
             String::new(),
-            None,
+            Some(device),
         )
         .await
         .unwrap();
-    assert_eq!(list[0]["available"], false);
-    // An invalidated release must still allow stopping its configuration.
-    service
-        .write(
-            &a,
-            Some(school),
-            "update-assignment",
-            Some(aid),
-            "stop-assignment",
-            json!({"device_id":device,"release_id":rid,"expected_revision":1,"enabled":false}),
-        )
-        .await
-        .unwrap();
-    assert!(
-        service
-            .write(
-                &a,
-                Some(school),
-                "update-assignment",
-                Some(aid),
-                "enable-revoked",
-                json!({"device_id":device,"release_id":rid,"expected_revision":2,"enabled":true})
-            )
-            .await
-            .is_err()
-    );
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0]["execution_ready"], false);
+    pool.close().await;
 }

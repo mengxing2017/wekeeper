@@ -10,11 +10,32 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct Service<R = Repository>(pub R);
 impl<R: Store> Service<R> {
+    pub async fn capability_context(
+        &self,
+        c: &crate::distribution::domain::device_control::Credential,
+    ) -> Result<Vec<Value>> {
+        self.0.capability_context(c).await
+    }
+    pub async fn capability_decision(
+        &self,
+        c: &crate::distribution::domain::device_control::Credential,
+        key: &str,
+        input: crate::distribution::domain::mobile_execution::shared_capability::DecisionInput,
+    ) -> Result<Value> {
+        input.validate()?;
+        self.0
+            .capability_decision(c, &text(key, 1, 128)?, input)
+            .await
+    }
+
     pub async fn validations(
         &self,
         c: &crate::distribution::domain::device_control::Credential,
     ) -> Result<Vec<Value>> {
-        self.0.validations(c).await
+        let _ = c;
+        Err(crate::business::Error::Invalid(
+            "旧手机业务协议已停止，请升级共享手机执行版本".into(),
+        ))
     }
     pub async fn validation_result(
         &self,
@@ -33,7 +54,10 @@ impl<R: Store> Service<R> {
         &self,
         credential: &crate::distribution::domain::device_control::Credential,
     ) -> Result<Vec<Value>> {
-        self.0.consent_context(credential).await
+        let _ = credential;
+        Err(crate::business::Error::Invalid(
+            "旧学校设备授权已停止，请升级共享手机执行版本".into(),
+        ))
     }
     pub async fn consent(
         &self,
@@ -41,14 +65,10 @@ impl<R: Store> Service<R> {
         key: &str,
         input: crate::distribution::domain::mobile_execution::ConsentInput,
     ) -> Result<Value> {
-        if input.grant_revision < 1
-            || input.expected_revision < 0
-            || input.scope_digest.len() != 64
-            || !input.scope_digest.bytes().all(|b| b.is_ascii_hexdigit())
-        {
-            return Err(crate::business::Error::Invalid("授权版本或摘要无效".into()));
-        }
-        self.0.consent(credential, &text(key, 1, 128)?, input).await
+        let _ = (credential, key, input);
+        Err(crate::business::Error::Invalid(
+            "旧学校设备授权已停止，请升级共享手机执行版本".into(),
+        ))
     }
 
     pub async fn target(&self, actor: &Actor, school: Uuid, id: Uuid) -> Result<Value> {
@@ -84,6 +104,9 @@ impl<R: Store> Service<R> {
         key: &str,
         input: Value,
     ) -> Result<Value> {
+        if school.is_some() && matches!(action, "bind" | "update-binding" | "revoke-binding") {
+            return Err(crate::business::Error::Forbidden);
+        }
         if let Some(s) = school {
             actor.authorize(
                 s,

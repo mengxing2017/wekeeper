@@ -26,6 +26,91 @@ fn key(h: &HeaderMap) -> &str {
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
 }
+async fn platform_capabilities(
+    State(a): State<Application>,
+    actor: Actor,
+    Query(f): Query<Filter>,
+) -> Result<ApiResponse> {
+    Ok(collection(
+        "mobile-device-capabilities",
+        a.mobile_execution()
+            .list(
+                &actor,
+                None,
+                Resource::Capabilities,
+                f.page.clone(),
+                f.search,
+                f.device_id,
+            )
+            .await?,
+        &f.page,
+    ))
+}
+async fn create_capability(
+    State(a): State<Application>,
+    actor: Actor,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "mobile-device-capabilities",
+        a.mobile_execution()
+            .write(
+                &actor,
+                None,
+                "capability",
+                None,
+                key(&h),
+                input.decode::<Value>("mobile-device-capabilities")?,
+            )
+            .await?,
+    ))
+}
+async fn update_capability(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(id): Path<Uuid>,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "mobile-device-capabilities",
+        a.mobile_execution()
+            .write(
+                &actor,
+                None,
+                "update-capability",
+                Some(id),
+                key(&h),
+                input.decode::<Value>("mobile-device-capabilities")?,
+            )
+            .await?,
+    ))
+}
+async fn capability_context(State(a): State<Application>, h: HeaderMap) -> Result<ApiResponse> {
+    let c = device_credential(&a, &h).await?;
+    Ok(resource(
+        "mobile-device-capability-contexts",
+        serde_json::json!({"id":c.device_id,"protocol_version":7,"scopes":a.mobile_execution().capability_context(&c).await?}),
+    ))
+}
+async fn capability_decision(
+    State(a): State<Application>,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    let c = device_credential(&a, &h).await?;
+    Ok(resource(
+        "mobile-device-capability-consents",
+        a.mobile_execution()
+            .capability_decision(
+                &c,
+                key(&h),
+                input.decode("mobile-device-capability-consents")?,
+            )
+            .await?,
+    ))
+}
 async fn platform_devices(
     State(a): State<Application>,
     actor: Actor,
@@ -109,26 +194,6 @@ async fn bindings(
         &f.page,
     ))
 }
-async fn grants(
-    State(a): State<Application>,
-    actor: Actor,
-    Query(f): Query<Filter>,
-) -> Result<ApiResponse> {
-    Ok(collection(
-        "mobile-device-school-grants",
-        a.mobile_execution()
-            .list(
-                &actor,
-                None,
-                Resource::Grants,
-                f.page.clone(),
-                f.search,
-                f.device_id,
-            )
-            .await?,
-        &f.page,
-    ))
-}
 async fn target(
     State(a): State<Application>,
     actor: Actor,
@@ -153,7 +218,6 @@ async fn target(
 async fn binding(
     State(a): State<Application>,
     actor: Actor,
-    Path(s): Path<Uuid>,
     h: HeaderMap,
     input: Input,
 ) -> Result<ApiResponse> {
@@ -162,7 +226,7 @@ async fn binding(
         a.mobile_execution()
             .write(
                 &actor,
-                Some(s),
+                None,
                 "bind",
                 None,
                 key(&h),
@@ -171,51 +235,10 @@ async fn binding(
             .await?,
     ))
 }
-async fn grant(
-    State(a): State<Application>,
-    actor: Actor,
-    h: HeaderMap,
-    input: Input,
-) -> Result<ApiResponse> {
-    Ok(resource(
-        "mobile-device-school-grants",
-        a.mobile_execution()
-            .write(
-                &actor,
-                None,
-                "grant",
-                None,
-                key(&h),
-                input.decode::<Value>("mobile-device-school-grants")?,
-            )
-            .await?,
-    ))
-}
-async fn revoke_grant(
-    State(a): State<Application>,
-    actor: Actor,
-    Path(id): Path<Uuid>,
-    h: HeaderMap,
-    input: Input,
-) -> Result<ApiResponse> {
-    Ok(resource(
-        "mobile-device-school-grants",
-        a.mobile_execution()
-            .write(
-                &actor,
-                None,
-                "revoke-grant",
-                Some(id),
-                key(&h),
-                input.decode::<Value>("mobile-device-school-grants")?,
-            )
-            .await?,
-    ))
-}
 async fn revoke_binding(
     State(a): State<Application>,
     actor: Actor,
-    Path((s, id)): Path<(Uuid, Uuid)>,
+    Path(id): Path<Uuid>,
     h: HeaderMap,
     input: Input,
 ) -> Result<ApiResponse> {
@@ -224,7 +247,7 @@ async fn revoke_binding(
         a.mobile_execution()
             .write(
                 &actor,
-                Some(s),
+                None,
                 "revoke-binding",
                 Some(id),
                 key(&h),
@@ -633,8 +656,85 @@ async fn cancel_task(
             .await?,
     ))
 }
+async fn platform_bindings(
+    State(a): State<Application>,
+    actor: Actor,
+    Query(f): Query<Filter>,
+) -> Result<ApiResponse> {
+    Ok(collection(
+        "mobile-target-bindings",
+        a.mobile_execution()
+            .list(
+                &actor,
+                None,
+                Resource::PlatformBindings,
+                f.page.clone(),
+                f.search,
+                f.device_id,
+            )
+            .await?,
+        &f.page,
+    ))
+}
+async fn platform_targets(
+    State(a): State<Application>,
+    actor: Actor,
+    Query(f): Query<Filter>,
+) -> Result<ApiResponse> {
+    Ok(collection(
+        "mobile-targets",
+        a.mobile_execution()
+            .list(
+                &actor,
+                None,
+                Resource::PlatformTargets,
+                f.page.clone(),
+                f.search,
+                None,
+            )
+            .await?,
+        &f.page,
+    ))
+}
+async fn update_binding(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(id): Path<Uuid>,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "mobile-target-bindings",
+        a.mobile_execution()
+            .write(
+                &actor,
+                None,
+                "update-binding",
+                Some(id),
+                key(&h),
+                input.decode::<Value>("mobile-target-bindings")?,
+            )
+            .await?,
+    ))
+}
 pub fn router() -> Router<Application> {
     Router::new()
+        .route(
+            "/api/v1/platform/mobile-execution/device-capabilities",
+            get(platform_capabilities).post(create_capability),
+        )
+        .route(
+            "/api/v1/platform/mobile-execution/device-capabilities/{id}",
+            axum::routing::patch(update_capability),
+        )
+        .route(
+            "/api/v7/device-execution/capability-context",
+            get(capability_context),
+        )
+        .route(
+            "/api/v7/device-execution/capability-consents",
+            post(capability_decision),
+        )
         .route(
             "/api/v1/schools/{school}/mobile-execution/task-previews",
             post(task_preview),
@@ -695,12 +795,20 @@ pub fn router() -> Router<Application> {
                 .delete(archive_target),
         )
         .route(
-            "/api/v1/platform/mobile-execution/device-school-grants",
-            get(grants).post(grant),
+            "/api/v1/platform/mobile-execution/target-bindings",
+            get(platform_bindings).post(binding),
         )
         .route(
-            "/api/v1/platform/mobile-execution/device-school-grants/{id}/revocations",
-            post(revoke_grant),
+            "/api/v1/platform/mobile-execution/target-bindings/{id}",
+            axum::routing::patch(update_binding),
+        )
+        .route(
+            "/api/v1/platform/mobile-execution/target-bindings/{id}/revocations",
+            post(revoke_binding),
+        )
+        .route(
+            "/api/v1/platform/mobile-execution/targets",
+            get(platform_targets),
         )
         .route(
             "/api/v1/schools/{school}/mobile-execution/devices",
@@ -711,15 +819,7 @@ pub fn router() -> Router<Application> {
             get(targets).post(target),
         )
         .route(
-            "/api/v1/schools/{school}/mobile-execution/targets-with-bindings",
-            post(target),
-        )
-        .route(
             "/api/v1/schools/{school}/mobile-execution/target-bindings",
-            get(bindings).post(binding),
-        )
-        .route(
-            "/api/v1/schools/{school}/mobile-execution/target-bindings/{id}/revocations",
-            post(revoke_binding),
+            get(bindings),
         )
 }

@@ -1173,3 +1173,32 @@ async fn phone_task_blockers_explain_concrete_next_steps() {
         );
     }
 }
+
+#[tokio::test]
+async fn v7_capability_routes_require_device_credentials_and_platform_identity() {
+    for (method,path,body) in [
+        ("GET","/api/v7/device-execution/capability-context",String::new()),
+        ("POST","/api/v7/device-execution/capability-consents",json!({"data":{"type":"mobile-device-capability-consents","attributes":{"capability_id":"00000000-0000-0000-0000-000000000002","configuration_revision":1,"scope_digest":"a".repeat(64),"expected_revision":0,"accepted":true}}}).to_string()),
+        ("GET","/api/v1/platform/mobile-execution/device-capabilities",String::new()),
+    ] {
+        let response=app().oneshot(Request::builder().method(method).uri(path)
+            .header("cookie","session=browser-session").header("content-type","application/vnd.api+json")
+            .body(Body::from(body)).unwrap()).await.unwrap();
+        assert_eq!(response.status(),StatusCode::UNAUTHORIZED);
+    }
+}
+#[tokio::test]
+async fn v7_capability_context_uses_the_shared_native_wire_fixture() {
+    use axum::response::IntoResponse;
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/shared-mobile-capability-context.json"
+    ))
+    .unwrap();
+    let mut attributes = fixture["data"]["attributes"].clone();
+    attributes["id"] = fixture["data"]["id"].clone();
+    let response =
+        wekeeper_api::http::jsonapi::resource("mobile-device-capability-contexts", attributes)
+            .into_response();
+    let body = to_bytes(response.into_body(), 1_048_576).await.unwrap();
+    assert_eq!(serde_json::from_slice::<Value>(&body).unwrap(), fixture);
+}

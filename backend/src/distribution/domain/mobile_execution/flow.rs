@@ -117,13 +117,19 @@ pub const FLOW_CHECKS: &[&str] = &[
 ];
 impl FlowV2 {
     pub fn validate(&self) -> Result<()> {
+        self.validate_protocol(6)
+    }
+    pub fn validate_shared(&self) -> Result<()> {
+        self.validate_protocol(7)
+    }
+    fn validate_protocol(&self, protocol: u8) -> Result<()> {
         require(
             self.schema_version == 2
-                && self.protocol_version == 6
+                && self.protocol_version == protocol
                 && self.engine_version == "otter-ui/2"
                 && self.app_key == "wecom"
                 && self.capability == "group_text",
-            "仅支持 v6、schema v2 的企业微信群文字流程",
+            "流程必须匹配指定业务协议和 schema v2 的企业微信群文字能力",
         )?;
         require(
             self.selection_policy == SELECTION_POLICY && self.result_order == "top_to_bottom",

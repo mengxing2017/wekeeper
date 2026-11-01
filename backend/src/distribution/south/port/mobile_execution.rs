@@ -12,10 +12,22 @@ pub enum Resource {
     Targets,
     Devices,
     PlatformDevices,
+    Capabilities,
     Bindings,
-    Grants,
+    PlatformBindings,
+    PlatformTargets,
 }
 pub trait Store: Clone + Send + Sync + 'static {
+    fn capability_context(
+        &self,
+        c: &crate::distribution::domain::device_control::Credential,
+    ) -> impl std::future::Future<Output = Result<Vec<Value>>> + Send;
+    fn capability_decision(
+        &self,
+        c: &crate::distribution::domain::device_control::Credential,
+        key: &str,
+        input: crate::distribution::domain::mobile_execution::shared_capability::DecisionInput,
+    ) -> impl std::future::Future<Output = Result<Value>> + Send;
     fn validations(
         &self,
         credential: &crate::distribution::domain::device_control::Credential,

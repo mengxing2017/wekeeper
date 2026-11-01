@@ -32,22 +32,22 @@ async fn object(tx: &mut Tx<'_>, table: &str, id: Uuid) -> Result<Value> {
         .await?
         .ok_or(Error::NotFound)
 }
-async fn bind(
-    tx: &mut Tx<'_>,
-    school: Uuid,
-    actor: Uuid,
-    target: Uuid,
-    devices: &[Uuid],
-) -> Result<()> {
-    for d in devices {
-        let grant:Uuid=sqlx::query_scalar("SELECT g.id FROM mobile_device_school_grants g JOIN execution_devices d ON d.id=g.device_id JOIN mobile_targets t ON t.school_id=g.school_id WHERE g.school_id=$1 AND g.device_id=$2 AND g.enabled AND d.enabled AND t.id=$3 AND t.enabled AND t.archived_at IS NULL FOR UPDATE OF g,t,d")
-            .bind(school).bind(d).bind(target).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("school_device_grant_required"))?;
-        sqlx::query("INSERT INTO mobile_device_target_bindings(id,school_id,device_id,target_id,grant_id,created_by,updated_by) VALUES($1,$2,$3,$4,$5,$6,$6) ON CONFLICT(school_id,device_id,target_id) DO UPDATE SET enabled=true,revision=mobile_device_target_bindings.revision+CASE WHEN mobile_device_target_bindings.enabled THEN 0 ELSE 1 END,updated_by=$6,updated_at=clock_timestamp()")
-            .bind(Uuid::now_v7()).bind(school).bind(d).bind(target).bind(grant).bind(actor).execute(&mut **tx).await?;
-    }
-    Ok(())
-}
 impl Store for Repository {
+    async fn capability_context(
+        &self,
+        c: &crate::distribution::domain::device_control::Credential,
+    ) -> Result<Vec<Value>> {
+        Repository::capability_context(self, c).await
+    }
+    async fn capability_decision(
+        &self,
+        c: &crate::distribution::domain::device_control::Credential,
+        key: &str,
+        input: shared_capability::DecisionInput,
+    ) -> Result<Value> {
+        Repository::capability_decision(self, c, key, input).await
+    }
+
     async fn validations(
         &self,
         c: &crate::distribution::domain::device_control::Credential,
@@ -97,13 +97,24 @@ impl Store for Repository {
         search: String,
         device: Option<Uuid>,
     ) -> Result<Vec<Value>> {
-        if matches!(resource, Resource::PlatformDevices | Resource::Grants) && school.is_some() {
+        if matches!(
+            resource,
+            Resource::Capabilities
+                | Resource::PlatformDevices
+                | Resource::PlatformBindings
+                | Resource::PlatformTargets
+        ) && school.is_some()
+        {
             return Err(Error::Forbidden);
         }
         let mut tx = self.0.begin().await?;
         authorize(&mut tx, actor.id, school, false).await?;
         let (limit, offset) = page.fetch_bounds()?;
         let sql = match resource {
+            Resource::Capabilities => {
+                "SELECT to_jsonb(k)||jsonb_build_object('flow',v.flow,'execution_ready',false,'execution_block_reason','shared_execution_upgrade_required') FROM mobile_device_capabilities k JOIN mobile_device_capability_versions v ON v.capability_id=k.id AND v.revision=k.revision WHERE $1::uuid IS NULL AND strpos(lower(k.name),lower($2))>0 AND ($3::uuid IS NULL OR k.device_id=$3) ORDER BY k.created_at,k.id LIMIT $4 OFFSET $5"
+            }
+
             Resource::Tasks => {
                 "SELECT to_jsonb(t)||jsonb_build_object('device_name',d.name,'plan',p.snapshot,'plan_digest',p.digest,'items',(SELECT COALESCE(jsonb_agg(to_jsonb(i) ORDER BY i.position),'[]'::jsonb) FROM mobile_execution_task_items i WHERE i.school_id=t.school_id AND i.task_id=t.id)) FROM mobile_execution_tasks t JOIN execution_devices d ON d.id=t.device_id JOIN mobile_execution_plans p ON p.task_id=t.id AND p.school_id=t.school_id WHERE t.school_id=$1 AND $2::text IS NOT NULL AND ($3::uuid IS NULL OR t.device_id=$3) ORDER BY t.created_at DESC,t.id DESC LIMIT $4 OFFSET $5"
             }
@@ -117,22 +128,22 @@ impl Store for Repository {
                 "SELECT to_jsonb(r)||jsonb_build_object('flow_name',f.name,'flow_digest',f.content_digest) FROM mobile_execution_flow_releases r JOIN mobile_execution_flow_versions f ON f.id=r.flow_version_id WHERE r.school_id=$1 AND strpos(lower(r.name),lower($2))>0 AND $3::uuid IS NULL ORDER BY r.created_at DESC,r.id DESC LIMIT $4 OFFSET $5"
             }
             Resource::Assignments => {
-                "SELECT to_jsonb(a)||jsonb_build_object('device_name',d.name,'release_name',r.name,'consent_required',NOT COALESCE(c.accepted AND c.grant_revision=g.revision,false),'available',a.enabled AND g.enabled AND d.enabled AND r.enabled AND COALESCE(c.accepted AND c.grant_revision=g.revision,false) AND EXISTS(SELECT 1 FROM mobile_execution_flow_validations v WHERE v.school_id=a.school_id AND v.device_id=a.device_id AND v.flow_version_id=r.flow_version_id AND v.state='passed' AND v.grant_revision=g.revision AND v.consent_id=c.id AND v.consent_revision=c.revision AND v.credential_generation=d.credential_generation AND NOT EXISTS(SELECT 1 FROM mobile_execution_flow_validations newer WHERE newer.device_id=v.device_id AND newer.flow_version_id=v.flow_version_id AND newer.state<>'pending' AND newer.completed_at>v.completed_at)),'device_validation_required',NOT EXISTS(SELECT 1 FROM mobile_execution_flow_validations v WHERE v.school_id=a.school_id AND v.device_id=a.device_id AND v.flow_version_id=r.flow_version_id AND v.state='passed' AND v.grant_revision=g.revision AND v.consent_id=c.id AND v.consent_revision=c.revision AND v.credential_generation=d.credential_generation AND NOT EXISTS(SELECT 1 FROM mobile_execution_flow_validations newer WHERE newer.device_id=v.device_id AND newer.flow_version_id=v.flow_version_id AND newer.state<>'pending' AND newer.completed_at>v.completed_at))) FROM mobile_execution_assignments a JOIN execution_devices d ON d.id=a.device_id JOIN mobile_device_school_grants g ON g.id=a.grant_id JOIN mobile_execution_flow_releases r ON r.id=a.release_id LEFT JOIN mobile_device_consents c ON c.grant_id=g.id WHERE a.school_id=$1 AND strpos(lower(d.name),lower($2))>0 AND ($3::uuid IS NULL OR a.device_id=$3) ORDER BY a.created_at,a.id LIMIT $4 OFFSET $5"
+                "SELECT to_jsonb(a)||jsonb_build_object('device_name',d.name,'release_name',r.name,'consent_required',NOT COALESCE(c.accepted AND c.grant_revision=g.revision,false),'available',false,'historical_configuration_valid',a.enabled AND g.enabled AND d.enabled AND r.enabled AND COALESCE(c.accepted AND c.grant_revision=g.revision,false) AND EXISTS(SELECT 1 FROM mobile_execution_flow_validations v WHERE v.school_id=a.school_id AND v.device_id=a.device_id AND v.flow_version_id=r.flow_version_id AND v.state='passed' AND v.grant_revision=g.revision AND v.consent_id=c.id AND v.consent_revision=c.revision AND v.credential_generation=d.credential_generation AND NOT EXISTS(SELECT 1 FROM mobile_execution_flow_validations newer WHERE newer.device_id=v.device_id AND newer.flow_version_id=v.flow_version_id AND newer.state<>'pending' AND newer.completed_at>v.completed_at)),'device_validation_required',NOT EXISTS(SELECT 1 FROM mobile_execution_flow_validations v WHERE v.school_id=a.school_id AND v.device_id=a.device_id AND v.flow_version_id=r.flow_version_id AND v.state='passed' AND v.grant_revision=g.revision AND v.consent_id=c.id AND v.consent_revision=c.revision AND v.credential_generation=d.credential_generation AND NOT EXISTS(SELECT 1 FROM mobile_execution_flow_validations newer WHERE newer.device_id=v.device_id AND newer.flow_version_id=v.flow_version_id AND newer.state<>'pending' AND newer.completed_at>v.completed_at))) FROM mobile_execution_assignments a JOIN execution_devices d ON d.id=a.device_id JOIN mobile_device_school_grants g ON g.id=a.grant_id JOIN mobile_execution_flow_releases r ON r.id=a.release_id LEFT JOIN mobile_device_consents c ON c.grant_id=g.id WHERE a.school_id=$1 AND strpos(lower(d.name),lower($2))>0 AND ($3::uuid IS NULL OR a.device_id=$3) ORDER BY a.created_at,a.id LIMIT $4 OFFSET $5"
             }
             Resource::Targets => {
-                "SELECT to_jsonb(t) FROM mobile_targets t WHERE school_id=$1 AND archived_at IS NULL AND (strpos(lower(search_text),lower($2))>0 OR strpos(lower(alias),lower($2))>0) AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mobile_device_target_bindings b JOIN mobile_device_school_grants g ON g.id=b.grant_id JOIN execution_devices d ON d.id=b.device_id AND d.enabled WHERE t.enabled AND b.target_id=t.id AND b.school_id=t.school_id AND b.device_id=$3 AND b.enabled AND g.enabled)) ORDER BY created_at,id LIMIT $4 OFFSET $5"
+                "SELECT to_jsonb(t) FROM mobile_targets t WHERE school_id=$1 AND archived_at IS NULL AND (strpos(lower(search_text),lower($2))>0 OR strpos(lower(alias),lower($2))>0) AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id AND d.enabled WHERE t.enabled AND b.target_id=t.id AND b.school_id=t.school_id AND b.device_id=$3 AND b.enabled)) ORDER BY created_at,id LIMIT $4 OFFSET $5"
             }
             Resource::PlatformDevices => {
                 "SELECT to_jsonb(d)-'client_instance_id' FROM execution_devices d WHERE $1::uuid IS NULL AND strpos(lower(d.name),lower($2))>0 AND ($3::uuid IS NULL OR d.id=$3) ORDER BY d.created_at,d.id LIMIT $4 OFFSET $5"
             }
             Resource::Devices => {
-                "SELECT jsonb_build_object('id',d.id,'name',d.name,'enabled',d.enabled,'last_seen_at',d.last_seen_at,'grant_id',g.id,'grant_revision',g.revision,'school_alias',g.school_alias,'school_remark',g.school_remark,'control_state',p.state,'last_control_heartbeat_at',p.last_control_heartbeat_at) FROM mobile_device_school_grants g JOIN execution_devices d ON d.id=g.device_id JOIN device_control_presence p ON p.id=d.id WHERE g.school_id=$1 AND g.enabled AND strpos(lower(d.name),lower($2))>0 AND ($3::uuid IS NULL OR d.id=$3) ORDER BY d.created_at,d.id LIMIT $4 OFFSET $5"
+                "SELECT jsonb_build_object('id',d.id,'name',d.name,'enabled',d.enabled,'last_seen_at',d.last_seen_at,'control_state',p.state,'last_control_heartbeat_at',p.last_control_heartbeat_at) FROM execution_devices d LEFT JOIN device_control_presence p ON p.id=d.id WHERE EXISTS(SELECT 1 FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id AND t.school_id=b.school_id WHERE b.device_id=d.id AND b.school_id=$1 AND b.enabled AND t.enabled AND t.archived_at IS NULL) AND strpos(lower(d.name),lower($2))>0 AND ($3::uuid IS NULL OR d.id=$3) ORDER BY d.created_at,d.id LIMIT $4 OFFSET $5"
             }
-            Resource::Bindings => {
-                "SELECT to_jsonb(b)||jsonb_build_object('device_name',d.name,'search_text',t.search_text,'target_alias',t.alias,'available',g.enabled AND d.enabled AND t.enabled AND t.archived_at IS NULL) FROM mobile_device_target_bindings b JOIN mobile_device_school_grants g ON g.id=b.grant_id JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id AND t.school_id=b.school_id WHERE b.school_id=$1 AND b.enabled AND ($2::text IS NOT NULL) AND ($3::uuid IS NULL OR b.device_id=$3) ORDER BY b.created_at,b.id LIMIT $4 OFFSET $5"
+            Resource::Bindings | Resource::PlatformBindings => {
+                "SELECT to_jsonb(b)||jsonb_build_object('school_name',s.name,'device_name',d.name,'search_text',COALESCE(b.search_text_override,t.search_text),'search_source',CASE WHEN b.search_text_override IS NULL THEN 'target_default' ELSE 'binding_override' END,'source_locator_revision',CASE WHEN b.search_text_override IS NULL THEN t.locator_revision ELSE b.locator_revision END,'target_alias',t.alias,'available',b.enabled AND d.enabled AND t.enabled AND t.archived_at IS NULL) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id AND t.school_id=b.school_id JOIN schools s ON s.id=t.school_id WHERE ($1::uuid IS NULL OR b.school_id=$1) AND (strpos(lower(t.search_text),lower($2))>0 OR strpos(lower(d.name),lower($2))>0 OR strpos(lower(t.alias),lower($2))>0 OR strpos(lower(COALESCE(b.search_text_override,'')),lower($2))>0) AND ($3::uuid IS NULL OR b.device_id=$3) ORDER BY b.created_at,b.id LIMIT $4 OFFSET $5"
             }
-            Resource::Grants => {
-                "SELECT to_jsonb(g)||jsonb_build_object('device_name',d.name,'school_name',s.name) FROM mobile_device_school_grants g JOIN execution_devices d ON d.id=g.device_id JOIN schools s ON s.id=g.school_id WHERE ($1::uuid IS NULL OR g.school_id=$1) AND $2::text IS NOT NULL AND ($3::uuid IS NULL OR g.device_id=$3) ORDER BY g.created_at,g.id LIMIT $4 OFFSET $5"
+            Resource::PlatformTargets => {
+                "SELECT jsonb_build_object('id',t.id,'school_id',t.school_id,'school_name',s.name,'search_text',t.search_text,'alias',t.alias,'enabled',t.enabled) FROM mobile_targets t JOIN schools s ON s.id=t.school_id WHERE $1::uuid IS NULL AND s.active AND t.archived_at IS NULL AND (strpos(lower(t.search_text),lower($2))>0 OR strpos(lower(t.alias),lower($2))>0 OR strpos(lower(s.name),lower($2))>0) AND $3::uuid IS NULL ORDER BY t.created_at,t.id LIMIT $4 OFFSET $5"
             }
         };
         let rows = sqlx::query_scalar(sql)
@@ -155,6 +166,22 @@ impl Store for Repository {
         key: &str,
         input: Value,
     ) -> Result<Value> {
+        if matches!(
+            action,
+            "task-preview"
+                | "confirm-task"
+                | "flow"
+                | "validation"
+                | "release"
+                | "revoke-release"
+                | "assignment"
+                | "update-assignment"
+        ) {
+            return Err(Error::Invalid("共享手机执行链路正在升级，暂不能登记或启用旧学校设备执行计划；已有记录仍可查看和取消未领取任务".into()));
+        }
+        if matches!(action, "bind" | "update-binding" | "revoke-binding") && school.is_some() {
+            return Err(Error::Forbidden);
+        }
         let mut tx = self.0.begin().await?;
         // All current resource changes share one channel-local guard, including idempotency.
         sqlx::query("SELECT pg_advisory_xact_lock(78234610243)")
@@ -184,6 +211,20 @@ impl Store for Repository {
         }
         let resource = id.unwrap_or_else(Uuid::now_v7);
         let result = match action {
+            "capability" | "update-capability" => {
+                if school.is_some() {
+                    return Err(Error::Forbidden);
+                }
+                capabilities::configuration(
+                    &mut tx,
+                    actor.id,
+                    resource,
+                    &input,
+                    action == "capability",
+                )
+                .await?
+            }
+
             "task-preview" | "confirm-task" | "cancel-task" => {
                 tasks::write(
                     &mut tx,
@@ -207,35 +248,6 @@ impl Store for Repository {
                 )
                 .await?
             }
-            "grant" => {
-                if school.is_some() {
-                    return Err(Error::Forbidden);
-                }
-                let v: GrantInput = serde_json::from_value(input.clone())
-                    .map_err(|_| Error::Invalid("授权字段无效".into()))?;
-                validate_text(&v.purpose, 1, 256, 1024)?;
-                let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM schools WHERE id=$1 AND active) AND EXISTS(SELECT 1 FROM execution_devices WHERE id=$2)").bind(v.school_id).bind(v.device_id).fetch_one(&mut *tx).await?;
-                if !active {
-                    return Err(Error::NotFound);
-                }
-                let grant:Uuid=sqlx::query_scalar("INSERT INTO mobile_device_school_grants(id,school_id,device_id,purpose,granted_by) VALUES($1,$2,$3,$4,$5) ON CONFLICT(school_id,device_id) DO UPDATE SET enabled=true,purpose=$4,revision=mobile_device_school_grants.revision+1,granted_by=$5,revoked_by=NULL,revoked_at=NULL RETURNING id")
-                    .bind(resource).bind(v.school_id).bind(v.device_id).bind(v.purpose).bind(actor.id).fetch_one(&mut *tx).await?;
-                object(&mut tx, "mobile_device_school_grants", grant).await?
-            }
-            "revoke-grant" => {
-                if school.is_some() {
-                    return Err(Error::Forbidden);
-                }
-                let v: RevisionInput = serde_json::from_value(input.clone())
-                    .map_err(|_| Error::Invalid("撤权字段无效".into()))?;
-                validate_text(&v.reason, 1, 2000, 8000)?;
-                let n=sqlx::query("UPDATE mobile_device_school_grants SET enabled=false,revision=revision+1,revoked_by=$2,revoked_at=clock_timestamp() WHERE id=$1 AND revision=$3")
-                    .bind(resource).bind(actor.id).bind(v.expected_revision).execute(&mut *tx).await?.rows_affected();
-                if n != 1 {
-                    return Err(Error::Policy("revision_conflict"));
-                }
-                object(&mut tx, "mobile_device_school_grants", resource).await?
-            }
             "target" => {
                 let school = school.ok_or(Error::Forbidden)?;
                 let v: TargetInput = serde_json::from_value(input.clone())
@@ -246,15 +258,7 @@ impl Store for Repository {
                 if !candidates.is_empty() {
                     // Confirmation binds exact input and duplicate candidates, never inferred identity.
                     let confirmation = hash(
-                        &json!([
-                            school,
-                            v.search_text,
-                            v.alias,
-                            v.remark,
-                            v.device_ids,
-                            candidates
-                        ])
-                        .to_string(),
+                        &json!([school, v.search_text, v.alias, v.remark, candidates]).to_string(),
                     );
                     if v.duplicate_confirmation.as_deref() != Some(&confirmation) {
                         let response = json!({"id":resource,"confirmation_required":true,"duplicate_confirmation":confirmation,"candidate_ids":candidates.iter().map(|v|v.0).collect::<Vec<_>>()});
@@ -266,7 +270,6 @@ impl Store for Repository {
                 }
                 sqlx::query("INSERT INTO mobile_targets(id,school_id,search_text,alias,remark,created_by,updated_by) VALUES($1,$2,$3,$4,$5,$6,$6)")
                     .bind(resource).bind(school).bind(&v.search_text).bind(&v.alias).bind(&v.remark).bind(actor.id).execute(&mut *tx).await?;
-                bind(&mut tx, school, actor.id, resource, &v.device_ids).await?;
                 object(&mut tx, "mobile_targets", resource).await?
             }
             "update-target" => {
@@ -300,28 +303,45 @@ impl Store for Repository {
                 object(&mut tx, "mobile_targets", resource).await?
             }
             "bind" => {
-                let school = school.ok_or(Error::Forbidden)?;
-                let v: BindingInput = serde_json::from_value(input.clone())
+                let v: SharedBindingInput = serde_json::from_value(input.clone())
                     .map_err(|_| Error::Invalid("绑定字段无效".into()))?;
-                if v.device_ids.is_empty() || v.device_ids.len() > 100 {
-                    return Err(Error::Invalid("请选择 1–100 台设备".into()));
+                v.validate()?;
+                let target_school: Uuid = sqlx::query_scalar("SELECT t.school_id FROM mobile_targets t JOIN schools s ON s.id=t.school_id WHERE t.id=$1 AND t.enabled AND t.archived_at IS NULL AND s.active FOR SHARE OF t,s")
+                    .bind(v.target_id).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
+                let mut bindings = Vec::new();
+                for device in &v.device_ids {
+                    sqlx::query(
+                        "SELECT id FROM execution_devices WHERE id=$1 AND enabled FOR SHARE",
+                    )
+                    .bind(device)
+                    .fetch_optional(&mut *tx)
+                    .await?
+                    .ok_or(Error::NotFound)?;
+                    let binding: Uuid = sqlx::query_scalar("INSERT INTO mobile_device_target_bindings(id,school_id,device_id,target_id,search_text_override,created_by,updated_by) VALUES($1,$2,$3,$4,$5,$6,$6) ON CONFLICT(device_id,target_id) DO UPDATE SET enabled=true,search_text_override=$5,revision=mobile_device_target_bindings.revision+CASE WHEN NOT mobile_device_target_bindings.enabled OR mobile_device_target_bindings.search_text_override IS DISTINCT FROM $5 THEN 1 ELSE 0 END,locator_revision=mobile_device_target_bindings.locator_revision+CASE WHEN mobile_device_target_bindings.search_text_override IS DISTINCT FROM $5 THEN 1 ELSE 0 END,updated_by=$6,updated_at=clock_timestamp() RETURNING id")
+                        .bind(Uuid::now_v7()).bind(target_school).bind(device).bind(v.target_id).bind(&v.search_text_override).bind(actor.id).fetch_one(&mut *tx).await?;
+                    bindings.push(object(&mut tx, "mobile_device_target_bindings", binding).await?);
                 }
-                let mut unique = v.device_ids.clone();
-                unique.sort();
-                unique.dedup();
-                if unique.len() != v.device_ids.len() {
-                    return Err(Error::Invalid("设备不可重复".into()));
+                json!({"id":resource,"school_id":target_school,"target_id":v.target_id,"bindings":bindings})
+            }
+            "update-binding" => {
+                let v: SharedBindingUpdate = serde_json::from_value(input.clone())
+                    .map_err(|_| Error::Invalid("绑定字段无效".into()))?;
+                if let Some(value) = &v.search_text_override {
+                    validate_text(value, 1, 256, 1024)?;
                 }
-                bind(&mut tx, school, actor.id, v.target_id, &v.device_ids).await?;
-                json!({"id":resource,"target_id":v.target_id,"device_ids":v.device_ids})
+                let n=sqlx::query("UPDATE mobile_device_target_bindings b SET enabled=$3,search_text_override=$4,revision=revision+CASE WHEN enabled<>$3 OR search_text_override IS DISTINCT FROM $4 THEN 1 ELSE 0 END,locator_revision=locator_revision+CASE WHEN search_text_override IS DISTINCT FROM $4 THEN 1 ELSE 0 END,updated_by=$5,updated_at=clock_timestamp() WHERE id=$1 AND revision=$2 AND (NOT $3 OR EXISTS(SELECT 1 FROM mobile_targets t JOIN schools s ON s.id=t.school_id JOIN execution_devices d ON d.id=b.device_id WHERE t.id=b.target_id AND t.enabled AND t.archived_at IS NULL AND s.active AND d.enabled))")
+                    .bind(resource).bind(v.expected_revision).bind(v.enabled).bind(v.search_text_override).bind(actor.id).execute(&mut *tx).await?.rows_affected();
+                if n != 1 {
+                    return Err(Error::Policy("revision_conflict"));
+                }
+                object(&mut tx, "mobile_device_target_bindings", resource).await?
             }
             "revoke-binding" => {
-                let school = school.ok_or(Error::Forbidden)?;
                 let v: RevisionInput = serde_json::from_value(input.clone())
                     .map_err(|_| Error::Invalid("解绑字段无效".into()))?;
                 validate_text(&v.reason, 1, 2000, 8000)?;
-                let n=sqlx::query("UPDATE mobile_device_target_bindings SET enabled=false,revision=revision+1,updated_by=$4,updated_at=clock_timestamp() WHERE school_id=$1 AND id=$2 AND revision=$3")
-                    .bind(school).bind(resource).bind(v.expected_revision).bind(actor.id).execute(&mut *tx).await?.rows_affected();
+                let n=sqlx::query("UPDATE mobile_device_target_bindings SET enabled=false,revision=revision+1,updated_by=$3,updated_at=clock_timestamp() WHERE id=$1 AND revision=$2")
+                    .bind(resource).bind(v.expected_revision).bind(actor.id).execute(&mut *tx).await?.rows_affected();
                 if n != 1 {
                     return Err(Error::Policy("revision_conflict"));
                 }
@@ -344,3 +364,5 @@ mod consent;
 mod flows;
 
 mod tasks;
+
+mod capabilities;

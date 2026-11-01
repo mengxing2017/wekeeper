@@ -15,8 +15,6 @@ pub struct TargetInput {
     #[serde(default)]
     pub remark: String,
     #[serde(default)]
-    pub device_ids: Vec<Uuid>,
-    #[serde(default)]
     pub duplicate_confirmation: Option<String>,
 }
 impl TargetInput {
@@ -24,11 +22,7 @@ impl TargetInput {
         validate_text(&self.search_text, 1, 256, 1024)?;
         validate_text(&self.alias, 0, 128, 512)?;
         validate_text(&self.remark, 0, 2000, 8000)?;
-        require(self.device_ids.len() <= 100, "一次最多绑定 100 台设备")?;
-        let mut ids = self.device_ids.clone();
-        ids.sort();
-        ids.dedup();
-        require(ids.len() == self.device_ids.len(), "设备不可重复")
+        Ok(())
     }
 }
 pub fn validate_text(value: &str, min: usize, max: usize, bytes: usize) -> Result<()> {
@@ -44,16 +38,37 @@ pub fn validate_text(value: &str, min: usize, max: usize, bytes: usize) -> Resul
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct GrantInput {
-    pub school_id: Uuid,
-    pub device_id: Uuid,
-    pub purpose: String,
+pub struct SharedBindingInput {
+    pub target_id: Uuid,
+    pub device_ids: Vec<Uuid>,
+    #[serde(deserialize_with = "Deserialize::deserialize")]
+    pub search_text_override: Option<String>,
+}
+impl SharedBindingInput {
+    pub fn validate(&self) -> Result<()> {
+        require(!self.target_id.is_nil(), "请选择目标群")?;
+        require(
+            !self.device_ids.is_empty() && self.device_ids.len() <= 100,
+            "请选择 1–100 台设备",
+        )?;
+        let ids: std::collections::BTreeSet<_> = self.device_ids.iter().collect();
+        require(
+            ids.len() == self.device_ids.len() && self.device_ids.iter().all(|id| !id.is_nil()),
+            "设备不可重复或为空",
+        )?;
+        if let Some(value) = &self.search_text_override {
+            validate_text(value, 1, 256, 1024)?;
+        }
+        Ok(())
+    }
 }
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct BindingInput {
-    pub target_id: Uuid,
-    pub device_ids: Vec<Uuid>,
+pub struct SharedBindingUpdate {
+    pub expected_revision: i64,
+    pub enabled: bool,
+    #[serde(deserialize_with = "Deserialize::deserialize")]
+    pub search_text_override: Option<String>,
 }
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -71,7 +86,6 @@ mod tests {
             search_text: "家长  A群🦦".into(),
             alias: String::new(),
             remark: String::new(),
-            device_ids: vec![],
             duplicate_confirmation: None,
         };
         v.validate().unwrap();
@@ -151,3 +165,52 @@ pub use flow::*;
 
 mod task;
 pub use task::*;
+
+#[cfg(test)]
+mod shared_binding_tests {
+    use super::*;
+    #[test]
+    fn shared_binding_preserves_override_and_rejects_inferred_school_authority() {
+        let value = serde_json::json!({"target_id":Uuid::from_u128(1),"device_ids":[Uuid::from_u128(2)],"search_text_override":"同群  手机备注🦦"});
+        let input: SharedBindingInput = serde_json::from_value(value.clone()).unwrap();
+        input.validate().unwrap();
+        assert_eq!(serde_json::to_value(&input).unwrap(), value);
+        for field in ["school_id", "grant_id", "sender_account_id"] {
+            let mut bad = value.clone();
+            bad[field] = serde_json::json!(Uuid::from_u128(3));
+            assert!(serde_json::from_value::<SharedBindingInput>(bad).is_err());
+        }
+        for text in ["", " ", " 群", "群\n名"] {
+            let mut bad = value.clone();
+            bad["search_text_override"] = serde_json::json!(text);
+            assert!(
+                serde_json::from_value::<SharedBindingInput>(bad)
+                    .unwrap()
+                    .validate()
+                    .is_err()
+            );
+        }
+        let mut inherited = value.clone();
+        inherited["search_text_override"] = serde_json::Value::Null;
+        serde_json::from_value::<SharedBindingInput>(inherited)
+            .unwrap()
+            .validate()
+            .unwrap();
+        let mut duplicate = value;
+        duplicate["device_ids"] = serde_json::json!([Uuid::from_u128(2), Uuid::from_u128(2)]);
+        assert!(
+            serde_json::from_value::<SharedBindingInput>(duplicate)
+                .unwrap()
+                .validate()
+                .is_err()
+        );
+        assert!(
+            serde_json::from_value::<TargetInput>(
+                serde_json::json!({"search_text":"群","device_ids":[]})
+            )
+            .is_err()
+        );
+    }
+}
+
+pub mod shared_capability;
