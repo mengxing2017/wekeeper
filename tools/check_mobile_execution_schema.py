@@ -267,6 +267,47 @@ END $$;
     run(command, input=sql+'\n\n')
 
 
+def seed_legacy_retirement(command):
+    run(command, input="""
+INSERT INTO automation_flow_validations(id,school_id,device_id,manual_application,kind,revision,generation,credential_generation,state,created_by)
+VALUES('00000000-0000-0000-0000-000000000090','00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000006','{}','measure_manual',4,gen_random_uuid(),1,'queued','00000000-0000-0000-0000-000000000003'),
+('00000000-0000-0000-0000-000000000091','00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000006','{}','measure_manual',7,gen_random_uuid(),1,'accepted','00000000-0000-0000-0000-000000000003');
+"""+'\n\n')
+
+
+def verify_legacy_retirement(command):
+    source = (ROOT / 'backend/src/distribution/south/adapter/postgres/mobile_execution/field_checks.rs').read_text()
+    busy = re.search(r'"(SELECT EXISTS\(SELECT 1 FROM mobile_execution_device_reservations[^"\n]+)"', source).group(1)
+    busy = busy.replace('$1', "'00000000-0000-0000-0000-000000000006'::uuid")
+    sql = """
+DO $$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM automation_flow_validations WHERE id='00000000-0000-0000-0000-000000000090' AND state='cancelled' AND revision=5 AND retired_at IS NOT NULL) THEN RAISE EXCEPTION 'queued legacy work not retired'; END IF;
+ IF NOT EXISTS(SELECT 1 FROM automation_flow_validations WHERE id='00000000-0000-0000-0000-000000000091' AND state='accepted' AND revision=7 AND retired_at IS NOT NULL) THEN RAISE EXCEPTION 'accepted settlement identity lost'; END IF;
+ IF (SELECT inventory->'v5_validations'->>'accepted' FROM legacy_mobile_maintenance_retirement)<>'1' THEN RAISE EXCEPTION 'retirement inventory missing'; END IF;
+ BEGIN
+  INSERT INTO automation_flow_validations SELECT * FROM automation_flow_validations LIMIT 1;
+  RAISE EXCEPTION 'rollback reopened creation' USING ERRCODE='XX000';
+ EXCEPTION WHEN check_violation THEN
+  IF SQLERRM<>'legacy_mobile_maintenance_retired' THEN RAISE; END IF;
+ END;
+ BEGIN
+  UPDATE automation_flow_validations SET state='accepted' WHERE state='cancelled';
+  RAISE EXCEPTION 'rollback reopened acceptance' USING ERRCODE='XX000';
+ EXCEPTION WHEN check_violation THEN NULL; END;
+END $$;
+"""
+    sql += f"DO $$ BEGIN IF NOT ({busy}) THEN RAISE EXCEPTION 'accepted legacy work lost device exclusion'; END IF; END $$;"
+    sql += """
+INSERT INTO automation_flow_validation_events(job_id,event_id,body) VALUES('00000000-0000-0000-0000-000000000091',gen_random_uuid(),'{"outcome":"interrupted","test_only":true}');
+UPDATE automation_flow_validations SET state='interrupted',revision=revision+1 WHERE id='00000000-0000-0000-0000-000000000091';
+DO $$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM automation_flow_validation_events WHERE job_id='00000000-0000-0000-0000-000000000091') THEN RAISE EXCEPTION 'settlement evidence lost'; END IF;
+ IF (SELECT content FROM broadcast_tasks WHERE id='00000000-0000-0000-0000-000000000005')<>'Original content' THEN RAISE EXCEPTION 'official broadcast changed'; END IF;
+END $$;
+"""
+    run(command, input=sql+'\n\n')
+
+
 def run(command, **kwargs):
     result = subprocess.run(command, text=True, capture_output=True, **kwargs)
     errors = [line for line in result.stderr.splitlines() if "ERROR:" in line or "FATAL:" in line or "PANIC:" in line]
@@ -294,13 +335,16 @@ def main():
         run(command, input="\n".join(p.read_text() for p in migrations if "202611010106" <= p.name < "202611010108") + "\n\n")
         verify_shared(command, repository)
         verify_capabilities(command)
-        run(command, input="\n".join(p.read_text() for p in migrations if p.name >= "202611010108") + "\n\n")
+        run(command, input="\n".join(p.read_text() for p in migrations if "202611010108" <= p.name < "202611010110") + "\n\n")
+        seed_legacy_retirement(command)
+        run(command, input="\n".join(p.read_text() for p in migrations if p.name >= "202611010110") + "\n\n")
+        verify_legacy_retirement(command)
         verify_onboarding(command)
         verify_field_checks(command)
         queries = re.findall(r'"((?:SELECT|INSERT|UPDATE) [^"\n]*)"', "\n".join(p.read_text() for p in [repository, *repository.with_suffix("").glob("*.rs")]))
         static_queries = [json.loads('"' + query + '"') for query in queries if "{table}" not in query]
         run(command, input="\n".join(f"PREPARE phone_query_{i} AS {query};" for i, query in enumerate(static_queries)) + "\n\n")
-    print("PASS: upgrade preserves official data; historical consent/release checks pass; shared bindings require manual re-enable, enforce unique device-target and school scope, preserve override source versions and school privacy; v7 starts empty and enforces immutable configuration, v7-only flow and device-bound consent; onboarding has no fixture releases or promoted manual configurations, immutable native environment evidence and unique unresolved support; field checks enforce invitation dependencies, immutable evidence, one-use invitations and monotonic lease acquisition; current repository SQL prepares successfully")
+    print("PASS: upgrade preserves official data; historical consent/release checks pass; shared bindings require manual re-enable, enforce unique device-target and school scope, preserve override source versions and school privacy; v7 starts empty and enforces immutable configuration, v7-only flow and device-bound consent; onboarding has no fixture releases or promoted manual configurations, immutable native environment evidence and unique unresolved support; field checks enforce invitation dependencies, immutable evidence, one-use invitations and monotonic lease acquisition; legacy retirement preserves accepted settlement and official data, cancels queued jobs, prevents rollback creation/activation and holds device exclusion; current repository SQL prepares successfully")
 
 
 if __name__ == "__main__":
