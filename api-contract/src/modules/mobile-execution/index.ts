@@ -1,8 +1,6 @@
 import type { FieldCheckInvitation, FieldCheckRequest, FieldCheck } from './capabilities'
 import type { CapabilityOpening, CapabilityOpeningInput, CapabilityOpeningApplication, AdapterRelease, AdapterSupportRequest } from './capabilities'
 export * from './capabilities'
-import type { TaskPreviewInput, TaskConfirmationInput, TaskPreview, ExecutionTask, ExecutionTaskDetail } from './tasks'
-export * from './tasks'
 import type { FlowV2, FlowVersion, FlowValidation, FlowRelease, ExecutionAssignment, AssignmentInput } from './flows'
 export * from './flows'
 import { requestCollection, requestResource, type Collection } from '../../http'
@@ -63,10 +61,6 @@ export const mobileExecutionApi = {
   adapterSupportRequests: (page?: number, deviceId?: string) => list<AdapterSupportRequest>('/api/v1/platform/mobile-execution/adapter-support-requests', page, '', deviceId),
   updateAdapterSupport: (id: string, input: {expected_revision: number; state: 'investigating' | 'resolved' | 'declined'; response: string}, key: string) => write<AdapterSupportRequest>(`/api/v1/platform/mobile-execution/adapter-support-requests/${encodeURIComponent(id)}`, 'PATCH', input, key),
   requestAdapterSupport: (input: {device_id: string; note: string}, key: string) => write<AdapterSupportRequest>('/api/v1/platform/mobile-execution/adapter-support-requests', 'POST', input, key),
-  taskPreview: (school: string, input: TaskPreviewInput, key: string) => write<TaskPreview>(`${base(school)}/task-previews`, 'POST', input, key),
-  confirmTask: (school: string, input: TaskConfirmationInput, key: string) => write<ExecutionTask>(`${base(school)}/tasks`, 'POST', input, key),
-  tasks: (school: string, page?: number, deviceId?: string) => list<ExecutionTaskDetail>(`${base(school)}/tasks`, page, '', deviceId),
-  cancelTask: (school: string, id: string, expected_revision: number, reason: string, key: string) => write<ExecutionTask>(`${base(school)}/tasks/${encodeURIComponent(id)}/cancellations`, 'POST', { expected_revision, reason }, key),
   flows: (school: string, page?: number) => list<FlowVersion>(`${base(school)}/flow-versions`, page),
   createFlow: (school: string, input: { name: string; flow: FlowV2 }, key: string) => write<FlowVersion>(`${base(school)}/flow-versions`, 'POST', input, key),
   validations: (school: string, page?: number, deviceId?: string) => list<FlowValidation>(`${base(school)}/flow-validations`, page, '', deviceId),

@@ -112,8 +112,6 @@ export function resourceType(path: string): string {
       case "shared-inspections": return "mobile-shared-inspections";
       case "shared-send-policies": return "mobile-shared-policies";
       case "shared-send-openings": return "mobile-shared-openings";
-      case "task-previews": return "mobile-execution-task-previews";
-      case "tasks": return "mobile-execution-tasks";
       case "flow-versions": return "mobile-execution-flow-versions";
       case "flow-validations": return "mobile-execution-flow-validations";
       case "flow-releases": return "mobile-execution-flow-releases";
