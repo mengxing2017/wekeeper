@@ -177,6 +177,33 @@ END $$;
     run(command, input=sql+"\n\n")
 
 
+def verify_onboarding(command):
+    """Exercise real new constraints; no approved production release is seeded by migrations."""
+    run(command, input="""
+DO $$ BEGIN
+ IF EXISTS(SELECT 1 FROM mobile_device_capabilities WHERE enabled) THEN RAISE EXCEPTION 'manual configuration remained enabled'; END IF;
+ IF NOT EXISTS(SELECT 1 FROM mobile_device_capability_versions WHERE enabled) OR NOT EXISTS(SELECT 1 FROM mobile_device_capability_consents WHERE accepted) THEN RAISE EXCEPTION 'historical evidence was erased'; END IF;
+ IF EXISTS(SELECT 1 FROM mobile_adapter_releases) THEN RAISE EXCEPTION 'production migration promoted fixture'; END IF;
+ IF EXISTS(SELECT 1 FROM mobile_capability_openings) THEN RAISE EXCEPTION 'manual configuration promoted to opening'; END IF;
+END $$;
+INSERT INTO mobile_device_environments(id,device_id,credential_generation,snapshot,digest) VALUES('00000000-0000-0000-0000-000000000070','00000000-0000-0000-0000-000000000006',1,'{}',repeat('a',64));
+INSERT INTO mobile_device_environment_observations(device_id,snapshot_id) VALUES('00000000-0000-0000-0000-000000000006','00000000-0000-0000-0000-000000000070');
+INSERT INTO mobile_adapter_support_requests(id,device_id,note,created_by,updated_by) VALUES('00000000-0000-0000-0000-000000000071','00000000-0000-0000-0000-000000000006','test support','00000000-0000-0000-0000-000000000003','00000000-0000-0000-0000-000000000003');
+DO $$ BEGIN
+ BEGIN
+  UPDATE mobile_device_environments SET snapshot='{"forged":true}';
+  RAISE EXCEPTION 'environment evidence mutable' USING ERRCODE='XX000';
+ EXCEPTION WHEN raise_exception THEN NULL; END;
+ BEGIN
+  INSERT INTO mobile_adapter_support_requests(id,device_id,note,created_by,updated_by) SELECT gen_random_uuid(),device_id,note,created_by,updated_by FROM mobile_adapter_support_requests;
+  RAISE EXCEPTION 'duplicate unresolved support accepted' USING ERRCODE='XX000';
+ EXCEPTION WHEN unique_violation THEN NULL; END;
+END $$;
+UPDATE mobile_adapter_support_requests SET state='resolved',response='test response',revision=revision+1;
+INSERT INTO mobile_adapter_support_requests(id,device_id,note,created_by,updated_by) VALUES('00000000-0000-0000-0000-000000000072','00000000-0000-0000-0000-000000000006','new support','00000000-0000-0000-0000-000000000003','00000000-0000-0000-0000-000000000003');
+"""+"\n\n")
+
+
 def run(command, **kwargs):
     result = subprocess.run(command, text=True, capture_output=True, **kwargs)
     errors = [line for line in result.stderr.splitlines() if "ERROR:" in line or "FATAL:" in line or "PANIC:" in line]
@@ -201,13 +228,15 @@ def main():
         run(command, input=VERIFY + CONSENT_VERIFY + "\n\n")
         repository = ROOT / "backend/src/distribution/south/adapter/postgres/mobile_execution.rs"
         verify_flows(command, repository)
-        run(command, input="\n".join(p.read_text() for p in migrations if p.name >= "202611010106") + "\n\n")
+        run(command, input="\n".join(p.read_text() for p in migrations if "202611010106" <= p.name < "202611010108") + "\n\n")
         verify_shared(command, repository)
         verify_capabilities(command)
+        run(command, input="\n".join(p.read_text() for p in migrations if p.name >= "202611010108") + "\n\n")
+        verify_onboarding(command)
         queries = re.findall(r'"((?:SELECT|INSERT|UPDATE) [^"\n]*)"', "\n".join(p.read_text() for p in [repository, *repository.with_suffix("").glob("*.rs")]))
         static_queries = [json.loads('"' + query + '"') for query in queries if "{table}" not in query]
         run(command, input="\n".join(f"PREPARE phone_query_{i} AS {query};" for i, query in enumerate(static_queries)) + "\n\n")
-    print("PASS: upgrade preserves official data; historical consent/release checks pass; shared bindings require manual re-enable, enforce unique device-target and school scope, preserve override source versions and school privacy; v7 starts empty and enforces immutable configuration, v7-only flow and device-bound consent; current repository SQL prepares successfully")
+    print("PASS: upgrade preserves official data; historical consent/release checks pass; shared bindings require manual re-enable, enforce unique device-target and school scope, preserve override source versions and school privacy; v7 starts empty and enforces immutable configuration, v7-only flow and device-bound consent; onboarding has no fixture releases or promoted manual configurations, immutable native environment evidence and unique unresolved support; current repository SQL prepares successfully")
 
 
 if __name__ == "__main__":
