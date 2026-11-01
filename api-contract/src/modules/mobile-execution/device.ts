@@ -1,7 +1,7 @@
 import type { FlowValidation, FlowValidationResultInput } from './flows'
 /** Device-only v7 capability agreement. Historical v6 results use an explicit evidence-only route. */
 import { ApiError, decodeData, type ResourceDocument } from '../../http/client'
-import type { DeviceCapabilityContext, DeviceCapabilityConsent, DeviceCapabilityDecision } from './capabilities'
+import type { DeviceEnvironment, CapabilityOpening, DeviceCapabilityContext, DeviceCapabilityConsent, DeviceCapabilityDecision } from './capabilities'
 export function createMobileExecutionDeviceClient(options: { baseUrl: string; token: string; fetch?: typeof fetch }) {
   const base = new URL(options.baseUrl)
   if (base.protocol !== 'https:' || base.username || base.password || base.search || base.hash || base.pathname !== '/') {
@@ -27,6 +27,8 @@ export function createMobileExecutionDeviceClient(options: { baseUrl: string; to
     return decodeData<T>(doc)
   }
   return {
+    openingContext: () => one<{id: string; progress: CapabilityOpening}>('opening-context', 'mobile-device-opening-contexts'),
+    reportEnvironment: (input: DeviceEnvironment['snapshot'], key: string) => one<DeviceEnvironment>('environment-reports', 'mobile-device-environments', input, key),
     capabilityContext: async () => {
       const context=await one<DeviceCapabilityContext>('capability-context', 'mobile-device-capability-contexts')
       if(context.protocol_version!==7 || !Array.isArray(context.scopes) || context.scopes.some(item =>

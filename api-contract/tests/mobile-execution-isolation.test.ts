@@ -28,15 +28,14 @@ test('clearing an override and disabling a binding use revisioned platform write
   expect(fetcher.mock.calls[1][0]).toBe('/api/v1/platform/mobile-execution/target-bindings/binding/revocations')
 })
 
-test('global device capability configuration uses platform authority and v7 flow without school fields', async () => {
-  const transport=vi.fn<typeof fetch>().mockImplementation(async () => new Response(JSON.stringify({data:{type:'mobile-device-capabilities',id:'cap',attributes:{execution_ready:false}}}),{headers:{'Content-Type':'application/vnd.api+json'}}))
+test('opening references a product release and environment, never administrator flow', async () => {
+  const transport=vi.fn<typeof fetch>().mockImplementation(async () => new Response(JSON.stringify({data:{type:'mobile-capability-openings',id:'opening',attributes:{}}}),{headers:{'Content-Type':'application/vnd.api+json'}}))
   vi.stubGlobal('fetch',transport)
-  const flow=(await import('../fixtures/shared-mobile-flow-v7.json')).default
-  const input={device_id:'device',expected_revision:0,name:'全局配置',enabled:true,flow:flow as import('../src/modules/mobile-execution').SharedFlowV2}
-  await mobileExecutionApi.createCapability(input,'create')
-  await mobileExecutionApi.updateCapability('cap',{...input,expected_revision:1,enabled:false},'disable')
-  expect(transport.mock.calls[0][0]).toBe('/api/v1/platform/mobile-execution/device-capabilities')
-  expect(JSON.parse(String(transport.mock.calls[0][1]?.body))).toEqual({data:{type:'mobile-device-capabilities',attributes:input}})
-  expect(transport.mock.calls[1][1]?.method).toBe('PATCH')
-  expect(input).not.toHaveProperty('school_id')
+  const input={device_id:'device',expected_revision:0,profile_release_id:'release',environment_snapshot_id:'snapshot'}
+  await mobileExecutionApi.openCapability(input,'open')
+  await mobileExecutionApi.cancelOpening('opening',1,'cancel')
+  expect(transport.mock.calls[0][0]).toBe('/api/v1/platform/mobile-execution/capability-openings')
+  expect(JSON.parse(String(transport.mock.calls[0][1]?.body))).toEqual({data:{type:'mobile-capability-openings',attributes:input}})
+  expect(transport.mock.calls[1][0]).toBe('/api/v1/platform/mobile-execution/capability-openings/opening/cancellations')
+  expect(input).not.toHaveProperty('flow')
 })

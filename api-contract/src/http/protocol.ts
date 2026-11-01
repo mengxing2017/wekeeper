@@ -114,7 +114,9 @@ export function resourceType(path: string): string {
       case "targets": return "mobile-targets";
       case "target-bindings": return "mobile-target-bindings";
       case "devices": return "mobile-devices";
-      case "device-capabilities": return "mobile-device-capabilities";
+      case "capability-openings": return "mobile-capability-openings";
+      case "adapter-releases": return "mobile-adapter-releases";
+      case "adapter-support-requests": return "mobile-adapter-support-requests";
       default: throw new Error("Unknown mobile execution resource path");
     }
   }

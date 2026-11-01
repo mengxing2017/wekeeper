@@ -53,3 +53,13 @@ test('v7 resource envelope cannot disguise a v6 school scope', async () => {
   const api=createMobileExecutionDeviceClient({baseUrl:'https://keeper.example',token:'wk_device_test',fetch:transport})
   await expect(api.capabilityContext()).rejects.toMatchObject({code:'invalid_document'})
 })
+
+test('native environment wire fixture has a distinct device-authenticated observational route', async () => {
+ const fixture=(await import('../fixtures/shared-mobile-environment-report.json')).default
+ const transport=vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({data:{...fixture.data,id:'snapshot'}}),{headers:{'Content-Type':'application/vnd.api+json'}}))
+ const api=createMobileExecutionDeviceClient({baseUrl:'https://keeper.example',token:'wk_device_test',fetch:transport})
+ await api.reportEnvironment(fixture.data.attributes as import('../src/modules/mobile-execution').DeviceEnvironment['snapshot'],'observation')
+ expect(transport.mock.calls[0][0]).toBe('https://keeper.example/api/v7/device-execution/environment-reports')
+ expect(JSON.parse(String(transport.mock.calls[0][1]?.body))).toEqual(fixture)
+ expect(transport.mock.calls[0][1]).toMatchObject({credentials:'omit',redirect:'error',headers:{Authorization:'Bearer wk_device_test','Idempotency-Key':'observation'}})
+})

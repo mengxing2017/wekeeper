@@ -1,4 +1,4 @@
-import type { DeviceCapabilityConfiguration, DeviceCapabilityConfigurationInput } from './capabilities'
+import type { CapabilityOpening, CapabilityOpeningInput, CapabilityOpeningApplication, AdapterRelease, AdapterSupportRequest } from './capabilities'
 export * from './capabilities'
 import type { TaskPreviewInput, TaskConfirmationInput, TaskPreview, ExecutionTask, ExecutionTaskDetail } from './tasks'
 export * from './tasks'
@@ -47,9 +47,13 @@ function list<T>(path: string, page = 1, search = '', deviceId?: string): Promis
   return requestCollection<T>(`${path}?page[number]=${page}&page[size]=30&search=${encodeURIComponent(search)}${deviceId ? `&device_id=${encodeURIComponent(deviceId)}` : ''}`)
 }
 export const mobileExecutionApi = {
-  platformCapabilities: (page?: number, deviceId?: string) => list<DeviceCapabilityConfiguration>('/api/v1/platform/mobile-execution/device-capabilities', page, '', deviceId),
-  createCapability: (input: DeviceCapabilityConfigurationInput, key: string) => write<DeviceCapabilityConfiguration>('/api/v1/platform/mobile-execution/device-capabilities', 'POST', input, key),
-  updateCapability: (id: string, input: DeviceCapabilityConfigurationInput, key: string) => write<DeviceCapabilityConfiguration>(`/api/v1/platform/mobile-execution/device-capabilities/${encodeURIComponent(id)}`, 'PATCH', input, key),
+  capabilityOpenings: (page?: number, deviceId?: string) => list<CapabilityOpening>('/api/v1/platform/mobile-execution/capability-openings', page, '', deviceId),
+  adapterReleases: (page?: number) => list<AdapterRelease>('/api/v1/platform/mobile-execution/adapter-releases', page),
+  openCapability: (input: CapabilityOpeningInput, key: string) => write<CapabilityOpeningApplication>('/api/v1/platform/mobile-execution/capability-openings', 'POST', input, key),
+  cancelOpening: (id: string, expected_revision: number, key: string) => write<CapabilityOpeningApplication>(`/api/v1/platform/mobile-execution/capability-openings/${encodeURIComponent(id)}/cancellations`, 'POST', { expected_revision }, key),
+  adapterSupportRequests: (page?: number, deviceId?: string) => list<AdapterSupportRequest>('/api/v1/platform/mobile-execution/adapter-support-requests', page, '', deviceId),
+  updateAdapterSupport: (id: string, input: {expected_revision: number; state: 'investigating' | 'resolved' | 'declined'; response: string}, key: string) => write<AdapterSupportRequest>(`/api/v1/platform/mobile-execution/adapter-support-requests/${encodeURIComponent(id)}`, 'PATCH', input, key),
+  requestAdapterSupport: (input: {device_id: string; note: string}, key: string) => write<AdapterSupportRequest>('/api/v1/platform/mobile-execution/adapter-support-requests', 'POST', input, key),
   taskPreview: (school: string, input: TaskPreviewInput, key: string) => write<TaskPreview>(`${base(school)}/task-previews`, 'POST', input, key),
   confirmTask: (school: string, input: TaskConfirmationInput, key: string) => write<ExecutionTask>(`${base(school)}/tasks`, 'POST', input, key),
   tasks: (school: string, page?: number, deviceId?: string) => list<ExecutionTaskDetail>(`${base(school)}/tasks`, page, '', deviceId),

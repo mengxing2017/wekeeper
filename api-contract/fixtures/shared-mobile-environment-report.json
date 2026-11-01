@@ -1,0 +1,16 @@
+{
+  "data": {
+    "type": "mobile-device-environments",
+    "attributes": {
+      "android_api": 36,
+      "engine_version": "otter-ui/2",
+      "application_status": "confirmed",
+      "package_name": "com.tencent.wework",
+      "version_name": "TEST ONLY",
+      "version_code": 1,
+      "instance_ref": "test-instance",
+      "launcher_package": "test.home",
+      "launcher_version": 1
+    }
+  }
+}
