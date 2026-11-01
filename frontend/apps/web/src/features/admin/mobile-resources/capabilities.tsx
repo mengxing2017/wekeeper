@@ -1,3 +1,4 @@
+import { PlatformFieldChecks } from './field-checks'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Card, Input, Modal, Select, Space, Steps, Table, Tag } from 'antd'
@@ -13,7 +14,7 @@ function stage(row: CapabilityOpening) {
   if (row.matching_releases.length !== 1) return '实际环境暂未适配'
   if (!row.opening) return row.configuration_revision ? '需重新开通' : '等待发送手机确认'
   if (!row.release_available || row.opening.environment_snapshot_id !== row.environment?.id) return '需重新开通'
-  return row.consent_current ? '本机已同意，等待现场检查' : '等待本机确认'
+  return row.consent_current ? row.field_check_current_passed ? '现场检查通过，任务发送未开放' : '本机已同意，等待现场检查' : '等待本机确认'
 }
 export function DeviceCapabilities() {
   const client = useQueryClient()
@@ -59,6 +60,7 @@ export function DeviceCapabilities() {
         {selected.blockers.map(blocker => <Alert key={blocker.code} type="warning" title={blocker.message} description={`负责方：${blocker.owner}。下一步：${blocker.next_action}。`} />)}
         {selected.can_open && <Button type="primary" disabled={!!pending} onClick={() => Modal.confirm({ title: '发送到这台手机确认？', content: '系统将固定当前适配和环境。本次只申请本机确认，不启用任务发送，不代替学校授权。', onOk: () => submit('open', selected) })}>发送到手机确认</Button>}
         {selected.opening && <Button danger disabled={!!pending} onClick={() => Modal.confirm({ title: '取消本次开通申请？', content: '手机将不能继续接受该申请。已提交的决定与证据保留；取消不会重置未决执行。', onOk: () => submit('cancel', selected) })}>取消开通申请</Button>}
+        <PlatformFieldChecks key={selected.id} row={selected} />
         {selected.support_request && <Alert type="info" title={`适配支持请求：${supportStates[selected.support_request.state]}`} description={`负责方：${selected.support_request.owner}。${selected.support_request.response || '请求已记录，等待产品研发处理。'} 请求编号：${selected.support_request.id}`} />}
         {selected.support_request && ['submitted', 'investigating'].includes(selected.support_request.state) && <details><summary>登记支持处理进度</summary>
           <p>供负责方登记处理记录；这不会发布适配或开放任务执行。</p>

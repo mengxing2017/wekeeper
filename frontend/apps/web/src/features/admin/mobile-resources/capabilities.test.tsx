@@ -3,9 +3,10 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { DeviceCapabilities } from './capabilities'
 import { api, type CapabilityOpening } from './api'
-vi.mock('./api', () => ({ api: { capabilityOpenings: vi.fn(), openCapability: vi.fn(), cancelOpening: vi.fn(), requestAdapterSupport: vi.fn() } }))
+vi.mock('./api', () => ({ api: { platformFieldInvitations: vi.fn().mockResolvedValue({items:[]}), fieldChecks: vi.fn().mockResolvedValue({items:[]}), capabilityOpenings: vi.fn(), openCapability: vi.fn(), cancelOpening: vi.fn(), requestAdapterSupport: vi.fn() } }))
 afterEach(() => { cleanup(); vi.resetAllMocks() })
 function mount(row: CapabilityOpening) {
+ vi.mocked(api.platformFieldInvitations).mockResolvedValue({items:[]});vi.mocked(api.fieldChecks).mockResolvedValue({items:[]})
  vi.mocked(api.capabilityOpenings).mockResolvedValue({ items: [row] })
  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><DeviceCapabilities /></QueryClientProvider>)
 }

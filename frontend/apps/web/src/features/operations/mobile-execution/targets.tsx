@@ -46,5 +46,5 @@ export function MobileTargets({ school, admin }: { school: string; admin: boolea
     <Modal title="存在相同搜索文字的目标" open={!!pendingDuplicate} confirmLoading={save.isPending} okText="仍作为独立目标新增" onCancel={() => setPendingDuplicate(undefined)} onOk={() => pendingDuplicate && save.mutate({ ...pendingDuplicate.input, duplicate_confirmation: pendingDuplicate.token })}>
       相同搜索文字不代表同一真实群。确认后将新增独立记录。
     </Modal>
-  </Card><MobileTargetBindings school={school} /></>
+  </Card><MobileTargetBindings school={school} admin={admin} /></>
 }
