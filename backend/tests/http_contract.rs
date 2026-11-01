@@ -1116,3 +1116,60 @@ async fn new_flow_management_and_device_validation_do_not_accept_anonymous_acces
     let response=app().oneshot(Request::builder().method("POST").uri("/api/v6/device-execution/flow-validations/00000000-0000-0000-0000-000000000001/results").header("content-type","application/vnd.api+json").body(Body::from(json!({"data":{"type":"mobile-execution-flow-validations","attributes":{}}}).to_string())).unwrap()).await.unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn independent_task_routes_require_management_identity() {
+    for (method, path) in [
+        ("POST", "task-previews"),
+        ("POST", "tasks"),
+        ("GET", "tasks"),
+        (
+            "POST",
+            "tasks/00000000-0000-0000-0000-000000000002/cancellations",
+        ),
+    ] {
+        let response = app().oneshot(Request::builder().method(method)
+            .uri(format!("/api/v1/schools/00000000-0000-0000-0000-000000000001/mobile-execution/{path}"))
+            .header("content-type", "application/vnd.api+json")
+            .body(Body::from("{\"data\":{\"type\":\"mobile-execution-tasks\",\"attributes\":{}}}")).unwrap()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
+    }
+}
+
+#[test]
+fn task_preview_contract_roundtrip_preserves_body_and_order() {
+    use wekeeper_api::distribution::domain::mobile_execution::TaskPreviewInput;
+    let wire: serde_json::Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/mobile-execution-task-preview-input.json"
+    ))
+    .unwrap();
+    let input: TaskPreviewInput = serde_json::from_value(wire.clone()).unwrap();
+    input.validate(2).unwrap();
+    assert_eq!(serde_json::to_value(input).unwrap(), wire);
+}
+
+#[tokio::test]
+async fn phone_task_blockers_explain_concrete_next_steps() {
+    use axum::response::IntoResponse;
+    for (code, expected) in [
+        ("mobile_device_reserved", "平台管理员"),
+        ("mobile_target_unresolved", "不要换设备"),
+        ("mobile_execution_configuration_required", "现场验证"),
+        ("mobile_target_binding_required", "绑定"),
+        ("mobile_preview_expired", "重新预览"),
+        ("mobile_task_not_cancellable", "核对结果"),
+    ] {
+        let response = wekeeper_api::business::Error::Policy(code).into_response();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(body["errors"][0]["code"], code);
+        assert!(
+            body["errors"][0]["detail"]
+                .as_str()
+                .unwrap()
+                .contains(expected)
+        );
+    }
+}

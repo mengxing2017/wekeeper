@@ -534,6 +534,139 @@ async fn flow_release_and_assignment_require_current_device_validation_without_o
             .await
             .is_err()
     );
+    // Preview/confirm must remain independent of the old phone/official model.
+    let target = service
+        .write(
+            &a,
+            Some(school),
+            "target",
+            None,
+            "task-target",
+            json!({"search_text":"独立目标  原文","device_ids":[device]}),
+        )
+        .await
+        .unwrap();
+    let target_id = target["id"].clone();
+    let preview_input =
+        json!({"device_id":device,"target_ids":[target_id],"message":" 原文\n正文 "});
+    let preview = service
+        .write(
+            &a,
+            Some(school),
+            "task-preview",
+            None,
+            "preview-task",
+            preview_input.clone(),
+        )
+        .await
+        .unwrap();
+    // Metadata does not invalidate execution versions or rewrite snapshots.
+    service.write(&a, Some(school), "update-target", Some(target_id.as_str().unwrap().parse().unwrap()), "remark-only", json!({"expected_revision":1,"search_text":"独立目标  原文","alias":"展示别名","remark":"改备注","enabled":true})).await.unwrap();
+    let confirmation =
+        json!({"preview_id":preview["id"],"preview_digest":preview["digest"],"confirmed":true});
+    let task = service
+        .write(
+            &a,
+            Some(school),
+            "confirm-task",
+            None,
+            "confirm-task",
+            confirmation.clone(),
+        )
+        .await
+        .unwrap();
+    let replay = service
+        .write(
+            &a,
+            Some(school),
+            "confirm-task",
+            None,
+            "confirm-task",
+            confirmation.clone(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay, task);
+    assert!(
+        service
+            .write(
+                &a,
+                Some(school),
+                "confirm-task",
+                None,
+                "second-confirm-key",
+                confirmation
+            )
+            .await
+            .is_err()
+    );
+    assert!(
+        service
+            .write(
+                &a,
+                Some(school),
+                "task-preview",
+                None,
+                "occupied-preview",
+                preview_input.clone()
+            )
+            .await
+            .is_err()
+    );
+    let tasks = service
+        .list(
+            &a,
+            Some(school),
+            Resource::Tasks,
+            Page::default(),
+            String::new(),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(tasks[0]["plan"]["message"], " 原文\n正文 ");
+    assert_eq!(
+        tasks[0]["items"][0]["snapshot"]["search_text"],
+        "独立目标  原文"
+    );
+    let tid = task["id"].as_str().unwrap().parse().unwrap();
+    assert!(
+        service
+            .write(
+                &a,
+                Some(school),
+                "archive-target",
+                Some(target_id.as_str().unwrap().parse().unwrap()),
+                "archive-active",
+                json!({"expected_revision":2,"reason":"归档"})
+            )
+            .await
+            .is_err()
+    );
+    service
+        .write(
+            &a,
+            Some(school),
+            "cancel-task",
+            Some(tid),
+            "cancel-task",
+            json!({"expected_revision":1,"reason":"取消未领取任务"}),
+        )
+        .await
+        .unwrap();
+    let changed = service
+        .write(
+            &a,
+            Some(school),
+            "task-preview",
+            None,
+            "new-preview",
+            preview_input,
+        )
+        .await
+        .unwrap();
+    service.write(&a, Some(school), "update-target", Some(target_id.as_str().unwrap().parse().unwrap()), "locator-change", json!({"expected_revision":2,"search_text":"已改名","alias":"展示别名","remark":"改备注","enabled":true})).await.unwrap();
+    assert!(service.write(&a, Some(school), "confirm-task", None, "stale-locator-confirm", json!({"preview_id":changed["id"],"preview_digest":changed["digest"],"confirmed":true})).await.is_err());
     service
         .write(
             &a,
