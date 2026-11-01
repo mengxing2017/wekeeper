@@ -7,7 +7,6 @@ export const pageHelp: Record<string, string> = {
   groups: 'operator/groups-and-templates',
   templates: 'operator/groups-and-templates',
   'broadcast-tasks': 'operator/broadcast-tasks',
-  'mobile-delivery': 'operator/mobile-tasks',
   members: 'school-admin/settings-and-members',
   settings: 'school-admin/settings-and-members',
   audit: 'platform-admin/audit-and-resources#audit',

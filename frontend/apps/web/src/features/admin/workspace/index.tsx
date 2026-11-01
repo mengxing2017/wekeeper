@@ -27,7 +27,7 @@ import {
   Tag,
   Empty,
 } from 'antd'
-import MobileDelivery, { ExecutionDevices } from '../../operations/mobile-delivery'
+import { ExecutionDevices } from '../../operations/mobile-delivery'
 import BroadcastTasks from '../../operations/broadcast-tasks'
 import { Directory } from './directory'
 import { Assets, GroupPicker } from './assets'
@@ -190,9 +190,7 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
         />
       ) : (
         <div className="business-panel" key={`${school.id}-${tab}`}>
-          {resourcePage && tab !== 'mobile-execution-flows' ? (role === 'admin' || role === 'operator' ? <SchoolExecutionResources key={`${school.id}-${tab}`} school={school.id} accounts={params.get('subview') === 'historical-accounts'} admin={role === 'admin'} /> : <Alert type="warning" title="查看学校执行资源需要本校运营或管理员授权" />) : tab === 'mobile-delivery' ? (
-            <MobileDelivery key={school.id} school={school.id} role={role} subview={params.get('subview') ?? undefined} onSubviewChange={setSubview} />
-          ) : tab === 'mobile-execution-tasks' ? <MobileExecutionTasks school={school.id} admin={role === 'admin'} onNavigate={navigate} /> : tab === 'mobile-execution-flows' ? <MobileExecutionFlows key={school.id} school={school.id} admin={role === 'admin'} /> : tab === 'mobile-targets' ? <MobileTargets key={school.id} school={school.id} admin={role === 'admin'} /> : tab === 'broadcast-tasks' ? (
+          {resourcePage && tab !== 'mobile-execution-flows' ? (role === 'admin' || role === 'operator' ? <SchoolExecutionResources key={`${school.id}-${tab}`} school={school.id} accounts={params.get('subview') === 'historical-accounts'} admin={role === 'admin'} /> : <Alert type="warning" title="查看学校执行资源需要本校运营或管理员授权" />) : tab === 'mobile-execution-tasks' ? <MobileExecutionTasks school={school.id} admin={role === 'admin'} onNavigate={navigate} /> : tab === 'mobile-execution-flows' ? <MobileExecutionFlows key={school.id} school={school.id} admin={role === 'admin'} /> : tab === 'mobile-targets' ? <MobileTargets key={school.id} school={school.id} admin={role === 'admin'} /> : tab === 'broadcast-tasks' ? (
             <BroadcastTasks
               key={school.id}
               school={school.id}

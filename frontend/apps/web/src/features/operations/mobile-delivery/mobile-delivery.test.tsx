@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import MobileDelivery, { ExecutionDevices } from './index'
+import { ExecutionDevices } from './index'
 import { api } from './api'
 vi.mock('./api', () => ({
   api: {
@@ -40,15 +40,6 @@ afterEach(() => {
   vi.resetAllMocks()
   vi.unstubAllGlobals()
 })
-function show(role?: string) {
-  render(
-    <QueryClientProvider
-      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
-    >
-      <MobileDelivery school="school" role={role} />
-    </QueryClientProvider>,
-  )
-}
 it.each([undefined, {}])('registers a phone without Web Crypto (%s)', async (crypto) => {
   vi.stubGlobal('crypto', crypto)
   vi.mocked(api.devices).mockResolvedValue({ items: [] })
@@ -89,136 +80,4 @@ it('shows a grouped short code and explains that device ID entry is unnecessary'
   expect(api.enrollment).toHaveBeenCalledWith('device', { expected_revision: 1 }, expect.any(String))
   fireEvent.click(screen.getByRole('button', { name: '关闭配对码' }))
   expect(screen.queryByText('0012 3456')).toBeNull()
-})
-it('requires actual school authorization before requesting business data', () => {
-  show()
-  expect(screen.getByText(/平台管理员身份不代替学校授权/)).toBeTruthy()
-  expect(api.capabilities).not.toHaveBeenCalled()
-  expect(api.tasks).not.toHaveBeenCalled()
-})
-function setupReview(configured: boolean) {
-  const task = {
-    id: 'task-123456',
-    revision: 2,
-    school_id: 'school',
-    creator_id: 'admin',
-    confirmed_by: null,
-    activity_id: '校园活动',
-    state: 'draft' as const,
-    review_evidence_ref: null,
-    created_at: '2026-10-26T00:00:00Z',
-  }
-  vi.mocked(api.capabilities).mockResolvedValue({
-    id: 'school',
-    create: false,
-    confirm: true,
-    claim_enabled: false,
-    reason: 'execution_disabled',
-    quota_summary: [],
-    quota_summary_limit: 100,
-    settings: {
-      id: 'school',
-      school_id: 'school',
-      revision: 0,
-      enabled: false,
-      history_reviewed: false,
-    },
-    minimum_protocol_version: 1,
-    account_default_limit: 30,
-    account_max_limit: 50,
-    group_default_limit: 10,
-    group_max_limit: 30,
-  })
-  vi.mocked(api.tasks).mockResolvedValue({ items: [task] })
-  vi.mocked(api.groups).mockResolvedValue({ items: [] })
-  vi.mocked(api.task).mockResolvedValue(task)
-  vi.mocked(api.items).mockResolvedValue({ items: [] })
-  vi.mocked(api.events).mockResolvedValue({ items: [] })
-  vi.mocked(api.preview).mockResolvedValue({
-    id: task.id,
-    expected_revision: 2,
-    preview_digest: 'frozen-digest',
-    requires_substantive_difference_review: !configured,
-    requires_shared_text_scope_acceptance: configured,
-    items: [
-      {
-        id: 'item',
-        group_id: 'group',
-        content: '本群专属通知',
-        snapshot_digest: 'snapshot',
-        reason: null,
-        next_eligible_at: null,
-      },
-    ],
-  })
-  vi.mocked(api.confirm).mockResolvedValue({ ...task, state: 'confirmed' })
-  return task
-}
-it('shows account limits only in the target-group tab', async () => {
-  setupReview(false)
-  show('admin')
-  await screen.findByText('execution_disabled', {}, { timeout: 5000 })
-  expect(screen.queryByRole('columnheader', { name: '每日限额' })).toBeNull()
-  fireEvent.click(screen.getByRole('tab', { name: '目标群' }))
-  expect(await screen.findByRole('columnheader', { name: '每日限额' })).toBeTruthy()
-  expect(screen.queryByRole('columnheader', { name: '活动标识' })).toBeNull()
-  fireEvent.click(screen.getByRole('tab', { name: '发送任务' }))
-})
-it.each([false, true])(
-  'requires the correct manual reviews (configured=%s)',
-  async (configured) => {
-    const task = setupReview(configured)
-    show('admin')
-    await screen.findByText('execution_disabled', {}, { timeout: 5000 })
-    const row = (await screen.findByText('校园活动')).closest('tr')!
-    fireEvent.click(within(row).getByRole('button', { name: '查看手机任务 123456' }))
-    const detail = within(await screen.findByRole('dialog'))
-    await detail.findByText('任务状态：草稿')
-    fireEvent.click(detail.getByRole('button', { name: '生成冻结内容预览' }))
-    await screen.findByText('本群专属通知', {}, { timeout: 5000 })
-    const confirm = detail.getByRole('button', { name: '人工确认并进入执行队列' })
-    expect(confirm.hasAttribute('disabled')).toBe(true)
-    expect(api.confirm).not.toHaveBeenCalled()
-    fireEvent.click(detail.getByLabelText('已人工审核各群内容'))
-    fireEvent.click(detail.getByLabelText('已核对目标群、授权和发送范围'))
-    fireEvent.change(detail.getByLabelText('人工确认依据'), { target: { value: 'review-001' } })
-    expect(confirm.hasAttribute('disabled')).toBe(true)
-    fireEvent.click(
-      detail.getByLabelText(
-        configured
-          ? '已确认本次有序目标可接收相同正文，并核对群顺序、配置及人工基准'
-          : '已核对同校不同群内容的实质差异',
-      ),
-    )
-    fireEvent.click(confirm)
-    await waitFor(() =>
-      expect(api.confirm).toHaveBeenCalledWith(
-        'school',
-        task.id,
-        {
-          expected_revision: 2,
-          preview_digest: 'frozen-digest',
-          content_review: true,
-          scope_acceptance: true,
-          substantive_difference_reviewed: !configured,
-          ...(configured ? { shared_text_scope_acceptance: true } : {}),
-          evidence_ref: 'review-001',
-        },
-        expect.any(String),
-      ),
-    )
-  },
-)
-
-it('rejects a school configuration subview for an operator without silently changing pages', async () => {
-  setupReview(false)
-  vi.mocked(api.tasks).mockResolvedValue({ items: [] })
-  vi.mocked(api.groups).mockResolvedValue({ items: [] })
-  const onSubviewChange = vi.fn()
-  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-    <MobileDelivery school="school" role="operator" subview="applications" onSubviewChange={onSubviewChange} />
-  </QueryClientProvider>)
-  expect(screen.getByText('当前子页面不存在或无权访问')).toBeTruthy()
-  fireEvent.click(screen.getByRole('button', { name: '返回发送任务' }))
-  expect(onSubviewChange).toHaveBeenCalledWith('tasks')
 })

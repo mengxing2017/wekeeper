@@ -23,7 +23,7 @@ test('历史入口兼容，未知入口保留给显式错误页处理', () => {
   expect(resolveNavigation('execution-devices', 'accounts')).toBe('execution-accounts')
   expect(resolveNavigation('delivery-drafts', null)).toBe('broadcast-tasks')
   expect(resolveNavigation('delivery-attempts', null)).toBe('broadcast-tasks')
-  expect(resolveNavigation('mobile-delivery', 'tasks')).toBe('mobile-delivery')
+  expect(navigation.find(n => n.key === 'mobile-delivery')).toBeUndefined()
   expect(resolveNavigation('unknown', null)).toBe('unknown')
   expect(new Set(navigation.map(n => n.key)).size).toBe(navigation.length)
 })
