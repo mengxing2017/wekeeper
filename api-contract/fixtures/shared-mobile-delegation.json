@@ -1,0 +1,22 @@
+{
+  "scope": {
+    "schema": "shared_mobile_device_delegation/1",
+    "platform_id": "00000000-0000-0000-0000-000000000001",
+    "device_id": "00000000-0000-0000-0000-000000000002",
+    "credential_generation": 1,
+    "package_name": "com.tencent.wework",
+    "capability": "group_text",
+    "resource_policy": "platform_managed_school_targets",
+    "background_collection": true,
+    "automatic_inspection": true,
+    "text_input": true,
+    "single_use_send": true
+  },
+  "scope_digest": "e29005972825f0dd7b87fd45bc8c5cbcb190b57af98dd7ef45c87858e5f71f0b",
+  "decision": {
+    "delegation_id": "00000000-0000-0000-0000-000000000003",
+    "scope_digest": "e29005972825f0dd7b87fd45bc8c5cbcb190b57af98dd7ef45c87858e5f71f0b",
+    "expected_revision": 0,
+    "accepted": true
+  }
+}
