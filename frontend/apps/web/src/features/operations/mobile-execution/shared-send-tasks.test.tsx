@@ -20,13 +20,17 @@ async function compose(admin = true) {
   fireEvent.click(await screen.findByText('家长通知'))
   fireEvent.change(screen.getByLabelText('发送文字'), { target: { value: message } })
 }
-it('正文保持空格与换行，未检查目标不能确认发送', async () => {
+it('本校管理员可点击确认，预览检查问题由提交接口明确反馈', async () => {
+  vi.mocked(sharedSend.confirm).mockRejectedValue(new Error('请选择已绑定手机'))
   await compose()
   expect(screen.queryByRole('button',{name:'保存草稿'})).toBeNull();expect(screen.queryByLabelText('发送阶段')).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: '预览逐群执行计划' }))
   await screen.findByText('没有可选绑定，请核对本校目标群与手机的关联')
-  expect((screen.getByRole('button', { name: '确认发送' }) as HTMLButtonElement).disabled).toBe(true)
-  expect(sharedSend.confirm).not.toHaveBeenCalled()
+  const button=screen.getByRole('button', { name: '确认发送' }) as HTMLButtonElement
+  expect(button.disabled).toBe(false)
+  fireEvent.click(button)
+  await waitFor(()=>expect(sharedSend.confirm).toHaveBeenCalledOnce())
+  expect(await screen.findByText('请选择已绑定手机')).toBeTruthy()
 })
 
 it('手机授权状态未知与状态过期不阻止确认，也不要求重新授权',async()=>{
@@ -104,3 +108,12 @@ it('缺少应用适配不阻断正常业务预览与确认',async()=>{
  expect((screen.getByRole('button',{name:'确认发送'}) as HTMLButtonElement).disabled).toBe(false)
  expect(sharedSend.confirm).not.toHaveBeenCalled()
 },120000)
+
+it('缺少本校管理员角色时明确说明权限原因，而不是无说明置灰',async()=>{
+ await compose(false)
+ fireEvent.click(screen.getByRole('button',{name:'预览逐群执行计划'}))
+ expect(await screen.findByText('没有本校管理员发送权限')).toBeTruthy()
+ expect(screen.getByText('当前账号没有本校管理员发送权限；平台管理员也需在学校成员管理中获得本校管理员角色')).toBeTruthy()
+ expect((screen.getByRole('button',{name:'确认发送'}) as HTMLButtonElement).disabled).toBe(true)
+ expect(sharedSend.confirm).not.toHaveBeenCalled()
+},60000)

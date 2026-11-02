@@ -52,6 +52,7 @@ export function SharedSendTasks({ school, admin }: { school: string; admin: bool
   const read = useMutation({ mutationFn: (id: string) => sharedSend.task(school, id), onSuccess: setDetail })
   const error = overview.error || options.error || inspect.error || confirm.error || read.error || reselect.error || mutate.error || bindings.error
   const dirty = !!draft && (message.replace(/\r\n?/g, '\n') !== draft.message || targets.join() !== draft.target_ids.join() || gap!==draft.between_targets_seconds)
+  const confirmationIssues = !admin ? ['当前账号没有本校管理员发送权限；平台管理员也需在学校成员管理中获得本校管理员角色'] : preview?.plan.items.flatMap(i => !i.selected ? [`${i.target.name}：请选择已绑定手机`] : i.blocker ? [`${i.target.name}：${i.blocker}`] : []) ?? []
   return <Card title="手机共享发送">
     <Space orientation="vertical" style={{ width: '100%' }}>
       <Alert type="info" showIcon title="按目标群创建，逐群选择共享手机" description="填写文字和目标群后直接预览，系统自动保存草稿。核对预览后确认发送。管理员确认后进入队列。结果不确定时停止该设备，核对前不会自动重发。企业微信官方群发独立使用。" />
@@ -90,7 +91,8 @@ export function SharedSendTasks({ school, admin }: { school: string; admin: bool
             {i.blocker&&!(i.readiness?.length)&&<p>没有可选绑定，请核对本校目标群与手机的关联</p>}
           </Space> },
         ]} />
-        <Button type="primary" loading={confirm.isPending} disabled={!admin || reselect.isPending || inspect.isPending || preview.plan.items.some(i => !i.selected || i.blocker)} onClick={() => confirm.mutate()}>确认发送</Button>
+        {confirmationIssues.length > 0 && <Alert type="warning" title={admin ? "提交时需要核对以下问题" : "没有本校管理员发送权限"} description={<ul>{confirmationIssues.map(issue=><li key={issue}>{issue}</li>)}</ul>}/>}
+        <Button type="primary" loading={confirm.isPending} disabled={!admin || reselect.isPending || inspect.isPending} onClick={() => confirm.mutate()}>确认发送</Button>
       </>}
       <Table<SharedTask> rowKey="id" loading={overview.isFetching} dataSource={overview.data?.tasks ?? []} pagination={{ pageSize: 10 }} columns={[
         { title: '任务', dataIndex: 'id' }, { title: '创建时间', dataIndex: 'created_at' }, { title: '状态', render: (_, t) => t.stopped ? '已停止领取' : '查看逐群进度' },
