@@ -160,3 +160,5 @@ pub mod mobile_execution;
 pub mod governance;
 
 pub mod shared_send;
+
+pub mod shared_send_v2;
