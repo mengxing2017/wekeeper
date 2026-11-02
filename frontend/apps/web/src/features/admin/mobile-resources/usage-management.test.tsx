@@ -22,7 +22,7 @@ it('平台开通只有范围与摘要两步，离线手机及同页新增群无�
  fireEvent.click(await screen.findByText('离线候选手机（离线，恢复后执行）'))
  fireEvent.change(screen.getByLabelText('同页新增群'),{target:{value:'  通知群  '}})
  fireEvent.click(screen.getByRole('button',{name:'下一步：核对摘要'}))
- expect(await screen.findByText(/产品尚未交付，确认后等待交付/)).toBeTruthy()
+ expect(await screen.findByText(/使用范围会保留，手机恢复可用后自动继续/)).toBeTruthy()
  const input=vi.mocked(sharedSend.usagePreview).mock.calls[0][1]
  expect(input.targets).toEqual([{id:null,name:'  通知群  ',search_text:'  通知群  '}]);expect(input.device_ids).toEqual(['phone'])
  expect(input).not.toHaveProperty('apk_id');expect(input).not.toHaveProperty('release_id')

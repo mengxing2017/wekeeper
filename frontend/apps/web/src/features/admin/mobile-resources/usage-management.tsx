@@ -36,8 +36,8 @@ export function UsageManagement({school,admin=true}:{school?:string;admin?:boole
  function operate(row:MobileUsage,operation:UsageOperation|'issue'){setAction({row,operation});setReason('');mutate.reset()}
  const error=list.error||globalOptions.error||options.error
  return <Card title="手机群消息使用管理" extra={admin&&<Button type="primary" onClick={()=>begin()}>开通使用</Button>}>
-  <Alert type="info" showIcon title="选范围，核对后确认" description="平台确认后直接开通；学校在已批准范围内可直接使用，新增范围提交平台审批。离线手机也可选择，恢复在线后自动检查。产品尚未交付时保留申请并等待交付，不要求管理员上传安装包或办理技术验证。"/>
-  {globalOptions.data?.sending_status&&<Alert type={globalOptions.data.sending_status.can_confirm?'success':'warning'} showIcon title={globalOptions.data.sending_status.message} description={`产品交付：${({missing:'尚未交付',inactive:'尚未激活',withdrawn:'已撤回',available:'有效'} as const)[globalOptions.data.sending_status.delivery]}；平台发送：${({unconfigured:'未配置',disabled:'已关闭',draft_only:'仅内容准备',preview_only:'仅预览',unsupported:'方案需更新',enabled:'已开放'} as const)[globalOptions.data.sending_status.platform]}。使用审批与手机现场状态见下表。`}/>}
+  <Alert type="info" showIcon title="选范围，核对后确认" description="平台确认后直接开通；学校在已批准范围内可直接使用，新增范围提交平台审批。离线手机也可选择，恢复在线后自动检查。使用范围与手机当前状态分别管理，已批准范围会保留，手机就绪后自动继续。"/>
+  {globalOptions.data?.sending_status&&<Alert type={globalOptions.data.sending_status.can_confirm?'success':'warning'} showIcon title={globalOptions.data.sending_status.message} description={`平台发送：${({unconfigured:'未配置',disabled:'已关闭',draft_only:'仅内容准备',preview_only:'仅预览',unsupported:'方案需更新',enabled:'已开放'} as const)[globalOptions.data.sending_status.platform]}。使用审批与手机现场状态见下表。`}/>}
   {globalOptions.data?.scheme&&<p>当前业务方案：时区 {globalOptions.data.scheme.timezone}；每所学校每日最多 {globalOptions.data.scheme.daily_max_calls} 次；每个目标群最小间隔 {globalOptions.data.scheme.interval_seconds} 秒。</p>}
   {!school&&admin&&<BusinessSchemeEditor scheme={globalOptions.data?.business_scheme} status={globalOptions.data?.sending_status}/>}
   {error&&<Alert type="error" title={error.message}/>}
@@ -68,7 +68,7 @@ export function UsageManagement({school,admin=true}:{school?:string;admin?:boole
     <p>手机：{preview.body.device_ids.map(id=>options.data?.devices.find(d=>d.id===id)?.name??'已选择手机').join('、')}</p>
     <p>群：{preview.body.targets.map(t=>t.name).join('、')}。{preview.body.auto_targets?'包含本校后续新增群。':''}</p>
     <p>累计额度：{preview.body.max_calls} 次；有效至 {new Date(preview.body.expires_at).toLocaleString()}。</p>
-    <p>{school?'在原批准范围内直接使用，其余范围提交平台审批。':'确认即批准此使用范围。'}{!options.data?.delivery_available?'产品尚未交付，确认后等待交付。':''}</p>
+    <p>{school?'在原批准范围内直接使用，其余范围提交平台审批。':'确认即批准此使用范围。'}使用范围会保留，手机恢复可用后自动继续。</p>
     {preview.body.scheme&&<p>每日上限：{preview.body.scheme.daily_max_calls} 次；最小间隔：{preview.body.scheme.interval_seconds} 秒。允许时段：{preview.body.scheme.allowed_windows.map(w=>`周 ${w.weekdays.join('、')} ${Math.floor(w.start_minute/60)}:${String(w.start_minute%60).padStart(2,'0')}–${Math.floor(w.end_minute/60)}:${String(w.end_minute%60).padStart(2,'0')}`).join('；')}（{preview.body.scheme.timezone}）</p>}
     <Space><Button onClick={()=>setPreview(undefined)}>返回修改</Button><Button type="primary" loading={confirm.isPending} onClick={()=>confirm.mutate()}>确认{school?'开通或提交申请':'开通'}</Button></Space>
    </>}

@@ -5,7 +5,7 @@ import {sharedSend,type BusinessScheme,type BusinessSchemeInput,type SendingStat
 import {createIdempotencyKey} from '../../../shared/idempotency-key'
 import {newPolicyWindow,policyClock,policyMinute,policyWeekdays} from './shared-policy-time'
 const defaults:BusinessSchemeInput['limits']={global:{interval_seconds:5,window_seconds:3600,max_calls:120,daily_max_calls:1000},school:{interval_seconds:10,window_seconds:3600,max_calls:60,daily_max_calls:300},device:{interval_seconds:30,window_seconds:3600,max_calls:30,daily_max_calls:150},target:{interval_seconds:60,window_seconds:3600,max_calls:10,daily_max_calls:30}}
-export function BusinessSchemeEditor({scheme,status}:{scheme?:BusinessScheme|null;status?:SendingStatus}){
+export function BusinessSchemeEditor({scheme}:{scheme?:BusinessScheme|null;status?:SendingStatus}){
  const cache=useQueryClient();const keys=useRef(new Map<string,string>())
  const [open,setOpen]=useState(false)
  const [form,writeForm]=useState<BusinessSchemeInput>({expected_revision:0,enabled:false,confirmed:false,timezone:'Asia/Shanghai',allowed_windows:[newPolicyWindow()],limits:defaults,reason:''})
@@ -16,8 +16,8 @@ export function BusinessSchemeEditor({scheme,status}:{scheme?:BusinessScheme|nul
  return <><Button onClick={begin}>配置业务方案</Button><Drawer title="手机群消息业务方案" open={open} size={920} onClose={()=>setOpen(false)} footer={<Button type="primary" loading={save.isPending} disabled={!form.confirmed||!form.reason.trim()||invalid} onClick={()=>save.mutate()}>确认保存业务方案</Button>}>
  <Space orientation="vertical" style={{width:'100%'}}>
  <Alert type="info" title="变更影响" description="时段、额度和间隔变化需要重新核对使用授权；关闭后停止新许可。已有调用及不确定结果保留，不会重置累计额度。技术产品升级不会覆盖此方案。"/>
- <label>开放新发送 <Switch aria-label="开放新发送" checked={form.enabled} disabled={status?.delivery!=='available'&&!form.enabled} onChange={enabled=>setForm({...form,enabled})}/></label>
- {status?.delivery!=='available'&&<p>有效产品交付后才能开放发送，现在可以保存关闭状态的业务方案。</p>}
+ <label>开放新发送 <Switch aria-label="开放新发送" checked={form.enabled} onChange={enabled=>setForm({...form,enabled})}/></label>
+ <p>发送开关只管理平台是否允许发送；实际执行时由系统自动判断手机是否就绪。</p>
  <label>IANA 时区 <Input aria-label="业务方案时区" value={form.timezone} onChange={e=>setForm({...form,timezone:e.target.value})}/></label>
  <p>允许时段按开始日计算，跨午夜延续至次日；结束 00:00 表示当天 24:00。</p>
  {form.allowed_windows.map((w,i)=><Space key={i} wrap>

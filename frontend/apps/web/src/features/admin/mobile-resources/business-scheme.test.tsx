@@ -6,10 +6,10 @@ import {sharedSend} from './api'
 vi.mock('./api',()=>({sharedSend:{saveBusinessScheme:vi.fn()}}))
 afterEach(()=>{cleanup();vi.resetAllMocks()})
 function mount(delivery:'missing'|'available') {render(<QueryClientProvider client={new QueryClient()}><BusinessSchemeEditor status={{delivery,platform:'unconfigured',can_confirm:false,owner:'platform',message:'尚未配置'}}/></QueryClientProvider>)}
-it('未交付可保存关闭方案，必须确认和填写理由',async()=>{
+it('业务设置不依赖技术交付，保存仍需确认和理由',async()=>{
  vi.mocked(sharedSend.saveBusinessScheme).mockResolvedValue({id:'scheme',revision:1})
  mount('missing');fireEvent.click(screen.getByRole('button',{name:'配置业务方案'}))
- expect(screen.getByRole('switch',{name:'开放新发送'}).hasAttribute('disabled')).toBe(true)
+ expect(screen.getByRole('switch',{name:'开放新发送'}).hasAttribute('disabled')).toBe(false)
  expect((screen.getByLabelText('业务方案时区') as HTMLInputElement).value).toBe('Asia/Shanghai')
  expect((screen.getByRole('button',{name:'确认保存业务方案'}) as HTMLButtonElement).disabled).toBe(true)
  fireEvent.change(screen.getByLabelText('业务方案变更理由'),{target:{value:'首次业务配置'}})
