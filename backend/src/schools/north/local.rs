@@ -47,41 +47,9 @@ impl<R: Store> Service<R> {
         a.authorize(school, "member")?;
         self.0.resources(school, a.can(school, "operator")).await
     }
-    pub async fn resource(&self, a: &Actor, school: Uuid, v: Value) -> Result<Value> {
-        if school.is_nil() {
-            a.platform()?;
-        } else {
-            a.authorize(school, "admin")?;
-        }
-        require(
-            [
-                "banner",
-                "qrcode",
-                "service",
-                "legal",
-                "tag",
-                "blocked_word",
-            ]
-            .contains(&v["kind"].as_str().unwrap_or("")),
-            "资源类型无效",
-        )?;
-        text(v["title"].as_str().unwrap_or(""), 1, 200)?;
-        let u = v["url"].as_str().unwrap_or("");
-        require(
-            u.is_empty()
-                || u.starts_with("https://")
-                || (u.starts_with('/') && !u.starts_with("//") && !u.contains('\\')),
-            "链接必须为 HTTPS 或本站路径",
-        )?;
-        for k in ["starts_at", "ends_at"] {
-            if let Some(s) = v[k].as_str() {
-                require(
-                    chrono::DateTime::parse_from_rfc3339(s).is_ok(),
-                    "日期格式错误",
-                )?
-            }
-        }
-        self.0.resource(a, school, v).await
+    pub async fn published_resources(&self, a: &Actor, school: Uuid) -> Result<Vec<Value>> {
+        a.authorize(school, "member")?;
+        self.0.resources(school, false).await
     }
     pub async fn group(
         &self,

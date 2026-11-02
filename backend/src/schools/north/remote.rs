@@ -70,16 +70,14 @@ async fn resources(
 ) -> Result<ApiResponse> {
     Ok(resource("resources", a.schools.resources(&actor, s).await?))
 }
-async fn save_resource(
+async fn published_resources(
     State(a): State<Application>,
     actor: Actor,
     Path(s): Path<Uuid>,
-    input_document: Input,
 ) -> Result<ApiResponse> {
-    let v = input_document.decode::<Value>("resources")?;
     Ok(resource(
         "resources",
-        a.schools.resource(&actor, s, v).await?,
+        a.schools.published_resources(&actor, s).await?,
     ))
 }
 async fn click(
@@ -115,32 +113,19 @@ async fn global_resources(State(a): State<Application>, actor: Actor) -> Result<
         a.schools.global_resources(&actor).await?,
     ))
 }
-async fn global_resource(
-    State(a): State<Application>,
-    actor: Actor,
-    input_document: Input,
-) -> Result<ApiResponse> {
-    let v = input_document.decode::<Value>("resources")?;
-    Ok(resource(
-        "resources",
-        a.schools.resource(&actor, Uuid::nil(), v).await?,
-    ))
-}
 pub fn router() -> Router<Application> {
     Router::new()
-        .route(
-            "/api/v1/platform/resources",
-            get(global_resources).post(global_resource),
-        )
+        .route("/api/v1/platform/resources", get(global_resources))
         .route("/api/v1/schools", get(list).post(create))
         .route("/api/v1/school-directory", get(directory))
         .route("/api/v1/schools/{school}", put(update))
         .route("/api/v1/schools/{school}/bind", post(bind))
         .route("/api/v1/schools/{school}/members", get(members))
         .route("/api/v1/schools/{school}/members/{id}", put(grant))
+        .route("/api/v1/schools/{school}/resources", get(resources))
         .route(
-            "/api/v1/schools/{school}/resources",
-            get(resources).post(save_resource),
+            "/api/v1/schools/{school}/published-resources",
+            get(published_resources),
         )
         .route("/api/v1/schools/{school}/resources/{id}/click", post(click))
         .route("/api/v1/schools/{school}/groups", get(groups).post(group))
