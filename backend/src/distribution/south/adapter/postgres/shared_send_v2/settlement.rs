@@ -38,6 +38,7 @@ pub(super) async fn settle(tx: &mut Tx<'_>, c: &Credential, v: Settlement) -> Re
     Ok(json!({"id":v.receipt_id,"event_id":v.event_id,"settled":true}))
 }
 pub(super) async fn sample(tx: &mut Tx<'_>, c: &Credential, v: HumanSampleEvent) -> Result<Value> {
+    require(v.operation != "start", "人工采样已退出业务流程")?;
     let r:Value=sqlx::query_scalar("SELECT to_jsonb(s) FROM mobile_v9_human_samples s WHERE id=$1 AND device_id=$2 AND credential_generation=$3 AND challenge=$4 AND expires_at>clock_timestamp()").bind(v.sample_id).bind(c.device_id).bind(c.generation).bind(&v.challenge).fetch_optional(&mut **tx).await?.ok_or(Error::Forbidden)?;
     authorize(tx, uid(&r, "requested_by")?, None, true).await?;
     if v.operation == "start" {
