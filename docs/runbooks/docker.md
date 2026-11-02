@@ -677,3 +677,7 @@ Web 镜像同时构建 React 与独立 docs 包。访问站点 `/docs/` 阅读�
 源码构建必须保留 docs 目录、独立锁文件与构建脚本。可通过 Docker build 参数 `WEKEEPER_BUILD_VERSION` 写入版本；未指定显示“开发构建”。文档与业务 Web 随同镜像回退，不回退数据库 migration。
 
 发布后运行 `make smoke`，再使用浏览器检查帮助入口、搜索、深链接、复制和 CSP。构建及安全头生成见[文档发布](../development/docs-publishing.md)。
+
+## 共享手机产品交付工具
+
+API 镜像包含同版本 `mobile-capability`，通过一次性 `docker compose run --rm --entrypoint /usr/local/bin/mobile-capability api ...` 使用，无需安装 Cargo 或增加常驻服务。公钥配置、只读状态、导入、激活与撤回的完整命令见[产品交付工具](mobile-capability-delivery.md#docker-标准部署)。技术交付不自动开放业务发送，管理员须在使用管理中独立配置业务方案。
