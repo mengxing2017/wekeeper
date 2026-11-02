@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Card, Checkbox, Input, InputNumber, Modal, Select, Space, Table, Tag } from 'antd'
 import { sharedSend, type UsageInput, type UsagePreview, type MobileUsage, type UsageOperation } from './api'
+import { BusinessSchemeEditor } from './business-scheme'
 import { createIdempotencyKey } from '../../../shared/idempotency-key'
 
 export function UsageManagement({school,admin=true}:{school?:string;admin?:boolean}) {
@@ -36,6 +37,9 @@ export function UsageManagement({school,admin=true}:{school?:string;admin?:boole
  const error=list.error||globalOptions.error||options.error
  return <Card title="手机群消息使用管理" extra={admin&&<Button type="primary" onClick={()=>begin()}>开通使用</Button>}>
   <Alert type="info" showIcon title="选范围，核对后确认" description="平台确认后直接开通；学校在已批准范围内可直接使用，新增范围提交平台审批。离线手机也可选择，恢复在线后自动检查。产品尚未交付时保留申请并等待交付，不要求管理员上传安装包或办理技术验证。"/>
+  {globalOptions.data?.sending_status&&<Alert type={globalOptions.data.sending_status.can_confirm?'success':'warning'} showIcon title={globalOptions.data.sending_status.message} description={`产品交付：${({missing:'尚未交付',inactive:'尚未激活',withdrawn:'已撤回',available:'有效'} as const)[globalOptions.data.sending_status.delivery]}；平台发送：${({unconfigured:'未配置',disabled:'已关闭',draft_only:'仅内容准备',preview_only:'仅预览',unsupported:'方案需更新',enabled:'已开放'} as const)[globalOptions.data.sending_status.platform]}。使用审批与手机现场状态见下表。`}/>}
+  {globalOptions.data?.scheme&&<p>当前业务方案：时区 {globalOptions.data.scheme.timezone}；每所学校每日最多 {globalOptions.data.scheme.daily_max_calls} 次；每个目标群最小间隔 {globalOptions.data.scheme.interval_seconds} 秒。</p>}
+  {!school&&admin&&<BusinessSchemeEditor scheme={globalOptions.data?.business_scheme} status={globalOptions.data?.sending_status}/>}
   {error&&<Alert type="error" title={error.message}/>}
   <Table<MobileUsage> rowKey="id" dataSource={list.data?.items??[]} loading={list.isFetching} pagination={{pageSize:10}} columns={[
    {title:'学校',dataIndex:'school_name'},
@@ -57,7 +61,7 @@ export function UsageManagement({school,admin=true}:{school?:string;admin?:boole
     <label>累计调用额度 <InputNumber aria-label="累计调用额度" value={limit} min={1} max={100000} precision={0} onChange={v=>setLimit(v??1)}/></label>
     <label>有效期 <Input aria-label="使用有效期" type="datetime-local" value={expiry} onChange={e=>setExpiry(e.target.value)}/></label>
     {!school&&<Checkbox checked={auto} onChange={e=>setAuto(e.target.checked)}>明确批准本校后续新增群</Checkbox>}
-    <p>使用方案：{options.data?.scheme?`每日最多 ${options.data.scheme.daily_max_calls} 次，目标群间隔至少 ${options.data.scheme.interval_seconds} 秒；时间按 ${options.data.scheme.timezone}。`:'等待产品提供业务方案，申请可先保存。'}</p>
+    <p>使用方案：{options.data?.scheme?`每日最多 ${options.data.scheme.daily_max_calls} 次，目标群间隔至少 ${options.data.scheme.interval_seconds} 秒；时间按 ${options.data.scheme.timezone}。`:'等待平台管理员配置业务方案，申请可先保存。'}</p>
     <Button type="primary" loading={inspect.isPending} disabled={!selectedSchool||!devices.length||(!targets.length&&!newGroup.trim())||!expiry} onClick={()=>inspect.mutate()}>下一步：核对摘要</Button>
    </>:<>
     <p>学校：{globalOptions.data?.schools.find(s=>s.id===selectedSchool)?.name??'本校'}</p>
