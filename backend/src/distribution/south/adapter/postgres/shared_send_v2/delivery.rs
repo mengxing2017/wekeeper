@@ -1,4 +1,4 @@
-//! Deployment-only signed product delivery. No browser session can import or publish a release.
+//! Deployment-only product delivery. No browser session can import or publish a release.
 use super::*;
 use crate::distribution::domain::mobile_execution::FlowV3;
 use serde::{Deserialize, Serialize};
@@ -27,12 +27,6 @@ pub struct DeliveryArtifact {
     pub content_hex: String,
     pub sha256: String,
 }
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Envelope {
-    pub payload: Value,
-    pub signature_hex: String,
-}
 pub fn unhex(s: &str) -> Result<Vec<u8>> {
     require(
         s.len().is_multiple_of(2) && s.len() <= 268435456,
@@ -47,17 +41,9 @@ pub fn unhex(s: &str) -> Result<Vec<u8>> {
         })
         .collect()
 }
-pub fn verify(envelope: Envelope, key: &str) -> Result<Delivery> {
-    let public = unhex(key)?;
-    let sig = unhex(&envelope.signature_hex)?;
-    ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, public)
-        .verify(
-            &serde_json::to_vec(&envelope.payload).map_err(|_| Error::Conflict)?,
-            &sig,
-        )
-        .map_err(|_| Error::Policy("delivery_signature_invalid"))?;
-    let d: Delivery =
-        serde_json::from_value(envelope.payload).map_err(|e| Error::Invalid(e.to_string()))?;
+/// Parse the actual product object; no signature envelope or signing configuration.
+pub fn parse(raw: &[u8]) -> Result<Delivery> {
+    let d: Delivery = serde_json::from_slice(raw).map_err(|e| Error::Invalid(e.to_string()))?;
     d.validate()?;
     Ok(d)
 }
@@ -169,10 +155,10 @@ pub async fn import(pool: &PgPool, actor: Uuid, d: Delivery) -> Result<Uuid> {
     .bind(actor)
     .execute(&mut *tx)
     .await?;
-    let provenance = json!({"measurement_source":d.measurement_source,"measured_at":d.measured_at,"reviewer":d.reviewer,"validation_evidence":d.validation_evidence,"signature_verified":true});
+    let provenance = json!({"measurement_source":d.measurement_source,"measured_at":d.measured_at,"reviewer":d.reviewer,"validation_evidence":d.validation_evidence,"import_method":"deployment_cli"});
     sqlx::query("INSERT INTO mobile_v9_baselines(id,flow_id,device_id,samples,evidence_ids,min_interval_ms,recorded_by,external_source) VALUES($1,$2,NULL,$3,$4,$5,$6,$7)").bind(baseline).bind(flow).bind(json!(d.samples_ms)).bind(&evidence).bind(d.samples_ms.iter().max().copied().unwrap()).bind(actor).bind(&provenance).execute(&mut *tx).await?;
     sqlx::query("INSERT INTO mobile_v9_adapter_releases(id,name,version,flow_id,flow,content_digest,baseline_id,evidence_ids,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)").bind(release).bind(&d.name).bind(&d.version).bind(flow).bind(&f).bind(&digest).bind(baseline).bind(&evidence).bind(actor).execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO mobile_v9_acceptance_runs(id,release_id,stage,apk_id,evidence_ids,validation_ids,cases,soak_hours,soak_passed,historical_debt_closed,reviewer_id,reason) VALUES($1,$2,'production_allowlist',$3,$4,'{}',$5,$6,true,true,$7,'核验签名的外部产品交付；原始验证见交付来源')").bind(acceptance).bind(release).bind(apk_ids[0]).bind(&evidence).bind(json!(d.cases)).bind(d.soak_hours).bind(actor).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO mobile_v9_acceptance_runs(id,release_id,stage,apk_id,evidence_ids,validation_ids,cases,soak_hours,soak_passed,historical_debt_closed,reviewer_id,reason) VALUES($1,$2,'production_allowlist',$3,$4,'{}',$5,$6,true,true,$7,'受控部署导入的产品交付；原始验证见交付来源')").bind(acceptance).bind(release).bind(apk_ids[0]).bind(&evidence).bind(json!(d.cases)).bind(d.soak_hours).bind(actor).execute(&mut *tx).await?;
     sqlx::query("INSERT INTO mobile_capability_deliveries(release_id,acceptance_id,supported_apks,provenance) VALUES($1,$2,$3,$4)").bind(release).bind(acceptance).bind(d.apks.iter().map(|a|a.sha256.clone()).collect::<Vec<_>>()).bind(provenance).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(release)
@@ -222,35 +208,39 @@ pub async fn status(pool: &PgPool, actor: Uuid) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ring::signature::KeyPair;
-    fn hex(b: &[u8]) -> String {
-        b.iter().map(|v| format!("{v:02x}")).collect()
-    }
-    #[test]
-    fn delivery_requires_trusted_signature_and_real_evidence_not_default_passes() {
-        let signer = ring::signature::Ed25519KeyPair::from_seed_unchecked(&[7; 32]).unwrap();
+    fn package() -> Value {
         let fixture: Value = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../api-contract/fixtures/shared-mobile-send-v9.json"
         )))
         .unwrap();
-        let payload = json!({"flow":fixture["flow"]});
-        let signature = signer.sign(&serde_json::to_vec(&payload).unwrap());
-        let signed = || Envelope {
-            payload: payload.clone(),
-            signature_hex: hex(signature.as_ref()),
-        };
-        assert!(
-            matches!(
-                verify(signed(), &hex(signer.public_key().as_ref())),
-                Err(Error::Invalid(_))
-            ),
-            "A valid signature cannot supply missing measurement or acceptance evidence"
-        );
-        assert!(verify(signed(), &hex(&[8; 32])).is_err());
-        let mut tampered = signed();
-        tampered.payload["name"] = json!("changed");
-        assert!(verify(tampered, &hex(signer.public_key().as_ref())).is_err());
+        // Synthetic evidence only. Empty material must never become an accepted product.
+        json!({"name":"Synthetic","version":"1","flow":fixture["flow"],"measurement_source":"Synthetic test only","measured_at":chrono::Utc::now(),"samples_ms":[1000,1000,1000],"evidence":[],"apks":[],"validation_evidence":{},"cases":{},"soak_hours":0,"soak_passed":false,"historical_debt_closed":false,"reviewer":"Synthetic reviewer"})
+    }
+    #[test]
+    fn plain_delivery_still_requires_real_evidence() {
+        assert!(matches!(
+            parse(&serde_json::to_vec(&package()).unwrap()),
+            Err(Error::Policy("delivery_evidence_required"))
+        ));
+        assert!(matches!(parse(b"{}"), Err(Error::Invalid(_))));
+        assert!(parse(b"not json").is_err());
         assert!(unhex("not-hex").is_err());
+    }
+    #[test]
+    fn obsolete_envelopes_and_unknown_fields_are_rejected() {
+        assert!(matches!(
+            parse(
+                &serde_json::to_vec(&json!({"payload":package(),"signature_hex":"obsolete"}))
+                    .unwrap()
+            ),
+            Err(Error::Invalid(_))
+        ));
+        let mut p = package();
+        p["policy"] = json!({});
+        assert!(matches!(
+            parse(&serde_json::to_vec(&p).unwrap()),
+            Err(Error::Invalid(_))
+        ));
     }
 }

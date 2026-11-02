@@ -1,4 +1,4 @@
-//! Deployment tool: dry-run by default. Credentials and signing keys never enter browser APIs.
+//! Deployment tool: dry-run by default. Database credentials never enter browser APIs.
 use clap::Parser;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -30,10 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let package = if args.action == "import" {
         let raw = std::fs::read(args.package.ok_or("--package required")?)?;
-        Some(delivery::verify(
-            serde_json::from_slice(&raw)?,
-            &std::env::var("WEKEEPER_CAPABILITY_PUBLIC_KEY")?,
-        )?)
+        Some(delivery::parse(&raw)?)
     } else {
         args.release.ok_or("--release required")?;
         None
