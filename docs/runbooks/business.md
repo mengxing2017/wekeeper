@@ -17,7 +17,7 @@ pnpm --dir frontend dev
 
 浏览器地址应匹配 WEKEEPER_PUBLIC_ORIGIN；本地 insecure 模式允许同协议同端口的 localhost、127.0.0.1 和 IPv6 loopback，局域网地址或其他端口需显式配置对应 origin。
 嵌入式库每次停止后删除数据；显式设置开发密码时创建 admin，没有硬编码默认密码。
-后台 `/admin`、成员社区 `/community`、企业微信 `/wecom`。
+后台及企业微信分发入口为 `/admin`，成员社区为 `/community`。
 
 需要本地调试企业通讯录时，在启动后端的同一终端先 export `WEKEEPER_WECOM_CORP_ID` 和 `WEKEEPER_WECOM_SECRET`；`WEKEEPER_WECOM_AGENT_ID` 可留空。嵌入式启动不会自动读取 `.env`，完整命令及本地文件注入方式见 [本地开发：企业微信凭据注入](../manual/local-development.md#企业微信凭据注入)。嵌入式入口强制本地登录模式，完整凭据也不会开启 OAuth；服务端群发不依赖本地 origin/登录方式，配置凭据并显式设置 `WEKEEPER_WECOM_BROADCAST_ENABLED=true` 后可调试真实任务。
 
@@ -49,7 +49,7 @@ unset WK_ADMIN_PASSWORD
 7. 配置学校客户群，并确保群主绑定有效本校运营账号。打开“群发任务”直接填写正文，或选择社区内容及模板，再选择多个群并保存冻结草稿。直接文本无须社区内容，operator 可保存，须由本校 admin 确认。
 8. 预览正文（最多 4000 UTF-8 字节）、目标群与群主，人工确认创建企业微信任务。无需打开每个群侧边栏。
 9. API 按群主分批单次创建任务；成员在企业微信确认执行。
-10. 在任务详情查看官方逐群结果、提醒与停止。unknown 先人工核对，再由 admin 明确创建再次发送草稿。历史记录位于“历史人工分享”。
+10. 在任务详情查看官方逐群结果、提醒与停止。unknown 先人工核对，再由 admin 明确创建再次发送草稿。当前任务的操作记录在任务详情查看。
 
 平台默认资源在账号/学校管理展开区配置；学校有同类启用资源时覆盖平台默认。
 全局和学校屏蔽词同时生效。资源链接必须为 HTTPS 或本站相对地址。
@@ -60,7 +60,7 @@ unset WK_ADMIN_PASSWORD
 
 - CorpID / Secret：服务端目录、成员核验、OAuth 与群发凭据。群发应用须在客户联系“可调用应用”范围；AgentID 不再是发送前提。
 - WEKEEPER_WECOM_BROADCAST_ENABLED 默认 false，完成应用权限与 4.1.10+ 终端验收后显式启用。
-- OAuth 回调：`https://域名/api/v1/wecom/oauth/callback`；`/wecom` 仅显示迁移说明。
+- OAuth 回调：`https://域名/api/v1/wecom/oauth/callback`；认证成功后进入当前后台群发页。
 - 后台普通登录可组织任务，学校授权与执行群主绑定必须有效。确认及领取时重新校验内容、群主和凭据代次。
 - token 缓存在 PostgreSQL，不再生成 JS-SDK 签名/票据或加载外部 SDK。群发由服务端凭据和显式开关控制，与 OAuth 门禁独立。
 - 官方创建成功只表示任务创建；结果同步、人工核对和再次发送各自保留证据。无有效配置不模拟成功。
