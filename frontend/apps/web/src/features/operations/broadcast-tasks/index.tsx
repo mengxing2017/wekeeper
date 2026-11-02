@@ -467,7 +467,7 @@ function DraftEditor({
         预览会核验目录和群主学校授权；未就绪时保留草稿，确认前再次校验。
       </p>
       {initial?.source_task_id && (
-        <Field label="再次发送 / 迁移原因">
+        <Field label="再次发送原因">
           <Input.TextArea
             value={reason}
             maxLength={1000}
