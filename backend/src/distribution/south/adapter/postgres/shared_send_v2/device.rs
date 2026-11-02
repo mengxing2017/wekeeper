@@ -3,13 +3,14 @@ pub(super) async fn read(repo: &Repository, c: &Credential) -> Result<Value> {
     let mut tx = repo.0.begin().await?;
     guard(&mut tx).await?;
     authenticate(&mut tx, c, false).await?;
+    usage::reconcile(&mut tx).await?;
     let delegation = delegation::context(&mut tx, c).await?;
     inspections::reconcile(&mut tx, Some(c.device_id), None).await?;
     let work:Vec<Value>=sqlx::query_scalar("SELECT (to_jsonb(c)-'recovery_credential_hash'-'encrypted_response')||jsonb_build_object('attempt_state',a.state,'invocation_id',i.id,'execute_before',i.execute_before) FROM mobile_v9_send_claims c JOIN mobile_v9_attempts a ON a.id=c.attempt_id LEFT JOIN mobile_v9_invocations i ON i.claim_id=c.id WHERE c.device_id=$1 AND (c.state='active' OR a.state='unknown') ORDER BY c.created_at LIMIT 100").bind(c.device_id).fetch_all(&mut *tx).await?;
-    let inspections:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',i.id,'target_id',i.target_id,'target_name',coalesce(nullif(t.alias,''),t.search_text),'state',i.state,'expires_at',i.expires_at) FROM mobile_v9_send_inspections i JOIN mobile_targets t ON t.id=i.target_id AND t.school_id=i.school_id WHERE i.device_id=$1 AND i.delegation_id=$2 AND i.state='pending' AND i.expires_at>clock_timestamp() AND NOT EXISTS(SELECT 1 FROM mobile_v9_plans p JOIN mobile_v9_attempts a ON a.plan_id=p.id JOIN mobile_v9_task_items ti ON ti.id=a.item_id JOIN mobile_v9_tasks task ON task.id=ti.task_id WHERE p.plan->>'binding_id'=i.binding_id::text AND a.current AND NOT task.stopped AND task.confirmed_until>clock_timestamp() AND (ti.position<>task.cursor_position OR task.next_eligible_at>clock_timestamp())) ORDER BY i.created_at,i.id").bind(c.device_id).bind(uid(&delegation,"id")?).fetch_all(&mut *tx).await?;
-    let samples:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(s) FROM mobile_v9_human_samples s WHERE device_id=$1 AND credential_generation=$2 AND state IN ('pending','running') AND expires_at>clock_timestamp() ORDER BY created_at").bind(c.device_id).bind(c.generation).fetch_all(&mut *tx).await?;
+    let inspections:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',i.id,'target_id',i.target_id,'target_name',coalesce(nullif(t.alias,''),t.search_text),'state',i.state,'expires_at',i.expires_at) FROM mobile_v9_send_inspections i JOIN mobile_targets t ON t.id=i.target_id AND t.school_id=i.school_id WHERE i.device_id=$1 AND i.delegation_id=$2 AND i.purpose='automatic' AND i.state='pending' AND i.expires_at>clock_timestamp() AND NOT EXISTS(SELECT 1 FROM mobile_v9_plans p JOIN mobile_v9_attempts a ON a.plan_id=p.id JOIN mobile_v9_task_items ti ON ti.id=a.item_id JOIN mobile_v9_tasks task ON task.id=ti.task_id WHERE p.plan->>'binding_id'=i.binding_id::text AND a.current AND NOT task.stopped AND task.confirmed_until>clock_timestamp() AND (ti.position<>task.cursor_position OR task.next_eligible_at>clock_timestamp())) ORDER BY i.created_at,i.id").bind(c.device_id).bind(uid(&delegation,"id")?).fetch_all(&mut *tx).await?;
+
     let turns:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',a.id,'task_id',t.id,'position',i.position,'next_eligible_at',t.next_eligible_at,'interval_ms',CASE WHEN i.position=0 THEN 0 ELSE greatest((p.plan->>'between_targets_seconds')::bigint*1000,(p.plan->'flow'->'pacing'->>'between_targets_min_ms')::bigint,coalesce((SELECT max((lim.value->>'interval_seconds')::bigint)*1000 FROM mobile_v9_send_policy_versions policy,jsonb_each(policy.limits) lim WHERE policy.revision=(SELECT max(revision) FROM mobile_v9_send_policy_versions)),1000)) END) FROM mobile_v9_tasks t JOIN mobile_v9_task_items i ON i.task_id=t.id AND i.position=t.cursor_position JOIN mobile_v9_attempts a ON a.item_id=i.id AND a.current JOIN mobile_v9_plans p ON p.id=a.plan_id WHERE p.device_id=$1 AND a.state='queued' AND NOT t.stopped AND t.confirmed_until>clock_timestamp() ORDER BY t.created_at,t.id LIMIT 100").bind(c.device_id).fetch_all(&mut *tx).await?;
-    let v = json!({"turns":turns,"human_samples":samples,"inspections":inspections,"id":c.device_id,"schema":SCHEMA,"authorization_schema":SCOPE,"protocol_version":9,"single_use_supported":true,"result_recovery_supported":true,"delegation":delegation,"recovery":work});
+    let v = json!({"turns":turns,"human_samples":[],"inspections":inspections,"id":c.device_id,"schema":SCHEMA,"authorization_schema":SCOPE,"protocol_version":9,"single_use_supported":true,"result_recovery_supported":true,"delegation":delegation,"recovery":work});
     tx.commit().await?;
     Ok(v)
 }
@@ -28,6 +29,8 @@ async fn live_claim(tx: &mut Tx<'_>, c: &Credential, id: Uuid) -> Result<Value> 
         "shared_send_consent_required",
     )?;
     tasks::validate_plan(tx, school, &v["plan"]).await?;
+    let supported:bool=sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM mobile_capability_deliveries d WHERE d.release_id=$1 AND NOT EXISTS(SELECT 1 FROM mobile_v9_runtime_details r WHERE r.device_id=$2 AND r.apk_sha256=ANY(d.supported_apks) AND r.credential_generation=$3))").bind(uid(&v["plan"],"release_id")?).bind(c.device_id).bind(c.generation).fetch_one(&mut **tx).await?;
+    require(supported, "shared_send_helper_update_required")?;
     let checked:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_send_inspections i JOIN mobile_v9_runtime_details r ON r.device_id=i.device_id WHERE i.device_id=$1 AND i.binding_id=$2 AND i.dependencies=$3 AND i.state='passed' AND i.purpose='automatic' AND i.expires_at>clock_timestamp() AND i.result->>'ui_context_epoch'=r.ui_context_epoch)").bind(c.device_id).bind(uid(&v["plan"],"binding_id")?).bind(tasks::dependencies(&v["plan"])).fetch_one(&mut **tx).await?;
     require(checked, "shared_send_inspection_required")?;
     Ok(v)
@@ -42,6 +45,22 @@ async fn quota(
     let p = policy(tx)
         .await?
         .ok_or(Error::Policy("shared_send_not_released"))?;
+    let frozen:Option<Value>=sqlx::query_scalar("SELECT to_jsonb(policy) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_usage_scopes m ON m.scope_id=(p.plan->>'scope_id')::uuid JOIN mobile_usages u ON u.id=m.usage_id JOIN mobile_v9_send_policy_versions policy ON policy.id=(u.body->>'scheme_id')::uuid WHERE a.id=$1").bind(attempt).fetch_optional(&mut **tx).await?;
+    if let Some(original) = frozen
+        && !quota_policy(tx, s, device, target, attempt, &original).await?
+    {
+        return Ok(false);
+    }
+    quota_policy(tx, s, device, target, attempt, &p).await
+}
+async fn quota_policy(
+    tx: &mut Tx<'_>,
+    s: Uuid,
+    device: Uuid,
+    target: Uuid,
+    attempt: Uuid,
+    p: &Value,
+) -> Result<bool> {
     let limits: Limits = serde_json::from_value(p["limits"].clone())
         .map_err(|_| Error::Policy("shared_send_policy_invalid"))?;
     limits.validate()?;
@@ -214,7 +233,10 @@ pub(super) async fn write(
             )?;
             let scope_id = uid(&cl["plan"], "scope_id")?;
             let budget:bool=sqlx::query_scalar("SELECT (SELECT count(*) FROM mobile_v9_invocations i JOIN mobile_v9_attempts a ON a.id=i.attempt_id JOIN mobile_v9_plans p ON p.id=a.plan_id WHERE p.plan->>'scope_id'=$1::uuid::text )<g.max_calls FROM mobile_v9_scope_grants g WHERE g.id=$1 AND g.expires_at>clock_timestamp()+interval '15 seconds'").bind(scope_id).fetch_optional(&mut *tx).await?.unwrap_or(false);
-            require(budget, "quota_wait")?;
+            require(
+                budget && usage_budget(&mut tx, scope_id).await?,
+                "quota_wait",
+            )?;
             let inv = Uuid::now_v7();
             let timing:Value=sqlx::query_scalar("SELECT jsonb_build_object('server_time',clock_timestamp(),'not_before',clock_timestamp(),'execute_before',clock_timestamp()+interval '15 seconds') FROM mobile_v9_send_claims WHERE id=$1 AND expires_at>clock_timestamp()+interval '27 seconds' AND EXISTS(SELECT 1 FROM mobile_v9_tasks t JOIN mobile_v9_task_items i ON i.task_id=t.id JOIN mobile_v9_attempts a ON a.item_id=i.id WHERE a.id=mobile_v9_send_claims.attempt_id AND t.confirmed_until>clock_timestamp()+interval '15 seconds')").bind(id).fetch_optional(&mut *tx).await?.ok_or(Error::Policy("lease_expired"))?;
             let secret = secrets::token();
@@ -454,4 +476,9 @@ async fn mutate_lease(
         sqlx::query("UPDATE mobile_shared_device_leases SET expires_at=(SELECT expires_at FROM mobile_v9_send_claims WHERE id=$2) WHERE device_id=$1 AND holder_id=$2 AND fence=$3").bind(c.device_id).bind(id).bind(v.lease_fence).execute(&mut **tx).await?;
     }
     Ok(json!({"id":id,"lease_fence":v.lease_fence,"state":if release{"closed"}else{"active"}}))
+}
+
+async fn usage_budget(tx: &mut Tx<'_>, scope: Uuid) -> Result<bool> {
+    let budget:Option<bool>=sqlx::query_scalar("SELECT (SELECT count(*) FROM mobile_v9_invocations i JOIN mobile_v9_attempts a ON a.id=i.attempt_id JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_usage_scopes x ON x.scope_id=(p.plan->>'scope_id')::uuid JOIN mobile_usages family ON family.id=x.usage_id WHERE family.budget_root=u.budget_root)<(u.body->>'max_calls')::bigint FROM mobile_usage_scopes m JOIN mobile_usages u ON u.id=m.usage_id WHERE m.scope_id=$1").bind(scope).fetch_optional(&mut **tx).await?;
+    Ok(budget.unwrap_or(true))
 }
