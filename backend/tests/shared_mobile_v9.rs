@@ -24,6 +24,9 @@ struct Fixture {
 }
 impl Fixture {
     async fn new() -> Self {
+        Self::with_adapter(true).await
+    }
+    async fn with_adapter(seed_adapter: bool) -> Self {
         let url = std::env::var("WEKEEPER_TEST_DATABASE_URL")
             .expect("explicit isolated database required");
         let base = PgPool::connect(&url).await.unwrap();
@@ -69,20 +72,22 @@ impl Fixture {
             sqlx::query("INSERT INTO mobile_targets(id,school_id,search_text,created_by,updated_by) VALUES($1,$2,'测试群',$3,$3)").bind(target).bind(school).bind(actor_id).execute(&pool).await.unwrap();
             sqlx::query("INSERT INTO mobile_device_target_bindings(id,school_id,device_id,target_id,created_by,updated_by) VALUES($1,$2,$3,$4,$5,$5)").bind(Uuid::new_v4()).bind(school).bind(device).bind(target).bind(actor_id).execute(&pool).await.unwrap();
         }
-        let flow = Uuid::new_v4();
-        let artifact = Uuid::new_v4();
-        let baseline = Uuid::new_v4();
         let release = Uuid::new_v4();
         let acceptance = Uuid::new_v4();
-        let fixture: Value = serde_json::from_str(include_str!(
-            "../../api-contract/fixtures/shared-mobile-send-v9.json"
-        ))
-        .unwrap();
-        sqlx::query("INSERT INTO mobile_v9_flows(id,name,flow,digest,created_by) VALUES($1,'Synthetic',$2,$3,$4)").bind(flow).bind(&fixture["flow"]).bind(fixture["flow_digest"].as_str()).bind(actor_id).execute(&pool).await.unwrap();
-        sqlx::query("INSERT INTO mobile_v9_artifacts(id,kind,name,sha256,content,created_by) VALUES($1,'apk','Synthetic',repeat('a',64),$2,$3)").bind(artifact).bind(vec![1u8]).bind(actor_id).execute(&pool).await.unwrap();
-        sqlx::query("INSERT INTO mobile_v9_baselines(id,flow_id,device_id,samples,evidence_ids,min_interval_ms,recorded_by) VALUES($1,$2,$3,'[]',ARRAY[$4]::uuid[],1000,$5)").bind(baseline).bind(flow).bind(device).bind(artifact).bind(actor_id).execute(&pool).await.unwrap();
-        sqlx::query("INSERT INTO mobile_v9_adapter_releases(id,name,version,flow_id,flow,content_digest,baseline_id,evidence_ids,created_by) VALUES($1,'Synthetic','1',$2,$3,$4,$5,ARRAY[$6]::uuid[],$7)").bind(release).bind(flow).bind(&fixture["flow"]).bind(fixture["flow_digest"].as_str()).bind(baseline).bind(artifact).bind(actor_id).execute(&pool).await.unwrap();
-        sqlx::query("INSERT INTO mobile_v9_acceptance_runs(id,release_id,stage,apk_id,evidence_ids,validation_ids,cases,soak_hours,soak_passed,historical_debt_closed,reviewer_id,reason) VALUES($1,$2,'test_send',$3,ARRAY[$3]::uuid[],'{}','{}',0,false,false,$4,'Synthetic test only')").bind(acceptance).bind(release).bind(artifact).bind(actor_id).execute(&pool).await.unwrap();
+        if seed_adapter {
+            let flow = Uuid::new_v4();
+            let artifact = Uuid::new_v4();
+            let baseline = Uuid::new_v4();
+            let fixture: Value = serde_json::from_str(include_str!(
+                "../../api-contract/fixtures/shared-mobile-send-v9.json"
+            ))
+            .unwrap();
+            sqlx::query("INSERT INTO mobile_v9_flows(id,name,flow,digest,created_by) VALUES($1,'Synthetic',$2,$3,$4)").bind(flow).bind(&fixture["flow"]).bind(fixture["flow_digest"].as_str()).bind(actor_id).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO mobile_v9_artifacts(id,kind,name,sha256,content,created_by) VALUES($1,'apk','Synthetic',repeat('a',64),$2,$3)").bind(artifact).bind(vec![1u8]).bind(actor_id).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO mobile_v9_baselines(id,flow_id,device_id,samples,evidence_ids,min_interval_ms,recorded_by) VALUES($1,$2,$3,'[]',ARRAY[$4]::uuid[],1000,$5)").bind(baseline).bind(flow).bind(device).bind(artifact).bind(actor_id).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO mobile_v9_adapter_releases(id,name,version,flow_id,flow,content_digest,baseline_id,evidence_ids,created_by) VALUES($1,'Synthetic','1',$2,$3,$4,$5,ARRAY[$6]::uuid[],$7)").bind(release).bind(flow).bind(&fixture["flow"]).bind(fixture["flow_digest"].as_str()).bind(baseline).bind(artifact).bind(actor_id).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO mobile_v9_acceptance_runs(id,release_id,stage,apk_id,evidence_ids,validation_ids,cases,soak_hours,soak_passed,historical_debt_closed,reviewer_id,reason) VALUES($1,$2,'test_send',$3,ARRAY[$3]::uuid[],'{}','{}',0,false,false,$4,'Synthetic test only')").bind(acceptance).bind(release).bind(artifact).bind(actor_id).execute(&pool).await.unwrap();
+        }
         let actor=serde_json::from_value(json!({"id":actor_id,"username":"v9-admin","display_name":"Admin","platform_admin":true,"grants":[],"wecom_authenticated":false})).unwrap();
         Self {
             pool,
@@ -471,14 +476,27 @@ async fn business_usage_is_atomic_scoped_idempotent_and_survives_delivery_change
 
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn business_production_delivery_materializes_once_and_pausing_blocks_plans() {
+async fn business_scope_materializes_without_delivery_acceptance_or_activation_and_pause_blocks_plans()
+ {
     use wekeeper_api::distribution::domain::mobile_execution::usage::*;
     let f = Fixture::new().await;
     let r = f.repo();
-    f.activate("activate-usage").await.unwrap();
-    // All evidence in this test is synthetic and isolated; never used by delivery tooling.
-    sqlx::query("INSERT INTO mobile_v9_acceptance_runs(id,release_id,stage,apk_id,evidence_ids,validation_ids,cases,soak_hours,soak_passed,historical_debt_closed,reviewer_id,reason) SELECT $1,release_id,'production_allowlist',apk_id,evidence_ids,validation_ids,cases,72,true,true,reviewer_id,'Synthetic business test only' FROM mobile_v9_acceptance_runs WHERE id=$2").bind(Uuid::now_v7()).bind(f.acceptance).execute(&f.pool).await.unwrap();
-    sqlx::query("INSERT INTO mobile_capability_deliveries(release_id,acceptance_id,supported_apks,provenance) SELECT release_id,id,ARRAY[(SELECT sha256 FROM mobile_v9_artifacts WHERE id=apk_id)], '{\"synthetic_test\":true}' FROM mobile_v9_acceptance_runs WHERE stage='production_allowlist'").execute(&f.pool).await.unwrap();
+    // The actual executable rule is a synthetic fixture; no acceptance/delivery/activation
+    // records are required to authorize resources or confirm a business task.
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_capability_deliveries")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_v9_activations")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        0
+    );
     let p:PolicyInput=serde_json::from_value(json!({"expected_revision":0,"mode":"enabled","allowed_stages":["production_allowlist"],"confirmation_seconds":600,"inspection_seconds":600,"retry_seconds":300,"retry_limit":3,"timezone":"Asia/Shanghai","allowed_windows":[{"weekdays":[1,2,3,4,5,6,7],"start_minute":0,"end_minute":1440}],"limits":ObjectLimits::value(),"reason":"Synthetic test"})).unwrap();
     r.platform_write(&f.actor, "business-policy", PlatformCommand::Policy(p))
         .await
@@ -549,6 +567,25 @@ async fn business_production_delivery_materializes_once_and_pausing_blocks_plans
     assert_eq!(preview["draft"]["stage"], "production_allowlist");
     assert_eq!(preview["preview"]["plan"]["message"], "  一步预览\n🙂  ");
     assert!(preview["preview"]["plan"]["items"][0]["blocker"].is_null());
+    let task = r
+        .usage_write(
+            &f.actor,
+            f.school,
+            "confirm-without-delivery",
+            UsageCommand::TaskConfirm(Confirmation {
+                preview_id: serde_json::from_value(preview["preview"]["id"].clone()).unwrap(),
+                preview_digest: preview["preview"]["digest"].as_str().unwrap().into(),
+                confirmed: true,
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(task["items"][0]["attempts"][0]["state"], "queued");
+    assert_eq!(
+        task["items"][0]["attempts"][0]["plan"]["device_id"],
+        json!(f.device)
+    );
+
     let id: Uuid = serde_json::from_value(u["items"][0]["id"].clone()).unwrap();
     r.usage_write(
         &f.actor,
@@ -586,7 +623,8 @@ async fn business_configuration_does_not_require_technical_delivery() {
         .usage_read(&f.actor, Some(f.school), None, true)
         .await
         .unwrap();
-    assert_eq!(options["sending_status"]["delivery"], "missing");
+    assert!(options["sending_status"].get("delivery").is_none());
+    assert_eq!(options["sending_status"]["platform"], "unconfigured");
     let result = r
         .usage_write(
             &f.actor,
@@ -638,5 +676,168 @@ async fn business_configuration_does_not_require_technical_delivery() {
     )
     .await
     .unwrap();
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn approved_business_resources_exist_without_any_adapter_or_delivery_records() {
+    use wekeeper_api::distribution::domain::mobile_execution::usage::*;
+    let f = Fixture::with_adapter(false).await;
+    let r = f.repo();
+    let mut scheme: BusinessSchemeInput = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/mobile-business-scheme.json"
+    ))
+    .unwrap();
+    scheme.enabled = true;
+    r.platform_write(
+        &f.actor,
+        "enable-business-only",
+        PlatformCommand::Policy(scheme.policy().unwrap()),
+    )
+    .await
+    .unwrap();
+    let input = UsageInput {
+        device_ids: vec![f.device],
+        targets: vec![UsageTarget {
+            id: None,
+            name: "新增目标".into(),
+            search_text: "新增目标".into(),
+        }],
+        max_calls: 5,
+        expires_at: chrono::Utc::now() + chrono::Duration::days(3),
+        auto_targets: false,
+        renewal_of: None,
+        expected_revision: None,
+    };
+    let p = r
+        .usage_write(
+            &f.actor,
+            f.school,
+            "business-only-preview",
+            UsageCommand::Preview(input),
+        )
+        .await
+        .unwrap();
+    let u = r
+        .usage_write(
+            &f.actor,
+            f.school,
+            "business-only-confirm",
+            UsageCommand::Confirm(UsageConfirm {
+                preview_id: serde_json::from_value(p["id"].clone()).unwrap(),
+                digest: p["digest"].as_str().unwrap().into(),
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(u["items"][0]["delivery"], "available");
+    let id: Uuid = serde_json::from_value(u["items"][0]["id"].clone()).unwrap();
+    sqlx::query(
+        "UPDATE mobile_usages SET confirmed_until=clock_timestamp()-interval '1 day' WHERE id=$1",
+    )
+    .bind(id)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    r.reconcile_usages().await.unwrap();
+    r.reconcile_usages().await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM mobile_usage_scopes WHERE usage_id=$1 AND release_id IS NULL"
+        )
+        .bind(id)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap(),
+        1
+    );
+    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM mobile_v9_scope_grants WHERE release_id IS NULL AND acceptance_id IS NULL").fetch_one(&f.pool).await.unwrap(),1);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_v9_adapter_releases")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_v9_acceptance_runs")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM mobile_shared_school_access WHERE enabled"
+        )
+        .fetch_one(&f.pool)
+        .await
+        .unwrap(),
+        1
+    );
+    let options = r
+        .usage_read(&f.actor, Some(f.school), None, true)
+        .await
+        .unwrap();
+    assert_eq!(options["sending_status"]["can_confirm"], true);
+    let target: Uuid =
+        serde_json::from_value(u["items"][0]["body"]["targets"][0]["id"].clone()).unwrap();
+    let overview = r.school_read(&f.actor, f.school, None).await.unwrap();
+    let row = overview["readiness"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["target_id"] == json!(target))
+        .unwrap();
+    assert_eq!(row["plan_selectable"], true);
+    assert_eq!(row["confirmable"], true); // Business confirmation does not gate on an implementation bug.
+    let p = r
+        .usage_write(
+            &f.actor,
+            f.school,
+            "no-rules-task-preview",
+            UsageCommand::TaskPreview(UsageTaskInput {
+                draft_id: None,
+                expected_revision: None,
+                target_ids: vec![target],
+                message: "正常下发".into(),
+                between_targets_seconds: 30,
+                selections: vec![],
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(p["preview"]["plan"]["items"][0]["blocker"].is_null());
+    let task = r
+        .usage_write(
+            &f.actor,
+            f.school,
+            "no-rules-task-confirm",
+            UsageCommand::TaskConfirm(Confirmation {
+                preview_id: serde_json::from_value(p["preview"]["id"].clone()).unwrap(),
+                preview_digest: p["preview"]["digest"].as_str().unwrap().into(),
+                confirmed: true,
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(task["items"][0]["attempts"][0]["state"], "queued");
+    assert!(task["items"][0]["attempts"][0]["plan"]["flow"].is_null());
+
+    assert!(
+        row["blockers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|v| v["code"] != "release_missing")
+    );
+    assert!(
+        !row["blockers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v["code"] == "business_scope_missing")
+    );
     f.close().await;
 }

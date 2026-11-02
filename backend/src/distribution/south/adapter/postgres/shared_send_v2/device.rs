@@ -29,8 +29,10 @@ async fn live_claim(tx: &mut Tx<'_>, c: &Credential, id: Uuid) -> Result<Value> 
         "shared_send_consent_required",
     )?;
     tasks::validate_plan(tx, school, &v["plan"]).await?;
-    let supported:bool=sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM mobile_capability_deliveries d WHERE d.release_id=$1 AND NOT EXISTS(SELECT 1 FROM mobile_v9_runtime_details r WHERE r.device_id=$2 AND r.apk_sha256=ANY(d.supported_apks) AND r.credential_generation=$3))").bind(uid(&v["plan"],"release_id")?).bind(c.device_id).bind(c.generation).fetch_one(&mut **tx).await?;
-    require(supported, "shared_send_helper_update_required")?;
+    require(
+        !tasks::missing_rules(&v["plan"]),
+        "shared_send_adapter_unavailable",
+    )?;
     let checked:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_send_inspections i JOIN mobile_v9_runtime_details r ON r.device_id=i.device_id WHERE i.device_id=$1 AND i.binding_id=$2 AND i.dependencies=$3 AND i.state='passed' AND i.purpose='automatic' AND i.expires_at>clock_timestamp() AND i.result->>'ui_context_epoch'=r.ui_context_epoch)").bind(c.device_id).bind(uid(&v["plan"],"binding_id")?).bind(tasks::dependencies(&v["plan"])).fetch_one(&mut **tx).await?;
     require(checked, "shared_send_inspection_required")?;
     Ok(v)
@@ -295,7 +297,9 @@ async fn claim(tx: &mut Tx<'_>, c: &Credential, v: ClaimRequest) -> Result<Value
         }
         let valid_inspection:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_send_inspections i JOIN mobile_v9_runtime_details r ON r.device_id=i.device_id WHERE i.device_id=$1 AND i.binding_id=$2 AND i.dependencies=$3 AND i.state='passed' AND i.purpose='automatic' AND i.expires_at>clock_timestamp() AND i.result->>'ui_context_epoch'=r.ui_context_epoch)").bind(c.device_id).bind(uid(plan,"binding_id")?).bind(tasks::dependencies(plan)).fetch_one(&mut **tx).await?;
         let accepted = delegation::context(tx, c).await?;
-        if !valid_inspection || accepted["decision"]["accepted"] != true {
+        if (!valid_inspection && !tasks::missing_rules(plan))
+            || accepted["decision"]["accepted"] != true
+        {
             continue;
         }
         let target = uid(plan, "target_id")?;

@@ -147,18 +147,17 @@ impl BusinessSchemeInput {
         Ok(p)
     }
 }
-/// Delivery and business permission remain separate even when content can be prepared.
+/// Platform permission describes business settings only; device readiness is per binding.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SendingStatus {
-    pub delivery: String,
     pub platform: String,
     pub can_confirm: bool,
     pub owner: String,
     pub message: String,
 }
 impl SendingStatus {
-    pub fn project(delivery: &str, mode: Option<&str>, production: bool) -> Self {
+    pub fn project(mode: Option<&str>, production: bool) -> Self {
         let platform = match mode {
             None => "unconfigured",
             Some("enabled") if !production => "unsupported",
@@ -167,44 +166,17 @@ impl SendingStatus {
             Some("draft_only") => "draft_only",
             _ => "disabled",
         };
-        let (owner, message) = match delivery {
-            "available" => match platform {
-                "enabled" => ("school", "平台已开放发送；仍需有效使用授权及手机现场条件"),
-                "unconfigured" => (
-                    "platform",
-                    "平台尚未配置业务方案，请平台管理员在手机群消息使用管理中配置",
-                ),
-                "preview_only" => (
-                    "platform",
-                    "平台仅开放预览，可以保存内容，实际发送需平台管理员开放",
-                ),
-                "draft_only" => ("platform", "平台仅开放内容准备，实际发送需平台管理员开放"),
-                "unsupported" => (
-                    "platform",
-                    "现有业务方案不支持当前发送业务，请平台管理员重新保存业务方案",
-                ),
-                _ => (
-                    "platform",
-                    "平台已关闭新发送，可以保存内容，实际发送需平台管理员开放",
-                ),
-            },
-            "withdrawn" => (
-                "engineering",
-                "当前发送功能暂不可用，使用范围和内容会保留；可在使用管理中报告问题",
-            ),
-            "inactive" => (
-                "engineering",
-                "当前版本的发送功能尚未就绪，使用范围和内容会保留；可在使用管理中报告问题",
-            ),
-            _ => (
-                "engineering",
-                "当前版本暂不支持手机发送，使用范围和内容会保留；可在使用管理中报告问题",
-            ),
+        let (owner, message) = match platform {
+            "enabled" => ("school", "平台已开放发送；手机就绪和自动群检查通过后执行"),
+            "unconfigured" => ("platform", "请平台管理员配置手机发送业务方案"),
+            "preview_only" => ("platform", "平台仅开放预览，请平台管理员启用发送"),
+            "draft_only" => ("platform", "平台仅开放内容准备，请平台管理员启用发送"),
+            "unsupported" => ("platform", "请平台管理员重新保存手机发送业务方案"),
+            _ => ("platform", "平台已暂停发送，可继续保存内容"),
         };
         Self {
-            delivery: delivery.into(),
             platform: platform.into(),
-            can_confirm: delivery == "available" && platform == "enabled",
+            can_confirm: platform == "enabled",
             owner: owner.into(),
             message: message.into(),
         }
@@ -215,27 +187,25 @@ impl SendingStatus {
 mod policy_tests {
     use super::*;
     #[test]
-    fn delivery_and_platform_states_are_independent_and_preparation_is_explained() {
-        for delivery in ["missing", "inactive", "withdrawn"] {
-            let s = SendingStatus::project(delivery, Some("enabled"), true);
-            assert!(!s.can_confirm);
-            assert_eq!(s.owner, "engineering");
-        }
+    fn business_permission_depends_only_on_the_platform_scheme() {
         for mode in [
             None,
             Some("disabled"),
             Some("draft_only"),
             Some("preview_only"),
         ] {
-            let s = SendingStatus::project("available", mode, true);
+            let s = SendingStatus::project(mode, true);
             assert!(!s.can_confirm);
             assert_eq!(s.owner, "platform");
         }
         assert_eq!(
-            SendingStatus::project("available", Some("enabled"), false).platform,
+            SendingStatus::project(Some("enabled"), false).platform,
             "unsupported"
         );
-        assert!(SendingStatus::project("available", Some("enabled"), true).can_confirm);
+        assert!(SendingStatus::project(Some("enabled"), true).can_confirm);
+        let wire = serde_json::to_value(SendingStatus::project(Some("enabled"), true)).unwrap();
+        assert!(wire.get("delivery").is_none());
+        assert_eq!(wire["can_confirm"], true);
     }
     #[test]
     fn business_form_cannot_select_technical_stages_or_skip_confirmation() {

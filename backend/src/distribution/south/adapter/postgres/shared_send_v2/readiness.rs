@@ -77,39 +77,16 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
             .and_then(|v| v.parse::<chrono::DateTime<chrono::Utc>>().ok())
             .is_some_and(|t| t > chrono::Utc::now());
         let busy = inspections::busy(tx, uid(&row, "device_id")?).await?;
-        let helper_update:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_capability_deliveries d JOIN mobile_v9_runtime_details r ON r.device_id=$1 WHERE d.release_id=$2 AND NOT (r.apk_sha256=ANY(d.supported_apks)))").bind(uid(&row,"device_id")?).bind(candidate.as_ref().and_then(|c|c["release_id"].as_str()).and_then(|v|v.parse::<Uuid>().ok())).fetch_one(&mut **tx).await?;
         let mut blockers = Vec::new();
         let mut add = |code: &str, message: &str, owner: &str, action: &str, automatic: bool| {
             blockers.push(json!({"code":code,"message":message,"owner":owner,"action":action,"automatic":automatic,"observed_at":chrono::Utc::now()}))
         };
-        if helper_update {
-            add(
-                "shared_send_helper_update_required",
-                "手机助手需要更新至产品支持版本",
-                "device",
-                "更新手机助手后等待自动检查",
-                false,
-            );
-        }
         if !selectable {
             add(
                 "resource_unavailable",
                 "绑定、手机、群或共享资格已停用",
                 "platform",
                 "检查共享资格和群绑定",
-                false,
-            );
-        }
-        if selectable
-            && candidate
-                .as_ref()
-                .is_some_and(|c| c["release_id"].is_null())
-        {
-            add(
-                "release_missing",
-                "当前版本暂不支持此手机应用的发送",
-                "engineering",
-                "在使用管理中报告问题，由系统维护处理",
                 false,
             );
         }
@@ -150,6 +127,9 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
             );
         }
         if stages.is_empty()
+            && candidate
+                .as_ref()
+                .is_some_and(|c| !c["release_id"].is_null())
             && scope_exists
             && !risk
             && policy.as_ref().is_some_and(|p| p["mode"] == "enabled")
@@ -189,7 +169,8 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
                 true,
             );
         }
-        if !passed {
+        let missing_rules = candidate.as_ref().is_some_and(tasks::missing_rules);
+        if !passed && !missing_rules {
             add(
                 if exhausted {
                     "inspection_budget_exhausted"
@@ -212,15 +193,16 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
                 !exhausted,
             );
         }
-        let ready = !helper_update
-            && selectable
+        let ready = selectable
             && !busy
             && !stages.is_empty()
             && accepted
             && row["online"] == true
             && row["ui_ready"] == true
             && passed;
-        let inspection_state = if passed {
+        let inspection_state = if missing_rules {
+            "check_on_execution"
+        } else if passed {
             "passed"
         } else if exhausted {
             "retry_exhausted"

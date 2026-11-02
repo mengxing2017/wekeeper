@@ -45,9 +45,8 @@ async fn options(tx: &mut Tx<'_>, a: &Actor, s: Option<Uuid>) -> Result<Value> {
     let schools:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',id,'name',name) FROM schools WHERE active AND ($1 OR id=$2) ORDER BY name,id").bind(platform).bind(s).fetch_all(&mut **tx).await?;
     let targets:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',id,'name',coalesce(nullif(alias,''),search_text),'search_text',search_text,'revision',locator_revision) FROM mobile_targets WHERE school_id=$1 AND enabled AND archived_at IS NULL ORDER BY alias,search_text,id").bind(s).fetch_all(&mut **tx).await?;
     let p = policy(tx).await?;
-    let ready:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_activations a JOIN mobile_capability_deliveries d ON d.release_id=a.release_id JOIN mobile_v9_acceptance_runs c ON c.id=d.acceptance_id AND c.release_id=a.release_id WHERE c.stage='production_allowlist' AND NOT EXISTS(SELECT 1 FROM mobile_v9_adapter_withdrawals w WHERE w.release_id=a.release_id))").fetch_one(&mut **tx).await?;
     Ok(
-        json!({"id":"usage-options","schools":schools,"devices":devices,"targets":targets,"scheme":p.as_ref().map(scheme),"delivery_available":ready,"sending_status":business_scheme::status(tx).await?,"business_scheme":if platform {p.clone()} else {None}}),
+        json!({"id":"usage-options","schools":schools,"devices":devices,"targets":targets,"scheme":p.as_ref().map(scheme),"sending_status":business_scheme::status(tx).await?,"business_scheme":if platform {p.clone()} else {None}}),
     )
 }
 fn selection_input(b: &Value) -> Result<UsageInput> {
@@ -439,24 +438,11 @@ impl Repository {
 /// Called under the existing shared guard: repeatable after crashes and product updates.
 pub(super) async fn reconcile(tx: &mut Tx<'_>) -> Result<()> {
     let usages:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(u) FROM mobile_usages u WHERE approval='approved' AND state='active' AND expires_at>clock_timestamp() ORDER BY id").fetch_all(&mut **tx).await?;
-    let delivery:Option<Value>=sqlx::query_scalar("SELECT jsonb_build_object('release_id',a.release_id,'acceptance_id',c.id) FROM mobile_v9_activations a JOIN mobile_capability_deliveries d ON d.release_id=a.release_id JOIN mobile_v9_acceptance_runs c ON c.id=d.acceptance_id AND c.release_id=a.release_id AND c.stage='production_allowlist' WHERE NOT EXISTS(SELECT 1 FROM mobile_v9_adapter_withdrawals w WHERE w.release_id=a.release_id) ORDER BY c.created_at DESC LIMIT 1").fetch_optional(&mut **tx).await?;
     for u in usages {
         let id = uid(&u, "id")?;
         let s = uid(&u, "school_id")?;
         let b = &u["body"];
-        let mapped: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM mobile_usage_scopes WHERE usage_id=$1)",
-        )
-        .bind(id)
-        .fetch_one(&mut **tx)
-        .await?;
-        let mut reason = if !mapped && date(&u, "confirmed_until")? <= Utc::now() {
-            "确认已过期，请重新申请"
-        } else if delivery.is_none() {
-            "当前版本的手机发送功能尚不可用，已保留使用范围；可报告问题"
-        } else {
-            ""
-        };
+        let mut reason = "";
         let p = policy(tx).await?;
         if reason.is_empty()
             && p.as_ref().is_none_or(|p| {
@@ -476,8 +462,6 @@ pub(super) async fn reconcile(tx: &mut Tx<'_>) -> Result<()> {
             reason = "使用方案已提供或变化，请重新核对后申请";
         }
         if reason.is_empty() {
-            let d = delivery.as_ref().unwrap();
-            let release = uid(d, "release_id")?;
             let devices: Vec<Uuid> =
                 serde_json::from_value(b["device_ids"].clone()).map_err(|_| Error::Conflict)?;
             let mut targets = b["targets"].as_array().cloned().unwrap_or_default();
@@ -487,7 +471,7 @@ pub(super) async fn reconcile(tx: &mut Tx<'_>) -> Result<()> {
             for device in devices {
                 for t in &targets {
                     let target = uid(t, "id")?;
-                    let exists:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_usage_scopes WHERE usage_id=$1 AND release_id=$2 AND target_id=$3 AND device_id=$4)").bind(id).bind(release).bind(target).bind(device).fetch_one(&mut **tx).await?;
+                    let exists:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_usage_scopes WHERE usage_id=$1 AND release_id IS NULL AND target_id=$2 AND device_id=$3)").bind(id).bind(target).bind(device).fetch_one(&mut **tx).await?;
                     if exists {
                         continue;
                     }
@@ -528,9 +512,9 @@ pub(super) async fn reconcile(tx: &mut Tx<'_>) -> Result<()> {
                     sqlx::query("INSERT INTO mobile_device_target_bindings(id,school_id,device_id,target_id,created_by,updated_by,source) VALUES($1,$2,$3,$4,$5,$5,'school_pool') ON CONFLICT DO NOTHING").bind(Uuid::now_v7()).bind(s).bind(device).bind(target).bind(actor).execute(&mut **tx).await?;
                     let revision:i64=sqlx::query_scalar("SELECT revision FROM mobile_shared_school_access WHERE device_id=$1 AND school_id=$2").bind(device).bind(s).fetch_one(&mut **tx).await?;
                     let scope = Uuid::now_v7();
-                    sqlx::query("INSERT INTO mobile_v9_scope_grants(id,school_id,release_id,acceptance_id,stage,device_ids,target_ids,auto_targets,max_calls,expires_at,reason,created_by,resource_revisions) VALUES($1,$2,$3,$4,'production_allowlist',ARRAY[$5]::uuid[],ARRAY[$6]::uuid[],false,$7,$8,'使用授权自动关联',$9,$10)").bind(scope).bind(s).bind(release).bind(uid(d,"acceptance_id")?).bind(device).bind(target).bind(b["max_calls"].as_i64().unwrap_or(1)).bind(date(&u,"expires_at")?).bind(actor).bind(json!({device.to_string():revision})).execute(&mut **tx).await?;
+                    sqlx::query("INSERT INTO mobile_v9_scope_grants(id,school_id,release_id,acceptance_id,stage,device_ids,target_ids,auto_targets,max_calls,expires_at,reason,created_by,resource_revisions) VALUES($1,$2,$3,$4,'production_allowlist',ARRAY[$5]::uuid[],ARRAY[$6]::uuid[],false,$7,$8,'使用授权自动关联',$9,$10)").bind(scope).bind(s).bind(None::<Uuid>).bind(None::<Uuid>).bind(device).bind(target).bind(b["max_calls"].as_i64().unwrap_or(1)).bind(date(&u,"expires_at")?).bind(actor).bind(json!({device.to_string():revision})).execute(&mut **tx).await?;
                     let snapshot:Value=sqlx::query_scalar("SELECT jsonb_build_object('device_revision',d.revision,'binding_locator_revision',b.locator_revision,'target_locator_revision',CASE WHEN b.search_text_override IS NULL THEN t.locator_revision ELSE NULL END,'search_text',coalesce(b.search_text_override,t.search_text)) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id WHERE b.device_id=$1 AND b.target_id=$2").bind(device).bind(target).fetch_one(&mut **tx).await?;
-                    sqlx::query("INSERT INTO mobile_usage_scopes(scope_id,usage_id,release_id,target_id,device_id,resource_snapshot) VALUES($1,$2,$3,$4,$5,$6)").bind(scope).bind(id).bind(release).bind(target).bind(device).bind(snapshot).execute(&mut **tx).await?;
+                    sqlx::query("INSERT INTO mobile_usage_scopes(scope_id,usage_id,release_id,target_id,device_id,resource_snapshot) VALUES($1,$2,$3,$4,$5,$6)").bind(scope).bind(id).bind(None::<Uuid>).bind(target).bind(device).bind(snapshot).execute(&mut **tx).await?;
                 }
             }
         }

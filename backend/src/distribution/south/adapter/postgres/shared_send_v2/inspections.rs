@@ -127,8 +127,6 @@ async fn material(tx: &mut Tx<'_>, row: &Value) -> Result<Value> {
 pub(super) async fn claim(tx: &mut Tx<'_>, c: &Credential, v: InspectionClaim) -> Result<Value> {
     let row:Value=sqlx::query_scalar("SELECT to_jsonb(i) FROM mobile_v9_send_inspections i WHERE id=$1 AND device_id=$2 AND state='pending' AND purpose='automatic' AND expires_at>clock_timestamp()").bind(v.inspection_id).bind(c.device_id).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("inspection_expired"))?;
     let candidate = material(tx, &row).await?;
-    let compatible:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_capability_deliveries d JOIN mobile_v9_runtime_details r ON r.apk_sha256=ANY(d.supported_apks) WHERE d.release_id=$1 AND r.device_id=$2 AND r.credential_generation=$3)").bind(uid(&row,"release_id")?).bind(c.device_id).bind(c.generation).fetch_one(&mut **tx).await?;
-    require(compatible, "shared_send_helper_update_required")?;
     require(
         cursor_allows(tx, uid(&row, "binding_id")?).await?,
         "task_cursor_wait",
