@@ -680,4 +680,4 @@ Web 镜像同时构建 React 与独立 docs 包。访问站点 `/docs/` 阅读�
 
 ## 共享手机业务与维护工具的边界
 
-API 镜像包含同版本 `mobile-capability`，通过一次性 `docker compose run --rm --entrypoint /usr/local/bin/mobile-capability api ...` 使用，无需安装 Cargo 或增加常驻服务。只读状态、导入、激活与撤回的完整命令见[产品交付工具](mobile-capability-delivery.md#docker-标准部署)。该工具仅用于维护已有执行规则，不是业务部署、开通授权或发送的必做步骤。正常业务不查询其交付/验收/激活记录，不要求登记 APK 摘要。管理员在使用管理配置业务方案并批准手机和群范围即可；规则缺失需要产品补齐实际应用适配，不能通过插入虚假验收记录放行。
+API 镜像包含同版本 `mobile-capability`，通过一次性 `docker compose run --rm --entrypoint /usr/local/bin/mobile-capability api ...` 使用，无需安装 Cargo 或增加常驻服务。只读状态、导入、激活与撤回的完整命令见[产品交付工具](mobile-capability-delivery.md#docker-标准部署)。该工具仅用于维护已有执行规则，不是业务部署、开通授权或发送的必做步骤。正常业务不查询其交付/验收/激活记录，不要求登记 APK 摘要。管理员在使用管理批准手机和群范围即可；未配置发送方案时使用系统默认设置，平台可按需调整实际执行限制；规则缺失需要产品补齐实际应用适配，不能通过插入虚假验收记录放行。
