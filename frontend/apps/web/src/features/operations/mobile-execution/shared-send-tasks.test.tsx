@@ -6,17 +6,17 @@ import { SharedSendTasks } from './shared-send-tasks'
 vi.mock('./api', () => ({ api: { targets: vi.fn(), bindings: vi.fn() }, sharedSend: { overview: vi.fn(), draft: vi.fn(), preview: vi.fn(), confirm: vi.fn(), task: vi.fn() } }))
 afterEach(() => cleanup())
 const message = '  第一行\n第二行🙂  '
-const preview: SharedPreview = { id: 'preview', digest: 'digest', expires_at: '2099-01-01T00:00:00Z', plan: { schema: 'shared_mobile_send/1', school_id: 'school', draft_id: 'draft', draft_revision: 1, intent_id: 'intent', message, content_digest: 'hash', policy_id: null, items: [{ position: 0, target_id: 'target', target:{id:'target',name:'家长通知',search_text:'实际搜索文字',locator_revision:1},selected: null, candidates: [], blocker: 'inspection_required' }] } }
+const preview: SharedPreview = { id: 'preview', digest: 'digest', expires_at: '2099-01-01T00:00:00Z', plan: { schema: 'shared_mobile_send/2', school_id: 'school', draft_id: 'draft', draft_revision: 1, intent_id: 'intent', message, content_digest: 'hash', policy_id: null, items: [{ position: 0, target_id: 'target', target:{id:'target',name:'家长通知',search_text:'实际搜索文字',locator_revision:1},selected: null, candidates: [], blocker: 'inspection_required' }] } }
 beforeEach(() => {
   vi.resetAllMocks()
   vi.mocked(api.targets).mockResolvedValue({ items: [{ id: 'target', school_id: 'school', alias: '家长通知', search_text: '实际搜索文字', remark: '', enabled: true, archived_at: null, metadata_revision: 1, locator_revision: 1 }] })
   vi.mocked(sharedSend.overview).mockResolvedValue({ id: 'school', tasks: [], drafts: [], readiness: [], pool: [], inspections: [] })
-  vi.mocked(sharedSend.draft).mockResolvedValue({ id: 'draft', targets:[{id:'target',name:'家长通知'}],school_id: 'school', intent_id: 'intent', target_ids: ['target'], message, content_type: 'text/plain', revision: 1, content_digest: 'hash' })
+  vi.mocked(sharedSend.draft).mockResolvedValue({ id: 'draft', targets:[{id:'target',name:'家长通知'}],school_id: 'school', intent_id: 'intent', target_ids: ['target'], message, content_type: 'text/plain',stage:'test_send',between_targets_seconds:30, revision: 1, content_digest: 'hash' })
   vi.mocked(sharedSend.preview).mockResolvedValue(preview)
 })
 async function compose(admin = true) {
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SharedSendTasks school="school" admin={admin} /></QueryClientProvider>)
-  fireEvent.mouseDown(screen.getByRole('combobox'))
+  fireEvent.mouseDown(screen.getByLabelText('手机目标群'))
   fireEvent.click(await screen.findByText('家长通知'))
   fireEvent.change(screen.getByLabelText('发送文字'), { target: { value: message } })
 }
@@ -44,7 +44,7 @@ it('草稿响应不明时重试保持相同内容与幂等键', async () => {
 
 it('已绑定但未授权的手机显示本机操作路径并保持禁止发送', async () => {
  const pending:SharedPreview=structuredClone(preview)
- pending.plan.items[0].readiness=[{device_name:'现场共享手机',target_name:'家长通知',search_text:'实际搜索文字',inspection_state:'waiting_prerequisites',retry_at:null,retry_remaining:3,binding_id:'binding',device_id:'bound-phone',target_id:'target',state:'waiting_initial_consent',ready:false,automatic:true,inspection:null,blockers:[{code:'waiting_initial_consent',message:'等待首次授权',owner:'device',automatic:false},{code:'acceptance_missing',message:'该范围尚未完成真机验收放行',owner:'engineering',automatic:false}]}]
+ pending.plan.items[0].readiness=[{device_name:'现场共享手机',target_name:'家长通知',search_text:'实际搜索文字',inspection_state:'waiting_prerequisites',retry_at:null,retry_remaining:3,binding_id:'binding',device_id:'bound-phone',target_id:'target',state:'waiting_initial_consent',ready:false,plan_selectable:true,confirmable:false,execution_ready:false,confirmable_stages:[],automatic:true,inspection:null,blockers:[{code:'waiting_initial_consent',message:'等待首次授权',owner:'device',automatic:false},{code:'acceptance_missing',message:'该范围尚未完成真机验收放行',owner:'engineering',automatic:false}]}]
  vi.mocked(sharedSend.preview).mockResolvedValue(pending)
  await compose()
  fireEvent.click(screen.getByRole('button',{name:'保存草稿'}))
@@ -69,9 +69,9 @@ it('无手机候选仍显示群名和搜索文字，重新预览生成新操作�
  expect(screen.getByRole('cell',{name:'实际搜索文字'})).toBeTruthy()
  expect(screen.queryByRole('cell',{name:'target'})).toBeNull()
  fireEvent.click(screen.getByRole('checkbox'))
- const phone:NonNullable<SharedPreview['plan']['items'][number]['selected']>={target_id:'target',target_name:'家长通知',device_name:'新就绪手机',device_id:'phone',binding_id:'binding',binding_locator_revision:1,target_locator_revision:1,search_text:'实际搜索文字',search_source:'default',access_revision:null,credential_generation:1,delegation_id:'delegation',decision_id:'decision',decision_revision:1,environment_snapshot_id:'env',release_id:'release',flow_digest:'digest',scope_digest:'scope',inspection_id:'inspection',environment:{},flow:{}}
+ const phone:NonNullable<SharedPreview['plan']['items'][number]['selected']>={target_id:'target',target_name:'家长通知',device_name:'新就绪手机',device_id:'phone',binding_id:'binding',binding_locator_revision:1,target_locator_revision:1,search_text:'实际搜索文字',search_source:'default',access_revision:null,credential_generation:1,delegation_id:'delegation',release_id:'release',flow_digest:'digest',flow:{}}
  const next=structuredClone(preview);next.id='new-preview';next.expires_at='2099-02-01T00:00:00Z'
- next.plan.items[0]={...next.plan.items[0],selected:phone,candidates:[phone],blocker:null,readiness:[{binding_id:'binding',device_id:'phone',target_id:'target',device_name:'新就绪手机',target_name:'家长通知',search_text:'实际搜索文字',state:'ready_for_task',ready:true,automatic:true,blockers:[],inspection:null,inspection_state:'passed',retry_at:null,retry_remaining:3}]}
+ next.plan.items[0]={...next.plan.items[0],selected:phone,candidates:[phone],blocker:null,readiness:[{binding_id:'binding',device_id:'phone',target_id:'target',device_name:'新就绪手机',target_name:'家长通知',search_text:'实际搜索文字',state:'ready_for_task',ready:true,plan_selectable:true,confirmable:true,execution_ready:true,confirmable_stages:["test_send"],automatic:true,blockers:[],inspection:null,inspection_state:'passed',retry_at:null,retry_remaining:3}]}
  vi.mocked(sharedSend.preview).mockResolvedValue(next)
  fireEvent.click(screen.getByRole('button',{name:'预览逐群执行计划'}))
  await screen.findByText(/2099-02-01T00:00:00Z/)
@@ -95,3 +95,21 @@ it('预览响应不明保持原键，成功后的主动预览使用新键',async
  await waitFor(()=>expect(sharedSend.preview).toHaveBeenCalledTimes(3))
  expect(calls[2][4]).not.toBe(calls[1][4])
 },60000)
+
+
+it('离线已绑定手机可选且静态范围有效时可确认等待，不发起手机检查',async()=>{
+ const pending=structuredClone(preview)
+ const phone={target_id:'target',target_name:'家长通知',device_name:'离线测试手机',device_id:'phone',binding_id:'binding',binding_locator_revision:1,target_locator_revision:1,search_text:'实际搜索文字',search_source:'default' as const,access_revision:null,credential_generation:1,delegation_id:null,release_id:'release',flow_digest:'digest',flow:{},confirmable:true}
+ pending.plan.items[0]={...pending.plan.items[0],selected:phone,candidates:[phone],blocker:null,readiness:[{binding_id:'binding',device_id:'phone',target_id:'target',device_name:'离线测试手机',target_name:'家长通知',search_text:'实际搜索文字',state:'waiting_connection',ready:false,plan_selectable:true,confirmable:true,execution_ready:false,confirmable_stages:['test_send'],automatic:true,blockers:[{code:'waiting_connection',message:'手机离线，连接后自动继续',owner:'system',automatic:true}],inspection:null,inspection_state:'waiting_prerequisites',retry_at:null,retry_remaining:3}]}
+ vi.mocked(sharedSend.preview).mockResolvedValue(pending)
+ await compose()
+ fireEvent.click(screen.getByRole('button',{name:'保存草稿'}))
+ await waitFor(()=>expect((screen.getByRole('button',{name:'预览逐群执行计划'}) as HTMLButtonElement).disabled).toBe(false))
+ fireEvent.click(screen.getByRole('button',{name:'预览逐群执行计划'}))
+ const select=await screen.findByLabelText('目标群 target 的共享手机')
+ fireEvent.mouseDown(select)
+ expect(document.querySelector('.ant-select-item-option-disabled')).toBeNull()
+ fireEvent.click(screen.getByRole('checkbox'))
+ expect((screen.getByRole('button',{name:'确认进入共享发送队列'}) as HTMLButtonElement).disabled).toBe(false)
+ expect(sharedSend.confirm).not.toHaveBeenCalled()
+},120000)
