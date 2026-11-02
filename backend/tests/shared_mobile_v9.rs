@@ -1,0 +1,277 @@
+//! Synthetic records in a unique schema, never production acceptance evidence.
+use serde_json::{Value, json};
+use sqlx::{PgPool, postgres::PgPoolOptions};
+use uuid::Uuid;
+use wekeeper_api::{
+    business::Actor,
+    database,
+    distribution::{
+        domain::mobile_execution::shared_send_v2::*,
+        south::{adapter::postgres::shared_send_v2::Repository, port::shared_send_v2::*},
+    },
+};
+
+struct Fixture {
+    pool: PgPool,
+    base: PgPool,
+    schema: String,
+    actor: Actor,
+    school: Uuid,
+    device: Uuid,
+    targets: Vec<Uuid>,
+    release: Uuid,
+    acceptance: Uuid,
+}
+impl Fixture {
+    async fn new() -> Self {
+        let url = std::env::var("WEKEEPER_TEST_DATABASE_URL")
+            .expect("explicit isolated database required");
+        let base = PgPool::connect(&url).await.unwrap();
+        let schema = format!("shared_v9_{}", Uuid::new_v4().simple());
+        sqlx::query(&format!("CREATE SCHEMA {schema}"))
+            .execute(&base)
+            .await
+            .unwrap();
+        let search = format!("SET search_path TO {schema},public");
+        let pool = PgPoolOptions::new()
+            .max_connections(4)
+            .after_connect(move |c, _| {
+                let search = search.clone();
+                Box::pin(async move {
+                    sqlx::query(&search).execute(c).await?;
+                    Ok(())
+                })
+            })
+            .connect(&url)
+            .await
+            .unwrap();
+        database::migrate(&pool).await.unwrap();
+        let actor_id = Uuid::new_v4();
+        let school = Uuid::new_v4();
+        let device = Uuid::new_v4();
+        sqlx::query("INSERT INTO accounts(id,username,display_name,platform_admin) VALUES($1,'v9-admin','Admin',true)").bind(actor_id).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO schools(id,name) VALUES($1,'V9 test')")
+            .bind(school)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO school_memberships(school_id,account_id,role) VALUES($1,$2,'admin')",
+        )
+        .bind(school)
+        .bind(actor_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO execution_devices(id,name,enabled,credential_generation) VALUES($1,'Offline phone',true,1)").bind(device).execute(&pool).await.unwrap();
+        let targets = vec![Uuid::new_v4(), Uuid::new_v4()];
+        for target in &targets {
+            sqlx::query("INSERT INTO mobile_targets(id,school_id,search_text,created_by,updated_by) VALUES($1,$2,'测试群',$3,$3)").bind(target).bind(school).bind(actor_id).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO mobile_device_target_bindings(id,school_id,device_id,target_id,created_by,updated_by) VALUES($1,$2,$3,$4,$5,$5)").bind(Uuid::new_v4()).bind(school).bind(device).bind(target).bind(actor_id).execute(&pool).await.unwrap();
+        }
+        let flow = Uuid::new_v4();
+        let artifact = Uuid::new_v4();
+        let baseline = Uuid::new_v4();
+        let release = Uuid::new_v4();
+        let acceptance = Uuid::new_v4();
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../api-contract/fixtures/shared-mobile-send-v9.json"
+        ))
+        .unwrap();
+        sqlx::query("INSERT INTO mobile_v9_flows(id,name,flow,digest,created_by) VALUES($1,'Synthetic',$2,$3,$4)").bind(flow).bind(&fixture["flow"]).bind(fixture["flow_digest"].as_str()).bind(actor_id).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO mobile_v9_artifacts(id,kind,name,sha256,content,created_by) VALUES($1,'apk','Synthetic',repeat('a',64),$2,$3)").bind(artifact).bind(vec![1u8]).bind(actor_id).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO mobile_v9_baselines(id,flow_id,device_id,samples,evidence_ids,min_interval_ms,recorded_by) VALUES($1,$2,$3,'[]',ARRAY[$4]::uuid[],1000,$5)").bind(baseline).bind(flow).bind(device).bind(artifact).bind(actor_id).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO mobile_v9_adapter_releases(id,name,version,flow_id,flow,content_digest,baseline_id,evidence_ids,created_by) VALUES($1,'Synthetic','1',$2,$3,$4,$5,ARRAY[$6]::uuid[],$7)").bind(release).bind(flow).bind(&fixture["flow"]).bind(fixture["flow_digest"].as_str()).bind(baseline).bind(artifact).bind(actor_id).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO mobile_v9_acceptance_runs(id,release_id,stage,apk_id,evidence_ids,validation_ids,cases,soak_hours,soak_passed,historical_debt_closed,reviewer_id,reason) VALUES($1,$2,'test_send',$3,ARRAY[$3]::uuid[],'{}','{}',0,false,false,$4,'Synthetic test only')").bind(acceptance).bind(release).bind(artifact).bind(actor_id).execute(&pool).await.unwrap();
+        let actor=serde_json::from_value(json!({"id":actor_id,"username":"v9-admin","display_name":"Admin","platform_admin":true,"grants":[],"wecom_authenticated":false})).unwrap();
+        Self {
+            pool,
+            base,
+            schema,
+            actor,
+            school,
+            device,
+            targets,
+            release,
+            acceptance,
+        }
+    }
+    async fn close(self) {
+        self.pool.close().await;
+        sqlx::query(&format!("DROP SCHEMA {} CASCADE", self.schema))
+            .execute(&self.base)
+            .await
+            .unwrap();
+        self.base.close().await;
+    }
+    fn repo(&self) -> Repository {
+        Repository(self.pool.clone())
+    }
+    async fn activate(&self, key: &str) -> wekeeper_api::business::Result<Value> {
+        self.repo()
+            .platform_write(
+                &self.actor,
+                key,
+                PlatformCommand::Manage(ManagementCommand::Activations(ActivationInput {
+                    release_id: self.release,
+                    expected_revision: 0,
+                    reason: "Synthetic test".into(),
+                })),
+            )
+            .await
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn offline_binding_is_selectable_and_confirmable_without_environment_or_consent() {
+    let f = Fixture::new().await;
+    f.activate("activate").await.unwrap();
+    let r = f.repo();
+    let policy:PolicyInput=serde_json::from_value(json!({"expected_revision":0,"mode":"enabled","allowed_stages":["test_send"],"confirmation_seconds":600,"inspection_seconds":600,"retry_seconds":300,"retry_limit":3,"timezone":"Asia/Shanghai","allowed_windows":[{"weekdays":[1,2,3,4,5,6,7],"start_minute":0,"end_minute":1440}],"limits":ObjectLimits::value(),"reason":"Synthetic test"})).unwrap();
+    r.platform_write(&f.actor, "policy", PlatformCommand::Policy(policy))
+        .await
+        .unwrap();
+    r.platform_write(
+        &f.actor,
+        "scope",
+        PlatformCommand::Manage(ManagementCommand::Scopes(ScopeInput {
+            acceptance_id: f.acceptance,
+            school_id: f.school,
+            device_ids: vec![f.device],
+            target_ids: f.targets.clone(),
+            auto_targets: false,
+            max_calls: 2,
+            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+            expected_access: [(f.device, 0)].into(),
+            reason: "Synthetic test".into(),
+        })),
+    )
+    .await
+    .unwrap();
+    let status = r.school_read(&f.actor, f.school, None).await.unwrap();
+    assert_eq!(status["readiness"][0]["plan_selectable"], true);
+    assert_eq!(status["readiness"][0]["confirmable"], true);
+    assert_eq!(status["readiness"][0]["execution_ready"], false);
+    let input = DraftInput {
+        target_ids: f.targets.clone(),
+        message: "  测试\n🙂  ".into(),
+        content_type: "text/plain".into(),
+        expected_revision: None,
+        stage: "test_send".into(),
+        between_targets_seconds: 30,
+    };
+    let draft = r
+        .school_write(
+            &f.actor,
+            f.school,
+            "draft",
+            SchoolCommand::Draft(None, input),
+        )
+        .await
+        .unwrap();
+    let preview = r
+        .school_write(
+            &f.actor,
+            f.school,
+            "preview",
+            SchoolCommand::Preview(PreviewInput {
+                draft_id: serde_json::from_value(draft["id"].clone()).unwrap(),
+                expected_revision: 1,
+                selections: vec![],
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(
+        preview["plan"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|i| i["blocker"].is_null() && i["candidates"].as_array().unwrap().len() == 1)
+    );
+    assert!(
+        preview["plan"]["items"][0]["selected"]
+            .get("environment_snapshot_id")
+            .is_none()
+    );
+    let confirm = Confirmation {
+        preview_id: serde_json::from_value(preview["id"].clone()).unwrap(),
+        preview_digest: preview["digest"].as_str().unwrap().into(),
+        confirmed: true,
+    };
+    let task = r
+        .school_write(
+            &f.actor,
+            f.school,
+            "confirm",
+            SchoolCommand::Confirm(confirm.clone()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(task["cursor_position"], 0);
+    assert_eq!(task["items"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        task["items"][0]["attempts"][0]["plan"]["message"],
+        "  测试\n🙂  "
+    );
+    assert_eq!(
+        r.school_write(
+            &f.actor,
+            f.school,
+            "confirm",
+            SchoolCommand::Confirm(confirm)
+        )
+        .await
+        .unwrap(),
+        task
+    );
+    let artifact: Uuid =
+        sqlx::query_scalar("SELECT apk_id FROM mobile_v9_acceptance_runs WHERE id=$1")
+            .bind(f.acceptance)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        f.repo().artifact_content(&f.actor, artifact).await.unwrap(),
+        vec![1u8]
+    );
+    let mut outsider = f.actor.clone();
+    outsider.id = Uuid::new_v4();
+    sqlx::query("INSERT INTO accounts(id,username,display_name,platform_admin) VALUES($1,'outsider','Outsider',false)").bind(outsider.id).execute(&f.pool).await.unwrap();
+    assert!(
+        f.repo()
+            .artifact_content(&outsider, artifact)
+            .await
+            .is_err()
+    );
+    f.close().await;
+}
+
+struct ObjectLimits;
+impl ObjectLimits {
+    fn value() -> Value {
+        let l = json!({"interval_seconds":60,"window_seconds":3600,"max_calls":10,"daily_max_calls":20});
+        json!({"global":l,"school":l,"device":l,"target":l})
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn concurrent_activation_has_one_winner_and_immutable_audit() {
+    let f = Fixture::new().await;
+    let (a, b) = tokio::join!(f.activate("left"), f.activate("right"));
+    assert_ne!(a.is_ok(), b.is_ok());
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM mobile_v9_activation_events")
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+    assert!(
+        sqlx::query("DELETE FROM mobile_v9_activation_events")
+            .execute(&f.pool)
+            .await
+            .is_err()
+    );
+    f.close().await;
+}
