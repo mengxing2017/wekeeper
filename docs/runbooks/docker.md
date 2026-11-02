@@ -303,7 +303,7 @@ Shell 已 export 的同名变量优先于 Compose `.env`；部署前核对 `API_
 
 ### 共享手机发送密钥：首次配置与已有部署更新
 
-使用共享手机发送前，必须配置 `WEKEEPER_SHARED_SEND_KEY`。此值是后端静态加密密钥，不是数据库密码、企业微信 Secret 或设备登录令牌，不需要填入 Web、手机或 PostgreSQL 容器。没有使用共享手机发送的部署可以暂留空；API 健康不代表共享发送已经具备资格。配置密钥也不等于完成手机同意、适配发行和真机验收。
+使用共享手机发送前，必须配置 `WEKEEPER_SHARED_SEND_KEY`。此值是后端静态加密密钥，不是数据库密码、企业微信 Secret 或设备登录令牌，不需要填入 Web、手机或 PostgreSQL 容器。没有使用共享手机发送的部署可以暂留空；API 健康不代表手机具备执行条件。配置密钥后仍需业务使用授权、手机本人托管及真实页面自动检查。人工验收、发行激活和 APK 摘要登记不是业务下发前置条件。
 
 **首次配置：** 在服务器终端运行一次，复制完整输出：
 
@@ -678,6 +678,6 @@ Web 镜像同时构建 React 与独立 docs 包。访问站点 `/docs/` 阅读�
 
 发布后运行 `make smoke`，再使用浏览器检查帮助入口、搜索、深链接、复制和 CSP。构建及安全头生成见[文档发布](../development/docs-publishing.md)。
 
-## 共享手机产品交付工具
+## 共享手机业务与维护工具的边界
 
-API 镜像包含同版本 `mobile-capability`，通过一次性 `docker compose run --rm --entrypoint /usr/local/bin/mobile-capability api ...` 使用，无需安装 Cargo 或增加常驻服务。只读状态、导入、激活与撤回的完整命令见[产品交付工具](mobile-capability-delivery.md#docker-标准部署)。技术交付不自动开放业务发送，管理员须在使用管理中独立配置业务方案。
+API 镜像包含同版本 `mobile-capability`，通过一次性 `docker compose run --rm --entrypoint /usr/local/bin/mobile-capability api ...` 使用，无需安装 Cargo 或增加常驻服务。只读状态、导入、激活与撤回的完整命令见[产品交付工具](mobile-capability-delivery.md#docker-标准部署)。该工具仅用于维护已有执行规则，不是业务部署、开通授权或发送的必做步骤。正常业务不查询其交付/验收/激活记录，不要求登记 APK 摘要。管理员在使用管理配置业务方案并批准手机和群范围即可；规则缺失需要产品补齐实际应用适配，不能通过插入虚假验收记录放行。

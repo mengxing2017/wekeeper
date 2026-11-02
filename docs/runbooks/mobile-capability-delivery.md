@@ -1,5 +1,7 @@
 # 手机群消息产品交付工具
 
+此文保留旧维护工具的操作参考，不属于当前业务开通步骤。迁移 `202611030119` 后，业务授权、预览确认、自动检查及发送许可均不读取交付、验收或激活记录，也不使用 APK 摘要白名单。后台自动选取最新未撤回的执行规则；工具导入规则后，不应再用 activate 作为业务开放条件。历史激活命令只保留维护记录，不能切换当前业务选择。
+
 本文仅供产品交付与部署人员使用。系统管理员及学校的操作见[使用管理](../guide/platform-admin/shared-mobile-resources.md)。不通过浏览器会话导入、批准或读取研发材料。
 
 
@@ -24,7 +26,7 @@
 ```bash
 # 默认只校验包，不连接数据库，不写数据
 cargo run --manifest-path backend/Cargo.toml --bin mobile-capability -- import --package /secure/product-delivery.json
-# 设置受控 DATABASE_URL 后导入，输出 release UUID；不切换当前产品
+# 设置受控 DATABASE_URL 后导入，输出 release UUID；最新未撤回规则会被新业务预览自动选取
 cargo run --manifest-path backend/Cargo.toml --bin mobile-capability -- import --package /secure/product-delivery.json --actor SERVICE_UUID --apply
 # 发布使用当前 activation 修订；不写入或覆盖业务方案
 cargo run --manifest-path backend/Cargo.toml --bin mobile-capability -- activate --release RELEASE_UUID --actor SERVICE_UUID --expected-revision CURRENT_REVISION --apply
@@ -32,7 +34,7 @@ cargo run --manifest-path backend/Cargo.toml --bin mobile-capability -- activate
 cargo run --manifest-path backend/Cargo.toml --bin mobile-capability -- withdraw --release RELEASE_UUID --actor SERVICE_UUID --apply
 ```
 
-导入保留真实外部来源，不冒充设备人工采样；发布原子切换产品生效指针，不修改平台业务方案，使用授权在后台自动关联新发行，继续共享原预算。撤回不能回收已发许可或删除 unknown。工具的 activate/withdraw 在不带 --apply 时只校验参数，不声称数据库预检通过。
+导入保留真实外部来源，不冒充设备人工采样；历史发布命令只更新维护记录，不修改当前业务的规则选择、平台业务方案或授权；新预览自动选择最新未撤回规则，已确认任务冻结原规则并继续共享原预算。撤回不能回收已发许可或删除 unknown。工具的 activate/withdraw 在不带 --apply 时只校验参数，不声称数据库预检通过。
 
 旧数据保留原发行、计划、调用和恢复链。已有真实生产授权迁入业务视图；测试授权不升级为生产。升级前后协议仍为 v9，不修改原 wire digest 或 Journal。先在隔离环境跑 `WEKEEPER_TEST_DATABASE_URL=... make test-integration`，并完成实际手机交付验证后发布。
 
