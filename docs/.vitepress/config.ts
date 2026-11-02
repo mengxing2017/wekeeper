@@ -39,8 +39,8 @@ export default defineConfig({
         { text: "移动端分发管理", items: [
           { text: "手机共享发送任务", link: "/guide/operator/mobile-execution-tasks" },
           { text: "手机目标群与设备绑定", link: "/guide/operator/mobile-targets" },
-          { text: "共享手机资源维护", link: "/guide/platform-admin/shared-mobile-resources" },
-          { text: "手机执行能力开通", link: "/guide/platform-admin/flow-maintenance" },
+          { text: "手机群消息使用管理", link: "/guide/platform-admin/shared-mobile-resources" },
+          { text: "使用开通说明", link: "/guide/platform-admin/flow-maintenance" },
           { text: "历史手机发送任务", link: "/guide/operator/mobile-tasks" },
           { text: "历史学校配置", link: "/guide/operator/mobile-execution-flows" },
           { text: "结果与异常处理", link: "/guide/operator/results-and-recovery" },
@@ -72,10 +72,10 @@ export default defineConfig({
               link: "/guide/platform-admin/directory-and-assets",
             },
             {
-              text: "共享手机资源维护",
+              text: "手机群消息使用管理",
               link: "/guide/platform-admin/devices-and-accounts",
             },
-            { text: "共享手机与目标群", link: "/guide/platform-admin/shared-mobile-resources" },
+            { text: "手机群消息使用管理", link: "/guide/platform-admin/shared-mobile-resources" },
             {
               text: "共享手机业务能力开通",
               link: "/guide/platform-admin/flow-maintenance",
