@@ -1,0 +1,17 @@
+import {useState} from 'react'
+import {useQuery} from '@tanstack/react-query'
+import {Alert,Button,Card,Input,Select,Space,Table} from 'antd'
+import {product,workspace,type Row,type TemplateInput,type BusinessPreview} from './api'
+const variables=[['school.name','学校名称'],['post.title','内容标题'],['post.summary','内容摘要'],['post.detail_url','详情入口']]
+export function TemplateManager({school}:{school:string}){
+ const q=useQuery({queryKey:['business',school,'templates'],queryFn:()=>workspace.list(school,'templates')})
+ const samples=useQuery({queryKey:['business',school,'template-samples'],queryFn:()=>workspace.list(school,'posts','?status=approved')})
+ const [form,setForm]=useState<TemplateInput>(),[preview,setPreview]=useState<BusinessPreview<TemplateInput>>(),[busy,setBusy]=useState(false),[error,setError]=useState('')
+ async function run(action:()=>Promise<unknown>){if(busy)return;setBusy(true);setError('');try{await action()}catch(e){setError(e instanceof Error?e.message:'模板操作失败')}finally{setBusy(false)}}
+ const edit=(row?:Row)=>{setForm({id:row?.id,revision:Number(row?.revision??0),name:String(row?.name??''),body:String(row?.draft_body??''),note:'',publish:true});setPreview(undefined)}
+ return <Card title="消息模板">{(q.error||error)&&<Alert type="error" title={error||q.error?.message}/>}<Button onClick={()=>edit()}>新建模板</Button>
+ <Table<Row> rowKey="id" dataSource={q.data?.items??[]} pagination={{pageSize:10}} columns={[{title:'名称',dataIndex:'name'},{title:'操作',render:(_,row)=><Button onClick={()=>edit(row)}>编辑模板</Button>},{title:'发布历史',render:(_,row)=><>{Array.isArray(row.versions)&&row.versions.filter(v=>v&&typeof v==='object'&&'published' in v&&v.published).map((v,i)=>{const x=v as Row;return <p key={i}>{String(x.published_at)} · {String(x.publisher_name)} · {String(x.change_note??'')}</p>})}</>}]} />
+ {form&&!preview&&<Space orientation="vertical"><label>模板名称<Input aria-label="模板名称" value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/></label><label>模板正文<Input.TextArea aria-label="模板正文" value={form.body} onChange={e=>setForm({...form,body:e.target.value})}/></label><Select aria-label="插入业务字段" placeholder="插入业务字段" options={variables.map(([value,label])=>({value,label}))} value={undefined} onChange={key=>setForm({...form,body:form.body+`{{${key}}}`})}/><Select aria-label="预览样本" allowClear placeholder="选择本校真实内容预览（不选则为示例）" value={form.sample_post_id??undefined} options={samples.data?.items.map(v=>({value:v.id,label:String(v.title)}))} onChange={sample_post_id=>setForm({...form,sample_post_id:sample_post_id??null})}/><Input aria-label="变更说明" placeholder="变更说明（可选）" value={form.note} onChange={e=>setForm({...form,note:e.target.value})}/><Button loading={busy} onClick={()=>void run(async()=>setPreview(await product.templates.preview(school,{...form,publish:true})))}>预览并发布</Button><Button disabled={busy} onClick={()=>void run(async()=>{const p=await product.templates.preview(school,{...form,publish:false});await product.templates.confirm(school,{preview_id:p.id,digest:p.digest});setForm(undefined);await q.refetch()})}>保留草稿</Button></Space>}
+ {preview&&<><p>{preview.sample?'示例替换效果；实际发送仍须核对真实内容':'实际内容替换效果'}</p><pre>{preview.rendered}</pre><Button onClick={()=>setPreview(undefined)}>返回编辑</Button><Button type="primary" loading={busy} onClick={()=>void run(async()=>{await product.templates.confirm(school,{preview_id:preview.id,digest:preview.digest});setPreview(undefined);setForm(undefined);await q.refetch()})}>确认发布模板</Button></>}
+ </Card>
+}

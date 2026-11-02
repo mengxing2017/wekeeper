@@ -1,10 +1,11 @@
+import { ResourceEditor } from './resource-editor'
+import { TemplateManager } from './template-manager'
 import { OfficialSenders } from '../../operations/wecom-senders'
 import { MobileExecutionTasks } from '../../operations/mobile-execution/tasks'
-import { UsageManagement } from '../mobile-resources/usage-management'
 import { SharedMobileResources } from '../mobile-resources'
 import { MobileTargets } from '../../operations/mobile-execution/targets'
-import { navigation, visibleNavigationKeys, resolveNavigation } from '../../../app/navigation'
-import { SchoolExecutionResources } from '../../operations/mobile-delivery/school-resources'
+import { navigation, visibleNavigationKeys } from '../../../app/navigation'
+import { UsageManagement } from '../mobile-resources/usage-management'
 import { ListPanel } from '../../../shared/list-panel'
 import { formatDate } from '../../../shared/format-date'
 import { PaginationControls } from '../../../shared/pagination-controls'
@@ -79,11 +80,11 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
   const school = visibleSchools?.find((s) => s.id === (selected || visibleSchools[0]?.id))
   const role = school?.active ? user.grants.find((g) => g.school_id === school.id)?.role : undefined
   const allowedKeys = visibleNavigationKeys(user.platform_admin, role)
-  const requestedTab = resolveNavigation(params.get('view') ?? allowedKeys[0] ?? '', params.get('subview'))
+  const requestedTab = params.get('view') ?? allowedKeys[0] ?? ''
   const knownPage = navigation.find(n => n.key === requestedTab)
   const tab = requestedTab
   const denied = !allowedKeys.includes(tab)
-  const resourcePage = ['execution-devices', 'wecom-senders', 'mobile-execution-flows'].includes(tab)
+  const resourcePage = ['execution-devices', 'wecom-senders'].includes(tab)
   const globalScope = knownPage?.scope === 'global' || (knownPage?.scope === 'selectable' && user.platform_admin && params.get('scope') !== 'school')
   const setSubview = (view: string) => setParams(previous => { const next = new URLSearchParams(previous); next.set('subview', view); return next })
   const navigate = (key: string) =>
@@ -142,11 +143,9 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
       {!tab ? (q.isPending ? <Empty className="empty-state" description="正在加载学校…" /> : <Alert type="info" title="当前账号没有该学校的后台管理权限，请联系平台管理员。" />)
       : !knownPage ? <Alert type="warning" title="页面不存在或已迁移" description={<Button onClick={() => navigate(allowedKeys[0] ?? 'posts')}>返回可用功能</Button>} />
       : denied ? <Alert type="warning" title="当前账号没有此功能的访问权限" description={<>请核对当前学校与角色，或从导航选择已授权功能。<Button onClick={() => navigate(allowedKeys[0] ?? 'posts')}>返回可用功能</Button></>} />
-      : tab === 'execution-accounts' ? <Card title="发送账号入口已拆分"><p>原入口属于旧手机人工登记资料，不是企业微信官方发送身份。请按用途选择。</p><Space><Button onClick={() => navigate('wecom-senders')}>官方发送账号</Button><Button onClick={() => setParams(previous => { const next = new URLSearchParams(previous); next.set('view', 'execution-devices'); next.set('subview', 'historical-accounts'); return next })}>历史手机账号资料</Button></Space></Card>
       : tab === 'wecom-senders' ? <OfficialSenders school={school?.id} global={globalScope && user.platform_admin} />
-      : tab === 'mobile-execution-flows' && globalScope && user.platform_admin ? <UsageManagement />
       : resourcePage && globalScope && user.platform_admin ? (
-        <ExecutionDevices key={tab} view={params.get('subview') === 'historical-accounts' ? 'accounts' : params.get('subview') === 'rules' ? 'rules' : 'devices'} onViewChange={setSubview} />
+        <ExecutionDevices key={tab} view={params.get('subview') === 'rules' ? 'rules' : 'devices'} onViewChange={setSubview} />
       ) : tab === 'shared-mobile-resources' && user.platform_admin ? <SharedMobileResources /> : tab === 'wecom-assets' && user.platform_admin ? (
         <Assets />
       ) : tab === 'wecom-directory' && user.platform_admin ? (
@@ -190,7 +189,7 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
         />
       ) : (
         <div className="business-panel" key={`${school.id}-${tab}`}>
-          {resourcePage && tab !== 'mobile-execution-flows' ? (role === 'admin' || role === 'operator' ? <SchoolExecutionResources key={`${school.id}-${tab}`} school={school.id} accounts={params.get('subview') === 'historical-accounts'} admin={role === 'admin'} /> : <Alert type="warning" title="查看学校执行资源需要本校运营或管理员授权" />) : tab === 'mobile-execution-tasks' ? <MobileExecutionTasks school={school.id} admin={role === 'admin'} onNavigate={navigate} /> : tab === 'mobile-execution-flows' ? <UsageManagement key={school.id} school={school.id} admin={role === 'admin'} /> : tab === 'mobile-targets' ? <MobileTargets key={school.id} school={school.id} admin={role === 'admin'} /> : tab === 'broadcast-tasks' ? (
+          {resourcePage ? (role === 'admin' || role === 'operator' ? <UsageManagement key={`${school.id}-${tab}`} school={school.id} admin={role === 'admin'} /> : <Alert type="warning" title="查看学校执行资源需要本校运营或管理员授权" />) : tab === 'mobile-execution-tasks' ? <MobileExecutionTasks school={school.id} admin={role === 'admin'} onNavigate={navigate} /> : tab === 'mobile-targets' ? <MobileTargets key={school.id} school={school.id} admin={role === 'admin'} /> : tab === 'broadcast-tasks' ? (
             <BroadcastTasks
               key={school.id}
               school={school.id}
@@ -313,6 +312,7 @@ function Panel({
     await workspace.mutate(s, path, body, method)
     await refresh()
   }
+  if(resource==='templates')return <TemplateManager school={s}/>
   return (
     <>
       {dialogs.contextHolder}
@@ -320,6 +320,7 @@ function Panel({
       {(error || q.error) && <Alert type="error" title={error || q.error?.message} />}
       {resource === 'resources' && schoolAdmin && (
         <>
+          <p>平台默认资源在本校只读；需要调整时新建本校同类配置并上传本校图片。</p>
           {(creating || editing) && (
             <Drawer
               open
@@ -333,8 +334,9 @@ function Panel({
               <ResourceEditor
                 key={editing?.id ?? 'new'}
                 item={editing}
-                save={async (v) => {
-                  await mutation('resources', v)
+                school={s}
+                onSaved={async () => {
+                  await refresh()
                   setCreating(false)
                   setEditing(undefined)
                 }}
@@ -402,21 +404,6 @@ function Panel({
           )}
         </>
       )}
-      {resource === 'templates' && (
-        <>
-          {creating && (
-            <Drawer open size="large" title="新建消息模板" onClose={() => setCreating(false)}>
-              <Editor
-                fields={[{ name: 'name', title: '模板名称' }]}
-                onSave={async (v) => {
-                  await mutation('templates', v)
-                  setCreating(false)
-                }}
-              />
-            </Drawer>
-          )}
-        </>
-      )}
       <ListPanel
         filters={
           <>
@@ -455,8 +442,6 @@ function Panel({
             'posts',
             'comments',
             'audit',
-            'delivery-drafts',
-            'delivery-attempts',
             'cases',
             'notifications',
           ].includes(resource) && (
@@ -470,8 +455,7 @@ function Panel({
         }
         title="查询结果"
         actions={
-          (((resource === 'resources' || resource === 'groups') && schoolAdmin) ||
-            resource === 'templates') && (
+          ((resource === 'resources' || resource === 'groups') && schoolAdmin) && (
             <Button
               type="primary"
               onClick={() => {
@@ -551,7 +535,7 @@ function Panel({
                   <Button type="link" onClick={() => setSelectedId(r.id)}>
                     详情
                   </Button>
-                  {['resources', 'groups'].includes(resource) && schoolAdmin && (
+                  {['resources', 'groups'].includes(resource) && schoolAdmin && (resource!=='resources'||r.school_id===s) && (
                     <Button type="link" onClick={() => setEditing(r)}>
                       编辑
                     </Button>
@@ -690,7 +674,7 @@ function Panel({
                   onSave={(v) => mutation(`cases/${r.id}`, { ...v, revision: r.revision }, 'PUT')}
                 />
               )}
-              {['resources', 'groups'].includes(resource) && schoolAdmin && (
+              {['resources', 'groups'].includes(resource) && schoolAdmin && (resource!=='resources'||r.school_id===s) && (
                 <Button
                   type="primary"
                   onClick={() => {
@@ -701,135 +685,10 @@ function Panel({
                   编辑
                 </Button>
               )}
-              {resource === 'templates' && (
-                <>
-                  <Editor
-                    fields={[
-                      {
-                        name: 'body',
-                        title:
-                          '新版本正文（支持 {{school.name}}、{{post.title}}、{{post.summary}}、{{post.detail_url}}）',
-                        type: 'textarea',
-                      },
-                    ]}
-                    onSave={(v) => mutation(`templates/${r.id}/versions`, v)}
-                  />
-                  {Array.isArray(r.versions) &&
-                    r.versions.map((v) => {
-                      const version = v as Row
-                      return (
-                        <div key={version.id}>
-                          <pre>{label(version.body)}</pre>
-                          {version.published ? (
-                            <Tag>已发布 · {version.id}</Tag>
-                          ) : (
-                            <Button
-                              disabled={busy}
-                              onClick={() =>
-                                act(`template-versions/${version.id}/publish`, {
-                                  revision: version.revision,
-                                })
-                              }
-                            >
-                              发布此版本
-                            </Button>
-                          )}
-                        </div>
-                      )
-                    })}
-                </>
-              )}
-              {resource === 'delivery-drafts' && (
-                <a href={`/wecom?school=${s}&draft=${r.id}`}>预览草稿与客户群入口说明 ↗</a>
-              )}
-              {resource === 'delivery-attempts' && schoolAdmin && (
-                <>
-                  <p>客户端结果与人工核对独立保存；不确定结果不会自动重发。</p>
-                  <Editor
-                    fields={[
-                      {
-                        name: 'decision',
-                        title: '核对结论',
-                        options: [
-                          { value: 'operator_confirmed', label: '人工确认已发送' },
-                          { value: 'operator_rejected', label: '人工确认未发送' },
-                        ],
-                      },
-                      { name: 'reason', title: '核对依据', type: 'textarea' },
-                    ]}
-                    onSave={(v) => mutation(`delivery-attempts/${r.id}/reconciliations`, v)}
-                  />
-                </>
-              )}
             </section>
           </Drawer>
         ))}
     </>
-  )
-}
-function ResourceEditor({ item, save }: { item?: Row; save: (v: unknown) => Promise<unknown> }) {
-  return (
-    <Editor
-      fields={[
-        {
-          name: 'kind',
-          title: '类型',
-          value: label(item?.kind),
-          options: [
-            ['banner', '轮播'],
-            ['qrcode', '二维码'],
-            ['service', '客服'],
-            ['legal', '法律文本'],
-            ['tag', '标签'],
-            ['blocked_word', '屏蔽词'],
-          ].map(([value, label]) => ({ value, label })),
-        },
-        { name: 'title', title: '标题或屏蔽词', value: label(item?.title) },
-        {
-          name: 'content',
-          title: '正文 / 说明',
-          type: 'textarea',
-          optional: true,
-          value: label(item?.content),
-        },
-        { name: 'url', title: '图片或跳转链接', optional: true, value: label(item?.url) },
-        { name: 'sort_order', title: '排序', type: 'number', value: label(item?.sort_order) || 0 },
-        {
-          name: 'starts_at',
-          title: '生效时间',
-          type: 'datetime',
-          optional: true,
-          value: label(item?.starts_at),
-        },
-        {
-          name: 'ends_at',
-          title: '失效时间',
-          type: 'datetime',
-          optional: true,
-          value: label(item?.ends_at),
-        },
-        {
-          name: 'active',
-          title: '状态',
-          value: item ? String(item.active) : 'true',
-          options: [
-            { value: 'true', label: '启用' },
-            { value: 'false', label: '停用' },
-          ],
-        },
-      ]}
-      onSave={(v) =>
-        save({
-          ...v,
-          id: item?.id,
-          revision: item?.revision ?? 0,
-          active: v.active === 'true',
-          sort_order: Number(v.sort_order),
-          starts_at: v.starts_at || null,
-          ends_at: v.ends_at || null,
-        })
-      }
-    />
   )
 }
 function GlobalResources() {
@@ -901,8 +760,7 @@ function GlobalResources() {
           <ResourceEditor
             key={item?.id ?? 'global'}
             item={item}
-            save={async (v) => {
-              await workspace.globalResource(v)
+            onSaved={async () => {
               await q.refetch()
               setOpen(false)
             }}
