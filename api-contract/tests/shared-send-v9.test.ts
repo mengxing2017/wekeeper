@@ -30,3 +30,12 @@ it('business input fixture has only business selection values',async()=>{
  expect(calls[0]).toEqual(['/api/v1/schools/school/mobile-execution/usage-previews','POST',input,undefined,{'Idempotency-Key':'key'}])
  expect(Object.keys(input).sort()).toEqual(['auto_targets','device_ids','expires_at','max_calls','targets'])
 })
+
+it('business scheme has its own authenticated platform endpoint, without technical stages',async()=>{
+ const {default:input}=await import('../fixtures/mobile-business-scheme.json')
+ const calls:unknown[]=[]
+ const client=createSharedSendV2Client({requestResource:async(path,...args)=>{calls.push([path,...args]);return {} as never}})
+ await client.saveBusinessScheme(input,'scheme-key')
+ expect(calls[0]).toEqual(['/api/v1/platform/mobile-execution/business-schemes','POST',input,undefined,{'Idempotency-Key':'scheme-key'}])
+ expect(input).not.toHaveProperty('allowed_stages');expect(input).not.toHaveProperty('release_id')
+})
