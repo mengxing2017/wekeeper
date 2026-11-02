@@ -39,7 +39,7 @@ export function UsageManagement({school,admin=true}:{school?:string;admin?:boole
   {error&&<Alert type="error" title={error.message}/>}
   <Table<MobileUsage> rowKey="id" dataSource={list.data?.items??[]} loading={list.isFetching} pagination={{pageSize:10}} columns={[
    {title:'学校',dataIndex:'school_name'},
-   {title:'使用范围',render:(_,u)=><><p>{u.body.targets?.map(t=>t.name).join('、')||(u.body.legacy?'原已批准范围':'指定目标群')} / {u.body.device_ids.length} 台手机</p><p>累计最多 {u.body.max_calls} 次；有效至 {new Date(u.expires_at).toLocaleString()}</p>{u.body.auto_targets&&<Tag>包含本校后续新增群</Tag>}</>},
+   {title:'使用范围',render:(_,u)=><><p>{u.body.targets.map(t=>t.name).join('、')||'指定目标群'} / {u.body.device_ids.length} 台手机</p><p>累计最多 {u.body.max_calls} 次；有效至 {new Date(u.expires_at).toLocaleString()}</p>{u.body.auto_targets&&<Tag>包含本校后续新增群</Tag>}</>},
    {title:'审批',render:(_,u)=>({pending:'待平台审批',approved:'已批准',declined:'已退回'})[u.approval]},
    {title:'使用状态',render:(_,u)=>new Date(u.expires_at)<=new Date()?'已到期':u.state==='paused'?'已暂停':u.state==='revoked'?'已撤销':u.approval!=='approved'?'等待审批':u.delivery==='available'?'已开通，现场条件自动检查':u.progress},
    {title:'操作',render:(_,u)=><Space wrap>{admin&&<>
