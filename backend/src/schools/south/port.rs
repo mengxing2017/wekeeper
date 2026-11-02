@@ -29,12 +29,6 @@ pub trait Store: Clone + Send + Sync + 'static {
         school: Uuid,
         operator: bool,
     ) -> impl std::future::Future<Output = Result<Vec<Value>>> + Send;
-    fn resource(
-        &self,
-        a: &Actor,
-        school: Uuid,
-        v: Value,
-    ) -> impl std::future::Future<Output = Result<Value>> + Send;
     fn click(&self, school: Uuid, id: Uuid)
     -> impl std::future::Future<Output = Result<()>> + Send;
     fn groups(&self, school: Uuid) -> impl std::future::Future<Output = Result<Vec<Value>>> + Send;
@@ -45,3 +39,5 @@ pub trait Store: Clone + Send + Sync + 'static {
         v: Value,
     ) -> impl std::future::Future<Output = Result<Value>> + Send;
 }
+
+pub mod resources;

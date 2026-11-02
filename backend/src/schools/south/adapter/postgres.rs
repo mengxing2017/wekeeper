@@ -87,36 +87,20 @@ impl Repository {
         Ok(())
     }
     pub async fn resources(&self, school: Uuid, operator: bool) -> Result<Vec<Value>> {
-        Ok(sqlx::query_scalar("SELECT to_jsonb(r) FROM school_resources r WHERE (school_id=$1 OR (school_id IS NULL AND NOT EXISTS(SELECT 1 FROM school_resources custom WHERE custom.school_id=$1 AND custom.kind=r.kind AND custom.active))) AND ($2 OR (active AND kind<>'blocked_word' AND (starts_at IS NULL OR starts_at<=now()) AND (ends_at IS NULL OR ends_at>now()))) ORDER BY sort_order DESC,id").bind(school).bind(operator).fetch_all(&self.0).await?)
-    }
-    pub async fn resource(&self, a: &Actor, school: Uuid, v: Value) -> Result<Value> {
-        let id = v["id"]
-            .as_str()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or_else(Uuid::now_v7);
-        let scope = if school.is_nil() { None } else { Some(school) };
-        let revision = v["revision"].as_i64().unwrap_or(0);
-        let mut tx = self.0.begin().await?;
-        let item=sqlx::query_scalar("INSERT INTO school_resources(id,school_id,kind,title,content,url,active,sort_order,starts_at,ends_at) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9::text::timestamptz,$10::text::timestamptz WHERE $11=0 ON CONFLICT(id) DO NOTHING RETURNING to_jsonb(school_resources)").bind(id).bind(scope).bind(v["kind"].as_str()).bind(v["title"].as_str()).bind(v["content"].as_str().unwrap_or("")).bind(v["url"].as_str().unwrap_or("")).bind(v["active"].as_bool().unwrap_or(true)).bind(v["sort_order"].as_i64().unwrap_or(0) as i32).bind(v["starts_at"].as_str()).bind(v["ends_at"].as_str()).bind(revision).fetch_optional(&mut *tx).await?;
-        let item = if let Some(item) = item {
-            item
-        } else {
-            sqlx::query_scalar("UPDATE school_resources SET title=$3,content=$4,url=$5,active=$6,sort_order=$7,starts_at=$8::text::timestamptz,ends_at=$9::text::timestamptz,revision=revision+1 WHERE id=$1 AND school_id IS NOT DISTINCT FROM $2 AND revision=$10 AND kind=$11 RETURNING to_jsonb(school_resources)").bind(id).bind(scope).bind(v["title"].as_str()).bind(v["content"].as_str().unwrap_or("")).bind(v["url"].as_str().unwrap_or("")).bind(v["active"].as_bool().unwrap_or(true)).bind(v["sort_order"].as_i64().unwrap_or(0) as i32).bind(v["starts_at"].as_str()).bind(v["ends_at"].as_str()).bind(revision).bind(v["kind"].as_str()).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?
-        };
-        crate::audit::record(
-            &mut tx,
-            a,
-            school,
-            "resource.save",
-            id,
-            json!({"kind":v["kind"]}),
-        )
-        .await?;
-        tx.commit().await?;
-        Ok(item)
+        Ok(sqlx::query_scalar("SELECT to_jsonb(r)||jsonb_build_object('image_url',CASE WHEN image_ref->>'kind'='asset' THEN '/api/v1/schools/'||($1::uuid)::text||'/resource-media/'||r.id::text ELSE NULL END) FROM school_resources r WHERE (school_id=$1 OR (school_id IS NULL AND NOT EXISTS(SELECT 1 FROM school_resources custom WHERE custom.school_id=$1 AND custom.kind=r.kind AND custom.active AND (custom.starts_at IS NULL OR custom.starts_at<=now()) AND (custom.ends_at IS NULL OR custom.ends_at>now())))) AND ($2 OR (active AND kind<>'blocked_word' AND (starts_at IS NULL OR starts_at<=now()) AND (ends_at IS NULL OR ends_at>now()))) ORDER BY sort_order DESC,id").bind(school).bind(operator).fetch_all(&self.0).await?)
     }
     pub async fn click(&self, school: Uuid, id: Uuid) -> Result<()> {
-        sqlx::query("UPDATE school_resources SET clicks=clicks+1 WHERE school_id=$1 AND id=$2 AND kind='banner' AND active").bind(school).bind(id).execute(&self.0).await?;
+        let visible = self.resources(school, false).await?;
+        if !visible
+            .iter()
+            .any(|v| v["id"].as_str() == Some(&id.to_string()) && v["kind"] == "banner")
+        {
+            return Err(Error::NotFound);
+        }
+        sqlx::query("UPDATE school_resources SET clicks=clicks+1 WHERE id=$1 AND kind='banner'")
+            .bind(id)
+            .execute(&self.0)
+            .await?;
         Ok(())
     }
     pub async fn groups(&self, school: Uuid) -> Result<Vec<Value>> {
@@ -183,9 +167,6 @@ impl crate::schools::south::port::Store for Repository {
     async fn resources(&self, school: Uuid, operator: bool) -> Result<Vec<Value>> {
         Repository::resources(self, school, operator).await
     }
-    async fn resource(&self, a: &Actor, school: Uuid, v: Value) -> Result<Value> {
-        Repository::resource(self, a, school, v).await
-    }
     async fn click(&self, school: Uuid, id: Uuid) -> Result<()> {
         Repository::click(self, school, id).await
     }
@@ -196,3 +177,5 @@ impl crate::schools::south::port::Store for Repository {
         Repository::group(self, a, school, v).await
     }
 }
+
+pub mod resources;
