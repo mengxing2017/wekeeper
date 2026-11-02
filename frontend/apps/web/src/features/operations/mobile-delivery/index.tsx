@@ -1,9 +1,8 @@
 import { ControlStatus, useControlFreshness } from './control-status'
 import { DeviceControlPanel } from './device-control'
 import { createIdempotencyKey as key } from '../../../shared/idempotency-key'
-import { ResponsibleActorDisplay } from './account-registration'
 import { DeviceStateEditor } from './device-state'
-import { ConfigurationWorkbench } from './configuration'
+import { UsageManagement } from '../../admin/mobile-resources/usage-management'
 import { ActionDrawer } from '../../../shared/action-drawer'
 import { useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -51,25 +50,18 @@ export function ExecutionDevices({ view, onViewChange }: { view?: string; onView
   const listTab = view ?? internalTab
   const setListTab = (value: string) => onViewChange ? onViewChange(value) : setInternalTab(value)
   const [page, setPage] = useState(1),
-    [accountPage, setAccountPage] = useState(1),
     [pairing, setPairing] = useState<{ code: string; expiresAt: string; name: string } | null>(
       null,
     ),
-    [deviceId, setDeviceId] = useState(''),
-    [senderId, setSenderId] = useState('')
+    [deviceId, setDeviceId] = useState('')
   const devices = useQuery({
     queryKey: ['mobile', 'platform', 'devices', page],
     queryFn: () => api.devices(page),
-    enabled: listTab !== 'rules',
+    enabled: listTab === 'devices',
     refetchInterval: listTab === 'devices' ? 5000 : false,
     refetchOnWindowFocus: 'always',
   })
   const devicesFresh = useControlFreshness(devices.dataUpdatedAt, devices.isError)
-  const accounts = useQuery({
-    queryKey: ['mobile', 'platform', 'accounts', accountPage],
-    queryFn: () => api.accounts(accountPage),
-    enabled: listTab !== 'rules',
-  })
   const cache = useQueryClient(),
     actions = useActions('platform')
   const refresh = async () => {
@@ -77,7 +69,7 @@ export function ExecutionDevices({ view, onViewChange }: { view?: string; onView
   }
   return (
     <section className="management-stack">
-      {[devices.error, accounts.error].map(
+      {[devices.error].map(
         (e, i) => e && <Alert key={i} type="error" title={e.message} />,
       )}
       {actions.error && <Alert type="error" title={actions.error} />}
@@ -102,25 +94,20 @@ export function ExecutionDevices({ view, onViewChange }: { view?: string; onView
         />
       )}
 
-      {view ? <Space><Tag>全平台资源维护</Tag>{view !== 'accounts' && <Button onClick={() => setListTab(view === 'rules' ? 'devices' : 'rules')}>{view === 'rules' ? '返回手机设备' : '业务能力开通'}</Button>}</Space> : <Tabs
-        activeKey={listTab}
-        onChange={setListTab}
-        items={[
-          { key: 'devices', label: '手机设备' },
-          { key: 'accounts', label: '历史手机账号资料' },
-          { key: 'rules', label: '业务能力开通' },
-        ]}
-      />}
-      {listTab === 'rules' ? (
-        <ConfigurationWorkbench />
-      ) : listTab === 'devices' ? (
+      <Tabs activeKey={listTab} onChange={setListTab} items={[
+        { key: 'devices', label: '手机设备' },
+        { key: 'usage', label: '业务使用开通' },
+      ]} />
+      {listTab === 'usage' ? (
+        <UsageManagement />
+      ) : (
         <>
           <Card
             className="data-panel"
             title="手机设备列表"
             extra={
               <Space>
-                <Button onClick={() => void refresh()}>刷新设备与账号</Button>
+                <Button onClick={() => void refresh()}>刷新设备</Button>
                 <ActionDrawer title="登记手机" primary>
                   <Editor
                     fields={[{ name: 'name', title: '设备名称' }]}
@@ -224,83 +211,6 @@ export function ExecutionDevices({ view, onViewChange }: { view?: string; onView
                       await refresh()
                     }}
                   />
-                </Card>
-              </Drawer>
-            ))}
-        </>
-      ) : (
-        <>
-          <Card
-            className="data-panel"
-            title="历史手机人工登记资料"
-          >
-            <Table
-              rowKey="id"
-              loading={accounts.isFetching}
-              dataSource={accounts.data?.items ?? []}
-              pagination={false}
-              scroll={{ x: 700 }}
-              columns={[
-                {
-                  title: '发送账号',
-                  render: (_, a) =>
-                    a.visible_profile
-                      ? `${a.visible_profile.company_name} · ${a.visible_profile.account_name}`
-                      : a.external_key,
-                },
-                { title: '责任人', render: (_, a) => <ResponsibleActorDisplay account={a} /> },
-                {
-                  title: '资料核对',
-                  render: (_, a) =>
-                    a.identity_mode === 'ui_visible' ? (
-                      <Tag>{a.verification_state === 'reviewed' ? '已人工核对' : '待人工核对'}</Tag>
-                    ) : (
-                      '旧模式'
-                    ),
-                },
-                {
-                  title: '状态',
-                  render: (_, a) => (
-                    <Tag color={a.enabled ? 'success' : 'default'}>
-                      {a.enabled ? '启用' : '停用'}
-                    </Tag>
-                  ),
-                },
-                { title: '每日限额', dataIndex: 'daily_limit' },
-                {
-                  title: '操作',
-                  render: (_, a) => (
-                    <Button type="link" onClick={() => setSenderId(a.id)}>
-                      资料详情
-                    </Button>
-                  ),
-                },
-              ]}
-            />
-            <PaginationControls
-              page={accountPage}
-              more={accounts.data?.page?.has_more}
-              change={setAccountPage}
-              subject="发送账号"
-            />
-          </Card>
-          {accounts.data?.items
-            .filter((a) => a.id === senderId)
-            .map((a) => (
-              <Drawer
-                open
-                size="large"
-                key={a.id}
-                title="发送账号管理"
-                onClose={() => setSenderId('')}
-              >
-                <Card key={a.id} title={a.visible_profile?.account_name ?? a.external_key}>
-                  <Alert type="info" title="历史资料只读" description="人工备注不认证手机实际登录身份，不转换为官方发送资格。" />
-                  <p>
-                    责任人：
-                    <ResponsibleActorDisplay account={a} /> · {a.enabled ? '启用' : '停用'}
-                  </p>
-
                 </Card>
               </Drawer>
             ))}

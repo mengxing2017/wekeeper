@@ -202,13 +202,13 @@ it('rejects direct global identity URLs without fetching global accounts', async
 
 it('shows a clear error for unknown navigation instead of an unrelated page', async () => {
   showManagement('does-not-exist')
-  expect(await screen.findByText('页面不存在或已迁移')).toBeTruthy()
+  expect(await screen.findByText('页面不存在')).toBeTruthy()
   expect(workspace.list).not.toHaveBeenCalled()
 })
 
 it('explains missing school management permission for an ordinary member at the default entry', async () => {
   showManagement('', false, 'member')
   expect(await screen.findByText('当前账号没有该学校的后台管理权限，请联系平台管理员。')).toBeTruthy()
-  expect(screen.queryByText('页面不存在或已迁移')).toBeNull()
+  expect(screen.queryByText('页面不存在')).toBeNull()
   expect(workspace.list).not.toHaveBeenCalled()
 })

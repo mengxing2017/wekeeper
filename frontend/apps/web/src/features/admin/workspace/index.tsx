@@ -141,11 +141,11 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
     >
       {q.error && <Alert type="error" title={q.error.message} showIcon />}
       {!tab ? (q.isPending ? <Empty className="empty-state" description="正在加载学校…" /> : <Alert type="info" title="当前账号没有该学校的后台管理权限，请联系平台管理员。" />)
-      : !knownPage ? <Alert type="warning" title="页面不存在或已迁移" description={<Button onClick={() => navigate(allowedKeys[0] ?? 'posts')}>返回可用功能</Button>} />
+      : !knownPage ? <Alert type="warning" title="页面不存在" description={<Button onClick={() => navigate(allowedKeys[0] ?? 'posts')}>返回可用功能</Button>} />
       : denied ? <Alert type="warning" title="当前账号没有此功能的访问权限" description={<>请核对当前学校与角色，或从导航选择已授权功能。<Button onClick={() => navigate(allowedKeys[0] ?? 'posts')}>返回可用功能</Button></>} />
       : tab === 'wecom-senders' ? <OfficialSenders school={school?.id} global={globalScope && user.platform_admin} />
       : resourcePage && globalScope && user.platform_admin ? (
-        <ExecutionDevices key={tab} view={params.get('subview') === 'rules' ? 'rules' : 'devices'} onViewChange={setSubview} />
+        <ExecutionDevices key={tab} view={params.get('subview') === 'usage' ? 'usage' : 'devices'} onViewChange={setSubview} />
       ) : tab === 'shared-mobile-resources' && user.platform_admin ? <SharedMobileResources /> : tab === 'wecom-assets' && user.platform_admin ? (
         <Assets />
       ) : tab === 'wecom-directory' && user.platform_admin ? (
