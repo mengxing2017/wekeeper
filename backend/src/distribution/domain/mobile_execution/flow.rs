@@ -21,7 +21,7 @@ pub struct Selector {
     pub ancestor_depth: u32,
 }
 impl Selector {
-    fn validate(&self) -> Result<()> {
+    pub(super) fn validate(&self) -> Result<()> {
         require(
             (1..=32).contains(&self.ancestor_depth),
             "控件祖先范围必须为 1–32 层",
@@ -124,6 +124,9 @@ impl FlowV2 {
     }
     pub fn validate_shared_send(&self) -> Result<()> {
         self.validate_protocol(8)?;
+        self.validate_return_path()
+    }
+    fn validate_return_path(&self) -> Result<()> {
         let mut reached: BTreeSet<&str> = ["chat"].into();
         loop {
             let before = reached.len();
@@ -154,11 +157,20 @@ impl FlowV2 {
             "v8 必须提供聊天页安全返回搜索页的真实导航路径",
         )
     }
+    pub(super) fn validate_generic(&self) -> Result<()> {
+        self.validate_protocol(9)?;
+        self.validate_return_path()
+    }
     fn validate_protocol(&self, protocol: u8) -> Result<()> {
         require(
-            self.schema_version == 2
+            self.schema_version == if protocol == 9 { 3 } else { 2 }
                 && self.protocol_version == protocol
-                && self.engine_version == "otter-ui/2"
+                && self.engine_version
+                    == if protocol == 9 {
+                        "otter-ui/3"
+                    } else {
+                        "otter-ui/2"
+                    }
                 && self.app_key == "wecom"
                 && self.capability == "group_text",
             "流程必须匹配指定业务协议和 schema v2 的企业微信群文字能力",
@@ -201,7 +213,7 @@ impl FlowV2 {
             self.pages.len() <= 64
                 && self.controls.len() <= 128
                 && self.navigation.len() <= 256
-                && !self.launchers.is_empty()
+                && (protocol == 9 || !self.launchers.is_empty())
                 && self.launchers.len() <= 16,
             "页面、控件或桌面流程数量无效",
         )?;
@@ -241,6 +253,11 @@ impl FlowV2 {
             )?;
         }
         for role in ["send", "group_result_row"] {
+            // Empty conversations may expose a disabled send control. v9 checks
+            // its availability only after exact message preparation.
+            if protocol == 9 && role == "send" {
+                continue;
+            }
             let p = &self.controls[role].predicate;
             require(
                 p.enabled == Some(true) && p.clickable == Some(true),
