@@ -393,6 +393,7 @@ impl Store for Repository {
             "bind" | "update-binding" | "revoke-binding" | "update-target" | "archive-target"
         ) {
             super::shared_send::reconcile_resources(&mut tx).await?;
+            super::shared_send_v2::reconcile_resources(&mut tx).await?;
         }
         tx.commit().await?;
         Ok(result)

@@ -12,6 +12,10 @@ pub(super) async fn read(repo: &Repository, c: &Credential) -> Result<Value> {
     Ok(v)
 }
 async fn live_claim(tx: &mut Tx<'_>, c: &Credential, id: Uuid) -> Result<Value> {
+    let retired: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_activations)")
+        .fetch_one(&mut **tx)
+        .await?;
+    require(!retired, "shared_send_upgrade_required")?;
     let v:Value=sqlx::query_scalar("SELECT to_jsonb(c)||jsonb_build_object('plan',p.plan,'plan_digest',p.digest,'content_digest',p.content_digest,'task_id',i.task_id) FROM mobile_shared_send_claims c JOIN mobile_shared_attempts a ON a.id=c.attempt_id JOIN mobile_shared_plans p ON p.id=a.plan_id JOIN mobile_shared_task_items i ON i.id=a.item_id JOIN mobile_shared_tasks t ON t.id=i.task_id JOIN mobile_shared_runtime r ON r.device_id=c.device_id JOIN mobile_shared_device_leases l ON l.device_id=c.device_id WHERE c.id=$1 AND c.device_id=$2 AND c.credential_generation=$3 AND c.state='active' AND c.expires_at>clock_timestamp() AND NOT t.stopped AND r.runtime_epoch=c.runtime_epoch AND r.ui_ready AND NOT r.paused AND r.observed_at>clock_timestamp()-interval '30 seconds' AND l.holder_id=c.id AND l.fence=c.lease_fence AND l.expires_at>clock_timestamp() AND EXISTS(SELECT 1 FROM device_control_presence cp WHERE cp.id=c.device_id AND cp.state='online' AND NOT cp.desired_paused AND cp.last_control_heartbeat_at>clock_timestamp()-interval '30 seconds')").bind(id).bind(c.device_id).bind(c.generation).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("lease_superseded"))?;
     let school = uid(&v, "school_id")?;
     let confirmed: Uuid =
@@ -222,6 +226,14 @@ pub(super) async fn write(
     Ok(result)
 }
 async fn claim(tx: &mut Tx<'_>, c: &Credential, v: ClaimRequest) -> Result<Value> {
+    let upgraded: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_activations)")
+        .fetch_one(&mut **tx)
+        .await?;
+    if upgraded {
+        return Ok(
+            json!({"id":c.device_id,"state":"waiting","reason":"protocol_upgrade_required","retry_after":60}),
+        );
+    }
     let fresh:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_shared_runtime WHERE device_id=$1 AND credential_generation=$2 AND runtime_epoch=$3 AND ui_ready AND quiescent AND NOT paused AND observed_at>clock_timestamp()-interval '30 seconds') AND EXISTS(SELECT 1 FROM device_control_presence WHERE id=$1 AND state='online' AND NOT desired_paused AND last_control_heartbeat_at>clock_timestamp()-interval '30 seconds')").bind(c.device_id).bind(c.generation).bind(v.runtime_epoch).fetch_one(&mut **tx).await?;
     require(fresh, "shared_send_runtime_required")?;
     let busy = inspections::busy(tx, c.device_id).await?;
