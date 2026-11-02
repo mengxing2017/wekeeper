@@ -1,3 +1,4 @@
+import {BusinessRequests} from '../wecom-senders/business-requests'
 import { createIdempotencyKey } from '../../../shared/idempotency-key'
 import { useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -12,7 +13,6 @@ import {
   Input,
   Select,
   Space,
-  Tabs,
   Tag,
 } from 'antd'
 import { Field } from '../../../shared/field'
@@ -22,14 +22,13 @@ import { formatDate } from '../../../shared/format-date'
 import {
   broadcast,
   workspace,
+  product,
   type BroadcastTask,
   type BroadcastTarget,
   type BroadcastDraftInput,
   type BroadcastAction,
   type Post,
   type Row,
-  type Draft,
-  type Attempt,
 } from './api'
 
 const creation: Record<string, string> = {
@@ -75,10 +74,10 @@ export default function BroadcastTasks({
   admin: boolean
   platformAdmin?: boolean
 }) {
-  const [tab, setTab] = useState('tasks'),
-    [selected, setSelected] = useState(''),
+  const [selected, setSelected] = useState(new URLSearchParams(window.location.search).get('task')??''),
     [page, setPage] = useState(1),
     [status, setStatus] = useState('')
+  const [channelReason,setChannelReason]=useState(''),[channelBusy,setChannelBusy]=useState(false),[channelError,setChannelError]=useState('')
   const [editing, setEditing] = useState<{ id?: string; input?: BroadcastDraftInput } | null>(null)
   const query = useQuery({
     queryKey: ['business', school, 'broadcast', page, status],
@@ -98,27 +97,9 @@ export default function BroadcastTasks({
       {capability.data && !capability.data.broadcast_available && (
         <Alert type="warning" title={capability.data.reason} />
       )}
+      {capability.data&&!capability.data.broadcast_available&&<Space orientation="vertical"><p>负责人：{capability.data.request?.owner_name??'待平台分派'} · {capability.data.request?.response??'可保留草稿；开通后仍需本人确认'}</p><Input aria-label="渠道开通用途" placeholder="填写开通用途或当前问题" value={channelReason} onChange={e=>setChannelReason(e.target.value)}/><Button loading={channelBusy} disabled={!channelReason.trim()} onClick={()=>{setChannelBusy(true);setChannelError('');void product.requests.channel(school,{reason:channelReason}).then(()=>{setChannelReason('');return refresh()}).catch(e=>setChannelError(e instanceof Error?e.message:'提交失败')).finally(()=>setChannelBusy(false))}}>确认提交开通申请</Button></Space>}
+      {channelError&&<Alert type="error" title={channelError}/>}
       {capability.error && <Alert type="error" title={capability.error.message} />}
-      <Tabs
-        activeKey={tab}
-        onChange={setTab}
-        items={[
-          { key: 'tasks', label: '群发任务' },
-          { key: 'history', label: '历史人工分享' },
-        ]}
-      />
-      {tab === 'history' ? (
-        <History
-          school={school}
-          admin={admin}
-          migrate={(input) => {
-            setEditing({ input })
-            setSelected('')
-            setTab('tasks')
-          }}
-        />
-      ) : (
-        <>
           <div className="query-filter">
             <Space wrap>
               <Select
@@ -149,6 +130,7 @@ export default function BroadcastTasks({
             >
               <DraftEditor
                 school={school}
+                admin={admin}
                 initial={editing.input}
                 id={editing.id}
                 saved={async (t) => {
@@ -259,24 +241,27 @@ export default function BroadcastTasks({
             busy={query.isFetching}
             change={setPage}
           />
-        </>
-      )}
     </section>
   )
 }
 function DraftEditor({
   school,
+  admin,
   initial,
   id,
   saved,
   cancel,
 }: {
+  admin: boolean
   school: string
   initial?: BroadcastDraftInput
   id?: string
   saved: (task: BroadcastTask) => Promise<void>
   cancel: () => void
 }) {
+  const [currentId,setCurrentId]=useState(id),[currentRevision,setCurrentRevision]=useState(initial?.revision)
+  const [result,setResult]=useState<Awaited<ReturnType<typeof broadcast.savePreview>>>(),[previewTargets,setPreviewTargets]=useState<BroadcastTarget[]>([])
+  const confirmKey=useRef(createIdempotencyKey())
   const [source, setSource] = useState<'posts' | 'text' | 'materials'>(
     initial ? (initial.content_source ?? 'posts') : 'text',
   )
@@ -324,8 +309,8 @@ function DraftEditor({
     templates.data?.items.flatMap((t) =>
       Array.isArray(t.versions)
         ? (t.versions as Row[])
-            .filter((v) => v.published)
-            .map((v) => ({ value: v.id, label: `${String(t.name)} · ${v.id.slice(-6)}` }))
+            .filter((v) => v.published && v.id===t.current_version_id)
+            .map((v) => ({ value: v.id, label: `${String(t.name)} · ${formatDate(String(v.published_at))}` }))
         : [],
     ) ?? []
   async function save() {
@@ -337,9 +322,8 @@ function DraftEditor({
       const common = {
         group_ids: groups,
         reason,
-        revision: initial?.revision,
+        revision: currentRevision,
         source_task_id: initial?.source_task_id,
-        source_draft_id: initial?.source_draft_id,
       }
       const input: BroadcastDraftInput =
         source === 'text'
@@ -348,7 +332,10 @@ function DraftEditor({
           : { ...common, content_source: 'posts', template_version_id: version, post_ids: chosen }
       const payload = JSON.stringify(input)
       if (saveIntent.current?.payload !== payload) saveIntent.current = { payload, key: createIdempotencyKey() }
-      await saved(await broadcast.save(school, input, id, saveIntent.current.key))
+      const response=await broadcast.savePreview(school,input,currentId,saveIntent.current.key)
+      setResult(response);setCurrentId(response.task_id)
+      const savedTask=await broadcast.task(school,response.task_id);setCurrentRevision(savedTask.revision)
+      if(response.preview)setPreviewTargets(await allTargets(school,response.task_id))
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -359,12 +346,14 @@ function DraftEditor({
   return (
     <Card title={id ? '修改任务草稿' : '创建任务草稿'}>
       {dialogs.contextHolder}
-      <p>保存仅生成预览，不创建企业微信任务。正文上限 4000 UTF-8 字节。</p>
+      <p>预览会自动保留草稿，不创建企业微信任务。正文上限 4000 UTF-8 字节。</p>
+      {error && <Alert type="error" title={error} />}
+      {!result&&<>
       <Field label="内容来源">
         <Select
           aria-label="内容来源"
           value={source}
-          disabled={busy || !!initial?.source_draft_id}
+          disabled={busy}
           options={[
             { value: 'text', label: '直接填写' },
             { value: 'posts', label: '从社区内容生成' },
@@ -472,12 +461,12 @@ function DraftEditor({
         />
       </Field>
       {targets.isSuccess && !targets.data.items.some((g) => g.active) && (
-        <p>暂无可用客户群。可先填写并预览正文，配置本校客户群后才能保存任务。</p>
+        <p>暂无可用客户群，可以先保留正文草稿；平台准备好本校范围后再预览。</p>
       )}
       <p>
-        保存时核验目录新鲜度和群主学校授权；确认前再次实时核验。失效群会阻止保存，不会静默跳过。
+        预览会核验目录和群主学校授权；未就绪时保留草稿，确认前再次校验。
       </p>
-      {(initial?.source_task_id || initial?.source_draft_id) && (
+      {initial?.source_task_id && (
         <Field label="再次发送 / 迁移原因">
           <Input.TextArea
             value={reason}
@@ -486,20 +475,28 @@ function DraftEditor({
           />
         </Field>
       )}
-      {error && <Alert type="error" title={error} />}
+
       <Space>
         <Button
           type="primary"
           loading={busy}
-          disabled={!groups.length || (source === 'text' ? !textValid : source === 'materials' ? initial?.content_source !== 'materials' : !chosen.length || !version)}
+          disabled={(source === 'text' ? !textValid : source === 'materials' ? initial?.content_source !== 'materials' : !chosen.length || !version)}
           onClick={() => void save()}
         >
-          保存并预览
+          预览
         </Button>
         <Button disabled={busy} onClick={cancel}>
           关闭
         </Button>
       </Space>
+      </>}
+      {result&&<>
+       {result.preview?<><h3>完整发送预览</h3><pre>{result.preview.content}</pre><p>全部 {result.preview.target_count} 个群；确认仅创建官方任务，执行成员仍需在企业微信确认。</p><ul>{previewTargets.map(v=><li key={v.id}>{v.group_name} · 执行成员：{v.sender}</li>)}</ul>
+       <Button disabled={busy} onClick={()=>{setResult(undefined);saveIntent.current=null}}>返回修改</Button>
+       <Button type="primary" disabled={busy||(source==='text'&&!admin)||previewTargets.length!==result.preview.target_count} onClick={()=>{if(lock.current)return;lock.current=true;setBusy(true);setError('');void broadcast.action(school,result.task_id,'confirm',confirmKey.current,{revision:result.preview!.revision,preview_digest:result.preview!.digest}).then(saved).catch(e=>setError(e instanceof Error?e.message:'确认失败')).finally(()=>{lock.current=false;setBusy(false)})}}>确认创建官方群发任务</Button>
+       {source==='text'&&!admin&&<p>请本校管理员从同一草稿核对确认；当前已保存正文。</p>}</>:<Alert type="info" title={result.reason??'草稿已保存'}/>}
+       <Button disabled={busy} onClick={()=>void broadcast.task(school,result.task_id).then(saved)}>查看已保存草稿</Button>
+      </>}
     </Card>
   )
 }
@@ -526,7 +523,6 @@ function Detail({
   school,
   id,
   admin,
-  platformAdmin,
   enabled,
   unavailableReason,
   managementAvailable,
@@ -550,8 +546,9 @@ function Detail({
   const [batch, setBatch] = useState(''),
     [decision, setDecision] = useState<BroadcastAction['decision']>('not_created'),
     [reason, setReason] = useState(''),
-    [msgid, setMsgid] = useState('')
-  const [candidates, setCandidates] = useState<Row[]>([])
+    [evidenceId, setEvidenceId] = useState('')
+  const [candidates,setCandidates]=useState<Awaited<ReturnType<typeof broadcast.evidenceCandidates>>['items']>([])
+  const [evidenceReason,setEvidenceReason]=useState(''),[issueReason,setIssueReason]=useState('')
   const keys = useRef(new Map<string, string>()),
     lock = useRef(false),
     dialogs = useDialogs(),
@@ -663,12 +660,7 @@ function Detail({
                 void run(async () => {
                   const preview = await broadcast.preview(school, t.id)
                   if (preview.revision !== t.revision || preview.content !== t.content || preview.target_count !== t.total) throw new Error('任务内容或目标已变化，请刷新后重新预览')
-                  if (
-                    await dialogs.confirm(
-                      `确认正文和全部 ${t.total} 个客户群，创建企业微信任务？成员仍需确认发送。`,
-                    )
-                  )
-                    await act('confirm', { revision: preview.revision, preview_digest: preview.digest })
+                  await act('confirm', { revision: preview.revision, preview_digest: preview.digest })
                 })
               }
             >
@@ -680,10 +672,9 @@ function Detail({
                 void run(async () =>
                   edit(id, {
                     ...taskContent(t),
-                    group_ids: (await allTargets(school, id)).map((x) => x.group_id),
+                    group_ids: t.draft_input.group_ids,
                     revision: t.revision,
                     source_task_id: t.source_task_id ?? undefined,
-                    source_draft_id: t.source_draft_id ?? undefined,
                     reason: t.resend_reason,
                   }),
                 )
@@ -754,7 +745,7 @@ function Detail({
       {targets.data?.items.map((x) => (
         <Card size="small" key={x.id} title={`${x.group_name} · ${x.sender}`}>
           <p>{x.chat_id}</p>
-          {x.msgid && <p>官方任务：{x.msgid}</p>}
+          {x.msgid && <p>已关联官方任务，可同步成员及目标群结果。</p>}
           <p>{t.state === 'draft' ? '已选为目标群，等待确认提交' : targetLabel(x)}</p>
           {t.state === 'confirmed' && x.msgid && (
             <p>
@@ -769,13 +760,13 @@ function Detail({
           )}
           {x.sync_error && <p>同步未完成，保留上次结果</p>}
           {x.error_code && <p>创建原因：{x.error_code}</p>}
-          {x.stop_state !== 'none' && <p>停止状态：{x.stop_state}</p>}
-          {x.reconciliation && <p>人工核对：{x.reconciliation}（与平台事实独立）</p>}
+          {x.stop_state !== 'none' && <p>停止状态：{({none:'无停止请求',requested:'已申请停止',stopped:'已停止',unknown:'停止结果待核对',rejected:'停止未受理'}[x.stop_state])}</p>}
+          {x.reconciliation && <p>人工核对：{({not_created:'有证据确认未创建',sent:'人工确认已发送',linked:'已关联官方证据',stop_confirmed:'已确认停止',reminder_reviewed:'已核对提醒'}[x.reconciliation]??'已登记核对依据')}（与平台事实独立）</p>}
           {admin &&
             (x.creation_state === 'unknown' ||
               x.stop_state === 'unknown' ||
               x.operation_unknown) && (
-              <Button onClick={() => setBatch(x.batch_id)}>核对此批次</Button>
+              <Button onClick={() => {setBatch(x.batch_id);setEvidenceId('');setCandidates([])}}>核对此批次</Button>
             )}
         </Card>
       ))}
@@ -787,7 +778,7 @@ function Detail({
         subject="目标群"
       />
       {admin && batch && (
-        <Card title="核对创建结果不确定的批次">
+        <Card title="核对未决操作">
           <p>没有查到记录不能证明未创建。请结合企业微信管理端证据，未核对前禁止再次发送。</p>
           <Select
             aria-label="核对结论"
@@ -795,18 +786,13 @@ function Detail({
             options={[
               { value: 'not_created', label: '有证据确认未创建' },
               { value: 'sent', label: '人工确认已发送（仍保留未知平台状态）' },
-              { value: 'linked', label: '关联已确认的官方任务 ID' },
+              { value: 'linked', label: '选择证据关联官方任务' },
               { value: 'stop_confirmed', label: '有证据确认停止已生效' },
               { value: 'reminder_reviewed', label: '提醒已核对（不重新发送）' },
             ]}
             onChange={setDecision}
           />
-          <Input
-            aria-label="官方任务 ID"
-            placeholder="关联时填写 msgid"
-            value={msgid}
-            onChange={(e) => setMsgid(e.target.value)}
-          />
+          {decision==='linked'&&<Select aria-label="候选证据" placeholder="先查询本校可见证据" value={evidenceId||undefined} options={candidates.map(v=>({value:v.id,label:`${v.summary.content.slice(0,60)} · ${v.summary.sender_name??v.summary.sender} · ${v.summary.target_count} 个群 · ${v.summary.created_at?formatDate(new Date(v.summary.created_at*1000).toISOString()):'时间待核对'}`}))} onChange={setEvidenceId}/>}
           <Input.TextArea
             aria-label="核对依据"
             placeholder="核对依据"
@@ -815,45 +801,33 @@ function Detail({
             onChange={(e) => setReason(e.target.value)}
           />
           <Button
-            disabled={busy || !reason.trim()}
+            disabled={busy || !reason.trim() || (decision==='linked'&&!evidenceId)}
             onClick={() =>
               void run(() =>
                 act('reconciliations', {
                   batch_id: batch,
                   decision,
                   reason,
-                  ...(decision === 'linked' ? { msgid } : {}),
+                  ...(decision === 'linked' ? {evidence_id:evidenceId} : {}),
+                  revision:t.revision,
                 }),
               )
             }
           >
             保存核对依据
           </Button>
-          {platformAdmin && (
-            <Button
-              disabled={busy}
-              onClick={() =>
-                void run(async () => {
-                  const end = Math.floor(Date.now() / 1000)
-                  setCandidates(await broadcast.candidates(end - 86400, end))
-                })
-              }
-            >
-              查询企业最近一天候选任务
-            </Button>
-          )}
-          {candidates.map((c) => (
-            <p key={c.id}>
-              {c.id} · {JSON.stringify(c.text)}（候选不代表匹配）
-            </p>
-          ))}
+          <Button disabled={busy} onClick={()=>void run(async()=>{const response=await broadcast.evidenceCandidates(school,id,batch);setCandidates(response.items);setEvidenceReason(response.reason);setEvidenceId('')})}>查询本校候选证据</Button>
+          {evidenceReason&&<p>{evidenceReason}</p>}
+
         </Card>
       )}
+      <Card title="报告群发问题"><Input.TextArea aria-label="问题现象" placeholder="描述现象，系统自动关联本校任务与范围" value={issueReason} onChange={e=>setIssueReason(e.target.value)}/><Button disabled={busy||!issueReason.trim()} onClick={()=>void run(async()=>{await product.requests.issue(school,{reason:issueReason,task_id:id,batch_id:batch||undefined});setIssueReason('')})}>确认移交负责人</Button></Card>
+      <BusinessRequests school={school}/>
       <h3>操作记录</h3>
       {events.error && <Alert type="error" title={events.error.message} />}
       {events.data?.items.map((e) => (
         <p key={e.id}>
-          {formatDate(e.created_at)} · {e.action} · {JSON.stringify(e.detail)}
+          {formatDate(e.created_at)} · {e.actor_name} · {e.description} {e.reason}
         </p>
       ))}
       <PaginationControls
@@ -864,147 +838,5 @@ function Detail({
         subject="操作记录"
       />
     </Card>
-  )
-}
-function History({
-  school,
-  admin,
-  migrate,
-}: {
-  school: string
-  admin: boolean
-  migrate: (input: BroadcastDraftInput) => void
-}) {
-  const [page, setPage] = useState(1),
-    [draftPage, setDraftPage] = useState(1),
-    [error, setError] = useState('')
-  const dialogs = useDialogs()
-  const records = useQuery({
-    queryKey: ['business', school, 'old-attempts', page],
-    queryFn: () =>
-      workspace.list<Attempt>(school, 'delivery-attempts', `?page[number]=${page}&page[size]=30`),
-  })
-  const drafts = useQuery({
-    queryKey: ['business', school, 'old-drafts', draftPage],
-    queryFn: () =>
-      workspace.list<Draft>(school, 'delivery-drafts', `?page[number]=${draftPage}&page[size]=30`),
-  })
-  return (
-    <>
-      {dialogs.contextHolder}
-      <p>历史客户端结果不是官方送达证据。旧分享入口已停用；历史快照保留用于核对和防重复。</p>
-      {error && <Alert type="error" title={error} />}
-      {[records, drafts].map(
-        (q, i) => q.error && <Alert key={i} type="error" title={q.error.message} />,
-      )}
-      <Card className="data-panel" title="历史发送记录">
-        <Table<Attempt>
-          rowKey="id"
-          loading={records.isFetching}
-          dataSource={records.data?.items ?? []}
-          pagination={false}
-          scroll={{ x: 800 }}
-          columns={[
-            { title: '客户群', render: (_, r) => String(r.group_name ?? r.id) },
-            { title: '客户端结果', dataIndex: 'state' },
-            { title: '人工核对', render: (_, r) => r.reconciliation ?? '尚未核对' },
-            {
-              title: '操作',
-              render: (_, r) => (
-                <>
-                  {' '}
-                  {admin && (
-                    <Space>
-                      {(['operator_confirmed', 'operator_rejected'] as const).map((decision) => (
-                        <Button
-                          key={decision}
-                          onClick={async () => {
-                            const reason = await dialogs.prompt('填写核对依据')
-                            if (!reason) return
-                            try {
-                              await workspace.mutate(
-                                school,
-                                `delivery-attempts/${r.id}/reconciliations`,
-                                {
-                                  decision,
-                                  reason,
-                                },
-                              )
-                              await records.refetch()
-                            } catch (e) {
-                              setError((e as Error).message)
-                            }
-                          }}
-                        >
-                          {decision === 'operator_confirmed' ? '确认已发送' : '确认未发送'}
-                        </Button>
-                      ))}
-                    </Space>
-                  )}
-                </>
-              ),
-            },
-          ]}
-          expandable={{
-            expandedRowRender: (r) => (
-              <pre className="message-preview">{String(r.content ?? '')}</pre>
-            ),
-          }}
-        />
-      </Card>
-      <PaginationControls
-        page={page}
-        more={records.data?.page?.has_more}
-        busy={records.isFetching}
-        change={setPage}
-        subject="历史记录"
-      />
-      <Card className="data-panel" title="历史草稿快照">
-        <Table<Draft>
-          rowKey="id"
-          loading={drafts.isFetching}
-          dataSource={drafts.data?.items ?? []}
-          pagination={false}
-          scroll={{ x: 700 }}
-          columns={[
-            { title: '客户群', dataIndex: 'group_name' },
-            { title: '草稿内容', dataIndex: 'content', ellipsis: true },
-            {
-              title: '操作',
-              render: (_, d) => (
-                <Button
-                  type="link"
-                  onClick={() =>
-                    migrate({
-                      template_version_id: d.template_version_id,
-                      group_ids: [d.group_id],
-                      post_ids: [],
-                      source_draft_id: d.id,
-                    })
-                  }
-                >
-                  转为群发草稿
-                </Button>
-              ),
-            },
-          ]}
-          expandable={{
-            expandedRowRender: (d) => (
-              <>
-                <pre className="message-preview">{d.content}</pre>
-                <p>旧快照仅供核对。新任务会重新选择内容、核验版本及生成正文。</p>
-              </>
-            ),
-          }}
-        />
-      </Card>
-      <PaginationControls
-        page={draftPage}
-        more={drafts.data?.page?.has_more}
-        busy={drafts.isFetching}
-        change={setDraftPage}
-        subject="历史草稿"
-      />
-    </>
   )
 }

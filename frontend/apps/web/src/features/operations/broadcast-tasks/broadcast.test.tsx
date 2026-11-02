@@ -3,14 +3,15 @@ import {configure,cleanup,fireEvent,render,screen,waitFor,within} from '@testing
 import {QueryClient,QueryClientProvider} from '@tanstack/react-query'
 import BroadcastTasks,{targetLabel} from './index'
 import {broadcast,workspace,type BroadcastTask,type BroadcastTarget} from './api'
-vi.mock('./api',()=>({broadcast:{preview:vi.fn(),list:vi.fn(),task:vi.fn(),capability:vi.fn(),targets:vi.fn(),events:vi.fn(),action:vi.fn(),save:vi.fn()},workspace:{list:vi.fn()}}))
+vi.mock('./api',()=>({broadcast:{preview:vi.fn(),list:vi.fn(),task:vi.fn(),capability:vi.fn(),targets:vi.fn(),events:vi.fn(),action:vi.fn(),save:vi.fn(),savePreview:vi.fn()},workspace:{list:vi.fn()}}))
 vi.mock('../../../shared/use-dialogs',()=>({useDialogs:()=>({confirm:async()=>true,prompt:async()=>'原因',contextHolder:null})}))
+vi.mock('../wecom-senders/business-requests',()=>({BusinessRequests:()=>null}))
 class Resize {observe(){}unobserve(){}disconnect(){}}
 vi.stubGlobal('ResizeObserver',Resize)
 Object.defineProperty(window,'matchMedia',{writable:true,value:()=>({matches:false,addListener:vi.fn(),removeListener:vi.fn(),addEventListener:vi.fn(),removeEventListener:vi.fn()})})
 configure({asyncUtilTimeout:5000})
 afterEach(()=>{cleanup();vi.clearAllMocks()})
-const task:BroadcastTask={id:'task-123456',school_id:'school',creator_id:'actor',content_source:'posts',source_namespace:'builtin.forum',materials:[],template_version_id:'v',content:'冻结通知',revision:1,state:'draft',stopped:false,created_at:'2026-10-22T00:00:00Z',total:2,sent:0,rejected:0,uncertain:0,pending:2,batch_count:1,post_ids:['p'],source_task_id:null,source_draft_id:null,resend_reason:''}
+const task:BroadcastTask={id:'task-123456',school_id:'school',creator_id:'actor',content_source:'posts',source_namespace:'builtin.forum',materials:[],template_version_id:'v',content:'冻结通知',revision:1,state:'draft',stopped:false,created_at:'2026-10-22T00:00:00Z',total:2,sent:0,rejected:0,uncertain:0,pending:2,batch_count:1,post_ids:['p'],source_task_id:null,draft_input:{content_source:'posts',template_version_id:'v',post_ids:['p'],group_ids:['group']},resend_reason:''}
 const target:BroadcastTarget={id:'target',group_id:'g',chat_id:'chat',group_name:'测试群',batch_id:'batch',sender:'owner',creation_state:'created',msgid:'official-task',rejected:false,official_status:null,send_time:null,member_status:2,last_synced_at:null,sync_error:null,error_code:null,stop_state:'none',reconciliation:null,operation_unknown:false}
 function show(admin=true, selectedTask:BroadcastTask=task, blockedReason:string|null=null){
  vi.mocked(broadcast.preview).mockResolvedValue({id:selectedTask.id,revision:selectedTask.revision,digest:'frozen-preview',expires_at:'2026-11-01T00:00:00Z',content:selectedTask.content,target_count:selectedTask.total,channel:'wecom'})
@@ -47,7 +48,7 @@ it('previews direct text with no posts or templates, and saves only selected gro
   if(resource==='groups')return {items:[{id:'g',name:'受控测试群',active:true}]}
   throw new Error('没有社区内容或模板')
  })
- vi.mocked(broadcast.save).mockRejectedValue(new Error('保存失败，请重试'))
+ vi.mocked(broadcast.savePreview).mockRejectedValue(new Error('保存失败，请重试'))
  fireEvent.click(await screen.findByRole('button',{name:'新建群发任务'}))
  const editor=await screen.findByLabelText('群发正文')
  fireEvent.change(editor,{target:{value:'测试😀\n第二行'}})
@@ -56,11 +57,11 @@ it('previews direct text with no posts or templates, and saves only selected gro
  expect(workspace.list).not.toHaveBeenCalledWith(expect.anything(),'templates')
  fireEvent.mouseDown(screen.getByRole('combobox',{name:'目标客户群'}))
  fireEvent.click(await screen.findByText('受控测试群'))
- fireEvent.click(screen.getByRole('button',{name:'保存并预览'}))
+ fireEvent.click(screen.getByRole('button',{name:/^预\s*览$/}))
  await screen.findByText('保存失败，请重试')
- expect(broadcast.save).toHaveBeenCalledWith('school',expect.objectContaining({content_source:'text',text_content:'测试😀\n第二行',group_ids:['g']}),undefined,expect.any(String))
- expect(vi.mocked(broadcast.save).mock.calls[0][1]).not.toHaveProperty('template_version_id')
- expect(vi.mocked(broadcast.save).mock.calls[0][1]).not.toHaveProperty('post_ids')
+ expect(broadcast.savePreview).toHaveBeenCalledWith('school',expect.objectContaining({content_source:'text',text_content:'测试😀\n第二行',group_ids:['g']}),undefined,expect.any(String))
+ expect(vi.mocked(broadcast.savePreview).mock.calls[0][1]).not.toHaveProperty('template_version_id')
+ expect(vi.mocked(broadcast.savePreview).mock.calls[0][1]).not.toHaveProperty('post_ids')
  expect((editor as HTMLTextAreaElement).value).toBe('测试😀\n第二行')
  expect(broadcast.action).not.toHaveBeenCalled()
 })
@@ -76,12 +77,13 @@ it('operator can inspect text draft but cannot confirm it',async()=>{
  expect(broadcast.action).not.toHaveBeenCalled()
  expect(screen.getByText('直接文本草稿需本校管理员检查并确认提交。')).toBeTruthy()
 })
-it('empty target directory still permits text preview but prevents saving',async()=>{
+it('empty target directory still permits text preview and saves a recoverable draft without confirmation',async()=>{
  show();fireEvent.click(await screen.findByRole('button',{name:'新建群发任务'}))
  fireEvent.change(await screen.findByLabelText('群发正文'),{target:{value:'通知'}})
- await screen.findByText('暂无可用客户群。可先填写并预览正文，配置本校客户群后才能保存任务。')
+ await screen.findByText('暂无可用客户群，可以先保留正文草稿；平台准备好本校范围后再预览。')
  expect(screen.getByLabelText('正文预览').textContent).toBe('通知')
- expect((screen.getByRole('button',{name:'保存并预览'}) as HTMLButtonElement).disabled).toBe(true)
+ expect((screen.getByRole('button',{name:/^预\s*览$/}) as HTMLButtonElement).disabled).toBe(false)
+ expect(broadcast.action).not.toHaveBeenCalled()
 })
 
 it('explains the actual deployment block next to the disabled submission action',async()=>{
