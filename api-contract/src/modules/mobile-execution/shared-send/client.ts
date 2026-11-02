@@ -2,7 +2,7 @@ import type { Client } from '../../../http/client'
 import type { Json } from '../../business/types'
 export const SHARED_SEND_SCHEMA = 'shared_mobile_send/1' as const
 export interface SharedDraftInput { target_ids:string[]; message:string; content_type:'text/plain'; expected_revision?:number }
-export interface SharedDraft extends SharedDraftInput { id:string; school_id:string; intent_id:string; revision:number; content_digest:string }
+export interface SharedDraft extends SharedDraftInput { targets:Array<{id:string;name:string}>;id:string; school_id:string; intent_id:string; revision:number; content_digest:string }
 export interface SharedCandidate {
  target_id:string; target_name:string;device_name:string;device_id:string; binding_id:string; binding_locator_revision:number;
  target_locator_revision:number|null; search_text:string; search_source:'default'|'override';
@@ -11,11 +11,11 @@ export interface SharedCandidate {
  inspection_id:string; environment:Record<string,Json>;flow:Record<string,Json>;
 }
 export interface SharedPlan extends SharedCandidate {schema:typeof SHARED_SEND_SCHEMA;school_id:string;intent_id:string;item_id:string;attempt_id:string;message:string;content_digest:string;selection_policy:'first_group_result'}
-export interface SharedPreview { id:string;digest:string;expires_at:string;plan:{schema:typeof SHARED_SEND_SCHEMA;school_id:string;draft_id:string;draft_revision:number;intent_id:string;message:string;content_digest:string;policy_id:string|null;items:Array<{position:number;target_id:string;selected:SharedCandidate|null;candidates:SharedCandidate[];blocker:string|null;readiness?:SharedReadiness[]}>} }
+export interface SharedPreview { id:string;digest:string;expires_at:string;plan:{schema:typeof SHARED_SEND_SCHEMA;school_id:string;draft_id:string;draft_revision:number;intent_id:string;message:string;content_digest:string;policy_id:string|null;items:Array<{position:number;target_id:string;target:{id:string;name:string;search_text:string;locator_revision:number};selected:SharedCandidate|null;candidates:SharedCandidate[];blocker:string|null;readiness?:SharedReadiness[]}>} }
 export type SharedAttemptState='queued'|'leased'|'prepared'|'invocation_issued'|'observed_sent'|'unknown'|'failed_before_call'|'invalidated'|'cancelled'|'verified_not_sent'|'manually_confirmed_sent'
 export interface SharedAttempt {id:string;state:SharedAttemptState;revision:number;plan:SharedPlan;plan_digest:string;attempt_no:number;current:boolean}
 export interface SharedTask {id:string;school_id:string;intent_id:string;revision:number;stopped:boolean;created_at:string;items?:Array<{id:string;target_id:string;position:number;attempts:SharedAttempt[]}>}
-export interface SharedReadiness {binding_id:string;device_id:string;target_id:string;state:string;ready:boolean;automatic:boolean;blockers:Array<{code:string;message:string;owner:string;automatic:boolean}>;inspection:{id:string;state:string;expires_at:string}|null}
+export interface SharedReadiness {device_name:string;target_name:string;search_text:string;inspection_state:'waiting_prerequisites'|'not_scheduled'|'queued'|'running'|'passed'|'expired'|'failed'|'stale'|'retry_wait'|'retry_exhausted';retry_at:string|null;retry_remaining:number;binding_id:string;device_id:string;target_id:string;state:string;ready:boolean;automatic:boolean;blockers:Array<{code:string;message:string;owner:string;automatic:boolean}>;inspection:{id:string;state:string;expires_at:string}|null}
 export interface SharedOverview {id:string;tasks:SharedTask[];drafts:SharedDraft[];readiness:SharedReadiness[];pool:Array<{id:string;name:string;access_revision:number}>;inspections:Array<{id:string;binding_id:string;state:string;expires_at:string}>}
 export interface SharedLimit {interval_seconds:number;window_seconds:number;max_calls:number;daily_max_calls:number}
 export interface SharedPolicyInput {expected_revision:number;mode:'disabled'|'draft_only'|'preview_only'|'test_send'|'production_allowlist';timezone:string;allowed_windows:Array<{weekdays:number[];start_minute:number;end_minute:number}>;limits:{global:SharedLimit;school:SharedLimit;device:SharedLimit;target:SharedLimit};reason:string}
