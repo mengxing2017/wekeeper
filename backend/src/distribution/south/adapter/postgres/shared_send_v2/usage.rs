@@ -45,7 +45,7 @@ async fn options(tx: &mut Tx<'_>, a: &Actor, s: Option<Uuid>) -> Result<Value> {
     let schools:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',id,'name',name) FROM schools WHERE active AND ($1 OR id=$2) ORDER BY name,id").bind(platform).bind(s).fetch_all(&mut **tx).await?;
     let targets:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',id,'name',coalesce(nullif(alias,''),search_text),'search_text',search_text,'revision',locator_revision) FROM mobile_targets WHERE school_id=$1 AND enabled AND archived_at IS NULL ORDER BY alias,search_text,id").bind(s).fetch_all(&mut **tx).await?;
     let p = policy(tx).await?;
-    let ready:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_activations a JOIN mobile_v9_acceptance_runs c ON c.release_id=a.release_id WHERE c.stage='production_allowlist' AND NOT EXISTS(SELECT 1 FROM mobile_v9_adapter_withdrawals w WHERE w.release_id=a.release_id))").fetch_one(&mut **tx).await?;
+    let ready:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_activations a JOIN mobile_capability_deliveries d ON d.release_id=a.release_id JOIN mobile_v9_acceptance_runs c ON c.id=d.acceptance_id AND c.release_id=a.release_id WHERE c.stage='production_allowlist' AND NOT EXISTS(SELECT 1 FROM mobile_v9_adapter_withdrawals w WHERE w.release_id=a.release_id))").fetch_one(&mut **tx).await?;
     Ok(
         json!({"id":"usage-options","schools":schools,"devices":devices,"targets":targets,"scheme":p.map(|p|scheme(&p)),"delivery_available":ready}),
     )
@@ -62,24 +62,23 @@ fn covers(parent: &Value, input: &Value) -> bool {
     let parent_targets = parent["targets"]
         .as_array()
         .map(|ts| ts.iter().map(|t| t["id"].clone()).collect::<Vec<_>>())
-        .unwrap_or_else(|| parent["target_ids"].as_array().cloned().unwrap_or_default());
-    let unchanged = parent["legacy"] == true
-        || (input["targets"].as_array().is_some_and(|ts| {
-            ts.iter().all(|t| {
-                parent["targets"].as_array().is_some_and(|original| {
-                    match original.iter().find(|v| v["id"] == t["id"]) {
-                        Some(v) => v == t,
-                        None => parent["auto_targets"] == true,
-                    }
-                })
+        .unwrap_or_default();
+    let unchanged = input["targets"].as_array().is_some_and(|ts| {
+        ts.iter().all(|t| {
+            parent["targets"].as_array().is_some_and(|original| {
+                match original.iter().find(|v| v["id"] == t["id"]) {
+                    Some(v) => v == t,
+                    None => parent["auto_targets"] == true,
+                }
             })
-        }) && input["device_revisions"].as_array().is_some_and(|ds| {
-            ds.iter().all(|d| {
-                parent["device_revisions"]
-                    .as_array()
-                    .is_some_and(|original| original.contains(d))
-            })
-        }) && same_scheme(&parent["scheme"], &input["scheme"]));
+        })
+    }) && input["device_revisions"].as_array().is_some_and(|ds| {
+        ds.iter().all(|d| {
+            parent["device_revisions"]
+                .as_array()
+                .is_some_and(|original| original.contains(d))
+        })
+    }) && same_scheme(&parent["scheme"], &input["scheme"]);
     unchanged
         && parent["device_ids"]
             .as_array()
@@ -157,12 +156,7 @@ async fn detail(tx: &mut Tx<'_>, s: Option<Uuid>, id: Option<Uuid>) -> Result<Va
         let targets = row["body"]["targets"]
             .as_array()
             .map(|ts| ts.iter().map(|t| t["id"].clone()).collect::<Vec<_>>())
-            .unwrap_or_else(|| {
-                row["body"]["target_ids"]
-                    .as_array()
-                    .cloned()
-                    .unwrap_or_default()
-            });
+            .unwrap_or_default();
         row["readiness"]=json!(states.iter().filter(|v|devices.contains(&v["device_id"])&&(row["body"]["auto_targets"]==true||targets.contains(&v["target_id"]))).map(|v|json!({"device_name":v["device_name"],"target_name":v["target_name"],"state":v["state"],"ready":v["ready"],"messages":v["blockers"].as_array().unwrap().iter().map(|b|b["message"].clone()).collect::<Vec<_>>()})).collect::<Vec<_>>());
     }
     Ok(json!({"id":"usages","items":rows}))
@@ -386,7 +380,7 @@ impl Repository {
             }
             UsageCommand::TaskConfirm(v) => {
                 let production:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_previews WHERE id=$1 AND school_id=$2 AND plan->>'stage'='production_allowlist')").bind(v.preview_id).bind(s).fetch_one(&mut *tx).await?;
-                require(production, "历史测试计划不能作为新的生产发送确认")?;
+                require(production, "发送确认必须引用当前业务预览")?;
                 tasks::write(&mut tx, a, s, SchoolCommand::Confirm(v)).await?
             }
             UsageCommand::TaskPreview(v) => {
@@ -400,7 +394,7 @@ impl Repository {
                     .await?;
                     require(
                         old_stage.as_deref() == Some("production_allowlist"),
-                        "历史测试草稿请复制为新的发送意图并重新确认",
+                        "请选择当前业务草稿",
                     )?;
                 }
 
@@ -444,8 +438,8 @@ impl Repository {
 
 /// Called under the existing shared guard: repeatable after crashes and product updates.
 pub(super) async fn reconcile(tx: &mut Tx<'_>) -> Result<()> {
-    let usages:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(u) FROM mobile_usages u WHERE approval='approved' AND state='active' AND expires_at>clock_timestamp() AND NOT coalesce((body->>'legacy')::boolean,false) ORDER BY id").fetch_all(&mut **tx).await?;
-    let delivery:Option<Value>=sqlx::query_scalar("SELECT jsonb_build_object('release_id',a.release_id,'acceptance_id',c.id) FROM mobile_v9_activations a JOIN mobile_v9_acceptance_runs c ON c.release_id=a.release_id AND c.stage='production_allowlist' WHERE NOT EXISTS(SELECT 1 FROM mobile_v9_adapter_withdrawals w WHERE w.release_id=a.release_id) ORDER BY c.created_at DESC LIMIT 1").fetch_optional(&mut **tx).await?;
+    let usages:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(u) FROM mobile_usages u WHERE approval='approved' AND state='active' AND expires_at>clock_timestamp() ORDER BY id").fetch_all(&mut **tx).await?;
+    let delivery:Option<Value>=sqlx::query_scalar("SELECT jsonb_build_object('release_id',a.release_id,'acceptance_id',c.id) FROM mobile_v9_activations a JOIN mobile_capability_deliveries d ON d.release_id=a.release_id JOIN mobile_v9_acceptance_runs c ON c.id=d.acceptance_id AND c.release_id=a.release_id AND c.stage='production_allowlist' WHERE NOT EXISTS(SELECT 1 FROM mobile_v9_adapter_withdrawals w WHERE w.release_id=a.release_id) ORDER BY c.created_at DESC LIMIT 1").fetch_optional(&mut **tx).await?;
     for u in usages {
         let id = uid(&u, "id")?;
         let s = uid(&u, "school_id")?;
