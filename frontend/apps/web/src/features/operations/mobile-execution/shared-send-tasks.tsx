@@ -6,7 +6,6 @@ import { createIdempotencyKey } from '../../../shared/idempotency-key'
 import { PaginationControls } from '../../../shared/pagination-controls'
 import { taskError } from './task-model'
 import { previewSelections } from './shared-preview-model'
-import { LegacySharedHistory } from './legacy-shared-history'
 import { UsageManagement } from '../../admin/mobile-resources/usage-management'
 
 const stateLabels:Record<string,string>={queued:'排队等待共享手机',leased:'手机已领取，准备中',prepared:'文字准备完成，等待单次许可',invocation_issued:'已发单次许可，等待手机结果',observed_sent:'手机观察到新的已发消息，未证明对方送达',unknown:'结果不确定，必须人工核对，禁止自动重发',failed_before_call:'调用前准备失败，未发出调用许可',invalidated:'执行依据已失效',cancelled:'未执行部分已取消',verified_not_sent:'人工核对确认未发送',manually_confirmed_sent:'人工核对确认已发送'}
@@ -23,7 +22,6 @@ export function SharedSendTasks({ school, admin }: { school: string; admin: bool
   const [targetPage,setTargetPage]=useState(1)
   const [targetSearch,setTargetSearch]=useState('')
   const [targetNames,setTargetNames]=useState<Record<string,string>>({})
-  const [historicalCopy,setHistoricalCopy]=useState(false)
   const [gap,setGap]=useState(30)
   const [message, setMessage] = useState('')
   const [targets, setTargets] = useState<string[]>([])
@@ -43,7 +41,7 @@ export function SharedSendTasks({ school, admin }: { school: string; admin: bool
     return result.preview
   }
   const inspect = useMutation({ mutationFn: () => generatePreview([]), onSuccess:setPreview })
-  const confirm = useMutation({ mutationFn: () => sharedSend.confirm(school, preview!, keyFor("confirm",preview!.id)), onSuccess: t => { setDetail(t); setHistoricalCopy(false); setDraft(undefined); setPreview(undefined); setMessage(''); setTargets([]); void refresh() } })
+  const confirm = useMutation({ mutationFn: () => sharedSend.confirm(school, preview!, keyFor("confirm",preview!.id)), onSuccess: t => { setDetail(t);  setDraft(undefined); setPreview(undefined); setMessage(''); setTargets([]); void refresh() } })
   const reselect=useMutation({mutationFn:(selections:Array<{target_id:string;device_id:string}>)=>generatePreview(selections),onSuccess:setPreview})
   const mutate=useMutation({mutationFn:async()=>{
     if(action!.kind==='stop')return sharedSend.stop(school,detail!.id,detail!.revision,reason,keyFor('stop',[detail!.id,detail!.revision,reason]))
@@ -55,15 +53,13 @@ export function SharedSendTasks({ school, admin }: { school: string; admin: bool
   const error = overview.error || options.error || inspect.error || confirm.error || read.error || reselect.error || mutate.error || bindings.error
   const dirty = !!draft && (message.replace(/\r\n?/g, '\n') !== draft.message || targets.join() !== draft.target_ids.join() || gap!==draft.between_targets_seconds)
   return <Card title="手机共享发送">
-    <LegacySharedHistory school={school} admin={admin}/>
     <Space orientation="vertical" style={{ width: '100%' }}>
       <Alert type="info" showIcon title="按目标群创建，逐群选择共享手机" description="填写文字和目标群后直接预览，系统自动保存草稿。核对预览后确认发送。管理员确认后进入队列。结果不确定时停止该设备，核对前不会自动重发。企业微信官方群发独立使用。" />
-      {historicalCopy&&<Alert type="warning" title="已复制历史测试内容为新的生产发送意图，请重新核对群、手机和完整正文后确认。"/>}
       {error && <Alert type="error" title={taskError(error)} />}
       <Input.Search aria-label="搜索手机目标群" placeholder="搜索本校群名或别名" onSearch={value=>{setTargetSearch(value);setTargetPage(1)}} />
       <Select labelInValue mode="multiple" aria-label="手机目标群" placeholder="选择本校手机目标群" style={{ width: '100%' }} value={targets.map(value=>({value,label:targetNames[value] ?? draft?.targets.find(t=>t.id===value)?.name ?? '目标信息待核对'}))} onChange={values=>{setTargets(values.map(v=>v.value));setTargetNames(names=>({...names,...Object.fromEntries(values.map(v=>[v.value,String(v.label)]))}))}} options={(options.data?.items ?? []).filter(t => t.enabled && !t.archived_at).map(t => ({ value: t.id, label: t.alias || t.search_text }))} />
       <PaginationControls page={targetPage} more={options.data?.page?.has_more} change={setTargetPage} subject="可选手机目标群" />
-      {!!overview.data?.drafts.length && <Select aria-label="恢复共享发送草稿" placeholder="恢复已保存草稿" style={{width:'100%'}} options={overview.data.drafts.map(d=>({value:d.id,label:`${d.stage==='test_send'?'历史测试内容（需重新确认） · ':''}${d.message.slice(0,30)}（${d.target_ids.length} 个目标群）`}))} onChange={id=>{const d=overview.data!.drafts.find(x=>x.id===id)!;setHistoricalCopy(d.stage!=='production_allowlist');setDraft(d.stage==='production_allowlist'?d:undefined);setTargetNames(n=>({...n,...Object.fromEntries(d.targets.map(t=>[t.id,t.name]))}));setTargets(d.target_ids);setMessage(d.message);setGap(d.between_targets_seconds);setPreview(undefined)}} />}
+      {!!overview.data?.drafts.length && <Select aria-label="恢复共享发送草稿" placeholder="恢复已保存草稿" style={{width:'100%'}} options={overview.data.drafts.map(d=>({value:d.id,label:`${d.message.slice(0,30)}（${d.target_ids.length} 个目标群）`}))} onChange={id=>{const d=overview.data!.drafts.find(x=>x.id===id)!;setDraft(d);setTargetNames(n=>({...n,...Object.fromEntries(d.targets.map(t=>[t.id,t.name]))}));setTargets(d.target_ids);setMessage(d.message);setGap(d.between_targets_seconds);setPreview(undefined)}} />}
       <label>逐群间隔（秒）<InputNumber aria-label="逐群间隔秒数" value={gap} min={1} max={86400} precision={0} onChange={v=>setGap(v??30)}/></label>
       <p>按目标群的选择顺序执行。上一群结果回执已确认且手机界面空闲后，再等待间隔；实际间隔由已批准的使用方案与此处设置共同约束。</p>
       <Space>{targets.map((id,index)=><span key={id}>{index+1}. {targetNames[id]??draft?.targets.find(t=>t.id===id)?.name??'目标群'} <Button disabled={index===0} onClick={()=>setTargets(ids=>{const next=[...ids];[next[index-1],next[index]]=[next[index],next[index-1]];return next})}>前移</Button></span>)}</Space>
@@ -88,7 +84,7 @@ export function SharedSendTasks({ school, admin }: { school: string; admin: bool
     <Modal title="手机群消息使用管理" open={usageOpen} footer={null} width={1000} onCancel={()=>setUsageOpen(false)}><UsageManagement school={school} admin={admin}/></Modal>
     <Modal title="共享任务逐群进度" open={!!detail} footer={null} onCancel={() => setDetail(undefined)}>
       {detail && <p>确认有效至：{detail.confirmed_until ?? '待核对'}；当前顺序：{(detail.cursor_position??0)+1}；下一群最早安排：{detail.next_eligible_at??'待核对'}。已到期的任务需要复制为新草稿并重新确认。</p>}
-      {detail?.items?.length && <Button onClick={()=>{const items=[...detail.items!].sort((a,b)=>a.position-b.position);const plans=items.map(i=>i.attempts.find(a=>a.current)?.plan);const first=plans[0];if(!first)return;setHistoricalCopy(first.stage!=='production_allowlist');setDraft(undefined);setTargets(items.map(i=>i.target_id));setTargetNames(Object.fromEntries(plans.filter(p=>!!p).map(p=>[p.target_id,p.target_name??p.search_text])));setMessage(first.message);setGap(first.between_targets_seconds);setPreview(undefined);setDetail(undefined)}}>复制原意图为新草稿（需重新确认）</Button>}
+      {detail?.items?.length && <Button onClick={()=>{const items=[...detail.items!].sort((a,b)=>a.position-b.position);const plans=items.map(i=>i.attempts.find(a=>a.current)?.plan);const first=plans[0];if(!first)return;setDraft(undefined);setTargets(items.map(i=>i.target_id));setTargetNames(Object.fromEntries(plans.filter(p=>!!p).map(p=>[p.target_id,p.target_name??p.search_text])));setMessage(first.message);setGap(first.between_targets_seconds);setPreview(undefined);setDetail(undefined)}}>复制原意图为新草稿（需重新确认）</Button>}
       {detail && admin && !detail.stopped && <Button danger onClick={()=>setAction({kind:'stop'})}>停止尚未发放许可的任务</Button>}
       {detail?.items?.map(i => <div key={i.id}><p>目标群：{i.target_id}</p>{i.attempts?.map(a => <p key={a.id}>{a.plan.search_text} / {a.plan.device_name || a.plan.device_id} / {stateLabels[a.state]}{admin && a.current && a.state==='unknown' && <Button onClick={()=>setAction({kind:'review',attempt:a})}>人工核对结果</Button>}{admin && a.current && ['failed_before_call','verified_not_sent','invalidated'].includes(a.state) && <Button onClick={()=>setAction({kind:'reassign',attempt:a})}>核对后重新安排设备</Button>}</p>)}</div>)}
     </Modal>

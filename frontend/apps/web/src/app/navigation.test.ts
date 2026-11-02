@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { canNavigate, navigation, resolveNavigation, visibleNavigationKeys } from './navigation'
+import { canNavigate, navigation, visibleNavigationKeys } from './navigation'
 
 test('功能分类不代替数据范围与角色权限', () => {
   for (const key of ['execution-devices', 'wecom-senders']) {
@@ -19,12 +19,8 @@ test('功能分类不代替数据范围与角色权限', () => {
   expect(visibleNavigationKeys(false, 'member')).toEqual([])
 })
 
-test('历史入口兼容，未知入口保留给显式错误页处理', () => {
-  expect(resolveNavigation('execution-devices', 'accounts')).toBe('execution-accounts')
-  expect(resolveNavigation('delivery-drafts', null)).toBe('broadcast-tasks')
-  expect(resolveNavigation('delivery-attempts', null)).toBe('broadcast-tasks')
+test('只注册当前业务入口', () => {
   expect(navigation.find(n => n.key === 'mobile-delivery')).toBeUndefined()
-  expect(resolveNavigation('unknown', null)).toBe('unknown')
   expect(new Set(navigation.map(n => n.key)).size).toBe(navigation.length)
 })
 
@@ -46,11 +42,9 @@ test('共享手机目标绑定属于平台资源，学校不保留旧设备授�
   expect(navigation.find(n => n.key === 'mobile-device-grants')).toBeUndefined()
 })
 
-test('三业务域与平台支撑分别组织；历史账号书签不伪装为官方身份', () => {
+test('三业务域与平台支撑分别组织', () => {
   expect(new Set(navigation.map(item => item.domain))).toEqual(new Set(['forum', 'wecom', 'mobile', 'support']))
   expect(navigation.find(item => item.key === 'wecom-directory')?.domain).toBe('wecom')
   expect(navigation.find(item => item.key === 'platform-resources')?.domain).toBe('forum')
-  expect(navigation.find(item => item.key === 'execution-accounts')?.hidden).toBe(true)
-  expect(resolveNavigation('execution-devices', 'accounts')).toBe('execution-accounts')
-  expect(resolveNavigation('execution-accounts', null)).not.toBe('wecom-senders')
+  expect(navigation.find(item => item.key === 'execution-accounts')).toBeUndefined()
 })

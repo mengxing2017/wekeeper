@@ -20,7 +20,6 @@ export const pageHelp: Record<string, string> = {
   'shared-mobile-resources': 'platform-admin/shared-mobile-resources',
   'execution-devices': 'operator/execution-resources',
   'wecom-senders': 'operator/official-senders',
-  'execution-accounts': 'operator/execution-resources#sending-accounts',
   'platform-resources': 'platform-admin/audit-and-resources',
 }
 export const helpHref = (active: string) =>

@@ -6,7 +6,5 @@ export type { FieldCheckInvitation, FieldCheck, FieldCheckRequest } from '@wekee
 
 export { sharedSendV2 as sharedSend } from '@wekeeper/api-contract/mobile-execution/shared-send'
 export type { SharedDraft, SharedPreview, SharedTask, SharedAttempt, SharedReadiness } from '@wekeeper/api-contract/mobile-execution/shared-send/v2'
-export { sharedSend as legacySharedSend } from '@wekeeper/api-contract/mobile-execution/shared-send'
-export type { SharedTask as LegacySharedTask } from '@wekeeper/api-contract/mobile-execution/shared-send/client'
 
 export type { UsageInput, UsagePreview, UsageOptions, MobileUsage, UsageOperation } from '@wekeeper/api-contract/mobile-execution/shared-send/v2'

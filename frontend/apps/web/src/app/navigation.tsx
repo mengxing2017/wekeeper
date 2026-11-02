@@ -109,7 +109,6 @@ export const navigation: NavigationItem[] = [
   { key: 'mobile-execution-tasks', icon: <MessageOutlined />, label: '手机任务', description: '选择学校目标群，预览共享手机分配、人工确认和查看任务记录。', domain: 'mobile', scope: 'school', capability: 'school.operate' },
   { key: 'mobile-targets', icon: <MessageOutlined />, label: '手机目标群', description: '管理独立手机搜索目标和设备绑定，与官方客户群隔离。', domain: 'mobile', scope: 'school', capability: 'school.operate' },
   { key: 'wecom-senders', icon: <UserOutlined />, label: '发送账号', description: '查看已核实的官方成员及学校发送资格，与手机账号无关。', domain: 'wecom', scope: 'selectable', capability: 'resources.read' },
-  { hidden: true, key: 'execution-accounts', icon: <UserOutlined />, label: '历史手机账号资料', description: '旧手机人工登记资料，仅供历史追溯，不代表官方发送身份。', domain: 'mobile', scope: 'selectable', capability: 'resources.read' },
   {
     key: 'members',
     icon: <UsergroupAddOutlined />,
@@ -204,9 +203,4 @@ export function canNavigate(item: NavigationItem, platformAdmin: boolean, school
 }
 export function visibleNavigationKeys(platformAdmin: boolean, schoolRole?: string) {
   return navigation.filter(item => canNavigate(item, platformAdmin, schoolRole)).map(item => item.key)
-}
-export function resolveNavigation(view: string, subview: string | null) {
-  if (['delivery-drafts', 'delivery-attempts'].includes(view)) return 'broadcast-tasks'
-  if (view === 'execution-devices' && subview === 'accounts') return 'execution-accounts'
-  return view
 }
