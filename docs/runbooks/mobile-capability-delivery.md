@@ -2,19 +2,20 @@
 
 本文仅供产品交付与部署人员使用。系统管理员及学校的操作见[使用管理](../guide/platform-admin/shared-mobile-resources.md)。不通过浏览器会话导入、批准或读取研发材料。
 
+
 ## 制品与验证
 
-部署 `202611020118_business_scheme_delivery_split.sql` 后使用 `mobile-capability` 二进制。签名包为 `{ "payload": { ... }, "signature_hex": "..." }`。使用可信产品交付密钥的 Ed25519 签名；签名对象是 payload 解析为 serde_json::Value 后的紧凑 UTF-8 序列化（对象键排序）。部署环境只配置 `WEKEEPER_CAPABILITY_PUBLIC_KEY` 的 32 字节公钥十六进制，私钥不进服务端或 Web。
+部署 `202611020118_business_scheme_delivery_split.sql` 后使用 `mobile-capability` 二进制。交付文件直接使用 `delivery::Delivery` JSON 对象，不需要签名、公钥或额外包装。部署人员通过已有受控命令行和专用数据库身份导入。
 
-payload 按代码 `delivery::Delivery` 定义，必须包含：
+交付 JSON 按代码 `delivery::Delivery` 定义，必须包含：
 
 - 名称、版本、经过验证的 FlowV3、测量来源、测量时间、至少三个真实间隔样本；样本最大值不得超过流程冻结的最小逐群间隔。
 - 原始 evidence 与实际受支持的手机助手 apks，每项包含 name、content_hex、sha256。工具重算内容摘要，安装包必须具备 Manifest 与 classes.dex 的 ZIP 结构。
 - validation_evidence 的 artifact_sha256s 引用本包原始证据，launch_paths 至少包含 search、all_apps，apk_sha256s 覆盖所有声明的安装包摘要。
 - 真实 S01—S40、T01—T14 结果、至少 72 小时观察、历史风险已处理、审阅者。没有默认通过值或虚构证据。
-- 交付包不再包含 policy；时区、时段和业务额度由平台管理员独立配置。旧格式包须由产品方移除 policy 后重新签名，不能修改已签名 payload 继续使用原签名。
+- 交付包不再包含 policy；时区、时段和业务额度由平台管理员独立配置。旧文件须移除 policy；旧签名包装不再接受，需要取出其中的产品对象作为新文件。
 
-签名只验证来源与完整性，交付人员必须审阅真实材料；代码与合成测试不替代外部应用真机结论。
+交付人员须通过已有交付渠道核对产品来源并审阅真实材料；代码与合成测试不替代外部应用真机结论。
 
 ## 独立命令
 
@@ -23,7 +24,7 @@ payload 按代码 `delivery::Delivery` 定义，必须包含：
 ```bash
 # 默认只校验包，不连接数据库，不写数据
 cargo run --manifest-path backend/Cargo.toml --bin mobile-capability -- import --package /secure/product-delivery.json
-# 设置公钥、受控 DATABASE_URL 后导入，输出 release UUID；不切换当前产品
+# 设置受控 DATABASE_URL 后导入，输出 release UUID；不切换当前产品
 cargo run --manifest-path backend/Cargo.toml --bin mobile-capability -- import --package /secure/product-delivery.json --actor SERVICE_UUID --apply
 # 发布使用当前 activation 修订；不写入或覆盖业务方案
 cargo run --manifest-path backend/Cargo.toml --bin mobile-capability -- activate --release RELEASE_UUID --actor SERVICE_UUID --expected-revision CURRENT_REVISION --apply
@@ -39,21 +40,21 @@ cargo run --manifest-path backend/Cargo.toml --bin mobile-capability -- withdraw
 
 API 镜像同时发行 `/usr/local/bin/mobile-capability`，与 API 版本一致；不需要在运行镜像安装 Cargo，也不新增常驻服务。先启动数据库并由 API 完成迁移，再运行一次性工具。
 
-`.env` 的 `WEKEEPER_CAPABILITY_PUBLIC_KEY` 是产品签名方提供的 32 字节 Ed25519 公钥十六进制。它只验证包来源；`WEKEEPER_SHARED_SEND_KEY` 是独立随机生成、长期保存的恢复材料加密密钥。两者不能互换，签名私钥不得进入 Compose、API 或浏览器。
+不需要配置产品交付签名密钥。`WEKEEPER_SHARED_SEND_KEY` 仍用于发送恢复材料加密，须长期保存并备份；它与产品文件导入无关。
 
-以下命令在宿主机预先安全导出 `DATABASE_URL`（指向 Compose 内的 postgres 主机，使用 URL 编码的用户名和密码）与 `WEKEEPER_CAPABILITY_PUBLIC_KEY`；不要将真实密码或包写进 Git。专用服务身份的创建沿用既有受控账号管理，必须 inactive 且非平台管理员。
+以下命令在宿主机预先安全导出 `DATABASE_URL`（指向 Compose 内的 postgres 主机，使用 URL 编码的用户名和密码）；不要将真实密码或包写进 Git。专用服务身份的创建沿用既有受控账号管理，必须 inactive 且非平台管理员。
 
 ```sh
 # 校验包，不访问数据库；挂载目录须允许镜像 UID 10001 只读访问
 # api 使用与当前部署一致的镜像，不覆盖默认常驻服务入口。
-docker compose run --rm --no-deps -e WEKEEPER_CAPABILITY_PUBLIC_KEY \
+docker compose run --rm --no-deps \
   -v /secure/product:/delivery:ro --entrypoint /usr/local/bin/mobile-capability \
   api import --package /delivery/product.json
 # 只读查看交付状态和 activation revision；不返回安装包、凭据或研发材料
 docker compose run --rm --no-deps -e DATABASE_URL \
   --entrypoint /usr/local/bin/mobile-capability api status --actor SERVICE_UUID
 # 导入不激活，输出真实 release UUID
-docker compose run --rm --no-deps -e DATABASE_URL -e WEKEEPER_CAPABILITY_PUBLIC_KEY \
+docker compose run --rm --no-deps -e DATABASE_URL \
   -v /secure/product:/delivery:ro --entrypoint /usr/local/bin/mobile-capability \
   api import --package /delivery/product.json --actor SERVICE_UUID --apply
 # 使用 status 显示的 activation revision，初次为 0
