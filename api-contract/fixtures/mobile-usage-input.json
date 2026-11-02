@@ -1,0 +1,15 @@
+{
+  "device_ids": [
+    "00000000-0000-4000-8000-000000000001"
+  ],
+  "targets": [
+    {
+      "id": null,
+      "name": "家长通知",
+      "search_text": "  实际群名  "
+    }
+  ],
+  "max_calls": 20,
+  "expires_at": "2099-01-01T00:00:00Z",
+  "auto_targets": false
+}
