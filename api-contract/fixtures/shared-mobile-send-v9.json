@@ -1,0 +1,407 @@
+{
+  "message": "  第一行\n第二行🙂  ",
+  "event": {
+    "schema": "shared_mobile_send/2",
+    "event_id": "00000000-0000-4000-8000-000000000001",
+    "claim_id": "00000000-0000-4000-8000-000000000002",
+    "attempt_id": "00000000-0000-4000-8000-000000000003",
+    "invocation_id": "00000000-0000-4000-8000-000000000004",
+    "credential_generation": 1,
+    "lease_fence": 9,
+    "plan_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "content_digest": "6a6d2976ec38e2ecd8c70d5d5585f21bc9d6b70ac517f4ddc1b1e1491b491aa8",
+    "outcome": "observed_sent",
+    "reason": "new_outgoing_observed",
+    "consumed": true,
+    "calling_marked": true,
+    "evidence": "native-observation-digest",
+    "result_credential": "1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "receipt": {
+    "event_id": "00000000-0000-4000-8000-000000000001",
+    "claim_id": "00000000-0000-4000-8000-000000000002",
+    "attempt_id": "00000000-0000-4000-8000-000000000003",
+    "invocation_id": "00000000-0000-4000-8000-000000000004",
+    "credential_generation": 1,
+    "lease_fence": 9,
+    "plan_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "content_digest": "6a6d2976ec38e2ecd8c70d5d5585f21bc9d6b70ac517f4ddc1b1e1491b491aa8",
+    "id": "00000000-0000-4000-8000-000000000005",
+    "device_id": "00000000-0000-4000-8000-000000000006",
+    "body_hash": "57b1b297658f6ba29834743661e2c821047696653652fd4834b058022e65afcc",
+    "disposition": "observed_sent"
+  },
+  "flow": {
+    "schema_version": 3,
+    "engine_version": "otter-ui/3",
+    "protocol_version": 9,
+    "app_key": "wecom",
+    "capability": "group_text",
+    "application_label": "企业微信",
+    "package_name": "com.tencent.wework",
+    "selection_policy": "first_group_result",
+    "result_order": "top_to_bottom",
+    "results_stable_ms": 500,
+    "page_timeout_ms": 10000,
+    "pages": {
+      "entry": {
+        "predicate": {
+          "text": "entry",
+          "visible": true,
+          "description": null,
+          "class_name": null,
+          "enabled": null,
+          "editable": null,
+          "clickable": null
+        },
+        "ancestor_depth": 8,
+        "ancestor": null
+      },
+      "search": {
+        "predicate": {
+          "text": "search",
+          "visible": true,
+          "description": null,
+          "class_name": null,
+          "enabled": null,
+          "editable": null,
+          "clickable": null
+        },
+        "ancestor_depth": 8,
+        "ancestor": null
+      },
+      "results": {
+        "predicate": {
+          "text": "results",
+          "visible": true,
+          "description": null,
+          "class_name": null,
+          "enabled": null,
+          "editable": null,
+          "clickable": null
+        },
+        "ancestor_depth": 8,
+        "ancestor": null
+      },
+      "chat": {
+        "predicate": {
+          "text": "chat",
+          "visible": true,
+          "description": null,
+          "class_name": null,
+          "enabled": null,
+          "editable": null,
+          "clickable": null
+        },
+        "ancestor_depth": 8,
+        "ancestor": null
+      }
+    },
+    "controls": {
+      "open_search": {
+        "predicate": {
+          "text": "open_search",
+          "visible": true,
+          "description": null,
+          "class_name": null,
+          "enabled": null,
+          "editable": null,
+          "clickable": null
+        },
+        "ancestor_depth": 8,
+        "ancestor": null
+      },
+      "group_tab": {
+        "predicate": {
+          "text": "group_tab",
+          "visible": true,
+          "description": null,
+          "class_name": null,
+          "enabled": null,
+          "editable": null,
+          "clickable": null
+        },
+        "ancestor_depth": 8,
+        "ancestor": null
+      },
+      "group_results_container": {
+        "predicate": {
+          "text": "group_results_container",
+          "visible": true,
+          "description": null,
+          "class_name": null,
+          "enabled": null,
+          "editable": null,
+          "clickable": null
+        },
+        "ancestor_depth": 8,
+        "ancestor": null
+      },
+      "group_result_row": {
+        "predicate": {
+          "text": "group_result_row",
+          "visible": true,
+          "enabled": true,
+          "clickable": true,
+          "description": null,
+          "class_name": null,
+          "editable": null
+        },
+        "ancestor_depth": 8,
+        "ancestor": null
+      },
+      "results_complete": {
+        "predicate": {
+          "text": "results_complete",
+          "visible": true,
+          "description": null,
+          "class_name": null,
+          "enabled": null,
+          "editable": null,
+          "clickable": null
+        },
+        "ancestor_depth": 8,
+        "ancestor": null
+      },
+      "chat_title": {
+        "predicate": {
+          "text": "chat_title",
+          "visible": true,
+          "description": null,
+          "class_name": null,
+          "enabled": null,
+          "editable": null,
+          "clickable": null
+        },
+        "ancestor_depth": 8,
+        "ancestor": null
+      },
+      "message_row": {
+        "predicate": {
+          "text": "message_row",
+          "visible": true,
+          "description": null,
+          "class_name": null,
+          "enabled": null,
+          "editable": null,
+          "clickable": null
+        },
+        "ancestor_depth": 8,
+        "ancestor": null
+      },
+      "outgoing": {
+        "predicate": {
+          "text": "outgoing",
+          "visible": true,
+          "description": null,
+          "class_name": null,
+          "enabled": null,
+          "editable": null,
+          "clickable": null
+        },
+        "ancestor_depth": 8,
+        "ancestor": null
+      },
+      "failed": {
+        "predicate": {
+          "text": "failed",
+          "visible": true,
+          "description": null,
+          "class_name": null,
+          "enabled": null,
+          "editable": null,
+          "clickable": null
+        },
+        "ancestor_depth": 8,
+        "ancestor": null
+      },
+      "pending": {
+        "predicate": {
+          "text": "pending",
+          "visible": true,
+          "description": null,
+          "class_name": null,
+          "enabled": null,
+          "editable": null,
+          "clickable": null
+        },
+        "ancestor_depth": 8,
+        "ancestor": null
+      },
+      "send": {
+        "predicate": {
+          "text": "send",
+          "visible": true,
+          "enabled": true,
+          "clickable": true,
+          "description": null,
+          "class_name": null,
+          "editable": null
+        },
+        "ancestor_depth": 8,
+        "ancestor": null
+      },
+      "input": {
+        "predicate": {
+          "text": "input",
+          "visible": true,
+          "editable": true,
+          "description": null,
+          "class_name": null,
+          "enabled": null,
+          "clickable": null
+        },
+        "ancestor_depth": 8,
+        "ancestor": null
+      },
+      "search_input": {
+        "predicate": {
+          "text": "search_input",
+          "visible": true,
+          "editable": true,
+          "description": null,
+          "class_name": null,
+          "enabled": null,
+          "clickable": null
+        },
+        "ancestor_depth": 8,
+        "ancestor": null
+      },
+      "group_result_title": {
+        "predicate": {
+          "visible": true,
+          "text": "group-title",
+          "description": null,
+          "class_name": null,
+          "enabled": null,
+          "editable": null,
+          "clickable": null
+        },
+        "ancestor": null,
+        "ancestor_depth": 8
+      },
+      "back": {
+        "predicate": {
+          "visible": true,
+          "text": "back",
+          "description": null,
+          "class_name": null,
+          "enabled": null,
+          "editable": null,
+          "clickable": true
+        },
+        "ancestor": null,
+        "ancestor_depth": 8
+      }
+    },
+    "navigation": [
+      {
+        "from": "entry",
+        "to": "search",
+        "control": "open_search",
+        "delay_ms": 500
+      },
+      {
+        "from": "search",
+        "to": "results",
+        "control": "group_tab",
+        "delay_ms": 500
+      },
+      {
+        "from": "chat",
+        "to": "search",
+        "control": "back",
+        "delay_ms": 500
+      }
+    ],
+    "pacing": {
+      "navigation_min_ms": 500,
+      "before_send_min_ms": 500,
+      "between_targets_min_ms": 3000,
+      "baseline_evidence": "示例基准，仅用于契约测试；现场登记必须替换控件条件并记录人工基准"
+    },
+    "max_attempts": 3,
+    "max_total_steps": 128,
+    "max_total_scrolls": 32,
+    "max_total_duration_ms": 180000,
+    "max_targets": 20,
+    "title_rule": "trailing_member_count",
+    "launcher_paths": [
+      {
+        "kind": "search",
+        "opener": {
+          "predicate": {
+            "visible": true,
+            "text": "desktop-search",
+            "description": null,
+            "class_name": null,
+            "enabled": null,
+            "editable": null,
+            "clickable": true
+          },
+          "ancestor": null,
+          "ancestor_depth": 8
+        },
+        "search_input": {
+          "predicate": {
+            "text": "launcher_search",
+            "visible": true,
+            "editable": true,
+            "description": null,
+            "class_name": null,
+            "enabled": null,
+            "clickable": null
+          },
+          "ancestor_depth": 8,
+          "ancestor": null
+        },
+        "application_row": {
+          "predicate": {
+            "text": "企业微信",
+            "visible": true,
+            "clickable": true,
+            "description": null,
+            "class_name": null,
+            "enabled": null,
+            "editable": null
+          },
+          "ancestor_depth": 8,
+          "ancestor": null
+        },
+        "max_scrolls": 8
+      },
+      {
+        "kind": "all_apps",
+        "opener": {
+          "predicate": {
+            "visible": true,
+            "text": "all-apps",
+            "description": null,
+            "class_name": null,
+            "enabled": null,
+            "editable": null,
+            "clickable": true
+          },
+          "ancestor": null,
+          "ancestor_depth": 8
+        },
+        "search_input": null,
+        "application_row": {
+          "predicate": {
+            "text": "企业微信",
+            "visible": true,
+            "clickable": true,
+            "description": null,
+            "class_name": null,
+            "enabled": null,
+            "editable": null
+          },
+          "ancestor_depth": 8,
+          "ancestor": null
+        },
+        "max_scrolls": 8
+      }
+    ]
+  },
+  "flow_digest": "1612cf877023e2ef23ee56c967451400ac5c9c88dd2cc1c1a6f83fab02b31740"
+}
