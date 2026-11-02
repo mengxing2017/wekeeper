@@ -1,3 +1,5 @@
+import {BusinessRequests} from './business-requests'
+import {OfficialUsageManager} from './usage-manager'
 import { DistributionPolicyPanel } from './policies'
 import { useState } from 'react'
 import { Alert, Button, Card, Space, Table, Tag } from 'antd'
@@ -31,7 +33,7 @@ export function OfficialSenders({ school, global }: { school?: string; global: b
       { title: '说明', dataIndex: 'reason' },
       ...(global ? [{ title: '操作', render: (_: unknown, row: OfficialSender) => <Button disabled={busy} onClick={() => void qualify(row)}>{row.enabled ? '停用学校资格' : '启用学校资格'}</Button> }] : []),
     ]} />
-    {global && <DistributionPolicyPanel />}
+    <OfficialUsageManager school={school} global={global}/><BusinessRequests school={school} global={global}/>{global && <DistributionPolicyPanel />}
     <PaginationControls page={page} more={query.data?.page?.has_more} change={setPage} subject="官方发送账号" />
   </Card>
 }

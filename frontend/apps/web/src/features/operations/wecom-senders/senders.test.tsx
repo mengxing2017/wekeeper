@@ -5,6 +5,9 @@ import { OfficialSenders } from './index'
 import { officialSenders } from './api'
 vi.mock('./api',()=>({officialSenders:{list:vi.fn(),qualify:vi.fn()},distributionPolicies:{get:vi.fn().mockResolvedValue({sources:[],resources:[]}),source:vi.fn(),resource:vi.fn()}}))
 vi.mock('../../../shared/use-dialogs',()=>({useDialogs:()=>({confirm:async()=>true,contextHolder:null})}))
+vi.mock('./usage-manager',()=>({OfficialUsageManager:()=>null}))
+vi.mock('./business-requests',()=>({BusinessRequests:()=>null}))
+vi.mock('./policies',()=>({DistributionPolicyPanel:()=>null}))
 class Resize {observe(){}unobserve(){}disconnect(){}}
 vi.stubGlobal('ResizeObserver',Resize)
 Object.defineProperty(window,'matchMedia',{writable:true,value:()=>({matches:false,addListener:vi.fn(),removeListener:vi.fn(),addEventListener:vi.fn(),removeEventListener:vi.fn()})})
