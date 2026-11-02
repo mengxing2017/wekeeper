@@ -41,6 +41,20 @@ pub enum DeviceCommand {
     Release(Uuid, LeaseMutation),
 }
 pub trait Store: Clone + Send + Sync {
+    fn usage_read(
+        &self,
+        a: &Actor,
+        s: Option<Uuid>,
+        id: Option<Uuid>,
+        get_options: bool,
+    ) -> impl Future<Output = Result<Value>> + Send;
+    fn usage_write(
+        &self,
+        a: &Actor,
+        s: Uuid,
+        key: &str,
+        command: crate::distribution::domain::mobile_execution::usage::UsageCommand,
+    ) -> impl Future<Output = Result<Value>> + Send;
     fn recover_claim(&self, event: ClaimRecovery) -> impl Future<Output = Result<Value>> + Send;
     fn recover_result(
         &self,

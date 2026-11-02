@@ -13,6 +13,7 @@ type Tx<'a> = Transaction<'a, Postgres>;
 #[derive(Clone)]
 pub struct Repository(pub PgPool);
 mod delegation;
+pub mod delivery;
 mod device;
 mod inspections;
 mod platform;
@@ -20,6 +21,7 @@ mod readiness;
 mod secrets;
 mod settlement;
 mod tasks;
+mod usage;
 async fn expire(tx: &mut Tx<'_>) -> Result<()> {
     sqlx::query("UPDATE mobile_v9_attempts a SET state='failed_before_call',revision=revision+1 FROM mobile_v9_send_claims c WHERE a.id=c.attempt_id AND a.state IN ('leased','prepared') AND c.expires_at<clock_timestamp() AND NOT EXISTS(SELECT 1 FROM mobile_v9_invocations i WHERE i.claim_id=c.id)").execute(&mut **tx).await?;
     sqlx::query("UPDATE mobile_v9_quota_reservations q SET state='released' FROM mobile_v9_attempts a WHERE q.attempt_id=a.id AND q.state='reserved' AND a.state='failed_before_call'").execute(&mut **tx).await?;
@@ -91,6 +93,24 @@ async fn task(tx: &mut Tx<'_>, s: Uuid, id: Uuid) -> Result<Value> {
     sqlx::query_scalar("SELECT to_jsonb(t)||jsonb_build_object('items',coalesce((SELECT jsonb_agg(to_jsonb(i)||jsonb_build_object('attempts',(SELECT jsonb_agg(to_jsonb(a)||jsonb_build_object('plan',p.plan,'plan_digest',p.digest) ORDER BY a.attempt_no) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id WHERE a.item_id=i.id)) ORDER BY i.position) FROM mobile_v9_task_items i WHERE i.task_id=t.id),'[]'::jsonb)) FROM mobile_v9_tasks t WHERE t.school_id=$1 AND t.id=$2").bind(s).bind(id).fetch_optional(&mut **tx).await?.ok_or(Error::NotFound)
 }
 impl Store for Repository {
+    async fn usage_read(
+        &self,
+        a: &Actor,
+        s: Option<Uuid>,
+        id: Option<Uuid>,
+        get_options: bool,
+    ) -> Result<Value> {
+        Repository::usage_read(self, a, s, id, get_options).await
+    }
+    async fn usage_write(
+        &self,
+        a: &Actor,
+        s: Uuid,
+        key: &str,
+        command: crate::distribution::domain::mobile_execution::usage::UsageCommand,
+    ) -> Result<Value> {
+        Repository::usage_write(self, a, s, key, command).await
+    }
     async fn artifact_content(&self, a: &Actor, id: Uuid) -> Result<Vec<u8>> {
         let mut tx = self.0.begin().await?;
         authorize(&mut tx, a.id, None, true).await?;
@@ -199,6 +219,7 @@ impl Store for Repository {
         guard(&mut tx).await?;
         authorize(&mut tx, a.id, Some(s), false).await?;
         expire(&mut tx).await?;
+        usage::reconcile(&mut tx).await?;
         let v = if let Some(id) = id {
             task(&mut tx, s, id).await?
         } else {
@@ -284,6 +305,7 @@ impl Store for Repository {
         guard(&mut tx).await?;
         authorize(&mut tx, a.id, None, true).await?;
         expire(&mut tx).await?;
+        usage::reconcile(&mut tx).await?;
         let mut v = platform::read(&mut tx, page).await?;
         v["id"] = json!("current");
         v["policy"] = json!(policy(&mut tx).await?);
@@ -315,6 +337,7 @@ impl Store for Repository {
 
 /// Resource mutation callers already hold the shared transaction guard.
 pub(super) async fn reconcile_resources(tx: &mut Transaction<'_, Postgres>) -> Result<()> {
+    usage::reconcile(tx).await?;
     inspections::reconcile(tx, None, None).await
 }
 
