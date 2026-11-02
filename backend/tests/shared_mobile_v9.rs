@@ -478,6 +478,7 @@ async fn business_production_delivery_materializes_once_and_pausing_blocks_plans
     f.activate("activate-usage").await.unwrap();
     // All evidence in this test is synthetic and isolated; never used by delivery tooling.
     sqlx::query("INSERT INTO mobile_v9_acceptance_runs(id,release_id,stage,apk_id,evidence_ids,validation_ids,cases,soak_hours,soak_passed,historical_debt_closed,reviewer_id,reason) SELECT $1,release_id,'production_allowlist',apk_id,evidence_ids,validation_ids,cases,72,true,true,reviewer_id,'Synthetic business test only' FROM mobile_v9_acceptance_runs WHERE id=$2").bind(Uuid::now_v7()).bind(f.acceptance).execute(&f.pool).await.unwrap();
+    sqlx::query("INSERT INTO mobile_capability_deliveries(release_id,acceptance_id,supported_apks,policy,provenance) SELECT release_id,id,ARRAY[(SELECT sha256 FROM mobile_v9_artifacts WHERE id=apk_id)], '{}', '{\"synthetic_test\":true}' FROM mobile_v9_acceptance_runs WHERE stage='production_allowlist'").execute(&f.pool).await.unwrap();
     let p:PolicyInput=serde_json::from_value(json!({"expected_revision":0,"mode":"enabled","allowed_stages":["production_allowlist"],"confirmation_seconds":600,"inspection_seconds":600,"retry_seconds":300,"retry_limit":3,"timezone":"Asia/Shanghai","allowed_windows":[{"weekdays":[1,2,3,4,5,6,7],"start_minute":0,"end_minute":1440}],"limits":ObjectLimits::value(),"reason":"Synthetic test"})).unwrap();
     r.platform_write(&f.actor, "business-policy", PlatformCommand::Policy(p))
         .await
