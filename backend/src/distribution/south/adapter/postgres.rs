@@ -350,3 +350,5 @@ pub mod senders;
 pub mod resource_policy;
 
 pub mod shared_send;
+
+pub mod shared_send_v2;
