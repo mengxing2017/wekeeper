@@ -275,3 +275,302 @@ async fn concurrent_activation_has_one_winner_and_immutable_audit() {
     );
     f.close().await;
 }
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn business_usage_is_atomic_scoped_idempotent_and_survives_delivery_changes() {
+    use wekeeper_api::distribution::domain::mobile_execution::usage::*;
+    let f = Fixture::new().await;
+    let r = f.repo();
+    let input = UsageInput {
+        device_ids: vec![f.device],
+        targets: vec![UsageTarget {
+            id: Some(f.targets[0]),
+            name: "测试群".into(),
+            search_text: "测试群".into(),
+        }],
+        max_calls: 5,
+        expires_at: chrono::Utc::now() + chrono::Duration::hours(2),
+        auto_targets: false,
+        renewal_of: None,
+        expected_revision: None,
+    };
+    let preview = r
+        .usage_write(
+            &f.actor,
+            f.school,
+            "usage-preview",
+            UsageCommand::Preview(input.clone()),
+        )
+        .await
+        .unwrap();
+    let confirm = UsageCommand::Confirm(UsageConfirm {
+        preview_id: serde_json::from_value(preview["id"].clone()).unwrap(),
+        digest: preview["digest"].as_str().unwrap().into(),
+    });
+    let approved = r
+        .usage_write(&f.actor, f.school, "usage-confirm", confirm.clone())
+        .await
+        .unwrap();
+    assert_eq!(approved["items"][0]["approval"], "approved");
+    assert_eq!(approved["items"][0]["delivery"], "waiting");
+    assert_eq!(
+        r.usage_write(&f.actor, f.school, "usage-confirm", confirm.clone())
+            .await
+            .unwrap(),
+        approved
+    );
+    assert_eq!(
+        r.usage_write(&f.actor, f.school, "same-summary-new-key", confirm)
+            .await
+            .unwrap(),
+        approved
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_usages")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        1
+    );
+    let id: Uuid = serde_json::from_value(approved["items"][0]["id"].clone()).unwrap();
+    let school_actor_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO accounts(id,username,display_name) VALUES($1,'school-only','School admin')",
+    )
+    .bind(school_actor_id)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO school_memberships(school_id,account_id,role) VALUES($1,$2,'admin')")
+        .bind(f.school)
+        .bind(school_actor_id)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let school_actor:Actor=serde_json::from_value(json!({"id":school_actor_id,"username":"school-only","display_name":"School admin","platform_admin":false,"grants":[],"wecom_authenticated":false})).unwrap();
+    assert!(
+        r.usage_read(&school_actor, None, None, false)
+            .await
+            .is_err()
+    );
+    assert!(
+        r.usage_read(&school_actor, Some(Uuid::new_v4()), None, false)
+            .await
+            .is_err()
+    );
+    // The school must reuse the approved budget rather than mint a second allowance.
+    let p = r
+        .usage_write(
+            &school_actor,
+            f.school,
+            "school-preview",
+            UsageCommand::Preview(input.clone()),
+        )
+        .await
+        .unwrap();
+    let reused = r
+        .usage_write(
+            &school_actor,
+            f.school,
+            "school-confirm",
+            UsageCommand::Confirm(UsageConfirm {
+                preview_id: serde_json::from_value(p["id"].clone()).unwrap(),
+                digest: p["digest"].as_str().unwrap().into(),
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(reused["items"][0]["id"], json!(id));
+    // Renewal retains the original budget, requires platform approval, and never mutates old scopes.
+    let mut renewal = input;
+    renewal.renewal_of = Some(id);
+    renewal.expected_revision = Some(1);
+    renewal.expires_at += chrono::Duration::hours(1);
+    let p = r
+        .usage_write(
+            &school_actor,
+            f.school,
+            "renew-preview",
+            UsageCommand::Preview(renewal),
+        )
+        .await
+        .unwrap();
+    let pending = r
+        .usage_write(
+            &school_actor,
+            f.school,
+            "renew-confirm",
+            UsageCommand::Confirm(UsageConfirm {
+                preview_id: serde_json::from_value(p["id"].clone()).unwrap(),
+                digest: p["digest"].as_str().unwrap().into(),
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(pending["items"][0]["approval"], "pending");
+    let next: Uuid = serde_json::from_value(pending["items"][0]["id"].clone()).unwrap();
+    assert!(
+        r.usage_write(
+            &school_actor,
+            f.school,
+            "forged-approve",
+            UsageCommand::Mutate {
+                id: next,
+                operation: "approve".into(),
+                mutation: UsageMutation {
+                    expected_revision: 1,
+                    reason: "越权".into()
+                }
+            }
+        )
+        .await
+        .is_err()
+    );
+    let roots: Vec<Uuid> = sqlx::query_scalar("SELECT budget_root FROM mobile_usages")
+        .fetch_all(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(roots[0], roots[1]);
+    let paused = r
+        .usage_write(
+            &f.actor,
+            f.school,
+            "pause-usage",
+            UsageCommand::Mutate {
+                id,
+                operation: "pause".into(),
+                mutation: UsageMutation {
+                    expected_revision: 1,
+                    reason: "暂停使用".into(),
+                },
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(paused["items"][0]["state"], "paused");
+    assert!(
+        r.usage_write(
+            &f.actor,
+            f.school,
+            "stale-revoke",
+            UsageCommand::Mutate {
+                id,
+                operation: "revoke".into(),
+                mutation: UsageMutation {
+                    expected_revision: 1,
+                    reason: "过期修订".into()
+                }
+            }
+        )
+        .await
+        .is_err()
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn business_production_delivery_materializes_once_and_pausing_blocks_plans() {
+    use wekeeper_api::distribution::domain::mobile_execution::usage::*;
+    let f = Fixture::new().await;
+    let r = f.repo();
+    f.activate("activate-usage").await.unwrap();
+    // All evidence in this test is synthetic and isolated; never used by delivery tooling.
+    sqlx::query("INSERT INTO mobile_v9_acceptance_runs(id,release_id,stage,apk_id,evidence_ids,validation_ids,cases,soak_hours,soak_passed,historical_debt_closed,reviewer_id,reason) SELECT $1,release_id,'production_allowlist',apk_id,evidence_ids,validation_ids,cases,72,true,true,reviewer_id,'Synthetic business test only' FROM mobile_v9_acceptance_runs WHERE id=$2").bind(Uuid::now_v7()).bind(f.acceptance).execute(&f.pool).await.unwrap();
+    let p:PolicyInput=serde_json::from_value(json!({"expected_revision":0,"mode":"enabled","allowed_stages":["production_allowlist"],"confirmation_seconds":600,"inspection_seconds":600,"retry_seconds":300,"retry_limit":3,"timezone":"Asia/Shanghai","allowed_windows":[{"weekdays":[1,2,3,4,5,6,7],"start_minute":0,"end_minute":1440}],"limits":ObjectLimits::value(),"reason":"Synthetic test"})).unwrap();
+    r.platform_write(&f.actor, "business-policy", PlatformCommand::Policy(p))
+        .await
+        .unwrap();
+    let input = UsageInput {
+        device_ids: vec![f.device],
+        targets: vec![UsageTarget {
+            id: None,
+            name: "同页新增群".into(),
+            search_text: "  同页新增群  ".into(),
+        }],
+        max_calls: 5,
+        expires_at: chrono::Utc::now() + chrono::Duration::hours(2),
+        auto_targets: false,
+        renewal_of: None,
+        expected_revision: None,
+    };
+    let p = r
+        .usage_write(
+            &f.actor,
+            f.school,
+            "production-preview",
+            UsageCommand::Preview(input),
+        )
+        .await
+        .unwrap();
+    let u = r
+        .usage_write(
+            &f.actor,
+            f.school,
+            "production-confirm",
+            UsageCommand::Confirm(UsageConfirm {
+                preview_id: serde_json::from_value(p["id"].clone()).unwrap(),
+                digest: p["digest"].as_str().unwrap().into(),
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(u["items"][0]["delivery"], "available");
+    r.reconcile_usages().await.unwrap();
+    r.reconcile_usages().await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_usage_scopes")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        1
+    );
+    let target: Uuid =
+        serde_json::from_value(u["items"][0]["body"]["targets"][0]["id"].clone()).unwrap();
+    let send = UsageTaskInput {
+        draft_id: None,
+        expected_revision: None,
+        target_ids: vec![target],
+        message: "  一步预览\n🙂  ".into(),
+        between_targets_seconds: 30,
+        selections: vec![],
+    };
+    let preview = r
+        .usage_write(
+            &f.actor,
+            f.school,
+            "auto-save-preview",
+            UsageCommand::TaskPreview(send),
+        )
+        .await
+        .unwrap();
+    assert_eq!(preview["draft"]["stage"], "production_allowlist");
+    assert_eq!(preview["preview"]["plan"]["message"], "  一步预览\n🙂  ");
+    assert!(preview["preview"]["plan"]["items"][0]["blocker"].is_null());
+    let id: Uuid = serde_json::from_value(u["items"][0]["id"].clone()).unwrap();
+    r.usage_write(
+        &f.actor,
+        f.school,
+        "pause-production",
+        UsageCommand::Mutate {
+            id,
+            operation: "pause".into(),
+            mutation: UsageMutation {
+                expected_revision: 1,
+                reason: "暂停".into(),
+            },
+        },
+    )
+    .await
+    .unwrap();
+    let overview = r.school_read(&f.actor, f.school, None).await.unwrap();
+    let row = overview["readiness"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["target_id"] == json!(target))
+        .unwrap();
+    assert_eq!(row["confirmable"], false);
+    f.close().await;
+}
