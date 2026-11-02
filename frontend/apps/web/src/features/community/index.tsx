@@ -1,15 +1,16 @@
+import {ResourceCard} from './resource-card'
 import { formatDate } from '../../shared/format-date'
 import { PaginationControls } from '../../shared/pagination-controls'
 import { Field } from '../../shared/field'
 import { useDialogs } from '../../shared/use-dialogs'
 import { Alert, Button, Form, Input, Select, Upload, ConfigProvider , Card  } from 'antd'
-import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useParams, useLocation } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { SessionGate } from '../identity'
 import { useSchools, useSchoolDirectory } from '../school-context'
 import { label } from '../../shared/label'
-import { identity, workspace, type User, type Post } from './api';
+import { identity, workspace, product, type User, type Post } from './api';
 export default function Community() { return <main className="community-shell"><header><Link to="/community">WeKeeper 社区</Link> · <Link to="/admin">运营后台</Link></header><SessionGate>{user => <Content user={user}/>}</SessionGate></main>; }
 function Content({ user }: {
     user: User;
@@ -17,19 +18,21 @@ function Content({ user }: {
     const dialogs = useDialogs();
     const [commentForm] = Form.useForm();
     const params = useParams();
+    const location = useLocation();
     const cache = useQueryClient();
     const schools = useSchools();
     const directory = useSchoolDirectory();
     const [selected, setSelected] = useState('');
     const school = schools.data?.find(v => v.id === (params.school || selected || user.bound_school_id || schools.data[0]?.id));
     const s = school?.id ?? '';
-    const [search, setSearch] = useState(''), [view, setView] = useState('feed'), [page, setPage] = useState(1), [error, setError] = useState(''), [busy, setBusy] = useState(false), [images, setImages] = useState<string[]>([]), [editing, setEditing] = useState<Post>();
+    const [search, setSearch] = useState(''), [view, setView] = useState(new URLSearchParams(window.location.search).get('service')??'feed'), [page, setPage] = useState(1), [error, setError] = useState(''), [busy, setBusy] = useState(false), [images, setImages] = useState<string[]>([]), [editing, setEditing] = useState<Post>();
+    useEffect(()=>{setView(new URLSearchParams(location.search).get('service')??'feed');setPage(1)},[location.search,location.pathname]);
     const posts = useQuery({ queryKey: ['business', s, 'feed', search, view, page], queryFn: () => workspace.list<Post>(s, 'posts', `?${new URLSearchParams({ search, 'page[number]': String(page), 'page[size]': '20', mine: String(view === 'mine'), ...(['collect', 'following'].includes(view) ? { kind: view } : {}) })}`), enabled: !!s });
     const detail = useQuery({ queryKey: ['business', s, 'post', params.id], queryFn: () => workspace.getPost(s, params.id!), enabled: !!s && !!params.id });
     const [commentPage, setCommentPage] = useState(1), [noticePage, setNoticePage] = useState(1);
     const comments = useQuery({ queryKey: ['business', s, 'post-comments', params.id, commentPage], queryFn: () => workspace.comments(s, params.id!, commentPage), enabled: !!s && !!params.id });
     const reactions = useQuery({ queryKey: ['business', s, 'reactions'], queryFn: () => workspace.list(s, 'reactions'), enabled: !!s });
-    const resources = useQuery({ queryKey: ['business', s, 'resources'], queryFn: () => workspace.list(s, 'resources'), enabled: !!s });
+    const resources = useQuery({ queryKey: ['business', s, 'resources'], queryFn: () => product.resources.list(s), enabled: !!s });
     const notices = useQuery({ queryKey: ['business', s, 'notifications', noticePage], queryFn: () => workspace.list(s, 'notifications', `?page[number]=${noticePage}&page[size]=30`), enabled: !!s });
     const follows = useQuery({ queryKey: ['business', s, 'follows'], queryFn: () => workspace.list(s, 'follows'), enabled: !!s });
     async function run(action: () => Promise<unknown>) { setBusy(true); setError(''); try {
@@ -71,8 +74,7 @@ function Content({ user }: {
       return false;
     }}><Button disabled={busy} loading={busy}>选择图片</Button></Upload></div>{images.map(src => <div key={src}><img src={src} alt="上传预览" width={100}/><Button htmlType="button" onClick={() => setImages(images.filter(v => v !== src))}>移除</Button></div>)}<Button type="primary" htmlType="submit" loading={busy} disabled={busy}>提交审核</Button></Form>}
  {view === 'notifications' && <>{notices.data?.items.map(n => <p key={n.id}>{label(n.kind)} · {formatDate(n.created_at)} <Button disabled={busy || !!n.read_at} onClick={() => run(() => workspace.mutate(s, `notifications/${n.id}/read`, undefined, 'PUT'))}>{n.read_at ? '已读' : '标记已读'}</Button></p>)}<PaginationControls page={noticePage} more={notices.data?.page?.has_more} busy={notices.isFetching} change={setNoticePage} subject="消息" /></>}
- {view === 'resources' && resources.data?.items.filter(r => r.kind !== 'blocked_word').map(r => <Card className="community-card" key={r.id}><h2>{label(r.title)}</h2><p className="text-content">{label(r.content)}</p>{r.url && <a href={label(r.url)} rel="noreferrer" target="_blank" onClick={() => { if (r.kind === 'banner')
-        void run(() => workspace.mutate(s, `resources/${r.id}/click`)); }}>打开 {label(r.title)}</a>}</Card>)}
+ {['resources','legal'].includes(view) && resources.data?.filter(r=>r.kind!=='blocked_word'&&(view!=='legal'||r.kind==='legal')).map(r=><ResourceCard key={r.id} school={s} item={r} onAction={r.kind==='banner'?()=>workspace.mutate(s,`resources/${r.id}/click`):undefined}/>)}
  {view === 'profile' && <Form layout="vertical" className="business-form" initialValues={{ name: user.display_name }} disabled={busy} onFinish={({ name }: { name: string }) => run(async () => { await identity.profile(name); await cache.invalidateQueries({ queryKey: ['session'] }); })}><Field name="name" required label="昵称"><Input /></Field><Button type="primary" htmlType="submit" loading={busy} disabled={busy}>更新昵称</Button><h2>我的关注</h2>{follows.data?.items.map(f => <p key={f.id}>{label(f.display_name)} <Button htmlType="button" onClick={() => run(() => workspace.mutate(s, `follows/${f.id}`, undefined, 'DELETE'))}>取消关注</Button></p>)}</Form>}
  {view === 'feedback' && <Form layout="vertical" className="business-form" disabled={busy} onFinish={({ content, contact }: { content: string; contact?: string }) => run(() => workspace.mutate(s, 'cases', { kind: 'feedback', content, contact: contact ?? '' }))}><Field name="content" required label="意见反馈"><Input.TextArea maxLength={500} /></Field><Field name="contact" label="联系方式"><Input /></Field><Button type="primary" htmlType="submit" loading={busy} disabled={busy}>提交反馈</Button></Form>}
  </div></ConfigProvider>;
