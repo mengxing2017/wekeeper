@@ -578,7 +578,7 @@ async fn business_production_delivery_materializes_once_and_pausing_blocks_plans
 
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn missing_delivery_allows_blocked_content_preview_and_closed_scheme_only() {
+async fn business_configuration_does_not_require_technical_delivery() {
     use wekeeper_api::distribution::domain::mobile_execution::usage::*;
     let f = Fixture::new().await;
     let r = f.repo();
@@ -631,14 +631,12 @@ async fn missing_delivery_allows_blocked_content_preview_and_closed_scheme_only(
     );
     input.expected_revision = 1;
     input.enabled = true;
-    assert!(
-        r.platform_write(
-            &f.actor,
-            "open-no-delivery",
-            PlatformCommand::Policy(input.policy().unwrap())
-        )
-        .await
-        .is_err()
-    );
+    r.platform_write(
+        &f.actor,
+        "open-no-delivery",
+        PlatformCommand::Policy(input.policy().unwrap()),
+    )
+    .await
+    .unwrap();
     f.close().await;
 }

@@ -107,9 +107,9 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
         {
             add(
                 "release_missing",
-                "产品尚未交付",
+                "当前版本暂不支持此手机应用的发送",
                 "engineering",
-                "打开能力办理，完成候选验证与限定测试放行",
+                "在使用管理中报告问题，由系统维护处理",
                 false,
             );
         }

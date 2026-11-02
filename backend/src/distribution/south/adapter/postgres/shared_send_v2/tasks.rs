@@ -225,7 +225,7 @@ pub(super) async fn write(
                 } else if chosen.is_none() {
                     Some("请选择已绑定手机")
                 } else if chosen.is_some_and(|c| c["confirmable"] != true) {
-                    Some("请查看本校手机使用状态，完成使用批准或等待产品交付")
+                    Some("请查看本校手机使用状态，核对使用授权和手机是否就绪")
                 } else {
                     None
                 };

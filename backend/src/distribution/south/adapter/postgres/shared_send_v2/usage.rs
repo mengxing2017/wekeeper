@@ -453,7 +453,7 @@ pub(super) async fn reconcile(tx: &mut Tx<'_>) -> Result<()> {
         let mut reason = if !mapped && date(&u, "confirmed_until")? <= Utc::now() {
             "确认已过期，请重新申请"
         } else if delivery.is_none() {
-            "等待产品交付"
+            "当前版本的手机发送功能尚不可用，已保留使用范围；可报告问题"
         } else {
             ""
         };

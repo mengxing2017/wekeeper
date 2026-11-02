@@ -21,12 +21,6 @@ pub(super) async fn save(tx: &mut Tx<'_>, a: &Actor, v: PolicyInput) -> Result<V
             .fetch_one(&mut **tx)
             .await?;
     require(valid, "shared_send_policy_invalid")?;
-    if v.mode == "enabled" && v.allowed_stages.iter().any(|s| s == "production_allowlist") {
-        require(
-            status(tx).await?.delivery == "available",
-            "shared_send_delivery_required",
-        )?;
-    }
     let revision = policy(tx)
         .await?
         .and_then(|p| p["revision"].as_i64())
