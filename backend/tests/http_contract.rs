@@ -16,6 +16,61 @@ fn app() -> axum::Router {
 }
 
 #[tokio::test]
+async fn removed_compatibility_routes_are_absent() {
+    let school = "00000000-0000-4000-8000-000000000001";
+    for (method, path, expected) in [
+        (
+            "GET",
+            format!("/api/v1/schools/{school}/delivery-drafts"),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "GET",
+            format!("/api/v1/schools/{school}/delivery-attempts"),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "GET",
+            format!("/api/v1/schools/{school}/mobile-execution/shared-tasks"),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "POST",
+            format!("/api/v1/schools/{school}/templates"),
+            StatusCode::METHOD_NOT_ALLOWED,
+        ),
+        (
+            "POST",
+            format!("/api/v1/schools/{school}/resources"),
+            StatusCode::METHOD_NOT_ALLOWED,
+        ),
+        (
+            "POST",
+            "/api/v1/platform/mobile-execution/shared-v2-management".into(),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "POST",
+            "/api/v9/device-execution/human-samples".into(),
+            StatusCode::NOT_FOUND,
+        ),
+    ] {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(&path)
+                    .header("origin", "http://localhost:5173")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected, "{method} {path}");
+    }
+}
+
+#[tokio::test]
 async fn responsible_actor_contract_matches_shared_fixture_and_requires_identity() {
     use axum::response::IntoResponse;
     use wekeeper_api::{
@@ -193,33 +248,7 @@ async fn oauth_missing_cookie_returns_to_the_frontend_error_state() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(response.headers()["location"], "/wecom?oauth_error=failed");
-}
-
-#[tokio::test]
-async fn delivery_history_serializes_the_shared_contract() {
-    use wekeeper_api::distribution::domain::RelatedHistory;
-    let fixture: Value = serde_json::from_str(include_str!(
-        "../../api-contract/fixtures/delivery-history.json"
-    ))
-    .unwrap();
-    let history = RelatedHistory {
-        items: vec![
-            serde_json::json!({"id":"00000000-0000-0000-0000-000000000001","school_id":"00000000-0000-0000-0000-000000000002","draft_id":"00000000-0000-0000-0000-000000000003","actor_id":"00000000-0000-0000-0000-000000000004","state":"unknown","reconciliation":null,"client_result":null,"actor_name":"运营甲","group_name":"学校客户群","content":"待核对内容","created_at":"2026-10-21T00:00:00Z"}),
-        ],
-        latest_attempt_id: Some(uuid::Uuid::from_u128(1)),
-        blocked: true,
-    };
-    use axum::response::IntoResponse;
-    let response = http::jsonapi::collection("delivery-attempts", history.items, &Default::default())
-        .meta(serde_json::json!({"blocked":history.blocked,"latest_attempt_id":history.latest_attempt_id})).into_response();
-    assert_eq!(
-        response.headers()["content-type"],
-        cairnkit_jsonapi::api::JSON_API_MEDIA_TYPE
-    );
-    let actual: Value =
-        serde_json::from_slice(&to_bytes(response.into_body(), 8192).await.unwrap()).unwrap();
-    assert_eq!(actual, fixture);
+    assert_eq!(response.headers()["location"], "/admin?oauth_error=failed");
 }
 
 #[tokio::test]
@@ -534,8 +563,8 @@ async fn broadcast_rust_serialization_matches_shared_fixtures() {
         batch_count: 1,
         post_ids: vec![id],
         source_task_id: None,
-        source_draft_id: None,
         resend_reason: String::new(),
+        draft_input: serde_json::from_value(serde_json::json!({"content_source":"posts","template_version_id":id,"post_ids":[id],"group_ids":[id]})).unwrap(),
     };
     let target = Target {
         id,
@@ -562,6 +591,10 @@ async fn broadcast_rust_serialization_matches_shared_fixtures() {
     text_task.source_namespace = "builtin.direct".into();
     text_task.template_version_id = None;
     text_task.post_ids.clear();
+    text_task.draft_input = serde_json::from_value(
+        serde_json::json!({"content_source":"text","text_content":"校园通知","group_ids":[id]}),
+    )
+    .unwrap();
     for (kind, value, fixture) in [
         (
             "broadcast-tasks",
@@ -1318,7 +1351,7 @@ async fn legacy_mobile_retirement_has_a_shared_error_contract() {
 }
 
 #[tokio::test]
-async fn stable_delegation_and_school_pool_writes_require_identity() {
+async fn removed_v8_delegation_and_school_pool_writes_are_absent() {
     for path in [
         "/api/v8/device-execution/send-delegation-decisions",
         "/api/v1/platform/mobile-execution/shared-device-access",
@@ -1338,7 +1371,7 @@ async fn stable_delegation_and_school_pool_writes_require_identity() {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
     }
 }
 
@@ -1458,6 +1491,83 @@ async fn mobile_research_management_routes_are_gone() {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::GONE, "{path}");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+    }
+}
+
+#[test]
+fn product_workflows_share_strict_typed_inputs_with_both_clients() {
+    use wekeeper_api::{distribution::domain::workflows::*, schools::domain::ResourceInput};
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/product-workflows.json"
+    ))
+    .unwrap();
+    macro_rules! roundtrip {
+        ($key:literal,$t:ty) => {{
+            let v: $t = serde_json::from_value(fixture[$key].clone()).unwrap();
+            assert_eq!(serde_json::to_value(v).unwrap(), fixture[$key]);
+            let mut bad = fixture[$key].clone();
+            bad["internal_resource_key"] = json!("forged");
+            assert!(serde_json::from_value::<$t>(bad).is_err());
+        }};
+    }
+    roundtrip!("resource", ResourceInput);
+    roundtrip!("template", TemplateInput);
+    roundtrip!("usage", UsageInput);
+    roundtrip!("policy", MemberPolicyInput);
+    roundtrip!("request", RequestInput);
+    roundtrip!("decision", RequestDecision);
+    roundtrip!("confirmation", Confirmation);
+    serde_json::from_value::<ResourceInput>(fixture["resource"].clone())
+        .unwrap()
+        .validate()
+        .unwrap();
+    Command::UsagePreview(serde_json::from_value(fixture["usage"].clone()).unwrap())
+        .validate()
+        .unwrap();
+}
+
+#[tokio::test]
+async fn product_workflow_routes_require_identity_before_any_database_access() {
+    for (method, path) in [
+        (
+            "POST",
+            "/api/v1/schools/00000000-0000-4000-8000-000000000001/broadcast-task-previews",
+        ),
+        (
+            "POST",
+            "/api/v1/schools/00000000-0000-4000-8000-000000000001/template-previews",
+        ),
+        (
+            "POST",
+            "/api/v1/schools/00000000-0000-4000-8000-000000000001/resource-publications",
+        ),
+        ("POST", "/api/v1/platform/resource-artwork"),
+        ("POST", "/api/v1/platform/member-policy-previews"),
+        ("GET", "/api/v1/platform/business-requests"),
+        (
+            "POST",
+            "/api/v1/platform/business-requests/00000000-0000-4000-8000-000000000001/decisions",
+        ),
+        (
+            "GET",
+            "/api/v1/schools/00000000-0000-4000-8000-000000000001/published-resources",
+        ),
+    ] {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::UNAUTHORIZED,
+            "{method} {path}"
+        );
     }
 }
