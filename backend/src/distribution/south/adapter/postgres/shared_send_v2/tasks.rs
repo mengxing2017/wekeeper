@@ -44,9 +44,29 @@ pub(super) async fn grant(
     row: &Value,
     stage: &str,
 ) -> Result<Option<Value>> {
-    sqlx::query_scalar("SELECT to_jsonb(g) FROM mobile_v9_scope_grants g WHERE g.school_id=$1 AND $2=ANY(g.device_ids) AND ($3=ANY(g.target_ids) OR g.auto_targets) AND (g.release_id IS NULL OR g.release_id=$4) AND g.stage=$5 AND ($6::uuid IS NULL OR g.id=$6) AND g.expires_at>clock_timestamp() AND (g.stage<>'production_allowlist' OR EXISTS(SELECT 1 FROM mobile_usage_scopes us JOIN mobile_usages u ON u.id=us.usage_id WHERE us.scope_id=g.id AND u.approval='approved' AND u.state='active' AND u.expires_at>clock_timestamp() AND EXISTS(SELECT 1 FROM execution_devices ud JOIN mobile_device_target_bindings ub ON ub.device_id=ud.id JOIN mobile_targets ut ON ut.id=ub.target_id WHERE ud.id=$2 AND ut.id=$3 AND ub.school_id=$1 AND us.resource_snapshot=jsonb_build_object('device_revision',ud.revision,'binding_locator_revision',ub.locator_revision,'target_locator_revision',CASE WHEN ub.search_text_override IS NULL THEN ut.locator_revision ELSE NULL END,'search_text',coalesce(ub.search_text_override,ut.search_text))))) AND NOT EXISTS(SELECT 1 FROM mobile_v9_scope_revocations r WHERE r.grant_id=g.id) AND (NOT (g.resource_revisions ? $2::uuid::text) OR (g.resource_revisions->>$2::uuid::text)::bigint=coalesce((SELECT revision FROM mobile_shared_school_access WHERE device_id=$2 AND school_id=$1 AND enabled),0)) ORDER BY g.created_at DESC,g.id DESC LIMIT 1")
+    sqlx::query_scalar("SELECT to_jsonb(g) FROM mobile_v9_scope_grants g WHERE g.school_id=$1 AND $2=ANY(g.device_ids) AND ($3=ANY(g.target_ids) OR g.auto_targets) AND ($5='production_allowlist' OR ((g.release_id IS NULL OR g.release_id=$4) AND g.stage=$5)) AND ($6::uuid IS NULL OR g.id=$6) AND g.expires_at>clock_timestamp() AND ($5<>'production_allowlist' OR EXISTS(SELECT 1 FROM mobile_usage_scopes us JOIN mobile_usages u ON u.id=us.usage_id WHERE us.scope_id=g.id AND u.approval='approved' AND u.state='active' AND u.expires_at>clock_timestamp() AND EXISTS(SELECT 1 FROM execution_devices ud JOIN mobile_device_target_bindings ub ON ub.device_id=ud.id JOIN mobile_targets ut ON ut.id=ub.target_id WHERE ud.id=$2 AND ut.id=$3 AND ub.school_id=$1 AND us.resource_snapshot=jsonb_build_object('device_revision',ud.revision,'binding_locator_revision',ub.locator_revision,'target_locator_revision',CASE WHEN ub.search_text_override IS NULL THEN ut.locator_revision ELSE NULL END,'search_text',coalesce(ub.search_text_override,ut.search_text))))) AND NOT EXISTS(SELECT 1 FROM mobile_v9_scope_revocations r WHERE r.grant_id=g.id) AND (NOT (g.resource_revisions ? $2::uuid::text) OR (g.resource_revisions->>$2::uuid::text)::bigint=coalesce((SELECT revision FROM mobile_shared_school_access WHERE device_id=$2 AND school_id=$1 AND enabled),0)) ORDER BY g.created_at DESC,g.id DESC LIMIT 1")
     .bind(s).bind(uid(row,"device_id")?).bind(uid(row,"target_id")?).bind(row["release_id"].as_str().and_then(|v|v.parse::<Uuid>().ok())).bind(stage).bind(row.get("scope_id").map(|_|uid(row,"scope_id")).transpose()?).fetch_optional(&mut **tx).await.map_err(Into::into)
 }
+/// A platform binding (or enabled school-pool access) already authorizes this
+/// school/device/target. Internal stage grants are not an extra opening step.
+/// Existing business usage restrictions must still be respected.
+pub(super) async fn validate_scope(
+    tx: &mut Tx<'_>,
+    s: Uuid,
+    plan: &Value,
+    stage: &str,
+) -> Result<()> {
+    if grant(tx, s, plan, stage).await?.is_some() {
+        return Ok(());
+    }
+    let managed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_usages u WHERE u.school_id=$1 AND ((u.body->'device_ids' @> jsonb_build_array($2::uuid) AND (u.body->'auto_targets'='true'::jsonb OR EXISTS(SELECT 1 FROM jsonb_array_elements(u.body->'targets') t WHERE t->>'id'=$3::uuid::text))) OR EXISTS(SELECT 1 FROM mobile_usage_scopes m WHERE m.usage_id=u.id AND m.device_id=$2 AND m.target_id=$3)))")
+        .bind(s).bind(uid(plan,"device_id")?).bind(uid(plan,"target_id")?).fetch_one(&mut **tx).await?;
+    require(
+        !plan.get("scope_id").is_some_and(Value::is_string) && !managed,
+        "shared_send_usage_unavailable",
+    )
+}
+
 /// A business task can be delivered even when this product build lacks its UI rules.
 pub(super) fn missing_rules(plan: &Value) -> bool {
     ["release_id", "flow", "flow_digest"]
@@ -91,13 +111,7 @@ pub(super) async fn validate_plan(tx: &mut Tx<'_>, s: Uuid, plan: &Value) -> Res
     let stage = plan["stage"]
         .as_str()
         .ok_or(Error::Policy("shared_send_stage_invalid"))?;
-    let g = grant(tx, s, plan, stage)
-        .await?
-        .ok_or(Error::Policy("shared_send_scope_not_accepted"))?;
-    require(
-        plan.get("scope_id").is_none_or(|id| id == &g["id"]),
-        "plan_dependency_changed",
-    )?;
+    validate_scope(tx, s, plan, stage).await?;
     let risk:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_invocations WHERE device_id=$1 AND state='risk_held') OR EXISTS(SELECT 1 FROM mobile_shared_invocations WHERE device_id=$1 AND state='risk_held') OR EXISTS(SELECT 1 FROM mobile_shared_risk_guards WHERE school_id=$2 AND target_id=$3 AND state='active') OR EXISTS(SELECT 1 FROM mobile_v9_risk_guards WHERE school_id=$2 AND target_id=$3 AND state='active')").bind(uid(plan,"device_id")?).bind(s).bind(uid(plan,"target_id")?).fetch_one(&mut **tx).await?;
     require(!risk, "shared_send_review_required")
 }
@@ -219,7 +233,7 @@ pub(super) async fn write(
                             .get(&uid(choice, "device_id")?)
                             .map(String::as_str)
                         {
-                            Some("shared_send_scope_not_accepted") => {
+                            Some("shared_send_usage_unavailable") => {
                                 "本校尚无此手机与目标群的有效使用范围，请在使用管理核对审批、有效期及资源变更"
                             }
                             Some("shared_send_review_required") => {
@@ -341,10 +355,9 @@ pub(super) async fn write(
             let stage = plan["stage"]
                 .as_str()
                 .ok_or(Error::Policy("shared_send_stage_invalid"))?;
-            let scope = grant(tx, s, &plan, stage)
-                .await?
-                .ok_or(Error::Policy("shared_send_scope_not_accepted"))?;
-            plan["scope_id"] = scope["id"].clone();
+            if let Some(scope) = grant(tx, s, &plan, stage).await? {
+                plan["scope_id"] = scope["id"].clone();
+            }
             validate_plan(tx, s, &plan).await?;
             let aid = Uuid::now_v7();
             let pid = Uuid::now_v7();

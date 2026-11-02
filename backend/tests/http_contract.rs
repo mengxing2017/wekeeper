@@ -1175,7 +1175,11 @@ async fn retired_phone_task_routes_are_removed() {
 #[tokio::test]
 async fn phone_task_blockers_explain_concrete_next_steps() {
     use axum::response::IntoResponse;
-    for (code, expected) in [("mobile_target_unresolved", "不要换设备")] {
+    for (code, expected) in [
+        ("mobile_target_unresolved", "不要换设备"),
+        ("shared_send_usage_unavailable", "使用管理"),
+        ("shared_send_scope_not_accepted", "使用管理"),
+    ] {
         let response = wekeeper_api::business::Error::Policy(code).into_response();
         assert_eq!(response.status(), StatusCode::CONFLICT);
         let body: Value =

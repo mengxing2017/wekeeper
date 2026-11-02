@@ -49,7 +49,7 @@ async fn quota(
     let p = policy(tx)
         .await?
         .ok_or(Error::Policy("shared_send_not_released"))?;
-    let frozen:Option<Value>=sqlx::query_scalar("SELECT coalesce(to_jsonb(policy),u.body->'scheme') FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_usage_scopes m ON m.scope_id=(p.plan->>'scope_id')::uuid JOIN mobile_usages u ON u.id=m.usage_id LEFT JOIN mobile_v9_send_policy_versions policy ON policy.id=(u.body->>'scheme_id')::uuid WHERE a.id=$1").bind(attempt).fetch_optional(&mut **tx).await?;
+    let frozen:Option<Value>=sqlx::query_scalar("SELECT coalesce(to_jsonb(policy),nullif(u.body->'scheme','null'::jsonb),to_jsonb(task_policy),$2::jsonb) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id LEFT JOIN mobile_usage_scopes m ON m.scope_id=(p.plan->>'scope_id')::uuid LEFT JOIN mobile_usages u ON u.id=m.usage_id LEFT JOIN mobile_v9_send_policy_versions policy ON policy.id=(u.body->>'scheme_id')::uuid LEFT JOIN mobile_v9_send_policy_versions task_policy ON task_policy.id=(p.plan->>'policy_id')::uuid WHERE a.id=$1").bind(attempt).bind(default_policy()).fetch_optional(&mut **tx).await?;
     if let Some(original) = frozen.filter(|p| p.is_object())
         && !quota_policy(tx, s, device, target, attempt, &original).await?
     {
@@ -233,12 +233,23 @@ pub(super) async fn write(
                 .await?,
                 "quota_wait",
             )?;
-            let scope_id = uid(&cl["plan"], "scope_id")?;
-            let budget:bool=sqlx::query_scalar("SELECT (SELECT count(*) FROM mobile_v9_invocations i JOIN mobile_v9_attempts a ON a.id=i.attempt_id JOIN mobile_v9_plans p ON p.id=a.plan_id WHERE p.plan->>'scope_id'=$1::uuid::text )<g.max_calls FROM mobile_v9_scope_grants g WHERE g.id=$1 AND g.expires_at>clock_timestamp()+interval '15 seconds'").bind(scope_id).fetch_optional(&mut *tx).await?.unwrap_or(false);
-            require(
-                budget && usage_budget(&mut tx, scope_id).await?,
-                "quota_wait",
-            )?;
+            // Binding-authorized tasks have no synthetic stage grant. Existing
+            // usage budgets still apply whenever this binding has a managed scope.
+            if let Some(scope) = tasks::grant(
+                &mut tx,
+                uid(&cl, "school_id")?,
+                &cl["plan"],
+                cl["plan"]["stage"].as_str().ok_or(Error::Conflict)?,
+            )
+            .await?
+            {
+                let scope_id = uid(&scope, "id")?;
+                let budget:bool=sqlx::query_scalar("SELECT (SELECT count(*) FROM mobile_v9_invocations i JOIN mobile_v9_attempts a ON a.id=i.attempt_id JOIN mobile_v9_plans p ON p.id=a.plan_id WHERE p.plan->>'scope_id'=$1::uuid::text )<g.max_calls FROM mobile_v9_scope_grants g WHERE g.id=$1 AND g.expires_at>clock_timestamp()+interval '15 seconds'").bind(scope_id).fetch_optional(&mut *tx).await?.unwrap_or(false);
+                require(
+                    budget && usage_budget(&mut tx, scope_id).await?,
+                    "quota_wait",
+                )?;
+            }
             let inv = Uuid::now_v7();
             let timing:Value=sqlx::query_scalar("SELECT jsonb_build_object('server_time',clock_timestamp(),'not_before',clock_timestamp(),'execute_before',clock_timestamp()+interval '15 seconds') FROM mobile_v9_send_claims WHERE id=$1 AND expires_at>clock_timestamp()+interval '27 seconds' AND EXISTS(SELECT 1 FROM mobile_v9_tasks t JOIN mobile_v9_task_items i ON i.task_id=t.id JOIN mobile_v9_attempts a ON a.item_id=i.id WHERE a.id=mobile_v9_send_claims.attempt_id AND t.confirmed_until>clock_timestamp()+interval '15 seconds')").bind(id).fetch_optional(&mut *tx).await?.ok_or(Error::Policy("lease_expired"))?;
             let secret = secrets::token();

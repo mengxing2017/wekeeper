@@ -617,7 +617,7 @@ async fn business_scope_materializes_without_delivery_acceptance_or_activation_a
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn business_configuration_does_not_require_technical_delivery() {
     use wekeeper_api::distribution::domain::mobile_execution::usage::*;
-    let f = Fixture::new().await;
+    let f = Fixture::with_adapter(false).await;
     let r = f.repo();
     let options = r
         .usage_read(&f.actor, Some(f.school), None, true)
@@ -646,7 +646,34 @@ async fn business_configuration_does_not_require_technical_delivery() {
         result["preview"]["plan"]["sending_status"]["can_confirm"],
         true
     );
-    assert!(!result["preview"]["plan"]["items"][0]["blocker"].is_null());
+    assert!(result["preview"]["plan"]["items"][0]["blocker"].is_null());
+    assert!(
+        result["preview"]["plan"]["items"][0]["selected"]
+            .get("scope_id")
+            .is_none()
+    );
+    let p = &result["preview"];
+    let task = r
+        .usage_write(
+            &f.actor,
+            f.school,
+            "binding-only-confirm",
+            UsageCommand::TaskConfirm(Confirmation {
+                preview_id: Uuid::parse_str(p["id"].as_str().unwrap()).unwrap(),
+                preview_digest: p["digest"].as_str().unwrap().into(),
+                confirmed: true,
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(task["items"][0]["attempts"][0]["state"], "queued");
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_v9_scope_grants")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        0
+    );
     let mut input: BusinessSchemeInput = serde_json::from_str(include_str!(
         "../../api-contract/fixtures/mobile-business-scheme.json"
     ))

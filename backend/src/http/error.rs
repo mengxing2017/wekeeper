@@ -163,7 +163,7 @@ impl IntoResponse for Error {
                     "shared_send_delivery_required" => "当前手机发送功能暂不可用，可在使用管理中报告问题",
                     "shared_send_not_released" => "平台尚未开放当前发送业务，请查看手机群消息使用管理中的使用状态和业务方案",
                     "shared_send_device_not_ready" => "设备或检查条件已变化，请重新生成逐群预览并查看当前阻塞原因",
-                    "shared_send_scope_not_accepted" => "该学校、手机和目标群尚无有效的当前阶段业务放行范围，请联系平台管理员核对测试或生产范围",
+                    "shared_send_scope_not_accepted" | "shared_send_usage_unavailable" => "本校手机与目标群的已有使用范围已暂停、撤销、到期或发生变更，请在使用管理查看具体状态",
                     "shared_send_runtime_required" => "等待手机上线、解锁并报告可执行状态；请检查长期托管、通知和无障碍权限",
                     "shared_send_review_required" => "原尝试必须先完成未发送核对并确认设备已停止，不能直接改派或重发",
                     "shared_access_invalid" => "学校或手机当前不可用，请刷新资源后重试",

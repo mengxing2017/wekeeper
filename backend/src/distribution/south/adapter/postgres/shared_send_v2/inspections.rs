@@ -52,9 +52,9 @@ pub(super) async fn reconcile(
         if c["accepted"] != true || c["release_id"].is_null() {
             continue;
         }
-        if tasks::grant(tx, uid(&b, "school_id")?, &c, "production_allowlist")
-            .await?
-            .is_none()
+        if tasks::validate_scope(tx, uid(&b, "school_id")?, &c, "production_allowlist")
+            .await
+            .is_err()
         {
             sqlx::query("UPDATE mobile_v9_send_inspections SET state='stale' WHERE binding_id=$1 AND automatic AND state='pending'").bind(uid(&b,"id")?).execute(&mut **tx).await?;
             continue;
@@ -106,17 +106,13 @@ async fn material(tx: &mut Tx<'_>, row: &Value) -> Result<Value> {
     candidate["release_id"] = release["id"].clone();
     candidate["flow"] = release["flow"].clone();
     candidate["flow_digest"] = release["digest"].clone();
-    require(
-        tasks::grant(
-            tx,
-            uid(row, "school_id")?,
-            &candidate,
-            "production_allowlist",
-        )
-        .await?
-        .is_some(),
-        "plan_dependency_changed",
-    )?;
+    tasks::validate_scope(
+        tx,
+        uid(row, "school_id")?,
+        &candidate,
+        "production_allowlist",
+    )
+    .await?;
     require(
         tasks::dependencies(&candidate) == row["dependencies"],
         "plan_dependency_changed",

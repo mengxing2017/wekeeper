@@ -12,7 +12,7 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
         let selectable = candidate.is_some();
         let mut stages = Vec::new();
         if let Some(ref c) = candidate {
-            for stage in ["test_send", "production_allowlist"] {
+            for stage in ["production_allowlist"] {
                 let mut p = c.clone();
                 p["stage"] = json!(stage);
                 if tasks::validate_plan(tx, school, &p).await.is_ok() {
@@ -36,8 +36,8 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
         let accepted = candidate.as_ref().is_some_and(|c| c["accepted"] == true);
         let mut scope_exists = false;
         if let Some(ref c) = candidate {
-            for stage in ["test_send", "production_allowlist"] {
-                if tasks::grant(tx, school, c, stage).await?.is_some() {
+            for stage in ["production_allowlist"] {
+                if tasks::validate_scope(tx, school, c, stage).await.is_ok() {
                     scope_exists = true;
                 }
             }
