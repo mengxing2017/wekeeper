@@ -123,40 +123,19 @@ async fn capability(
     actor: Actor,
     Path(s): Path<Uuid>,
 ) -> Result<ApiResponse> {
-    use crate::distribution::south::port::broadcast::Store;
-    let b = a.broadcast();
-    b.store.authorize(actor.id, s, false).await?;
-    Ok(singleton(
-        "broadcast-capabilities",
-        "current",
-        json!({"broadcast_available":b.enabled,"management_available":b.management_available,"reason":a.broadcast_unavailable_reason()}),
-    ))
+    let value = crate::distribution::north::local::workflows::Service(
+        crate::distribution::south::adapter::postgres::workflows::Repository(a.pool.clone()),
+    )
+    .channel(
+        &actor,
+        s,
+        a.integrations.server_configured(),
+        a.broadcast().enabled,
+        &a.integrations.credential_scope(),
+    )
+    .await?;
+    Ok(resource("broadcast-capabilities", value))
 }
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Window {
-    start_time: i64,
-    end_time: i64,
-}
-async fn candidates(
-    State(a): State<Application>,
-    actor: Actor,
-    Query(w): Query<Window>,
-) -> Result<ApiResponse> {
-    let values = a
-        .broadcast()
-        .candidates(&actor, w.start_time, w.end_time)
-        .await?
-        .into_iter()
-        .filter_map(|mut v| {
-            let id = v["msgid"].as_str()?.to_owned();
-            v["id"] = id.into();
-            Some(v)
-        })
-        .collect::<Vec<_>>();
-    Ok(resource("broadcast-candidates", values))
-}
-
 async fn preview(
     State(a): State<Application>,
     actor: Actor,
@@ -241,33 +220,72 @@ async fn source_policy(
         json!({"updated":true}),
     ))
 }
-async fn resource_policy(
+async fn save_preview(
     State(a): State<Application>,
     actor: Actor,
+    Path(s): Path<Uuid>,
+    headers: HeaderMap,
     input: Input,
 ) -> Result<ApiResponse> {
-    let policy = input.decode::<crate::distribution::domain::resource_policy::ResourcePolicy>(
-        "distribution-resource-policies",
-    )?;
-    crate::distribution::north::local::governance::Service(a.pool.clone())
-        .resource_policy(&actor, policy)
-        .await?;
-    Ok(singleton(
-        "distribution-policy-updates",
-        "current",
-        json!({"updated":true}),
+    let mut v = input.decode::<serde_json::Value>("broadcast-task-previews")?;
+    let id = match v.as_object_mut().and_then(|v| v.remove("id")) {
+        None | Some(serde_json::Value::Null) => None,
+        Some(v) => Some(
+            v.as_str()
+                .and_then(|s| s.parse::<Uuid>().ok())
+                .ok_or_else(|| crate::business::Error::Invalid("草稿引用无效".into()))?,
+        ),
+    };
+    let input: DraftInput = serde_json::from_value(v)
+        .map_err(|_| crate::business::Error::Invalid("草稿字段无效".into()))?;
+    Ok(resource(
+        "broadcast-task-previews",
+        a.broadcast()
+            .save_preview(
+                &actor,
+                s,
+                id,
+                input,
+                headers
+                    .get("idempotency-key")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or(""),
+            )
+            .await?,
+    ))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EvidenceQuery {
+    batch_id: Uuid,
+}
+async fn evidence_candidates(
+    State(a): State<Application>,
+    actor: Actor,
+    Path((s, id)): Path<(Uuid, Uuid)>,
+    Query(q): Query<EvidenceQuery>,
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "broadcast-evidence-candidates",
+        a.broadcast()
+            .evidence_candidates(&actor, s, id, q.batch_id)
+            .await?,
     ))
 }
 pub fn router() -> Router<Application> {
     Router::new()
+        .route(
+            "/api/v1/schools/{school}/broadcast-task-previews",
+            axum::routing::post(save_preview),
+        )
+        .route(
+            "/api/v1/schools/{school}/broadcast-tasks/{id}/evidence-candidates",
+            get(evidence_candidates),
+        )
         .route("/api/v1/platform/distribution-policies", get(policies))
         .route(
             "/api/v1/platform/distribution-source-policies",
             axum::routing::post(source_policy),
-        )
-        .route(
-            "/api/v1/platform/distribution-resource-policies",
-            axum::routing::post(resource_policy),
         )
         .route(
             "/api/v1/schools/{school}/wecom-senders",
@@ -298,5 +316,4 @@ pub fn router() -> Router<Application> {
             "/api/v1/schools/{school}/broadcast-tasks/{id}/{operation}",
             get(rows).post(action),
         )
-        .route("/api/v1/platform/broadcast-candidates", get(candidates))
 }

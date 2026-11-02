@@ -13,7 +13,7 @@ impl Repository {
                 .fetch_all(&self.0)
                 .await?;
         let resources: Vec<serde_json::Value> = sqlx::query_scalar(
-            "SELECT to_jsonb(p) FROM distribution_resource_policies p ORDER BY resource_key",
+            "SELECT (to_jsonb(p)-'resource_key')||jsonb_build_object('member_id',m.id,'display_name',coalesce(m.name,'历史成员')) FROM distribution_resource_policies p LEFT JOIN wecom_directory_state d ON true LEFT JOIN wecom_members m ON 'wecom:'||d.corp_id||':'||m.userid_key=p.resource_key ORDER BY p.id",
         )
         .fetch_all(&self.0)
         .await?;

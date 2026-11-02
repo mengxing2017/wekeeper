@@ -11,8 +11,9 @@ pub enum Command {
         id: Option<Uuid>,
         input: DraftInput,
         materials: Vec<crate::distribution::domain::content::Material>,
-        corp: String,
-        generation: i64,
+        corp: Option<String>,
+        generation: Option<i64>,
+        preview_key: Option<String>,
     },
     Action {
         id: Uuid,
@@ -22,6 +23,48 @@ pub enum Command {
     },
 }
 pub trait Store: Clone + Send + Sync + 'static {
+    fn action_replay(
+        &self,
+        actor: &Actor,
+        school: Uuid,
+        task: Uuid,
+        operation: &str,
+        key: &str,
+        input: &Action,
+    ) -> impl Future<Output = Result<bool>> + Send;
+    fn delivery_ready(&self) -> impl Future<Output = Result<bool>> + Send;
+    fn preview_response(
+        &self,
+        actor: &Actor,
+        school: Uuid,
+        key: &str,
+        input_hash: &str,
+    ) -> impl Future<Output = Result<Option<Value>>> + Send;
+    fn evidence_query(
+        &self,
+        actor: &Actor,
+        school: Uuid,
+        task: Uuid,
+        batch: Uuid,
+    ) -> impl Future<Output = Result<bool>> + Send;
+    fn evidence_save(
+        &self,
+        actor: &Actor,
+        school: Uuid,
+        task: Uuid,
+        batch: Uuid,
+        msgid: &str,
+        summary: Value,
+    ) -> impl Future<Output = Result<Value>> + Send;
+    fn evidence(
+        &self,
+        actor: &Actor,
+        school: Uuid,
+        task: Uuid,
+        batch: Uuid,
+        id: Uuid,
+    ) -> impl Future<Output = Result<String>> + Send;
+
     fn draft_request(
         &self,
         actor: &Actor,

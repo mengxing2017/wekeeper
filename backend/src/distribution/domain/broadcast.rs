@@ -22,14 +22,13 @@ impl ContentSource {
     }
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DraftInput {
     #[serde(skip)]
     pub request_key: Option<String>,
     pub text_content: Option<String>,
     pub template_version_id: Option<Uuid>,
-    #[serde(default)]
     pub content_source: ContentSource,
     #[serde(default)]
     pub post_ids: Vec<Uuid>,
@@ -38,7 +37,6 @@ pub struct DraftInput {
     pub group_ids: Vec<Uuid>,
     pub revision: Option<i64>,
     pub source_task_id: Option<Uuid>,
-    pub source_draft_id: Option<Uuid>,
     #[serde(default)]
     pub reason: String,
 }
@@ -64,8 +62,7 @@ impl DraftInput {
                     !self.materials.is_empty()
                         && self.post_ids.is_empty()
                         && self.template_version_id.is_none()
-                        && self.text_content.is_none()
-                        && self.source_draft_id.is_none(),
+                        && self.text_content.is_none(),
                     "请选择独立来源素材，不可混入论坛模板或正文",
                 )?;
                 for reference in &self.materials {
@@ -90,16 +87,9 @@ impl DraftInput {
                     "直接文本不能关联帖子或模板",
                 )?;
                 normalize_text(self.text_content.as_deref().unwrap_or_default())?;
-                require(
-                    self.source_draft_id.is_none(),
-                    "历史分享草稿须按社区内容迁移",
-                )?;
             }
         }
-        require(
-            (1..=10000).contains(&self.group_ids.len()),
-            "请选择 1–10000 个客户群",
-        )?;
+        require(self.group_ids.len() <= 10000, "最多选择 10000 个客户群")?;
         for ids in [&self.post_ids, &self.group_ids] {
             require(
                 ids.iter().collect::<BTreeSet<_>>().len() == ids.len(),
@@ -122,6 +112,7 @@ pub struct Action {
     pub batch_id: Option<Uuid>,
     pub decision: Option<String>,
     pub msgid: Option<String>,
+    pub evidence_id: Option<Uuid>,
     #[serde(default)]
     pub reason: String,
 }
@@ -131,7 +122,6 @@ pub struct Task {
     pub school_id: Uuid,
     pub creator_id: Uuid,
     pub template_version_id: Option<Uuid>,
-    #[serde(default)]
     pub content_source: ContentSource,
     pub source_namespace: String,
     #[serde(default)]
@@ -149,8 +139,8 @@ pub struct Task {
     pub batch_count: i64,
     pub post_ids: Vec<Uuid>,
     pub source_task_id: Option<Uuid>,
-    pub source_draft_id: Option<Uuid>,
     pub resend_reason: String,
+    pub draft_input: DraftInput,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Target {
@@ -270,11 +260,30 @@ pub fn created_response(v: Value, chats: &[String]) -> Outcome {
         failed,
     }
 }
+pub fn action_hash(task: Uuid, input: &Action) -> String {
+    let mut canonical = input.clone();
+    if canonical.evidence_id.is_some() {
+        canonical.msgid = None;
+    }
+    crate::business::hash(&serde_json::json!({"task":task,"input":canonical}).to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn direct_text_validation_and_legacy_input() {
+    fn retired_draft_reference_and_implicit_source_are_rejected() {
+        let id = Uuid::new_v4();
+        assert!(
+            serde_json::from_value::<DraftInput>(
+                serde_json::json!({"template_version_id":id,"post_ids":[id],"group_ids":[id]})
+            )
+            .is_err()
+        );
+        assert!(serde_json::from_value::<DraftInput>(serde_json::json!({"content_source":"text","text_content":"notice","group_ids":[id],"source_draft_id":id})).is_err());
+    }
+    #[test]
+    fn direct_text_validation_and_explicit_source() {
         assert_eq!(
             normalize_text("通知\r\n第二行\r第三行\t链接").unwrap(),
             "通知\n第二行\n第三行\t链接"
@@ -285,8 +294,8 @@ mod tests {
             assert!(normalize_text(bad).is_err());
         }
         let id = Uuid::new_v4();
-        let legacy = serde_json::json!({"template_version_id":id,"post_ids":[id],"group_ids":[id]});
-        let input: DraftInput = serde_json::from_value(legacy).unwrap();
+        let posts = serde_json::json!({"content_source":"posts","template_version_id":id,"post_ids":[id],"group_ids":[id]});
+        let input: DraftInput = serde_json::from_value(posts).unwrap();
         assert_eq!(input.content_source, ContentSource::Posts);
         assert!(input.validate().is_ok());
         let direct =

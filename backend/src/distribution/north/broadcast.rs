@@ -73,7 +73,14 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
                 material.detail_url = format!("{}{}", self.origin, material.detail_url);
             }
         }
-        let (corp, generation) = self.client.generation().await?;
+        let scope = if self.management_available {
+            self.client.generation().await.ok()
+        } else {
+            None
+        };
+        let (corp, generation) = scope
+            .map(|(c, g)| (Some(c), Some(g)))
+            .unwrap_or((None, None));
         self.store
             .execute(
                 a,
@@ -84,9 +91,176 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
                     materials,
                     corp,
                     generation,
+                    preview_key: None,
                 },
             )
             .await
+    }
+    pub async fn save_preview(
+        &self,
+        a: &Actor,
+        s: Uuid,
+        id: Option<Uuid>,
+        mut input: DraftInput,
+        key: &str,
+    ) -> Result<Value> {
+        self.store.authorize(a.id, s, false).await?;
+        let key = text(key, 1, 128)?;
+        input.validate()?;
+        let input_hash =
+            crate::business::hash(&serde_json::json!({"id":id,"input":input}).to_string());
+        if let Some(prior) = self.store.preview_response(a, s, &key, &input_hash).await? {
+            return Ok(prior);
+        }
+        // Drafts are retained even while delivery is unavailable; no external write occurs here.
+        let references = if input.content_source == ContentSource::Posts {
+            self.store.source_references(s, &input.post_ids).await?
+        } else {
+            input.materials.clone()
+        };
+        let mut materials = self.sources.read(a, s, &references).await?;
+        for m in &mut materials {
+            if m.detail_url.starts_with('/') {
+                m.detail_url = format!("{}{}", self.origin, m.detail_url);
+            }
+        }
+        let ready = self.enabled && self.store.delivery_ready().await?;
+        let scope = if ready {
+            self.client.generation().await.ok()
+        } else {
+            None
+        };
+        let (corp, generation) = scope
+            .map(|(c, g)| (Some(c), Some(g)))
+            .unwrap_or((None, None));
+        if id.is_none() {
+            input.request_key = Some(key.clone());
+        }
+        let command = Command::Save {
+            id,
+            input,
+            materials,
+            corp,
+            generation,
+            preview_key: Some(format!("{key}:{input_hash}")),
+        };
+        if let Err(error) = self.store.execute(a, s, command.clone()).await {
+            // A failed resolution/preview transaction is rolled back. Retain the valid business
+            // content and school-owned target references without inventing a sender or batch.
+            if generation.is_none() {
+                return Err(error);
+            }
+            if !matches!(
+                error,
+                Error::Invalid(_) | Error::Conflict | Error::Unavailable | Error::NotFound
+            ) {
+                return Err(error);
+            }
+            if let Command::Save {
+                id,
+                input,
+                materials,
+                preview_key,
+                ..
+            } = command
+            {
+                self.store
+                    .execute(
+                        a,
+                        s,
+                        Command::Save {
+                            id,
+                            input,
+                            materials,
+                            corp: None,
+                            generation: None,
+                            preview_key,
+                        },
+                    )
+                    .await?;
+            }
+        }
+        self.store
+            .preview_response(a, s, &key, &input_hash)
+            .await?
+            .ok_or(Error::Conflict)
+    }
+    pub async fn evidence_candidates(
+        &self,
+        a: &Actor,
+        s: Uuid,
+        id: Uuid,
+        batch: Uuid,
+    ) -> Result<Value> {
+        self.store.authorize(a.id, s, true).await?;
+        let task = self.store.task(s, id).await?;
+        let w = self
+            .store
+            .work(Some(id))
+            .await?
+            .into_iter()
+            .find(|w| w.id == batch)
+            .ok_or(Error::NotFound)?;
+        let start = chrono::DateTime::parse_from_rfc3339(&task.created_at)
+            .map_err(|_| Error::Conflict)?
+            .timestamp()
+            - 300;
+        let end = chrono::Utc::now().timestamp();
+        if end - start > 28 * 86400 {
+            return Ok(
+                serde_json::json!({"id":batch,"items":[],"reason":"已超出可查询时间，请移交负责人；未查到不能证明未发送"}),
+            );
+        }
+        if !self.store.evidence_query(a, s, id, batch).await? {
+            return Ok(
+                serde_json::json!({"id":batch,"items":[],"reason":"刚刚查询过，请稍后再核对；当前状态仍保留不确定"}),
+            );
+        }
+        let candidates = match self.client.candidates(start, end).await {
+            Ok(v) => v,
+            Err(_) => {
+                return Ok(
+                    serde_json::json!({"id":batch,"items":[],"reason":"暂时无法取得官方证据，请移交负责人或稍后重试"}),
+                );
+            }
+        };
+        let mut items = Vec::new();
+        for v in candidates
+            .into_iter()
+            .filter(|v| v["text"]["content"].as_str() == Some(&task.content))
+            .take(100)
+        {
+            let Some(msgid) = v["msgid"].as_str() else {
+                continue;
+            };
+            let mut read = w.clone();
+            read.msgid = Some(msgid.into());
+            read.operation = "read".into();
+            // The adapter rejects any member or target outside the frozen batch.
+            let Ok(results) = self.client.results(&read).await else {
+                continue;
+            };
+            if results.member_status.is_none()
+                || results.groups.len() != w.chats.len()
+                || !w
+                    .chats
+                    .iter()
+                    .all(|chat| results.groups.iter().any(|g| &g.chat_id == chat))
+            {
+                continue;
+            }
+            let summary = serde_json::json!({"content":task.content,"sender":w.sender,"target_count":w.chats.len(),"created_at":v["create_time"],"member_status":results.member_status});
+            if let Ok(candidate) = self
+                .store
+                .evidence_save(a, s, id, batch, msgid, summary)
+                .await
+            {
+                items.push(candidate);
+            }
+        }
+        Ok(
+            serde_json::json!({"id":batch,"items":items,"reason":"仅列出目标及成员证据完整且属于本校的候选。候选不代表已发送；没有候选可移交负责人。"}),
+        )
     }
     pub async fn preview(
         &self,
@@ -95,7 +269,17 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
         id: Uuid,
     ) -> Result<crate::distribution::domain::content::Preview> {
         self.store.authorize(a.id, s, false).await?;
-        let task = self.store.task(s, id).await?;
+        require(
+            self.enabled && self.store.delivery_ready().await?,
+            "官方渠道等待平台完成交付，可保留草稿",
+        )?;
+        let mut task = self.store.task(s, id).await?;
+        if task.total == 0 {
+            let mut input = task.draft_input.clone();
+            input.revision = Some(task.revision);
+            input.request_key = None;
+            task = self.save(a, s, Some(id), input).await?;
+        }
         self.sources.check(s, &task.materials).await?;
         self.store.preview(a, s, id).await
     }
@@ -106,7 +290,7 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
         id: Uuid,
         operation: &str,
         key: &str,
-        input: Action,
+        mut input: Action,
     ) -> Result<Task> {
         self.store
             .authorize(a.id, s, matches!(operation, "stop" | "reconcile"))
@@ -114,22 +298,43 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
         let key = text(key, 1, 128)?;
         require(!key.starts_with("child:"), "幂等键前缀保留")?;
         let task = self.store.task(s, id).await?;
+        if self
+            .store
+            .action_replay(a, s, id, operation, &key, &input)
+            .await?
+        {
+            return Ok(task);
+        }
         if operation == "confirm"
             && task.content_source == crate::distribution::domain::broadcast::ContentSource::Text
         {
             self.store.authorize(a.id, s, true).await?;
         }
         if matches!(operation, "confirm" | "remind") {
-            require(
-                self.enabled,
-                "企业群发尚未启用；请核验权限及成员终端版本后启用",
-            )?;
+            require(self.enabled, "官方渠道尚未开放新发送，请查看开通申请进度")?;
         }
         if operation == "stop" {
             require(
                 self.management_available,
                 "群发管理需要有效企业微信服务端凭据",
             )?;
+        }
+        if operation == "confirm" {
+            require(
+                self.store.delivery_ready().await?,
+                "官方渠道待交付负责人检查，尚不能创建发送任务",
+            )?;
+        }
+        if operation == "reconcile" && input.decision.as_deref() == Some("linked") {
+            require(input.msgid.is_none(), "请从本校证据候选中选择核对记录")?;
+            let evidence = input
+                .evidence_id
+                .ok_or_else(|| Error::Invalid("请选择本校证据候选".into()))?;
+            input.msgid = Some(
+                self.store
+                    .evidence(a, s, id, input.batch_id.ok_or(Error::Conflict)?, evidence)
+                    .await?,
+            );
         }
         if operation == "confirm" && task.state == "draft" {
             self.sources.check(s, &task.materials).await?;
@@ -163,9 +368,14 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
                 }),
                 "官方任务内容与冻结正文不匹配",
             )?;
+            let results = self.client.results(&w).await?;
             require(
-                self.client.results(&w).await?.member_status.is_some(),
-                "未取得指定执行成员的任务证据",
+                results.member_status.is_some()
+                    && results.groups.len() == w.chats.len()
+                    && w.chats
+                        .iter()
+                        .all(|chat| results.groups.iter().any(|g| &g.chat_id == chat)),
+                "未取得本校完整成员和目标证据，请移交负责人",
             )?;
         }
         self.store
@@ -253,13 +463,9 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
 }
 fn unavailable_reason(configured: bool, enabled: bool) -> Option<&'static str> {
     if !configured {
-        Some(
-            "未配置企业微信服务端凭据，无法提交群发。请在 API 配置 WEKEEPER_WECOM_CORP_ID 和 WEKEEPER_WECOM_SECRET 后重启服务。",
-        )
+        Some("官方渠道待平台交付，可保存草稿并提交开通申请。")
     } else if !enabled {
-        Some(
-            "企业微信群发开关未开启。核验应用群发权限和执行成员后，将 API 的 WEKEEPER_WECOM_BROADCAST_ENABLED 设为 true 并重启服务，再刷新本页。",
-        )
+        Some("官方渠道暂停新发送，请查看平台处理进度。")
     } else {
         None
     }
@@ -293,11 +499,15 @@ mod availability_tests {
     use super::unavailable_reason;
     #[test]
     fn server_credentials_and_explicit_switch_control_broadcast() {
-        assert!(unavailable_reason(false, true).unwrap().contains("凭据"));
+        assert!(
+            unavailable_reason(false, true)
+                .unwrap()
+                .contains("待平台交付")
+        );
         assert!(
             unavailable_reason(true, false)
                 .unwrap()
-                .contains("WEKEEPER_WECOM_BROADCAST_ENABLED")
+                .contains("暂停新发送")
         );
         assert!(unavailable_reason(true, true).is_none());
     }
