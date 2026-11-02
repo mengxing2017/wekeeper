@@ -70,12 +70,6 @@
       }
     },
     {
-      "path": "pages/user/myattentions",
-      "style": {
-        "navigationBarTitleText": "我的关注"
-      }
-    },
-    {
       "path": "pages/user/tag",
       "style": {
         "navigationBarTitleText": "校园标签"
