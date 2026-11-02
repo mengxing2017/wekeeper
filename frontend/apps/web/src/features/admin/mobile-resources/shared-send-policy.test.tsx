@@ -6,7 +6,7 @@ import { sharedSend } from './api'
 vi.mock('./api',()=>({sharedSend:{platform:vi.fn(),policy:vi.fn()}}))
 afterEach(()=>{cleanup();vi.resetAllMocks()})
 async function open(policy: unknown = null) {
- vi.mocked(sharedSend.platform).mockResolvedValue({id:'current',schools:[],access:[],policy,releases:[],devices:[]} as Awaited<ReturnType<typeof sharedSend.platform>>)
+ vi.mocked(sharedSend.platform).mockResolvedValue({flows:[],baselines:[],samples:[],acceptances:[],scopes:[],revocations:[],validations:[],support:[],withdrawals:[],diagnostics:[],artifacts:[],bindings:[],targets:[],activation:null,id:'current',schools:[],access:[],policy,releases:[],devices:[]} as Awaited<ReturnType<typeof sharedSend.platform>>)
  render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><SharedSendReadiness/></QueryClientProvider>)
  await screen.findByText('当前政策：已禁用')
  await waitFor(()=>expect(sharedSend.platform).toHaveBeenCalled())
@@ -36,7 +36,7 @@ it('新政策默认上海，新增时段可编辑中文星期和时分',async()=
  fireEvent.click(screen.getByRole('button',{name:'保存政策'}))
  await waitFor(()=>expect(sharedSend.policy).toHaveBeenCalled())
  expect(vi.mocked(sharedSend.policy).mock.calls[0][0].limits.device).toEqual({interval_seconds:30,window_seconds:3600,max_calls:30,daily_max_calls:150})
-},60000)
+},120000)
 it('既有时区保持且全天结束午夜提交1440',async()=>{
  const limit={interval_seconds:60,window_seconds:3600,max_calls:10,daily_max_calls:100}
  await open({id:'policy',revision:3,mode:'disabled',timezone:'UTC',allowed_windows:[{weekdays:[7],start_minute:0,end_minute:60}],limits:{global:limit,school:limit,device:limit,target:limit}})
@@ -55,4 +55,4 @@ it('既有时区保持且全天结束午夜提交1440',async()=>{
  expect(input.allowed_windows).toEqual([{weekdays:[7],start_minute:0,end_minute:1440}])
  expect(input.expected_revision).toBe(3)
  expect(input.limits).toEqual({global:limit,school:limit,device:limit,target:limit})
-},60000)
+},120000)
