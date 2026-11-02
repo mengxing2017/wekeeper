@@ -28,14 +28,14 @@ async fn permission(tx: &mut Tx<'_>, a: &Actor, s: Option<Uuid>, admin: bool) ->
 fn scheme(p: &Value) -> Value {
     json!({"id":p["id"],"limits":p["limits"],"timezone":p["timezone"],"allowed_windows":p["allowed_windows"],"daily_max_calls":p["limits"]["school"]["daily_max_calls"],"interval_seconds":p["limits"]["target"]["interval_seconds"]})
 }
-fn same_scheme(a: &Value, b: &Value) -> bool {
+fn same_resource_scope(a: &Value, b: &Value) -> bool {
     let mut a = a.clone();
     let mut b = b.clone();
-    if let Some(v) = a.as_object_mut() {
-        v.remove("id");
-    }
-    if let Some(v) = b.as_object_mut() {
-        v.remove("id");
+    for v in [&mut a, &mut b] {
+        if let Some(o) = v.as_object_mut() {
+            o.remove("scheme");
+            o.remove("scheme_id");
+        }
     }
     a == b
 }
@@ -77,7 +77,7 @@ fn covers(parent: &Value, input: &Value) -> bool {
                 .as_array()
                 .is_some_and(|original| original.contains(d))
         })
-    }) && same_scheme(&parent["scheme"], &input["scheme"]);
+    });
     unchanged
         && parent["device_ids"]
             .as_array()
@@ -156,7 +156,7 @@ async fn detail(tx: &mut Tx<'_>, s: Option<Uuid>, id: Option<Uuid>) -> Result<Va
             .as_array()
             .map(|ts| ts.iter().map(|t| t["id"].clone()).collect::<Vec<_>>())
             .unwrap_or_default();
-        row["readiness"]=json!(states.iter().filter(|v|devices.contains(&v["device_id"])&&(row["body"]["auto_targets"]==true||targets.contains(&v["target_id"]))).map(|v|json!({"device_name":v["device_name"],"target_name":v["target_name"],"state":v["state"],"ready":v["ready"],"messages":v["blockers"].as_array().unwrap().iter().map(|b|b["message"].clone()).collect::<Vec<_>>()})).collect::<Vec<_>>());
+        row["readiness"]=json!(states.iter().filter(|v|devices.contains(&v["device_id"])&&(row["body"]["auto_targets"]==true||targets.contains(&v["target_id"]))).map(|v|json!({"device_name":v["device_name"],"target_name":v["target_name"],"state":v["state"],"ready":v["ready"],"messages":v["blockers"].as_array().unwrap().iter().chain(v["execution_conditions"].as_array().unwrap().iter()).map(|b|b["message"].clone()).collect::<Vec<_>>()})).collect::<Vec<_>>());
     }
     Ok(json!({"id":"usages","items":rows}))
 }
@@ -229,7 +229,7 @@ impl Repository {
                 let mut b = p["body"].clone();
                 let input = selection_input(&b)?;
                 require(
-                    valid_selection(&mut tx, a, s, &input).await? == b,
+                    same_resource_scope(&valid_selection(&mut tx, a, s, &input).await?, &b),
                     "范围或使用方案已变化，请重新核对",
                 )?;
                 for t in b["targets"].as_array_mut().unwrap() {
@@ -299,7 +299,10 @@ impl Repository {
                     "approve" => {
                         let input = selection_input(&old["body"])?;
                         require(
-                            valid_selection(&mut tx, a, s, &input).await? == old["body"],
+                            same_resource_scope(
+                                &valid_selection(&mut tx, a, s, &input).await?,
+                                &old["body"],
+                            ),
                             "申请范围或方案已变化，请重新核对后申请",
                         )?;
                         require(
@@ -443,24 +446,6 @@ pub(super) async fn reconcile(tx: &mut Tx<'_>) -> Result<()> {
         let s = uid(&u, "school_id")?;
         let b = &u["body"];
         let mut reason = "";
-        let p = policy(tx).await?;
-        if reason.is_empty()
-            && p.as_ref().is_none_or(|p| {
-                p["mode"] != "enabled"
-                    || !p["allowed_stages"]
-                        .as_array()
-                        .is_some_and(|st| st.contains(&json!("production_allowlist")))
-            })
-        {
-            reason = "等待平台启用使用方案";
-        }
-        if reason.is_empty()
-            && (b["scheme"].is_null()
-                || p.as_ref()
-                    .is_some_and(|p| !same_scheme(&b["scheme"], &scheme(p))))
-        {
-            reason = "使用方案已提供或变化，请重新核对后申请";
-        }
         if reason.is_empty() {
             let devices: Vec<Uuid> =
                 serde_json::from_value(b["device_ids"].clone()).map_err(|_| Error::Conflict)?;

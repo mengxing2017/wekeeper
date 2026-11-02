@@ -159,7 +159,7 @@ pub struct SendingStatus {
 impl SendingStatus {
     pub fn project(mode: Option<&str>, production: bool) -> Self {
         let platform = match mode {
-            None => "unconfigured",
+            None => "default",
             Some("enabled") if !production => "unsupported",
             Some("enabled") => "enabled",
             Some("preview_only") => "preview_only",
@@ -168,15 +168,15 @@ impl SendingStatus {
         };
         let (owner, message) = match platform {
             "enabled" => ("school", "平台已开放发送；手机就绪和自动群检查通过后执行"),
-            "unconfigured" => ("platform", "请平台管理员配置手机发送业务方案"),
-            "preview_only" => ("platform", "平台仅开放预览，请平台管理员启用发送"),
-            "draft_only" => ("platform", "平台仅开放内容准备，请平台管理员启用发送"),
-            "unsupported" => ("platform", "请平台管理员重新保存手机发送业务方案"),
-            _ => ("platform", "平台已暂停发送，可继续保存内容"),
+            "default" => ("school", "使用系统默认发送设置，可正常提交任务"),
+            "preview_only" => ("platform", "任务可以提交，实际执行等待平台恢复发送"),
+            "draft_only" => ("platform", "任务可以提交，实际执行等待平台恢复发送"),
+            "unsupported" => ("platform", "任务可以提交，实际执行等待发送设置更新"),
+            _ => ("platform", "平台已暂停实际执行，任务仍可提交排队"),
         };
         Self {
             platform: platform.into(),
-            can_confirm: platform == "enabled",
+            can_confirm: true,
             owner: owner.into(),
             message: message.into(),
         }
@@ -195,8 +195,8 @@ mod policy_tests {
             Some("preview_only"),
         ] {
             let s = SendingStatus::project(mode, true);
-            assert!(!s.can_confirm);
-            assert_eq!(s.owner, "platform");
+            assert!(s.can_confirm);
+            assert_eq!(s.owner, if mode.is_none() { "school" } else { "platform" });
         }
         assert_eq!(
             SendingStatus::project(Some("enabled"), false).platform,

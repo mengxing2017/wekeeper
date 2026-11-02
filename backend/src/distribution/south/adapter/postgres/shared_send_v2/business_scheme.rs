@@ -4,7 +4,9 @@ use crate::distribution::domain::mobile_execution::usage::SendingStatus;
 pub(super) async fn status(tx: &mut Tx<'_>) -> Result<SendingStatus> {
     let p = policy(tx).await?;
     Ok(SendingStatus::project(
-        p.as_ref().and_then(|p| p["mode"].as_str()),
+        p.as_ref()
+            .filter(|p| !p["id"].is_null())
+            .and_then(|p| p["mode"].as_str()),
         p.as_ref().is_some_and(|p| {
             p["allowed_stages"]
                 .as_array()
@@ -31,12 +33,14 @@ pub(super) async fn save(tx: &mut Tx<'_>, a: &Actor, v: PolicyInput) -> Result<V
 }
 
 pub(super) async fn ensure_open(tx: &mut Tx<'_>) -> Result<()> {
-    let s = status(tx).await?;
-    let code = match s.platform.as_str() {
-        "unconfigured" => "shared_send_scheme_missing",
-        "preview_only" | "draft_only" => "shared_send_preparation_only",
-        "unsupported" => "shared_send_scheme_unsupported",
-        _ => "shared_send_platform_closed",
-    };
-    require(s.can_confirm, code)
+    let p = policy(tx)
+        .await?
+        .ok_or(Error::Policy("shared_send_policy_invalid"))?;
+    require(
+        p["mode"] == "enabled"
+            && p["allowed_stages"]
+                .as_array()
+                .is_some_and(|s| s.contains(&json!("production_allowlist"))),
+        "shared_send_platform_closed",
+    )
 }

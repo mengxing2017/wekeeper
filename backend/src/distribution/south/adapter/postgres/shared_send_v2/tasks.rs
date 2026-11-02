@@ -6,7 +6,7 @@ pub(super) async fn raw_candidates(tx: &mut Tx<'_>, s: Uuid, target: Uuid) -> Re
  'target_locator_revision',CASE WHEN b.search_text_override IS NULL THEN t.locator_revision ELSE NULL END,
  'search_text',coalesce(b.search_text_override,t.search_text),'search_source',CASE WHEN b.search_text_override IS NULL THEN 'default' ELSE 'override' END,
  'access_revision',CASE WHEN b.source='school_pool' THEN (SELECT revision FROM mobile_shared_school_access WHERE school_id=b.school_id AND device_id=b.device_id) ELSE NULL END,
- 'credential_generation',d.credential_generation,'delegation_id',m.id,'accepted',coalesce(c.accepted,false),
+ 'credential_generation',d.credential_generation,'delegation_id',m.id,'accepted',coalesce(c.accepted,false),'consent_state',CASE WHEN c.accepted IS NULL THEN 'unknown' WHEN c.accepted THEN 'accepted' ELSE 'revoked' END,
  'release_id',r.id,'flow_digest',r.content_digest,'flow',r.flow)
  FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id AND t.school_id=b.school_id
  JOIN schools s ON s.id=t.school_id AND s.active JOIN execution_devices d ON d.id=b.device_id
@@ -44,7 +44,7 @@ pub(super) async fn grant(
     row: &Value,
     stage: &str,
 ) -> Result<Option<Value>> {
-    sqlx::query_scalar("SELECT to_jsonb(g) FROM mobile_v9_scope_grants g WHERE g.school_id=$1 AND $2=ANY(g.device_ids) AND ($3=ANY(g.target_ids) OR g.auto_targets) AND (g.release_id IS NULL OR g.release_id=$4) AND g.stage=$5 AND ($6::uuid IS NULL OR g.id=$6) AND g.expires_at>clock_timestamp() AND (g.stage<>'production_allowlist' OR EXISTS(SELECT 1 FROM mobile_usage_scopes us JOIN mobile_usages u ON u.id=us.usage_id WHERE us.scope_id=g.id AND u.approval='approved' AND u.state='active' AND u.expires_at>clock_timestamp() AND EXISTS(SELECT 1 FROM mobile_v9_send_policy_versions bp WHERE bp.id=(SELECT id FROM mobile_v9_send_policy_versions ORDER BY revision DESC LIMIT 1) AND (u.body->'scheme')-'id'=jsonb_build_object('limits',bp.limits,'timezone',bp.timezone,'allowed_windows',bp.allowed_windows,'daily_max_calls',bp.limits->'school'->'daily_max_calls','interval_seconds',bp.limits->'target'->'interval_seconds')) AND EXISTS(SELECT 1 FROM execution_devices ud JOIN mobile_device_target_bindings ub ON ub.device_id=ud.id JOIN mobile_targets ut ON ut.id=ub.target_id WHERE ud.id=$2 AND ut.id=$3 AND ub.school_id=$1 AND us.resource_snapshot=jsonb_build_object('device_revision',ud.revision,'binding_locator_revision',ub.locator_revision,'target_locator_revision',CASE WHEN ub.search_text_override IS NULL THEN ut.locator_revision ELSE NULL END,'search_text',coalesce(ub.search_text_override,ut.search_text))))) AND NOT EXISTS(SELECT 1 FROM mobile_v9_scope_revocations r WHERE r.grant_id=g.id) AND (NOT (g.resource_revisions ? $2::uuid::text) OR (g.resource_revisions->>$2::uuid::text)::bigint=coalesce((SELECT revision FROM mobile_shared_school_access WHERE device_id=$2 AND school_id=$1 AND enabled),0)) ORDER BY g.created_at DESC,g.id DESC LIMIT 1")
+    sqlx::query_scalar("SELECT to_jsonb(g) FROM mobile_v9_scope_grants g WHERE g.school_id=$1 AND $2=ANY(g.device_ids) AND ($3=ANY(g.target_ids) OR g.auto_targets) AND (g.release_id IS NULL OR g.release_id=$4) AND g.stage=$5 AND ($6::uuid IS NULL OR g.id=$6) AND g.expires_at>clock_timestamp() AND (g.stage<>'production_allowlist' OR EXISTS(SELECT 1 FROM mobile_usage_scopes us JOIN mobile_usages u ON u.id=us.usage_id WHERE us.scope_id=g.id AND u.approval='approved' AND u.state='active' AND u.expires_at>clock_timestamp() AND EXISTS(SELECT 1 FROM execution_devices ud JOIN mobile_device_target_bindings ub ON ub.device_id=ud.id JOIN mobile_targets ut ON ut.id=ub.target_id WHERE ud.id=$2 AND ut.id=$3 AND ub.school_id=$1 AND us.resource_snapshot=jsonb_build_object('device_revision',ud.revision,'binding_locator_revision',ub.locator_revision,'target_locator_revision',CASE WHEN ub.search_text_override IS NULL THEN ut.locator_revision ELSE NULL END,'search_text',coalesce(ub.search_text_override,ut.search_text))))) AND NOT EXISTS(SELECT 1 FROM mobile_v9_scope_revocations r WHERE r.grant_id=g.id) AND (NOT (g.resource_revisions ? $2::uuid::text) OR (g.resource_revisions->>$2::uuid::text)::bigint=coalesce((SELECT revision FROM mobile_shared_school_access WHERE device_id=$2 AND school_id=$1 AND enabled),0)) ORDER BY g.created_at DESC,g.id DESC LIMIT 1")
     .bind(s).bind(uid(row,"device_id")?).bind(uid(row,"target_id")?).bind(row["release_id"].as_str().and_then(|v|v.parse::<Uuid>().ok())).bind(stage).bind(row.get("scope_id").map(|_|uid(row,"scope_id")).transpose()?).fetch_optional(&mut **tx).await.map_err(Into::into)
 }
 /// A business task can be delivered even when this product build lacks its UI rules.
@@ -53,25 +53,8 @@ pub(super) fn missing_rules(plan: &Value) -> bool {
         .iter()
         .all(|k| plan.get(*k).is_some_and(Value::is_null))
 }
-pub(super) async fn validate_plan(tx: &mut Tx<'_>, s: Uuid, plan: &Value) -> Result<()> {
-    if plan["stage"] == "production_allowlist" {
-        business_scheme::ensure_open(tx).await?;
-    }
-
-    let choices = raw_candidates(tx, s, uid(plan, "target_id")?).await?;
-    let frozen = plan.get("attempt_id").is_some();
-    require(
-        choices.iter().any(|c| {
-            let mut current = c.clone();
-            if frozen {
-                current["release_id"] = plan["release_id"].clone();
-                current["flow_digest"] = plan["flow_digest"].clone();
-            }
-            dependencies(&current) == dependencies(plan)
-        }),
-        "plan_dependency_changed",
-    )?;
-    if frozen && !missing_rules(plan) {
+pub(super) async fn validate_execution_rules(tx: &mut Tx<'_>, plan: &Value) -> Result<()> {
+    if !missing_rules(plan) {
         let release:Option<Value>=sqlx::query_scalar("SELECT jsonb_build_object('flow',r.flow,'digest',r.content_digest) FROM mobile_v9_adapter_releases r WHERE r.id=$1 AND NOT EXISTS(SELECT 1 FROM mobile_v9_adapter_withdrawals w WHERE w.release_id=r.id)").bind(uid(plan,"release_id")?).fetch_optional(&mut **tx).await?;
         require(
             release
@@ -89,19 +72,25 @@ pub(super) async fn validate_plan(tx: &mut Tx<'_>, s: Uuid, plan: &Value) -> Res
             "plan_dependency_changed",
         )?;
     }
-    let p = policy(tx)
-        .await?
-        .ok_or(Error::Policy("shared_send_not_released"))?;
+    Ok(())
+}
+pub(super) async fn validate_plan(tx: &mut Tx<'_>, s: Uuid, plan: &Value) -> Result<()> {
+    let choices = raw_candidates(tx, s, uid(plan, "target_id")?).await?;
+    let frozen = plan.get("attempt_id").is_some();
+    require(
+        choices.iter().any(|c| {
+            let mut current = c.clone();
+            if frozen {
+                current["release_id"] = plan["release_id"].clone();
+                current["flow_digest"] = plan["flow_digest"].clone();
+            }
+            dependencies(&current) == dependencies(plan)
+        }),
+        "plan_dependency_changed",
+    )?;
     let stage = plan["stage"]
         .as_str()
         .ok_or(Error::Policy("shared_send_stage_invalid"))?;
-    require(
-        p["mode"] == "enabled"
-            && p["allowed_stages"]
-                .as_array()
-                .is_some_and(|a| a.contains(&json!(stage))),
-        "shared_send_not_released",
-    )?;
     let g = grant(tx, s, plan, stage)
         .await?
         .ok_or(Error::Policy("shared_send_scope_not_accepted"))?;
@@ -240,7 +229,7 @@ pub(super) async fn write(
             let id = Uuid::now_v7();
             let plan = json!({"schema":SCHEMA,"school_id":s,"intent_id":d["intent_id"],"draft_id":input.draft_id,"draft_revision":input.expected_revision,"stage":d["stage"],"between_targets_seconds":d["between_targets_seconds"],"message":d["message"],"content_digest":d["content_digest"],"items":items,"policy_id":p.as_ref().map(|p|&p["id"]),"sending_status":sending_status});
             let h = digest(&plan)?;
-            sqlx::query("INSERT INTO mobile_v9_previews(id,school_id,draft_id,draft_revision,plan,digest,policy_id) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(id).bind(s).bind(input.draft_id).bind(input.expected_revision).bind(&plan).bind(&h).bind(p.as_ref().map(|p|uid(p,"id")).transpose()?).execute(&mut **tx).await?;
+            sqlx::query("INSERT INTO mobile_v9_previews(id,school_id,draft_id,draft_revision,plan,digest,policy_id) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(id).bind(s).bind(input.draft_id).bind(input.expected_revision).bind(&plan).bind(&h).bind(p.as_ref().map(policy_id).transpose()?.flatten()).execute(&mut **tx).await?;
             Ok(
                 sqlx::query_scalar("SELECT to_jsonb(p) FROM mobile_v9_previews p WHERE id=$1")
                     .bind(id)
@@ -263,13 +252,9 @@ pub(super) async fn write(
             }
             let p:Value=sqlx::query_scalar("SELECT to_jsonb(p) FROM mobile_v9_previews p JOIN mobile_v9_task_drafts d ON d.id=p.draft_id AND d.revision=p.draft_revision WHERE p.school_id=$1 AND p.id=$2 AND p.expires_at>clock_timestamp() AND p.digest=$3 FOR UPDATE OF d").bind(s).bind(input.preview_id).bind(input.preview_digest).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("preview_expired"))?;
             let plan = &p["plan"];
-            if plan["stage"] == "production_allowlist" {
-                business_scheme::ensure_open(tx).await?;
-            }
             let current = policy(tx)
                 .await?
                 .ok_or(Error::Policy("shared_send_not_released"))?;
-            require(current["id"] == p["policy_id"], "plan_dependency_changed")?;
             let items = plan["items"].as_array().ok_or(Error::Conflict)?;
             for item in items {
                 validate_plan(tx, s, &item["selected"]).await?;

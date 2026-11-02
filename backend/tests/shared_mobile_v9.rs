@@ -318,7 +318,7 @@ async fn business_usage_is_atomic_scoped_idempotent_and_survives_delivery_change
         .await
         .unwrap();
     assert_eq!(approved["items"][0]["approval"], "approved");
-    assert_eq!(approved["items"][0]["delivery"], "waiting");
+    assert_eq!(approved["items"][0]["delivery"], "available");
     assert_eq!(
         r.usage_write(&f.actor, f.school, "usage-confirm", confirm.clone())
             .await
@@ -624,7 +624,7 @@ async fn business_configuration_does_not_require_technical_delivery() {
         .await
         .unwrap();
     assert!(options["sending_status"].get("delivery").is_none());
-    assert_eq!(options["sending_status"]["platform"], "unconfigured");
+    assert_eq!(options["sending_status"]["platform"], "default");
     let result = r
         .usage_write(
             &f.actor,
@@ -644,7 +644,7 @@ async fn business_configuration_does_not_require_technical_delivery() {
     assert!(!result["draft"]["id"].is_null());
     assert_eq!(
         result["preview"]["plan"]["sending_status"]["can_confirm"],
-        false
+        true
     );
     assert!(!result["preview"]["plan"]["items"][0]["blocker"].is_null());
     let mut input: BusinessSchemeInput = serde_json::from_str(include_str!(
@@ -685,18 +685,15 @@ async fn approved_business_resources_exist_without_any_adapter_or_delivery_recor
     use wekeeper_api::distribution::domain::mobile_execution::usage::*;
     let f = Fixture::with_adapter(false).await;
     let r = f.repo();
-    let mut scheme: BusinessSchemeInput = serde_json::from_str(include_str!(
-        "../../api-contract/fixtures/mobile-business-scheme.json"
-    ))
-    .unwrap();
-    scheme.enabled = true;
-    r.platform_write(
-        &f.actor,
-        "enable-business-only",
-        PlatformCommand::Policy(scheme.policy().unwrap()),
-    )
-    .await
-    .unwrap();
+    // No policy row, activation, acceptance or runtime is seeded. Default business
+    // settings must be sufficient for authorization, preview and confirmation.
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_v9_send_policy_versions")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        0
+    );
     let input = UsageInput {
         device_ids: vec![f.device],
         targets: vec![UsageTarget {
@@ -776,6 +773,19 @@ async fn approved_business_resources_exist_without_any_adapter_or_delivery_recor
         .unwrap(),
         1
     );
+    let mut stopped: BusinessSchemeInput = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/mobile-business-scheme.json"
+    ))
+    .unwrap();
+    stopped.enabled = false;
+    r.platform_write(
+        &f.actor,
+        "pause-execution-only",
+        PlatformCommand::Policy(stopped.policy().unwrap()),
+    )
+    .await
+    .unwrap();
+    r.reconcile_usages().await.unwrap();
     let options = r
         .usage_read(&f.actor, Some(f.school), None, true)
         .await

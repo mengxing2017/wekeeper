@@ -2,7 +2,7 @@
 use super::*;
 pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> {
     let policy = policy(tx).await?;
-    let rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(b)||jsonb_build_object('device_name',d.name,'target_name',coalesce(nullif(t.alias,''),t.search_text),'search_text',coalesce(b.search_text_override,t.search_text),'online',coalesce(cp.state='online' AND cp.last_control_heartbeat_at>clock_timestamp()-interval '30 seconds',false),'ui_ready',coalesce(rt.ui_ready AND NOT rt.paused AND rt.credential_generation=d.credential_generation AND rt.observed_at>clock_timestamp()-interval '30 seconds' AND NOT cp.desired_paused,false),'context_epoch',rd.ui_context_epoch) FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id JOIN execution_devices d ON d.id=b.device_id LEFT JOIN device_control_presence cp ON cp.id=d.id LEFT JOIN mobile_shared_runtime rt ON rt.device_id=d.id LEFT JOIN mobile_v9_runtime_details rd ON rd.device_id=d.id WHERE b.school_id=$1 ORDER BY d.name,b.id").bind(school).fetch_all(&mut **tx).await?;
+    let rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(b)||jsonb_build_object('device_name',d.name,'target_name',coalesce(nullif(t.alias,''),t.search_text),'search_text',coalesce(b.search_text_override,t.search_text),'online',coalesce(cp.state='online' AND cp.last_control_heartbeat_at>clock_timestamp()-interval '30 seconds',false),'ui_ready',coalesce(rt.ui_ready AND NOT rt.paused AND rt.credential_generation=d.credential_generation AND rt.observed_at>clock_timestamp()-interval '30 seconds' AND NOT cp.desired_paused,false),'context_epoch',rd.ui_context_epoch,'runtime_observed_at',rt.observed_at,'runtime_fresh',coalesce(rt.credential_generation=d.credential_generation AND rd.credential_generation=d.credential_generation AND rt.observed_at>clock_timestamp()-interval '30 seconds' AND rd.observed_at>clock_timestamp()-interval '30 seconds',false),'runtime_conditions',rd.conditions,'paused',coalesce(rt.paused,false) OR coalesce(cp.desired_paused,false)) FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id JOIN execution_devices d ON d.id=b.device_id LEFT JOIN device_control_presence cp ON cp.id=d.id LEFT JOIN mobile_shared_runtime rt ON rt.device_id=d.id LEFT JOIN mobile_v9_runtime_details rd ON rd.device_id=d.id WHERE b.school_id=$1 ORDER BY d.name,b.id").bind(school).fetch_all(&mut **tx).await?;
     let mut result = Vec::new();
     for row in rows {
         let candidate = tasks::raw_candidates(tx, school, uid(&row, "target_id")?)
@@ -99,79 +99,24 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
                 false,
             );
         }
-        if busy && !risk {
-            add(
-                "waiting_physical_owner",
-                "手机正在处理原有界面工作",
-                "system",
-                "等待原会话结束并确认手机静止",
-                true,
+        if !scope_exists && selectable {
+            blockers.push(
+                scope_issue(tx, school, uid(&row, "device_id")?, uid(&row, "target_id")?).await?,
             );
         }
-        if policy.as_ref().is_none_or(|p| p["mode"] != "enabled") {
-            add(
-                "policy_not_enabled",
-                "使用方案尚未启用",
-                "platform",
-                "平台管理员在手机群消息使用管理中配置业务方案",
-                false,
-            );
-        }
-        if !scope_exists {
-            add(
-                "business_scope_missing",
-                "本校手机和目标群尚无有效使用授权",
-                "platform",
-                "打开手机群消息使用管理开通或核对授权",
-                false,
-            );
-        }
-        if stages.is_empty()
-            && candidate
-                .as_ref()
-                .is_some_and(|c| !c["release_id"].is_null())
-            && scope_exists
-            && !risk
-            && policy.as_ref().is_some_and(|p| p["mode"] == "enabled")
-        {
-            add(
-                "stage_not_allowed",
-                "当前业务方案与使用授权不匹配",
-                "platform",
-                "平台管理员核对业务方案和使用授权",
-                false,
-            );
-        }
-        if !accepted {
-            add(
-                "waiting_initial_consent",
-                "等待手机本人首次授权或恢复托管",
-                "device",
-                "在手机打开平台连接与长期托管",
-                false,
-            );
-        }
-        if row["online"] != true {
-            add(
-                "waiting_connection",
-                "手机离线，连接后自动继续",
-                "system",
-                "等待连接恢复",
-                true,
-            );
-        }
-        if row["ui_ready"] != true {
-            add(
-                "waiting_device_ready",
-                "等待解锁、无障碍和通知权限",
-                "device",
-                "查看手机执行条件",
-                true,
-            );
-        }
+        let consent_state = candidate
+            .as_ref()
+            .and_then(|c| c["consent_state"].as_str())
+            .unwrap_or("unknown");
+        let mut execution_conditions = execution_conditions(
+            &row,
+            consent_state,
+            busy,
+            policy.as_ref().and_then(|p| p["mode"].as_str()),
+        );
         let missing_rules = candidate.as_ref().is_some_and(tasks::missing_rules);
         if !passed && !missing_rules {
-            add(
+            execution_conditions.push(condition(
                 if exhausted {
                     "inspection_budget_exhausted"
                 } else {
@@ -191,7 +136,7 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
                     "后台按预算自动检查；失败后可提交适配支持"
                 },
                 !exhausted,
-            );
+            ));
         }
         let ready = selectable
             && !busy
@@ -199,7 +144,7 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
             && accepted
             && row["online"] == true
             && row["ui_ready"] == true
-            && passed;
+            && (passed || missing_rules);
         let inspection_state = if missing_rules {
             "check_on_execution"
         } else if passed {
@@ -219,10 +164,200 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
                 _ => "not_scheduled",
             }
         };
-        result.push(json!({"binding_id":row["id"],"device_id":row["device_id"],"target_id":row["target_id"],"device_name":row["device_name"],"target_name":row["target_name"],"search_text":row["search_text"],"plan_selectable":selectable,"confirmable":!stages.is_empty(),"confirmable_stages":stages,"execution_ready":ready,"ready":ready,"state":if ready{json!("ready_for_task")}else{blockers.first().map(|b|b["code"].clone()).unwrap_or(json!("waiting"))},"blockers":blockers,"inspection":inspection,"inspection_state":inspection_state,"retry_remaining":remaining,"retry_at":retry_at,"automatic":true}));
+        result.push(json!({"binding_id":row["id"],"device_id":row["device_id"],"target_id":row["target_id"],"device_name":row["device_name"],"target_name":row["target_name"],"search_text":row["search_text"],"plan_selectable":selectable,"confirmable":!stages.is_empty(),"confirmable_stages":stages,"execution_ready":ready,"ready":ready,"state":if ready{json!("ready_for_task")}else{blockers.first().or_else(||execution_conditions.first()).map(|b|b["code"].clone()).unwrap_or(json!("waiting"))},"consent_state":consent_state,"runtime_state":runtime_state(&row),"runtime_observed_at":row["runtime_observed_at"],"execution_conditions":execution_conditions,"blockers":blockers,"inspection":inspection,"inspection_state":inspection_state,"retry_remaining":remaining,"retry_at":retry_at,"automatic":true}));
     }
     Ok(result)
 }
 pub(super) async fn pool(tx: &mut Tx<'_>, s: Uuid) -> Result<Vec<Value>> {
     sqlx::query_scalar("SELECT jsonb_build_object('id',d.id,'name',d.name,'access_revision',a.revision) FROM mobile_shared_school_access a JOIN execution_devices d ON d.id=a.device_id JOIN schools s ON s.id=a.school_id WHERE a.school_id=$1 AND a.enabled AND d.enabled AND s.active ORDER BY d.name,d.id").bind(s).fetch_all(&mut **tx).await.map_err(Into::into)
+}
+
+fn condition(code: &str, message: &str, owner: &str, action: &str, automatic: bool) -> Value {
+    json!({"code":code,"message":message,"owner":owner,"action":action,"automatic":automatic,"observed_at":chrono::Utc::now()})
+}
+fn runtime_state(row: &Value) -> &'static str {
+    if row["runtime_observed_at"].is_null() {
+        "unknown"
+    } else if row["runtime_fresh"] != true {
+        "stale"
+    } else if row["paused"] == true {
+        "paused"
+    } else if row["runtime_conditions"]["unlocked"] == false {
+        "locked"
+    } else if row["runtime_conditions"]["accessibility"] == false {
+        "accessibility_required"
+    } else if row["runtime_conditions"]["notification"] == false {
+        "notification_required"
+    } else if row["ui_ready"] == true {
+        "ready"
+    } else {
+        "waiting"
+    }
+}
+fn execution_conditions(row: &Value, consent: &str, busy: bool, mode: Option<&str>) -> Vec<Value> {
+    let mut conditions = Vec::new();
+    if mode.is_some_and(|m| m != "enabled") {
+        conditions.push(condition(
+            "execution_paused",
+            "平台暂停实际执行，任务仍可提交排队",
+            "platform",
+            "等待平台恢复执行",
+            true,
+        ));
+    }
+    match consent {
+        "accepted" => {}
+        "revoked" => conditions.push(condition(
+            "consent_revoked",
+            "本机已撤回共享托管同意；任务可提交，执行需本人恢复同意",
+            "device",
+            "在手机查看共享托管状态",
+            false,
+        )),
+        _ => conditions.push(condition(
+            "consent_unknown",
+            "当前设备的托管状态尚未同步，不能据此判定未授权；不影响提交任务",
+            "system",
+            "后台同步当前设备与凭据代次的托管状态",
+            true,
+        )),
+    }
+    if row["online"] != true {
+        conditions.push(condition(
+            "waiting_connection",
+            "手机当前离线，任务可提交，连接后继续",
+            "system",
+            "等待连接恢复",
+            true,
+        ));
+    }
+    let (code, message, owner, action) = match runtime_state(row) {
+        "unknown" => (
+            "runtime_unknown",
+            "尚未收到手机执行状态，不代表系统权限未开启",
+            "system",
+            "等待手机上报执行状态",
+        ),
+        "stale" => (
+            "runtime_stale",
+            "手机执行状态已过期，不要求重新授权",
+            "system",
+            "等待手机更新执行状态",
+        ),
+        "paused" => (
+            "runtime_paused",
+            "手机执行已暂停，已有托管同意保留",
+            "device",
+            "在手机恢复执行",
+        ),
+        "locked" => (
+            "device_locked",
+            "手机当前锁屏，任务执行等待解锁",
+            "device",
+            "解锁手机",
+        ),
+        "accessibility_required" => (
+            "accessibility_required",
+            "手机最新状态报告无障碍服务不可用",
+            "device",
+            "在手机检查无障碍服务",
+        ),
+        "notification_required" => (
+            "notification_required",
+            "手机最新状态报告通知不可用",
+            "device",
+            "在手机检查通知权限",
+        ),
+        "waiting" => (
+            "waiting_device_ready",
+            "手机暂未就绪，可能正在处理其他工作；不要求重新授权",
+            "system",
+            "等待手机更新状态",
+        ),
+        _ => ("", "", "", ""),
+    };
+    if !code.is_empty() {
+        conditions.push(condition(code, message, owner, action, true));
+    }
+    if busy {
+        conditions.push(condition(
+            "waiting_physical_owner",
+            "手机正在处理原工作，当前任务可以提交排队",
+            "system",
+            "等待原工作结束",
+            true,
+        ));
+    }
+    conditions
+}
+async fn scope_issue(tx: &mut Tx<'_>, school: Uuid, device: Uuid, target: Uuid) -> Result<Value> {
+    let usage:Option<Value>=sqlx::query_scalar("SELECT to_jsonb(u)||jsonb_build_object('expired',u.expires_at<=clock_timestamp(),'mapped',EXISTS(SELECT 1 FROM mobile_usage_scopes m WHERE m.usage_id=u.id AND m.device_id=$2 AND m.target_id=$3)) FROM mobile_usages u WHERE u.school_id=$1 AND u.body->'device_ids' @> jsonb_build_array($2::uuid) AND (u.body->'auto_targets'='true'::jsonb OR EXISTS(SELECT 1 FROM jsonb_array_elements(u.body->'targets') t WHERE t->>'id'=$3::uuid::text)) ORDER BY (u.approval='approved' AND u.state='active' AND u.expires_at>clock_timestamp()) DESC,u.created_at DESC,u.id DESC LIMIT 1").bind(school).bind(device).bind(target).fetch_optional(&mut **tx).await?;
+    let (code, message) = match usage.as_ref() {
+        None => (
+            "business_scope_missing",
+            "当前学校尚未批准此手机与目标群的使用范围",
+        ),
+        Some(u) if u["state"] == "revoked" => (
+            "business_scope_revoked",
+            "此学校使用范围已撤销，手机托管同意不受此状态说明影响",
+        ),
+        Some(u) if u["state"] == "paused" => (
+            "business_scope_paused",
+            "此学校使用范围已暂停，请在使用管理恢复",
+        ),
+        Some(u) if u["expired"] == true => {
+            ("business_scope_expired", "此学校使用范围已到期，请办理续期")
+        }
+        Some(u) if u["approval"] != "approved" => {
+            ("business_scope_pending", "此学校使用范围尚未批准")
+        }
+        Some(u) if u["mapped"] != true => (
+            "business_scope_sync_pending",
+            "使用范围已批准，后台正在关联手机与目标群",
+        ),
+        _ => (
+            "business_scope_changed",
+            "使用范围存在，但手机资格或群定位已变化，请核对当前业务范围",
+        ),
+    };
+    Ok(condition(
+        code,
+        message,
+        "school",
+        "查看本校手机与目标群使用管理",
+        code == "business_scope_sync_pending",
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn unknown_and_stale_runtime_never_imply_missing_permissions_or_consent() {
+        let row = json!({"online":true,"ui_ready":false});
+        assert_eq!(runtime_state(&row), "unknown");
+        let c = execution_conditions(&row, "accepted", false, Some("enabled"));
+        assert_eq!(c[0]["code"], "runtime_unknown");
+        assert_eq!(c.len(), 1);
+        let row = json!({"runtime_observed_at":"2026-11-03","runtime_fresh":false,"runtime_conditions":{"accessibility":false}});
+        assert_eq!(runtime_state(&row), "stale");
+    }
+    #[test]
+    fn fresh_runtime_reports_the_actual_condition_and_preserves_consent() {
+        let mut row = json!({"online":true,"runtime_observed_at":"now","runtime_fresh":true,"runtime_conditions":{"unlocked":true,"accessibility":true,"notification":true},"ui_ready":true});
+        assert!(execution_conditions(&row, "accepted", false, Some("enabled")).is_empty());
+        row["runtime_conditions"]["unlocked"] = json!(false);
+        assert_eq!(runtime_state(&row), "locked");
+        row["runtime_conditions"]["unlocked"] = json!(true);
+        row["runtime_conditions"]["accessibility"] = json!(false);
+        assert_eq!(runtime_state(&row), "accessibility_required");
+        assert_eq!(
+            execution_conditions(&row, "unknown", false, None)[0]["code"],
+            "consent_unknown"
+        );
+        assert_eq!(
+            execution_conditions(&row, "revoked", false, None)[0]["code"],
+            "consent_revoked"
+        );
+    }
 }

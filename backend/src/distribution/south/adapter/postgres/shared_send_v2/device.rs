@@ -29,6 +29,8 @@ async fn live_claim(tx: &mut Tx<'_>, c: &Credential, id: Uuid) -> Result<Value> 
         "shared_send_consent_required",
     )?;
     tasks::validate_plan(tx, school, &v["plan"]).await?;
+    business_scheme::ensure_open(tx).await?;
+    tasks::validate_execution_rules(tx, &v["plan"]).await?;
     require(
         !tasks::missing_rules(&v["plan"]),
         "shared_send_adapter_unavailable",
@@ -47,8 +49,8 @@ async fn quota(
     let p = policy(tx)
         .await?
         .ok_or(Error::Policy("shared_send_not_released"))?;
-    let frozen:Option<Value>=sqlx::query_scalar("SELECT to_jsonb(policy) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_usage_scopes m ON m.scope_id=(p.plan->>'scope_id')::uuid JOIN mobile_usages u ON u.id=m.usage_id JOIN mobile_v9_send_policy_versions policy ON policy.id=(u.body->>'scheme_id')::uuid WHERE a.id=$1").bind(attempt).fetch_optional(&mut **tx).await?;
-    if let Some(original) = frozen
+    let frozen:Option<Value>=sqlx::query_scalar("SELECT coalesce(to_jsonb(policy),u.body->'scheme') FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_usage_scopes m ON m.scope_id=(p.plan->>'scope_id')::uuid JOIN mobile_usages u ON u.id=m.usage_id LEFT JOIN mobile_v9_send_policy_versions policy ON policy.id=(u.body->>'scheme_id')::uuid WHERE a.id=$1").bind(attempt).fetch_optional(&mut **tx).await?;
+    if let Some(original) = frozen.filter(|p| p.is_object())
         && !quota_policy(tx, s, device, target, attempt, &original).await?
     {
         return Ok(false);
@@ -275,6 +277,11 @@ async fn claim(tx: &mut Tx<'_>, c: &Credential, v: ClaimRequest) -> Result<Value
         v.eligible_attempt_ids.len() <= 100,
         "shared_send_selection_invalid",
     )?;
+    if business_scheme::ensure_open(tx).await.is_err() {
+        return Ok(
+            json!({"id":c.device_id,"state":"waiting","reason":"shared_send_platform_closed","retry_after":20}),
+        );
+    }
     let fresh:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_shared_runtime WHERE device_id=$1 AND credential_generation=$2 AND runtime_epoch=$3 AND ui_ready AND quiescent AND NOT paused AND observed_at>clock_timestamp()-interval '30 seconds') AND EXISTS(SELECT 1 FROM device_control_presence WHERE id=$1 AND state='online' AND NOT desired_paused AND last_control_heartbeat_at>clock_timestamp()-interval '30 seconds')").bind(c.device_id).bind(c.generation).bind(v.runtime_epoch).fetch_one(&mut **tx).await?;
     require(fresh, "shared_send_runtime_required")?;
     let busy = inspections::busy(tx, c.device_id).await?;

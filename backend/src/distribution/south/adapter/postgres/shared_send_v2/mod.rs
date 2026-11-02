@@ -85,7 +85,19 @@ async fn policy(tx: &mut Tx<'_>) -> Result<Option<Value>> {
         "SELECT to_jsonb(p) FROM mobile_v9_send_policy_versions p ORDER BY revision DESC LIMIT 1",
     )
     .fetch_optional(&mut **tx)
-    .await?)
+    .await?
+    .or_else(|| Some(default_policy())))
+}
+fn default_policy() -> Value {
+    let limits =
+        json!({"interval_seconds":30,"window_seconds":3600,"max_calls":30,"daily_max_calls":150});
+    json!({"id":null,"revision":0,"mode":"enabled","limits":{"global":limits,"school":limits,"device":limits,"target":limits},"timezone":"Asia/Shanghai","allowed_windows":[{"weekdays":[1,2,3,4,5,6,7],"start_minute":0,"end_minute":1440}],"allowed_stages":["production_allowlist"],"confirmation_seconds":86400,"inspection_seconds":3600,"retry_seconds":300,"retry_limit":3})
+}
+fn policy_id(p: &Value) -> Result<Option<Uuid>> {
+    p["id"]
+        .as_str()
+        .map(|v| v.parse().map_err(|_| Error::Conflict))
+        .transpose()
 }
 fn uid(v: &Value, k: &str) -> Result<Uuid> {
     serde_json::from_value(v[k].clone()).map_err(|_| Error::Conflict)
@@ -331,4 +343,33 @@ pub(super) async fn reconcile_resources(tx: &mut Transaction<'_, Postgres>) -> R
 fn hash_bytes(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     format!("{:x}", Sha256::digest(bytes))
+}
+
+#[cfg(test)]
+mod default_policy_tests {
+    use super::*;
+    #[test]
+    fn no_configuration_has_valid_bounded_defaults_without_a_fabricated_database_id() {
+        let p = default_policy();
+        assert_eq!(policy_id(&p).unwrap(), None);
+        let limits: Limits = serde_json::from_value(p["limits"].clone()).unwrap();
+        limits.validate().unwrap();
+        assert_eq!(p["timezone"], "Asia/Shanghai");
+        assert_eq!(
+            p["allowed_windows"][0]["weekdays"],
+            json!([1, 2, 3, 4, 5, 6, 7])
+        );
+        assert_eq!(p["mode"], "enabled");
+        assert_eq!(p["revision"], 0);
+        let mut input = p.clone();
+        let o = input.as_object_mut().unwrap();
+        o.remove("id");
+        o.remove("revision");
+        o.insert("expected_revision".into(), json!(0));
+        o.insert("reason".into(), json!("系统默认设置"));
+        serde_json::from_value::<PolicyInput>(input)
+            .unwrap()
+            .validate()
+            .unwrap();
+    }
 }

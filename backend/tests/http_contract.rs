@@ -1597,3 +1597,15 @@ async fn platform_business_scheme_route_requires_identity() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
+
+#[test]
+fn shared_submission_status_separates_defaults_and_execution_pause() {
+    use wekeeper_api::distribution::domain::mobile_execution::usage::SendingStatus;
+    let defaults = serde_json::to_value(SendingStatus::project(None, true)).unwrap();
+    assert_eq!(defaults["platform"], "default");
+    assert_eq!(defaults["can_confirm"], true);
+    let paused = serde_json::to_value(SendingStatus::project(Some("disabled"), true)).unwrap();
+    assert_eq!(paused["platform"], "disabled");
+    assert_eq!(paused["can_confirm"], true);
+    assert!(paused["message"].as_str().unwrap().contains("任务仍可提交"));
+}
