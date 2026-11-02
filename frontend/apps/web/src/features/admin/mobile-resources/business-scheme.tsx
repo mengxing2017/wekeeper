@@ -4,20 +4,22 @@ import {Alert,Button,Checkbox,Drawer,Input,InputNumber,Select,Space,Switch} from
 import {sharedSend,type BusinessScheme,type BusinessSchemeInput,type SendingStatus} from './api'
 import {createIdempotencyKey} from '../../../shared/idempotency-key'
 import {newPolicyWindow,policyClock,policyMinute,policyWeekdays} from './shared-policy-time'
-const defaults:BusinessSchemeInput['limits']={global:{interval_seconds:5,window_seconds:3600,max_calls:120,daily_max_calls:1000},school:{interval_seconds:10,window_seconds:3600,max_calls:60,daily_max_calls:300},device:{interval_seconds:30,window_seconds:3600,max_calls:30,daily_max_calls:150},target:{interval_seconds:60,window_seconds:3600,max_calls:10,daily_max_calls:30}}
+const limit={interval_seconds:30,window_seconds:3600,max_calls:30,daily_max_calls:150}
+const defaults:BusinessSchemeInput['limits']={global:{...limit},school:{...limit},device:{...limit},target:{...limit}}
+const defaultWindows=[{weekdays:[1,2,3,4,5,6,7],start_minute:0,end_minute:1440}]
 export function BusinessSchemeEditor({scheme}:{scheme?:BusinessScheme|null;status?:SendingStatus}){
  const cache=useQueryClient();const keys=useRef(new Map<string,string>())
  const [open,setOpen]=useState(false)
- const [form,writeForm]=useState<BusinessSchemeInput>({expected_revision:0,enabled:false,confirmed:false,timezone:'Asia/Shanghai',allowed_windows:[newPolicyWindow()],limits:defaults,reason:''})
+ const [form,writeForm]=useState<BusinessSchemeInput>({expected_revision:0,enabled:true,confirmed:false,timezone:'Asia/Shanghai',allowed_windows:structuredClone(defaultWindows),limits:defaults,reason:''})
  function setForm(value:BusinessSchemeInput){writeForm({...value,confirmed:false})}
  const save=useMutation({mutationFn:()=>{const body=JSON.stringify(form);let key=keys.current.get(body);if(!key){key=createIdempotencyKey();keys.current.set(body,key)}return sharedSend.saveBusinessScheme(form,key)},onSuccess:()=>{setOpen(false);void cache.invalidateQueries({queryKey:['mobile-execution']})}})
- function begin(){setForm({expected_revision:scheme?.revision??0,enabled:scheme?.mode==='enabled',confirmed:false,timezone:scheme?.timezone??'Asia/Shanghai',allowed_windows:structuredClone(scheme?.allowed_windows??[newPolicyWindow()]),limits:structuredClone(scheme?.limits??defaults),reason:''});save.reset();setOpen(true)}
+ function begin(){setForm({expected_revision:scheme?.revision??0,enabled:scheme?scheme.mode==='enabled':true,confirmed:false,timezone:scheme?.timezone??'Asia/Shanghai',allowed_windows:structuredClone(scheme?.allowed_windows??defaultWindows),limits:structuredClone(scheme?.limits??defaults),reason:''});save.reset();setOpen(true)}
  const invalid=form.allowed_windows.length===0||form.allowed_windows.some(w=>!w.weekdays.length||w.start_minute===w.end_minute)
  return <><Button onClick={begin}>配置业务方案</Button><Drawer title="手机群消息业务方案" open={open} size={920} onClose={()=>setOpen(false)} footer={<Button type="primary" loading={save.isPending} disabled={!form.confirmed||!form.reason.trim()||invalid} onClick={()=>save.mutate()}>确认保存业务方案</Button>}>
  <Space orientation="vertical" style={{width:'100%'}}>
- <Alert type="info" title="变更影响" description="时段、额度和间隔变化需要重新核对使用授权；关闭后停止新许可。已有调用及不确定结果保留，不会重置累计额度。技术产品升级不会覆盖此方案。"/>
- <label>开放新发送 <Switch aria-label="开放新发送" checked={form.enabled} onChange={enabled=>setForm({...form,enabled})}/></label>
- <p>发送开关只管理平台是否允许发送；实际执行时由系统自动判断手机是否就绪。</p>
+ <Alert type="info" title="变更影响" description="时段、额度和间隔约束实际执行，不要求重新办理已有使用范围；关闭后任务仍可提交排队，停止新执行许可。已有调用及不确定结果保留，不会重置累计额度。技术产品升级不会覆盖此方案。"/>
+ <label>允许实际执行 <Switch aria-label="允许实际执行" checked={form.enabled} onChange={enabled=>setForm({...form,enabled})}/></label>
+ <p>此开关只控制实际执行，不阻止任务提交和排队；手机运行条件由执行端处理。</p>
  <label>IANA 时区 <Input aria-label="业务方案时区" value={form.timezone} onChange={e=>setForm({...form,timezone:e.target.value})}/></label>
  <p>允许时段按开始日计算，跨午夜延续至次日；结束 00:00 表示当天 24:00。</p>
  {form.allowed_windows.map((w,i)=><Space key={i} wrap>

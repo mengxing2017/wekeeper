@@ -37,7 +37,7 @@ export function UsageManagement({school,admin=true}:{school?:string;admin?:boole
  const error=list.error||globalOptions.error||options.error
  return <Card title="手机群消息使用管理" extra={admin&&<Button type="primary" onClick={()=>begin()}>开通使用</Button>}>
   <Alert type="info" showIcon title="选范围，核对后确认" description="平台确认后直接开通；学校在已批准范围内可直接使用，新增范围提交平台审批。离线手机也可选择，恢复在线后自动检查。使用范围与手机当前状态分别管理，已批准范围会保留，手机就绪后自动继续。"/>
-  {globalOptions.data?.sending_status&&<Alert type={globalOptions.data.sending_status.can_confirm?'success':'warning'} showIcon title={globalOptions.data.sending_status.message} description={`平台发送：${({unconfigured:'未配置',disabled:'已关闭',draft_only:'仅内容准备',preview_only:'仅预览',unsupported:'方案需更新',enabled:'已开放'} as const)[globalOptions.data.sending_status.platform]}。使用审批与手机现场状态见下表。`}/>}
+  {globalOptions.data?.sending_status&&<Alert type={globalOptions.data.sending_status.can_confirm?'success':'warning'} showIcon title={globalOptions.data.sending_status.message} description={`实际执行：${({default:'系统默认',unconfigured:'未配置',disabled:'已关闭',draft_only:'仅内容准备',preview_only:'仅预览',unsupported:'方案需更新',enabled:'已开放'} as const)[globalOptions.data.sending_status.platform]}。使用审批与手机现场状态见下表。`}/>}
   {globalOptions.data?.scheme&&<p>当前业务方案：时区 {globalOptions.data.scheme.timezone}；每所学校每日最多 {globalOptions.data.scheme.daily_max_calls} 次；每个目标群最小间隔 {globalOptions.data.scheme.interval_seconds} 秒。</p>}
   {!school&&admin&&<BusinessSchemeEditor scheme={globalOptions.data?.business_scheme} status={globalOptions.data?.sending_status}/>}
   {error&&<Alert type="error" title={error.message}/>}
