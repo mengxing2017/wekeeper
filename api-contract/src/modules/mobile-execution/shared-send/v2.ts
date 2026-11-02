@@ -26,24 +26,21 @@ export function createSharedSendV2Client(client:Pick<Client,'requestResource'>) 
  const one=client.requestResource
  const post=<T>(path:string,input:unknown,key:string,method='POST')=>one<T>(path,method,input,undefined,{'Idempotency-Key':key})
  return {
-  bind:(s:string,input:{target_id:string;device_id:string;expected_access_revision:number;search_text_override:string|null},key:string)=>post<{id:string}>(`${root(s)}/shared-v2-bindings`,input,key),
-  unbind:(s:string,id:string,expected_revision:number,key:string)=>post<{id:string}>(`${root(s)}/shared-v2-bindings/${encodeURIComponent(id)}/revocations`,{expected_revision,reason:'学校管理员停用本校绑定'},key),
-  access:(input:{school_id:string;device_id:string;expected_revision:number;enabled:boolean},key:string)=>post<{id:string;revision:number}>('/api/v1/platform/mobile-execution/shared-v2-device-access',input,key),
   overview:(s:string)=>one<SharedOverview>(`${root(s)}/shared-v2-tasks`),
   task:(s:string,id:string)=>one<SharedTask>(`${root(s)}/shared-v2-tasks/${encodeURIComponent(id)}`),
-  draft:(s:string,input:SharedDraftInput,key:string,id?:string)=>post<SharedDraft>(`${root(s)}/shared-v2-task-drafts${id?`/${encodeURIComponent(id)}`:''}`,input,key,id?'PATCH':'POST'),
-  preview:(s:string,draft_id:string,expected_revision:number,selections:Array<{target_id:string;device_id:string}>,key:string)=>post<SharedPreview>(`${root(s)}/shared-v2-task-previews`,{draft_id,expected_revision,selections},key),
   confirm:(s:string,p:SharedPreview,key:string)=>post<SharedTask>(`${root(s)}/shared-v2-tasks`,{preview_id:p.id,preview_digest:p.digest,confirmed:true},key),
   stop:(s:string,id:string,expected_revision:number,reason:string,key:string)=>post<SharedTask>(`${root(s)}/shared-v2-tasks/${encodeURIComponent(id)}/stops`,{expected_revision,reason},key),
   review:(s:string,attempt:string,expected_revision:number,decision:'manually_confirmed_sent'|'verified_not_sent'|'still_unknown',evidence:string,key:string)=>post<{id:string}>(`${root(s)}/shared-v2-items/${encodeURIComponent(attempt)}/reviews`,{expected_revision,decision,evidence},key),
   inspection:(s:string,target_id:string,device_id:string,key:string)=>post<{id:string;state:string;readiness:SharedReadiness}>(`${root(s)}/shared-v2-inspections`,{target_id,device_id},key),
   reassign:(s:string,attempt:string,expected_revision:number,device_id:string,reason:string,key:string)=>post<SharedTask>(`${root(s)}/shared-v2-items/${encodeURIComponent(attempt)}/reassignments`,{expected_revision,device_id,reason},key),
-  platform:(page=1)=>one<ManagementOverview & {id:string;schools:Array<{id:string;name:string}>;access:Array<{id:string;school_id:string;device_id:string;device_name:string;school_name:string;revision:number;enabled:boolean}>;policy:(Omit<SharedPolicyInput,'expected_revision'>&{id:string;revision:number})|null;releases:Array<{id:string;name:string;version:string}>;devices:Array<{device_id:string;name:string;enabled:boolean}>}>( `/api/v1/platform/mobile-execution/shared-v2-readiness?page=${page}`),
-  support:(s:string,device_id:string,reason:string,key:string)=>post<{id:string}>(`${root(s)}/shared-v2-support`,{device_id,school_id:s,reason},key),
-  manage:(input:ManagementCommand,key:string)=>post<{id:string;revision?:number}>('/api/v1/platform/mobile-execution/shared-v2-management',input,key),
-  upload:(content:ArrayBuffer,kind:'apk'|'evidence',name:string,key:string)=>one<{id:string;sha256:string}>('/api/v1/platform/mobile-execution/shared-v2-artifacts','POST',content,undefined,{'Idempotency-Key':key,'X-Artifact-Kind':kind,'X-Artifact-Name':encodeURIComponent(name)}),
-  artifactUrl:(id:string)=>`/api/v1/platform/mobile-execution/shared-v2-artifacts/${encodeURIComponent(id)}/content`,
-  policy:(input:SharedPolicyInput,key:string)=>post<{id:string;revision:number}>('/api/v1/platform/mobile-execution/shared-v2-send-policies',input,key),
+  usageOptions:(s?:string)=>one<UsageOptions>(s?`${root(s)}/usage-options`:'/api/v1/platform/mobile-execution/usage-options'),
+  usages:(s?:string)=>one<UsageList>(s?`${root(s)}/usages`:'/api/v1/platform/mobile-execution/usage-requests'),
+  usagePreview:(s:string,input:UsageInput,key:string)=>post<UsagePreview>(`${root(s)}/usage-previews`,input,key),
+  usageConfirm:(s:string,input:{preview_id:string;digest:string},key:string)=>post<UsageList>(`${root(s)}/usages`,input,key),
+  usageAction:(s:string,id:string,operation:UsageOperation,input:{expected_revision:number;reason:string},key:string)=>post<UsageList>(`${root(s)}/usages/${encodeURIComponent(id)}/${operation}`,input,key),
+  usageIssueUpdate:(s:string,id:string,issue:string,input:{expected_revision:number;state:'investigating'|'resolved'|'declined';response:string},key:string)=>post<UsageList>(`${root(s)}/usages/${encodeURIComponent(id)}/issues/${encodeURIComponent(issue)}/responses`,input,key),
+  usageIssue:(s:string,id:string,description:string,key:string)=>post<{id:string;state:string}>(`${root(s)}/usages/${encodeURIComponent(id)}/issues`,{description},key),
+  taskPreview:(s:string,input:UsageTaskInput,key:string)=>post<{id:string;draft:SharedDraft;preview:SharedPreview}>(`${root(s)}/usage-task-previews`,input,key),
  }
 }
 
@@ -52,18 +49,11 @@ export interface SharedDelegationScope {schema:typeof SHARED_DELEGATION_SCHEMA;p
 export interface SharedDelegationDecisionInput {delegation_id:string;scope_digest:string;expected_revision:number;accepted:boolean}
 
 export type FlowV3=Omit<import('../flows').FlowV2,'schema_version'|'engine_version'|'protocol_version'|'launchers'> & {schema_version:3;engine_version:'otter-ui/3';protocol_version:9;title_rule:'exact'|'trailing_member_count';launcher_paths:Array<{kind:'search'|'all_apps';opener:import('../flows').UiSelector;search_input:import('../flows').UiSelector|null;application_row:import('../flows').UiSelector;max_scrolls:number}>}
-export type ManagedRecord={id:string;name?:string;created_at?:string;flow_id?:string;release_id?:string;flow?:FlowV3;stage?:string;device_id?:string;school_id?:string;target_id?:string;state?:string;code?:string;revision?:number;min_interval_ms?:number;elapsed_ms?:number;kind?:string;sha256?:string;device_ids?:string[];target_ids?:string[];auto_targets?:boolean;expires_at?:string;max_calls?:number;response?:string;reason?:string;result?:Record<string,Json>;launch_path?:string;device_name?:string;school_name?:string;target_name?:string}
-export interface ManagementOverview {page?:{number:number;size:number;has_more:boolean};counts?:Record<string,number>;flows:ManagedRecord[];baselines:ManagedRecord[];samples:ManagedRecord[];releases:ManagedRecord[];acceptances:ManagedRecord[];scopes:ManagedRecord[];revocations:Array<{grant_id:string}>;validations:ManagedRecord[];support:ManagedRecord[];withdrawals:Array<{release_id:string}>;diagnostics:ManagedRecord[];artifacts:ManagedRecord[];bindings:ManagedRecord[];targets:ManagedRecord[];activation:{release_id:string;revision:number}|null}
-export type ManagementCommand=
- |{action:'flows';input:{name:string;flow:FlowV3}}
- |{action:'human-samples';input:{flow_id:string;device_id:string}}
- |{action:'baselines';input:{flow_id:string;sample_ids:string[];evidence_ids:string[]}}
- |{action:'releases';input:{name:string;version:string;flow_id:string;baseline_id:string;evidence_ids:string[]}}
- |{action:'activations';input:{release_id:string;expected_revision:number;reason:string}}
- |{action:'withdrawals';input:{release_id:string;reason:string}}
- |{action:'validations';input:{flow_id:string;binding_id:string;launch_path:string;apk_id:string}}
- |{action:'acceptances';input:{release_id:string;stage:string;apk_id:string;evidence_ids:string[];validation_ids:string[];cases:Record<string,boolean>;soak_hours:number;soak_passed:boolean;historical_debt_closed:boolean;reason:string}}
- |{action:'scopes';input:{acceptance_id:string;school_id:string;device_ids:string[];target_ids:string[];auto_targets:boolean;max_calls:number;expires_at:string;expected_access:Record<string,number>;reason:string}}
- |{action:'revocations';input:{grant_id:string;reason:string}}
- |{action:'support';input:{device_id:string;school_id:string|null;reason:string}}
- |{action:'support-updates';input:{id:string;expected_revision:number;state:string;response:string;release_id:string|null}}
+export interface UsageTarget {id:string|null;name:string;search_text:string}
+export interface UsageInput {device_ids:string[];targets:UsageTarget[];max_calls:number;expires_at:string;auto_targets:boolean;renewal_of?:string;expected_revision?:number}
+export interface UsageOptions {id:string;schools:Array<{id:string;name:string}>;devices:Array<{id:string;name:string;revision:number;online:boolean}>;targets:Array<UsageTarget & {id:string;revision:number}>;delivery_available:boolean;scheme:{id:string;timezone:string;allowed_windows:Array<{weekdays:number[];start_minute:number;end_minute:number}>;daily_max_calls:number;interval_seconds:number}|null}
+export interface UsagePreview {id:string;digest:string;body:UsageInput & {scheme:UsageOptions['scheme']}}
+export type UsageOperation='approve'|'decline'|'pause'|'resume'|'revoke'
+export interface MobileUsage {readiness?:Array<{device_name:string;target_name:string;state:string;ready:boolean;messages:string[]}>;id:string;school_id:string;school_name:string;revision:number;approval:'pending'|'approved'|'declined';state:'active'|'paused'|'revoked';body:UsageInput & {legacy?:boolean;target_ids?:string[]};expires_at:string;confirmed_until:string;delivery:'available'|'waiting';progress:string;events:Array<{id:string;action:string;created_at:string}>;issues:Array<{id:string;description:string;state:string;revision:number;response:string}>}
+export interface UsageList {id:string;items:MobileUsage[]}
+export interface UsageTaskInput {draft_id?:string;expected_revision?:number;target_ids:string[];message:string;between_targets_seconds:number;selections?:Array<{target_id:string;device_id:string}>}
