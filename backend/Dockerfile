@@ -20,7 +20,8 @@ RUN --mount=type=cache,id=wekeeper-cargo-registry,target=/usr/local/cargo/regist
     --mount=type=cache,id=wekeeper-cargo-target,target=/workspace/backend/target,sharing=locked \
     cargo fetch --locked --verbose \
     && cargo build --frozen --release \
-    && cp target/release/wekeeper-api /tmp/wekeeper-api
+    && cp target/release/wekeeper-api /tmp/wekeeper-api \
+    && cp target/release/mobile-capability /tmp/mobile-capability
 
 FROM debian:bookworm-slim AS runtime
 RUN if [ -f /etc/apt/sources.list ]; then \
@@ -34,6 +35,7 @@ RUN if [ -f /etc/apt/sources.list ]; then \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --no-create-home wekeeper
 COPY --from=builder /tmp/wekeeper-api /usr/local/bin/wekeeper-api
+COPY --from=builder /tmp/mobile-capability /usr/local/bin/mobile-capability
 USER 10001:10001
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/wekeeper-api"]

@@ -5,7 +5,7 @@ use uuid::Uuid;
 use wekeeper_api::distribution::south::adapter::postgres::shared_send_v2::delivery;
 #[derive(Parser)]
 struct Args {
-    #[arg(value_parser=["import","activate","withdraw"])]
+    #[arg(value_parser=["import","activate","withdraw","status"])]
     action: String,
     #[arg(long)]
     package: Option<std::path::PathBuf>,
@@ -21,6 +21,13 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+    if args.action == "status" {
+        let pool = PgPool::connect(&std::env::var("DATABASE_URL")?).await?;
+        let result = delivery::status(&pool, args.actor.ok_or("--actor required")?).await?;
+        println!("{}", serde_json::to_string_pretty(&result)?);
+        pool.close().await;
+        return Ok(());
+    }
     let package = if args.action == "import" {
         let raw = std::fs::read(args.package.ok_or("--package required")?)?;
         Some(delivery::verify(
