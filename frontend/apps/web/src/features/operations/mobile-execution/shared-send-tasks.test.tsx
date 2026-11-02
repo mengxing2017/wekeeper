@@ -89,3 +89,17 @@ it('离线已绑定手机可选且静态范围有效时可确认等待，不发�
  expect((screen.getByRole('button',{name:'确认发送'}) as HTMLButtonElement).disabled).toBe(false)
  expect(sharedSend.confirm).not.toHaveBeenCalled()
 },120000)
+
+it('缺少应用适配不阻断正常业务预览与确认',async()=>{
+ const pending=structuredClone(preview)
+ const phone={target_id:'target',target_name:'家长通知',device_name:'离线测试手机',device_id:'phone',binding_id:'binding',binding_locator_revision:1,target_locator_revision:1,search_text:'实际搜索文字',search_source:'default' as const,access_revision:null,credential_generation:1,delegation_id:null,release_id:null,flow_digest:null,flow:null,confirmable:true}
+ pending.plan.items[0]={...pending.plan.items[0],selected:phone,candidates:[phone],blocker:null,readiness:[{binding_id:'binding',device_id:'phone',target_id:'target',device_name:'离线测试手机',target_name:'家长通知',search_text:'实际搜索文字',state:'waiting_connection',ready:false,plan_selectable:true,confirmable:true,execution_ready:false,confirmable_stages:['test_send'],automatic:true,blockers:[{code:'waiting_connection',message:'手机离线，连接后自动继续',owner:'system',automatic:true}],inspection:null,inspection_state:'waiting_prerequisites',retry_at:null,retry_remaining:3}]}
+ vi.mocked(sharedSend.taskPreview).mockResolvedValue(response(pending))
+ await compose()
+ fireEvent.click(screen.getByRole('button',{name:'预览逐群执行计划'}))
+ const select=await screen.findByLabelText('目标群 target 的共享手机')
+ fireEvent.mouseDown(select)
+ expect(document.querySelector('.ant-select-item-option-disabled')).toBeNull()
+ expect((screen.getByRole('button',{name:'确认发送'}) as HTMLButtonElement).disabled).toBe(false)
+ expect(sharedSend.confirm).not.toHaveBeenCalled()
+},120000)
