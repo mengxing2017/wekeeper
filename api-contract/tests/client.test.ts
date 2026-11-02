@@ -53,7 +53,7 @@ it('shares a real Rust create-post response and sends CSRF for writes', async ()
 it('keeps OAuth selection in a fixed local entry URL', async () => {
   const { wecomOAuthUrl } = await import('../src/modules/business')
   expect(wecomOAuthUrl()).toBe('/api/v1/wecom/oauth/start')
-  expect(wecomOAuthUrl({school: '00000000-0000-0000-0000-000000000000', draft: '00000000-0000-0000-0000-000000000001'})).toBe('/api/v1/wecom/oauth/start?school=00000000-0000-0000-0000-000000000000&draft=00000000-0000-0000-0000-000000000001')
+  expect(wecomOAuthUrl({school: '00000000-0000-0000-0000-000000000000'})).toBe('/api/v1/wecom/oauth/start?school=00000000-0000-0000-0000-000000000000')
 })
 
 it('reads the public WeCom status using the backend fixture', async () => {
@@ -61,21 +61,6 @@ it('reads the public WeCom status using the backend fixture', async () => {
   const fixture = (await import('../fixtures/wecom-status.json')).default
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(fixture)))
   expect(await workspace.wecomStatus()).toEqual({id:'current',server_configured:false,client_configured:false,oauth_available:false,share_available:false})
-})
-
-it('reads cross-draft related history with the Rust serialization contract', async () => {
-  const fixture = (await import('../fixtures/delivery-history.json')).default
-  const fetchMock = vi.fn().mockResolvedValue(json(fixture))
-  vi.stubGlobal('fetch', fetchMock)
-  const history = await workspace.relatedHistory('school', 'old-draft', 2)
-  expect(history).toEqual({...fixture.meta,items:fixture.data.map(r=>({...r.attributes,id:r.id}))})
-  expect(fetchMock).toHaveBeenCalledWith('/api/v1/schools/school/delivery-drafts/old-draft/history?page[number]=2&page[size]=30', expect.anything())
-})
-it('loads a draft by ID without depending on the current list page', async () => {
-  const fetchMock = vi.fn().mockResolvedValue(json({data:{type:'delivery-drafts',id:'old-draft',attributes:{}}}))
-  vi.stubGlobal('fetch', fetchMock)
-  expect(await workspace.getDraft('school','old-draft')).toEqual({id:'old-draft'})
-  expect(fetchMock).toHaveBeenCalledWith('/api/v1/schools/school/delivery-drafts/old-draft', expect.anything())
 })
 
 it('consumes the Cairnkit error fixture serialized by Rust', async () => {
@@ -94,15 +79,15 @@ it('uses JSON:API title when no detail is available', async () => {
   await expect(getSystemInfo()).rejects.toMatchObject({status:503,message:'Unavailable'})
 })
 
-it('sends only JSON:API resources, including nested comment and template version writes', async () => {
+it('sends only JSON:API resources, including nested comment writes', async () => {
   const mock = vi.fn().mockImplementation(async () => json({data:null}))
   vi.stubGlobal('fetch', mock)
   await workspace.mutate('s','groups',{id:'g',name:'Group'})
   expect(mock.mock.calls[0][1]).toMatchObject({headers:{'Content-Type':'application/vnd.api+json'},body:JSON.stringify({data:{type:'groups',id:'g',attributes:{name:'Group'}}})})
   await workspace.mutate('s','posts/p/comments',{content:'Reply'})
   expect(JSON.parse(mock.mock.calls[1][1].body).data.type).toBe('comments')
-  await workspace.mutate('s','templates/t/versions',{body:'Template'})
-  expect(JSON.parse(mock.mock.calls[2][1].body).data.type).toBe('template-versions')
+  await expect(workspace.mutate('s','templates/t/versions',{body:'Template'})).rejects.toThrow()
+  expect(mock).toHaveBeenCalledTimes(2)
 })
 it.each([{data:{id:'old',title:'Legacy'}},{data:{type:'posts',id:'p',attributes:{id:'conflict'}}},{data:[],meta:{page:{number:1,size:30,has_more:'false'}}},{data:null,errors:[]}])('rejects incompatible success documents rather than supporting two formats: %j',async fixture=>{
   vi.stubGlobal('fetch',vi.fn().mockResolvedValue(json(fixture)))

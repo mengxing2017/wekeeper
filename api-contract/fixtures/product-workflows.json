@@ -1,0 +1,63 @@
+{
+  "resource": {
+    "id": null,
+    "revision": 0,
+    "kind": "banner",
+    "title": "校园活动",
+    "content": "本周活动",
+    "image_ref": {
+      "kind": "asset",
+      "id": "00000000-0000-4000-8000-000000000001"
+    },
+    "action": {
+      "kind": "internal_page",
+      "page": "post",
+      "object_id": "00000000-0000-4000-8000-000000000002"
+    },
+    "active": true,
+    "sort_order": 1,
+    "starts_at": null,
+    "ends_at": null
+  },
+  "template": {
+    "id": null,
+    "revision": 0,
+    "name": "通知",
+    "body": "{{post.title}}",
+    "note": "新通知",
+    "sample_post_id": null,
+    "publish": true
+  },
+  "policy": {
+    "member_id": "00000000-0000-4000-8000-000000000001",
+    "generation": 1,
+    "revision": 0,
+    "enabled": true,
+    "window_seconds": 3600,
+    "max_calls": 4
+  },
+  "usage": {
+    "member_id": "00000000-0000-4000-8000-000000000001",
+    "account_id": "00000000-0000-4000-8000-000000000002",
+    "generation": 1,
+    "role": "operator",
+    "group_ids": [
+      "00000000-0000-4000-8000-000000000001"
+    ]
+  },
+  "request": {
+    "reason": "申请使用官方渠道",
+    "task_id": null,
+    "batch_id": null
+  },
+  "decision": {
+    "revision": 1,
+    "state": "investigating",
+    "response": "已受理",
+    "owner_id": null
+  },
+  "confirmation": {
+    "preview_id": "00000000-0000-4000-8000-000000000001",
+    "digest": "preview-digest"
+  }
+}

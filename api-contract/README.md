@@ -17,11 +17,10 @@ client 统一编码/解码协议，向 feature 提供 `{id,...attributes}` 领�
 
 健康探针 `/healthz`、`/readyz` 使用普通 JSON；图片上传请求为二进制、下载响应为图片；OAuth 是重定向。这些是明确的传输用途，不提供第二套业务 JSON 协议。旧 `/api/discover/*` 业务兼容路由已退出，历史图片 token 读取仍可用。
 
-## 分页和发送历史
+## 分页与任务记录
 
-帖子、评论、审计、分享草稿、分享尝试、相关历史、通知、反馈采用 `page[number]`、`page[size]`，默认 1/30，size 为 1–100，number 为 1–100000。旧 `page/page_size` 被拒绝。数据库多取一条，响应只保留请求页大小，并提供 `meta.page = {number,size,has_more}`；不伪造 total。前端据 `has_more` 控制翻页。学校/账号/成员/配置等完整选择列表不分页、不暗中截断，故没有 `meta.page`。
+帖子、评论、审计、任务、通知、反馈采用 `page[number]`、`page[size]`，默认 1/30，size 为 1–100，number 为 1–100000。旧 `page/page_size` 被拒绝。数据库多取一条，响应只保留请求页大小，并提供 `meta.page = {number,size,has_more}`；不伪造 total。前端据 `has_more` 控制翻页。学校/账号/成员/配置等完整选择列表不分页、不暗中截断，故没有 `meta.page`。
 
-`workspace.getDraft(school,id)` 直接读取历史草稿。`workspace.relatedHistory(school,id,page)` 的 wire `data` 是 `delivery-attempts` 集合，`meta.latest_attempt_id`、`meta.blocked` 保留全量历史阻断语义；client 返回 `{items,page,latest_attempt_id,blocked}`。
 
 ## 验证
 
@@ -30,7 +29,7 @@ pnpm --dir api-contract build
 pnpm --dir api-contract test
 ```
 
-`fixtures/system.json`、`wecom-status.json`、`post-created.json`、`delivery-history.json`、`not-found.json` 由真实 Rust 序列化/路由与 TS client 共同核对。公开接口修改需同步后端、contract、fixture 与调用方。后端和前端必须同批发布，旧 client 不再兼容。
+`fixtures/system.json`、`wecom-status.json`、`post-created.json`、`not-found.json` 由真实 Rust 序列化/路由与 TS client 共同核对。公开接口修改需同步后端、contract、fixture 与调用方。后端和前端必须同批发布，旧 client 不再兼容。
 
 ## 企业通讯录
 
@@ -40,6 +39,6 @@ pnpm --dir api-contract test
 
 ## 企业群发
 
-`broadcast` client 提供任务草稿创建/修改、确认、目标与事件分页、刷新、提醒、停止和核对。所有操作绑定学校，写操作使用 JSON:API `broadcast-tasks`，确认与管理动作带 Idempotency-Key。Task 汇总、成员状态和群级 official_status 分别建模；旧 SDK client 已移除，历史读取仍保留。Rust 序列化测试与 TypeScript 共用 broadcast-task / broadcast-target fixture。
+`broadcast` client 提供任务草稿创建/修改、确认、目标与事件分页、刷新、提醒、停止和核对。所有操作绑定学校，写操作使用 JSON:API `broadcast-tasks`，确认与管理动作带 Idempotency-Key。Task 汇总、成员状态和群级 official_status 分别建模；人工分享及旧历史读取 client 已移除。Rust 序列化测试与 TypeScript 共用 broadcast-task / broadcast-target fixture。
 
-群发新增 `content_source: posts | text`；未提供来源的旧请求按 posts 处理。text 请求使用 `text_content`，不需模板或帖子；输出统一使用冻结 `content`，`template_version_id` 为 null，`post_ids` 为空数组。posts/text 请求互斥，草稿 PATCH 仍需 revision。`broadcast-text-task.json` 与旧来源 fixture 均经 Rust 实际序列化及 TS client 验证。
+群发新增 `content_source: posts | text`；来源必须显式提交，缺失来源的旧请求被拒绝。text 请求使用 `text_content`，不需模板或帖子；输出统一使用冻结 `content`，`template_version_id` 为 null，`post_ids` 为空数组。posts/text 请求互斥，草稿 PATCH 仍需 revision。`broadcast-text-task.json` 与 posts 来源 fixture 均经 Rust 实际序列化及 TS client 验证。

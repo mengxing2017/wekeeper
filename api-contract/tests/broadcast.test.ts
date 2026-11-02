@@ -17,7 +17,7 @@ it('confirms the exact revision with a stable idempotency key and no automatic r
 })
 it('draft editing uses PATCH and preserves explicit selected groups',async()=>{
  const fetch=vi.fn().mockResolvedValue(Response.json(task,{headers:{'Content-Type':'application/vnd.api+json'}}));vi.stubGlobal('fetch',fetch)
- const input={template_version_id:'v',post_ids:['p'],group_ids:['g1','g2'],revision:2}
+ const input={content_source:'posts' as const,template_version_id:'v',post_ids:['p'],group_ids:['g1','g2'],revision:2}
  await broadcast.save('school',input,'draft')
  expect(fetch.mock.calls[0][1].method).toBe('PATCH')
  expect(JSON.parse(fetch.mock.calls[0][1].body).data.attributes).toEqual(input)
