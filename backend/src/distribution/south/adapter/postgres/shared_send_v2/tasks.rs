@@ -183,6 +183,7 @@ pub(super) async fn write(
             let mut items = Vec::new();
             for (position, target) in targets.iter().enumerate() {
                 let mut choices = candidates(tx, s, *target).await?;
+                let mut confirmation_issues = std::collections::BTreeMap::new();
                 for choice in &mut choices {
                     choice["stage"] = d["stage"].clone();
                     if let Some(g) =
@@ -190,7 +191,16 @@ pub(super) async fn write(
                     {
                         choice["scope_id"] = g["id"].clone();
                     }
-                    choice["confirmable"] = json!(validate_plan(tx, s, choice).await.is_ok());
+                    let issue = match validate_plan(tx, s, choice).await {
+                        Ok(()) => None,
+                        Err(Error::Policy(code)) => Some(code.to_owned()),
+                        Err(Error::Invalid(message)) => Some(message),
+                        Err(error) => return Err(error),
+                    };
+                    choice["confirmable"] = json!(issue.is_none());
+                    if let Some(issue) = issue {
+                        confirmation_issues.insert(uid(choice, "device_id")?, issue);
+                    }
                 }
                 let target_info:PreviewTarget = sqlx::query_scalar::<_,Value>("SELECT jsonb_build_object('id',id,'name',coalesce(nullif(alias,''),search_text),'search_text',search_text,'locator_revision',locator_revision) FROM mobile_targets WHERE id=$1 AND school_id=$2").bind(target).bind(s).fetch_optional(&mut **tx).await?.map(serde_json::from_value).transpose().map_err(|_|Error::Conflict)?.ok_or(Error::NotFound)?;
                 let target_status: Vec<Value> = status
@@ -199,27 +209,28 @@ pub(super) async fn write(
                     .cloned()
                     .collect();
                 let selection = input.selections.iter().find(|v| v.target_id == *target);
-                let chosen = if let Some(v) = selection {
-                    choices
-                        .iter()
-                        .find(|c| c["device_id"] == json!(v.device_id))
-                } else {
-                    choices
-                        .iter()
-                        .find(|c| {
-                            target_status
-                                .iter()
-                                .any(|r| r["device_id"] == c["device_id"] && r["ready"] == true)
-                        })
-                        .or_else(|| choices.first())
-                };
-                let blocker = if d["stage"] == "production_allowlist" && !sending_status.can_confirm
-                {
-                    Some(sending_status.message.as_str())
-                } else if chosen.is_none() {
+                let chosen =
+                    choose_candidate(&choices, &target_status, selection.map(|v| v.device_id));
+                let blocker = if chosen.is_none() {
                     Some("请选择已绑定手机")
-                } else if chosen.is_some_and(|c| c["confirmable"] != true) {
-                    Some("请查看本校手机使用状态，核对使用授权和手机是否就绪")
+                } else if let Some(choice) = chosen.filter(|c| c["confirmable"] != true) {
+                    Some(
+                        match confirmation_issues
+                            .get(&uid(choice, "device_id")?)
+                            .map(String::as_str)
+                        {
+                            Some("shared_send_scope_not_accepted") => {
+                                "本校尚无此手机与目标群的有效使用范围，请在使用管理核对审批、有效期及资源变更"
+                            }
+                            Some("shared_send_review_required") => {
+                                "存在未核对的发送结果，请先核对原任务"
+                            }
+                            Some("plan_dependency_changed") => {
+                                "手机或目标群关联已变化，请更新业务预览"
+                            }
+                            _ => "当前手机不满足任务受理条件，请核对本校使用范围",
+                        },
+                    )
                 } else {
                     None
                 };
@@ -429,6 +440,27 @@ pub(super) async fn write(
     }
 }
 
+// Runtime readiness only breaks ties between candidates with valid business scope.
+fn choose_candidate<'a>(
+    choices: &'a [Value],
+    status: &[Value],
+    requested: Option<Uuid>,
+) -> Option<&'a Value> {
+    if let Some(device) = requested {
+        return choices.iter().find(|c| c["device_id"] == json!(device));
+    }
+    choices
+        .iter()
+        .filter(|c| c["confirmable"] == true)
+        .find(|c| {
+            status
+                .iter()
+                .any(|r| r["device_id"] == c["device_id"] && r["ready"] == true)
+        })
+        .or_else(|| choices.iter().find(|c| c["confirmable"] == true))
+        .or_else(|| choices.first())
+}
+
 #[cfg(test)]
 mod rule_availability_tests {
     use super::*;
@@ -443,5 +475,28 @@ mod rule_availability_tests {
         partial = missing;
         partial["flow"] = json!({"invalid":true});
         assert!(!missing_rules(&partial));
+    }
+}
+
+#[cfg(test)]
+mod candidate_selection_tests {
+    use super::*;
+    #[test]
+    fn valid_offline_scope_wins_over_ready_but_unauthorized_phone() {
+        let choices = vec![
+            json!({"device_id":Uuid::now_v7(),"confirmable":false}),
+            json!({"device_id":Uuid::now_v7(),"confirmable":true}),
+        ];
+        let status = vec![json!({"device_id":choices[0]["device_id"],"ready":true})];
+        assert_eq!(choose_candidate(&choices, &status, None), Some(&choices[1]));
+        // A deliberate selection must never be silently replaced.
+        assert_eq!(
+            choose_candidate(
+                &choices,
+                &status,
+                Some(uid(&choices[0], "device_id").unwrap())
+            ),
+            Some(&choices[0])
+        );
     }
 }
