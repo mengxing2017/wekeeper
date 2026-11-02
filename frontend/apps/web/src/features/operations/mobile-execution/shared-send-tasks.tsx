@@ -55,6 +55,7 @@ export function SharedSendTasks({ school, admin }: { school: string; admin: bool
   return <Card title="手机共享发送">
     <Space orientation="vertical" style={{ width: '100%' }}>
       <Alert type="info" showIcon title="按目标群创建，逐群选择共享手机" description="填写文字和目标群后直接预览，系统自动保存草稿。核对预览后确认发送。管理员确认后进入队列。结果不确定时停止该设备，核对前不会自动重发。企业微信官方群发独立使用。" />
+      {overview.data?.sending_status&&<Alert type={overview.data.sending_status.can_confirm?'info':'warning'} title={overview.data.sending_status.message}/>}
       {error && <Alert type="error" title={taskError(error)} />}
       <Input.Search aria-label="搜索手机目标群" placeholder="搜索本校群名或别名" onSearch={value=>{setTargetSearch(value);setTargetPage(1)}} />
       <Select labelInValue mode="multiple" aria-label="手机目标群" placeholder="选择本校手机目标群" style={{ width: '100%' }} value={targets.map(value=>({value,label:targetNames[value] ?? draft?.targets.find(t=>t.id===value)?.name ?? '目标信息待核对'}))} onChange={values=>{setTargets(values.map(v=>v.value));setTargetNames(names=>({...names,...Object.fromEntries(values.map(v=>[v.value,String(v.label)]))}))}} options={(options.data?.items ?? []).filter(t => t.enabled && !t.archived_at).map(t => ({ value: t.id, label: t.alias || t.search_text }))} />
@@ -68,6 +69,7 @@ export function SharedSendTasks({ school, admin }: { school: string; admin: bool
       {dirty && <Alert type="warning" title="文字或目标群已修改，请重新预览" />}
       {preview && !dirty && <>
         {overview.data?.readiness.some(live=>{const old=preview.plan.items.flatMap(i=>i.readiness??[]).find(r=>r.binding_id===live.binding_id);return old && (old.state!==live.state || old.ready!==live.ready)}) && <Alert type="warning" title="手机条件已变化，当前预览仍为原快照" description={<Button onClick={()=>inspect.mutate()}>更新预览并重新确认</Button>}/>}
+        {preview.plan.sending_status&&!preview.plan.sending_status.can_confirm&&<Alert type="warning" title={preview.plan.sending_status.message}/>}
         <p>当前为固定计划；条件变化后请重新点击“预览逐群执行计划”，并重新确认。计划有效期：{preview.expires_at}。以下为实际发送文字：</p><pre style={{ whiteSpace: 'pre-wrap' }}>{preview.plan.message}</pre>
         <Table rowKey="target_id" pagination={false} dataSource={preview.plan.items} columns={[
           { title: '目标群', render:(_,i)=>i.target.name }, { title: '共享手机', render: (_, i) => <Select aria-label={`目标群 ${i.target_id} 的共享手机`} style={{minWidth:150}} disabled={reselect.isPending} value={i.selected?.device_id} placeholder={i.readiness?.length ? '选择已绑定手机（可离线）' : '无绑定设备'} options={(i.readiness ?? []).map(r=>({value:r.device_id,label:r.device_name,disabled:!i.candidates.some(c=>c.device_id===r.device_id) || r.plan_selectable===false}))} onChange={device_id=>reselect.mutate(previewSelections(preview.plan.items,i.target_id,device_id))} /> },
