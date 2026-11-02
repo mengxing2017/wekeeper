@@ -7,7 +7,7 @@ vi.mock('./api',()=>({sharedSend:{usageOptions:vi.fn(),usages:vi.fn(),usagePrevi
 afterEach(cleanup)
 beforeEach(()=>{
  vi.resetAllMocks()
- vi.mocked(sharedSend.usageOptions).mockResolvedValue({id:'options',schools:[{id:'school',name:'测试学校'}],devices:[{id:'phone',name:'离线候选手机',revision:1,online:false}],targets:[],delivery_available:false,scheme:null})
+ vi.mocked(sharedSend.usageOptions).mockResolvedValue({id:'options',schools:[{id:'school',name:'测试学校'}],devices:[{id:'phone',name:'离线候选手机',revision:1,online:false}],targets:[],scheme:null})
  vi.mocked(sharedSend.usages).mockResolvedValue({id:'usages',items:[]})
  vi.mocked(sharedSend.usagePreview).mockImplementation(async(_s,input)=>({id:'summary',digest:'summary-digest',body:{...input,scheme:null}}))
  vi.mocked(sharedSend.usageConfirm).mockResolvedValue({id:'usages',items:[]})
