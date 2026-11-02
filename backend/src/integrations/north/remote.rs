@@ -19,24 +19,17 @@ struct Callback {
     state: String,
 }
 #[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct Start {
     school: Option<uuid::Uuid>,
-    draft: Option<uuid::Uuid>,
 }
 impl Start {
     fn return_path(&self) -> String {
-        let mut query = vec![];
+        let mut query = vec!["view=broadcast-tasks".to_owned()];
         if let Some(id) = self.school {
             query.push(format!("school={id}"));
         }
-        if let Some(id) = self.draft {
-            query.push(format!("draft={id}"));
-        }
-        if query.is_empty() {
-            "/wecom".into()
-        } else {
-            format!("/wecom?{}", query.join("&"))
-        }
+        format!("/admin?{}", query.join("&"))
     }
 }
 async fn start(State(a): State<Application>, Query(input): Query<Start>) -> Result<Response> {
@@ -71,7 +64,7 @@ async fn callback(
         Ok(response) => response,
         Err(_) => (
             [(header::CACHE_CONTROL, "no-store")],
-            Redirect::to("/wecom?oauth_error=failed"),
+            Redirect::to("/admin?oauth_error=failed"),
         )
             .into_response(),
     }
@@ -191,15 +184,14 @@ mod tests {
     }
     #[test]
     fn oauth_return_path_is_local_and_preserves_selection() {
-        assert_eq!(Start::default().return_path(), "/wecom");
+        assert_eq!(
+            Start::default().return_path(),
+            "/admin?view=broadcast-tasks"
+        );
         let id = uuid::Uuid::nil();
         assert_eq!(
-            Start {
-                school: Some(id),
-                draft: Some(id)
-            }
-            .return_path(),
-            format!("/wecom?school={id}&draft={id}")
+            Start { school: Some(id) }.return_path(),
+            format!("/admin?view=broadcast-tasks&school={id}")
         );
     }
 }
