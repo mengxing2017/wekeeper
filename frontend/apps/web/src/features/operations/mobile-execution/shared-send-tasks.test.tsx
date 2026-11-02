@@ -37,7 +37,7 @@ it('已绑定但未授权的手机显示本机操作路径并保持禁止发送'
  fireEvent.click(screen.getByRole('button',{name:'预览逐群执行计划'}))
  expect(await screen.findByText(/不会因 Web 预览自动弹窗/)).toBeTruthy()
  expect(screen.getByText('已绑定手机：现场共享手机')).toBeTruthy()
- expect(screen.getByText('平台维护人员：该范围尚未完成真机验收放行')).toBeTruthy()
+ expect(screen.getByText('系统支持状态：当前手机应用暂不支持执行，请在使用管理中报告问题。')).toBeTruthy()
  expect(screen.queryByText('无可用设备')).toBeNull()
  expect((screen.getByRole('button',{name:'确认发送'}) as HTMLButtonElement).disabled).toBe(true)
  expect(sharedSend.confirm).not.toHaveBeenCalled()
