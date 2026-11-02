@@ -102,6 +102,8 @@ export function decodeResource(value: unknown): Record<string, unknown> {
 /** Explicit aliases for action routes whose target resource differs from the URL leaf. */
 export function resourceType(path: string): string {
   const parts = path.split("?")[0].split("/").filter(Boolean);
+  const productKind=parts[2]==='platform'?parts[3]:parts[2]==='schools'?parts[4]:undefined;
+  if(productKind && ['resource-previews','resource-publications','resource-qrcodes','template-previews','template-publications','official-usage-previews','official-usages','broadcast-task-previews','broadcast-access-requests','broadcast-issues','member-policy-previews','member-policies'].includes(productKind)) return productKind;
   if (parts[3] === "mobile-execution" || parts[4] === "mobile-execution") {
     const rawKind = parts[2] === "platform" ? parts[4] : parts[5];
     const kind=rawKind?.replace(/^shared-v2-/,"shared-");
@@ -236,6 +238,8 @@ export function resourceType(path: string): string {
   if (parts[2] === "platform" && parts[3] === "schools" && parts[5] === "wecom-senders") return "wecom-senders";
   if (parts[2] === "platform" && ["distribution-source-policies", "distribution-resource-policies"].includes(parts[3])) return parts[3];
   if (parts[2] === "schools" && parts[4] === "broadcast-tasks" && parts[6] === "preview") return "broadcast-previews";
+  if (parts[2] === "platform" && parts[3] === "business-requests") return "business-requests";
+  if (parts[2] === "schools" && parts[4] === "published-resources") return "resources";
   if (parts[2] === "auth") return "sessions";
   if (
     parts[2] === "platform" &&
@@ -246,15 +250,10 @@ export function resourceType(path: string): string {
   if (parts[2] === "accounts" && parts[4] === "wecom-binding")
     return "wecom-bindings";
   if (parts[2] === "profile" || parts[2] === "accounts") return "accounts";
-  if (parts[2] === "platform" && parts[3] === "resources") return "resources";
   if (parts[2] === "schools") {
     const kind = parts[4] ?? "schools";
     if (kind === "members") return "accounts";
     if (kind === "posts" && parts[6] === "comments") return "comments";
-    if (kind === "templates" && parts[6] === "versions")
-      return "template-versions";
-    if (kind === "delivery-drafts" && parts[6] === "attempts")
-      return "delivery-attempts";
     if (
       [
         "broadcast-tasks",
@@ -262,12 +261,7 @@ export function resourceType(path: string): string {
         "posts",
         "comments",
         "cases",
-        "resources",
         "groups",
-        "templates",
-        "template-versions",
-        "delivery-drafts",
-        "delivery-attempts",
       ].includes(kind)
     )
       return kind;

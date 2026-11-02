@@ -1,7 +1,7 @@
-import { requestResource, requestCollection, requestDocument, decodeData, setCsrf } from '../../http';
+import { requestResource, requestCollection, setCsrf } from '../../http';
 export { ApiError } from '../../http';
 export * from './types'
-import type { Row, Session, School, Post, Draft, Attempt, RelatedHistory, Resource } from './types'
+import type { Row, Session, School, Post, Resource } from './types'
 const part = (s: string) => encodeURIComponent(s);
 export const scope = (school: string, path: string) => `/api/v1/schools/${part(school)}/${path}`;
 export const identity = {
@@ -22,20 +22,12 @@ export interface WecomStatus { server_configured: boolean; client_configured: bo
 export const workspace = {
     wecomStatus: () => requestResource<WecomStatus>('/api/v1/wecom/status'),
     globalResources: () => requestResource<Row[]>('/api/v1/platform/resources'),
-    globalResource: (body: unknown) => requestResource('/api/v1/platform/resources', 'POST', body),
     schools: () => requestResource<School[]>('/api/v1/schools'),
     directory: () => requestResource<Pick<School, 'id' | 'name'>[]>('/api/v1/school-directory'),
     createSchool: (name: string) => requestResource<School>('/api/v1/schools', 'POST', { name }),
     updateSchool: (s: string, body: unknown) => requestResource<School>(`/api/v1/schools/${part(s)}`, 'PUT', body),
     bind: (s: string) => requestResource(scope(s, 'bind'), 'POST'),
     list: <T extends Row = Row>(s: string, resource: Resource, query = '', signal?: AbortSignal) => requestCollection<T>(scope(s, resource) + query, signal),
-    getDraft: (s: string, id: string) => requestResource<Draft>(scope(s, `delivery-drafts/${part(id)}`)),
-    async relatedHistory(s: string, id: string, page = 1): Promise<RelatedHistory> {
-        const document = await requestDocument(scope(s, `delivery-drafts/${part(id)}/history`) + `?page[number]=${page}&page[size]=30`);
-        const meta = document.meta;
-        if (!Array.isArray(document.data) || !meta?.page || typeof meta.blocked !== 'boolean' || !(meta.latest_attempt_id === null || typeof meta.latest_attempt_id === 'string')) throw new Error('不合法的发送历史文档');
-        return {items: decodeData<Attempt[]>(document), page: meta.page, blocked: meta.blocked, latest_attempt_id: meta.latest_attempt_id};
-    },
     getPost: (s: string, id: string) => requestResource<Post>(scope(s, `posts/${part(id)}`)),
     comments: (s: string, id: string, page = 1) => requestCollection<Row>(scope(s, `posts/${part(id)}/comments`) + `?page[number]=${page}&page[size]=30`),
     mutate: <T = Row>(s: string, path: string, body?: unknown, method = 'POST') => requestResource<T>(scope(s, path), method, body),
@@ -46,10 +38,9 @@ export const workspace = {
 };
 
 /** OAuth only accepts UUID selections; arbitrary return URLs are not supported. */
-export function wecomOAuthUrl(selection: { school?: string; draft?: string } = {}): string {
+export function wecomOAuthUrl(selection: { school?: string } = {}): string {
     const params = new URLSearchParams();
     if (selection.school) params.set('school', selection.school);
-    if (selection.draft) params.set('draft', selection.draft);
     return `/api/v1/wecom/oauth/start${params.size ? `?${params}` : ''}`;
 }
 
@@ -121,3 +112,5 @@ export const assets = {
 
 // Transitional export only; the official contract has one canonical owner.
 export * from '../wecom-distribution'
+
+export * from '../product-workflows'

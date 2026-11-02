@@ -9,7 +9,7 @@ export function createMediaClient(client: Client) {
     upload: (school: string, bytes: ArrayBuffer) =>
       client.requestResource<UploadedMedia>(`${schoolPath(school)}/media`, 'POST', bytes),
     download(school: string, path: string, signal?: Cancellation) {
-      const prefix = `${schoolPath(school)}/media/`
+      const prefix = [ 'media', 'resource-media', 'resource-artwork' ].map(kind=>`${schoolPath(school)}/${kind}/`).find(prefix=>path.startsWith(prefix)) ?? `${schoolPath(school)}/media/`
       if (!path.startsWith(prefix) || !/^[0-9a-f-]{36}$/i.test(path.slice(prefix.length)))
         throw new Error('图片必须属于当前学校')
       return client.requestBinary(path, signal)

@@ -36,12 +36,7 @@ export interface FeedFilter {
   mine?: boolean
   kind?: 'collect' | 'following'
 }
-export interface SchoolResource extends Row {
-  kind: string
-  title: string
-  content: string
-  url: string
-}
+export type SchoolResource = import('../product-workflows/client').PublishedResource
 export function pageQuery(page = 1) {
   return `page[number]=${page}&page[size]=20`
 }
@@ -93,7 +88,7 @@ export function createCommunityClient(client: Client) {
       client.requestCollection<Notification>(scope(s, 'notifications') + `?${pageQuery(page)}`),
     read: (s: string, id: string) =>
       client.requestResource<null>(scope(s, `notifications/${part(id)}/read`), 'PUT'),
-    resources: (s: string) => client.requestResource<SchoolResource[]>(scope(s, 'resources')),
+    resources: (s: string) => client.requestResource<SchoolResource[]>(scope(s, 'published-resources')),
     click: (s: string, id: string) =>
       client.requestResource<null>(scope(s, `resources/${part(id)}/click`), 'POST'),
     report: (s: string, post_id: string, content: string) =>
