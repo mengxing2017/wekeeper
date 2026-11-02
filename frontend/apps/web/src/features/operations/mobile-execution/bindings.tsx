@@ -5,6 +5,8 @@ import { api, sharedSend, type TargetBinding } from './api'
 import { createIdempotencyKey } from '../../../shared/idempotency-key'
 import { PaginationControls } from '../../../shared/pagination-controls'
 
+const inspectionLabels:Record<string,string>={waiting_prerequisites:'尚不能安排检查',not_scheduled:'尚未创建检查',queued:'已排队',running:'手机检查中',passed:'有效通过',expired:'记录已过期',failed:'检查失败',stale:'依赖已变化',retry_wait:'退避等待',retry_exhausted:'自动重试预算暂已用尽'}
+
 export function MobileTargetBindings({ school, admin=false }: { school: string; admin?: boolean }) {
   const cache=useQueryClient()
   const shared=useQuery({queryKey:['mobile-execution',school,'shared-inspections'],queryFn:()=>sharedSend.overview(school),refetchInterval:20000})
@@ -25,7 +27,11 @@ export function MobileTargetBindings({ school, admin=false }: { school: string; 
   return <><Card title="共享手机与目标群绑定" extra={admin && <Button onClick={()=>{form.resetFields();setOpen(true)}}>绑定可用手机</Button>}>
     <Alert type="info" showIcon title="群属于本校，手机属于共享资源池" description="绑定保存后系统自动安排无发送检查。手机只需首次启用托管，无需逐群确认；离线或锁屏时等待恢复。绑定不证明手机已加入真实群，发送仍需学校确认任务及有效验收范围。" />
     {(inspect.error || bind.error || unbind.error) && <Alert type="error" title={(inspect.error || bind.error || unbind.error)?.message} />}
-    {inspect.isSuccess && <Alert type="success" title="已重新评估检查需求，符合条件后自动执行，无需手机逐群确认" />}
+    {inspect.data && <Alert type={inspect.data.readiness.ready ? 'success' : 'info'} title={`重新评估结果：${inspect.data.readiness.target_name} / ${inspect.data.readiness.device_name}`} description={<>
+      <p>{inspect.data.readiness.ready ? '当前检查与发送条件已满足，请重新生成发送预览并核对。' : inspect.data.readiness.blockers.map(b=>b.message).join('；')}</p>
+      <p>检查状态：{inspectionLabels[inspect.data.readiness.inspection_state]}；自动重试剩余 {inspect.data.readiness.retry_remaining} 次。</p>
+      {inspect.data.readiness.retry_at && <p>下次自动评估：{new Date(inspect.data.readiness.retry_at).toLocaleString()}</p>}
+    </>} />}
     {rows.error && <Alert type="error" title={rows.error.message} />}
     <Table<TargetBinding> rowKey="id" dataSource={rows.data?.items ?? []} loading={rows.isFetching} pagination={false} columns={[
       { title: '手机', render: (_, row) => row.device_name || row.device_id },
@@ -34,7 +40,7 @@ export function MobileTargetBindings({ school, admin=false }: { school: string; 
       { title: '群别名', dataIndex: 'target_alias' },
       { title: '自动检查与发送条件', render: (_, row) => {
         const state=shared.data?.readiness?.find(r=>r.binding_id===row.id)
-        return !state ? '正在核对设备条件' : state.ready ? '可以用于发送任务' : <ul>{state.blockers.map(b=><li key={b.code}>{b.message}（{({platform:'平台管理员',school:'学校管理员',device:'手机现场人员',system:'系统自动处理',engineering:'产品研发',administrator:'管理员'} as Record<string,string>)[b.owner] ?? b.owner}）</li>)}</ul>
+        return !state ? '正在核对设备条件' : state.ready ? '可以用于发送任务' : <><p>检查状态：{inspectionLabels[state.inspection_state]}</p>{state.retry_at && <p>下次评估：{new Date(state.retry_at).toLocaleString()}</p>}<ul>{state.blockers.map(b=><li key={b.code}>{b.message}（{({platform:'平台管理员',school:'学校管理员',device:'手机现场人员',system:'系统自动处理',engineering:'产品研发',administrator:'管理员'} as Record<string,string>)[b.owner] ?? b.owner}）</li>)}</ul></>
       } },
       { title: '绑定管理', render:(_,row)=>admin && row.source==='school_pool' && row.enabled ? <Button danger onClick={()=>Modal.confirm({title:'停用本校目标绑定？',onOk:()=>unbind.mutateAsync(row)})}>停用绑定</Button> : '平台维护' },
       { title: '诊断', render: (_, row) => <Button disabled={!admin || !row.enabled || inspect.isPending} onClick={()=>inspect.mutate(row)}>重新评估自动检查</Button> },
