@@ -77,10 +77,20 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
             .and_then(|v| v.parse::<chrono::DateTime<chrono::Utc>>().ok())
             .is_some_and(|t| t > chrono::Utc::now());
         let busy = inspections::busy(tx, uid(&row, "device_id")?).await?;
+        let helper_update:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_capability_deliveries d JOIN mobile_v9_runtime_details r ON r.device_id=$1 WHERE d.release_id=$2 AND NOT (r.apk_sha256=ANY(d.supported_apks)))").bind(uid(&row,"device_id")?).bind(candidate.as_ref().and_then(|c|c["release_id"].as_str()).and_then(|v|v.parse::<Uuid>().ok())).fetch_one(&mut **tx).await?;
         let mut blockers = Vec::new();
         let mut add = |code: &str, message: &str, owner: &str, action: &str, automatic: bool| {
             blockers.push(json!({"code":code,"message":message,"owner":owner,"action":action,"automatic":automatic,"observed_at":chrono::Utc::now()}))
         };
+        if helper_update {
+            add(
+                "shared_send_helper_update_required",
+                "手机助手需要更新至产品支持版本",
+                "device",
+                "更新手机助手后等待自动检查",
+                false,
+            );
+        }
         if !selectable {
             add(
                 "resource_unavailable",
@@ -97,7 +107,7 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
         {
             add(
                 "release_missing",
-                "通用流程尚未激活",
+                "产品尚未交付",
                 "engineering",
                 "打开能力办理，完成候选验证与限定测试放行",
                 false,
@@ -124,18 +134,18 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
         if policy.as_ref().is_none_or(|p| p["mode"] != "enabled") {
             add(
                 "policy_not_enabled",
-                "发送政策尚未启用",
+                "使用方案尚未启用",
                 "platform",
-                "配置发送政策及允许发送阶段",
+                "等待产品提供可用的使用方案",
                 false,
             );
         }
         if !scope_exists {
             add(
                 "business_scope_missing",
-                "本校手机和目标群没有有效业务范围",
+                "本校手机和目标群尚无有效使用授权",
                 "platform",
-                "在通用能力办理中批准业务范围",
+                "打开手机群消息使用管理开通或核对授权",
                 false,
             );
         }
@@ -202,7 +212,8 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
                 !exhausted,
             );
         }
-        let ready = selectable
+        let ready = !helper_update
+            && selectable
             && !busy
             && !stages.is_empty()
             && accepted
