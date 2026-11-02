@@ -10,7 +10,7 @@
 
 
 ::: warning 历史协议与维护资料
-本文包含对应历史协议与在途任务的说明。新建手机业务请先阅读[使用手册](../guide/operator/mobile-tasks.md)和[共享手机能力开通](../guide/platform-admin/flow-maintenance.md)，不要将旧环境准备要求套用到新任务。
+本文包含对应历史协议与在途任务的说明。新建手机业务请先阅读[使用手册](../guide/operator/mobile-execution-tasks.md)和[共享手机能力开通](../guide/platform-admin/flow-maintenance.md)，不要将旧环境准备要求套用到新任务。
 :::
 
 
