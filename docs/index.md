@@ -34,7 +34,7 @@ features:
 
 日常业务从[使用手册](./guide/index.md)开始；服务器部署看[运行与故障处理](./operations/index.md)；修改代码看[开发者手册](./development/index.md)。不理解菜单或任务状态时先查[术语](./guide/glossary.md)。
 
-当前手机新任务使用[通用流程 v5](./runbooks/dispatch-v5.md)。历史 v3/v4 文档仅适用于对应旧任务。官方群发与手机发送是不同操作路径，创建成功不等于已送达，结果不确定须在原任务人工核对。
+当前手机任务使用[共享手机发送](./guide/operator/mobile-execution-tasks.md)。官方群发与手机发送是不同操作路径，创建成功不等于已送达，结果不确定须在原任务人工核对。
 
 ## 阅读与维护
 

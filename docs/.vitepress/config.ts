@@ -41,8 +41,6 @@ export default defineConfig({
           { text: "手机目标群与设备绑定", link: "/guide/operator/mobile-targets" },
           { text: "手机群消息使用管理", link: "/guide/platform-admin/shared-mobile-resources" },
           { text: "使用开通说明", link: "/guide/platform-admin/flow-maintenance" },
-          { text: "历史手机发送任务", link: "/guide/operator/mobile-tasks" },
-          { text: "历史学校配置", link: "/guide/operator/mobile-execution-flows" },
           { text: "结果与异常处理", link: "/guide/operator/results-and-recovery" },
         ] },
         {
@@ -115,13 +113,6 @@ export default defineConfig({
             { text: "业务流程", link: "/pipeline/" },
             { text: "业务运行", link: "/runbooks/business" },
             { text: "企业微信接入", link: "/runbooks/wecom" },
-            { text: "历史手机任务 v5（已停用）", link: "/runbooks/dispatch-v5" },
-            { text: "历史手机接口", link: "/runbooks/mobile-delivery" },
-            { text: "历史 v4 工作流", link: "/runbooks/automation-workflows" },
-            {
-              text: "历史 v3 配置",
-              link: "/runbooks/configured-mobile-delivery",
-            },
             { text: "协议与 ADR", link: "/references/" },
           ],
         },

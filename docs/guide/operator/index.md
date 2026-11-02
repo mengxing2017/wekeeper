@@ -16,7 +16,7 @@
 - [审核内容、评论和举报](moderation.md)
 - [学校客户群与消息模板](groups-and-templates.md)
 - [创建官方群发](broadcast-tasks.md)
-- [配置手机发送](mobile-tasks.md)
+- [配置手机发送](mobile-execution-tasks.md)
 - [结果、暂停、停止与异常核对](results-and-recovery.md)
 
 完成每日工作后，应能找到已处理记录和任务结果。没有相应按钮或操作被拒绝时，联系学校管理员核对角色，不要借用管理员账号。

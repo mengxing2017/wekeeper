@@ -25,7 +25,7 @@
 
 创建、确认、领取和结果上报必须保持当前幂等及 fencing 语义。人工确认、单次调用领取、unknown 人工核对不因新增通道而放宽。不接入千寻、Hook 或 Binlog 发送。
 
-设备 v1—v5 的恢复与在途记录保持原协议，不能强行升级旧请求。最新流程见[当前 v5](../runbooks/dispatch-v5.md)，历史解释见[参考资料](../references/index.md)。
+设备 v1—v5 的恢复与在途记录保持原协议，不能强行升级旧请求。当前手机流程见[共享手机通用发送](../runbooks/shared-mobile-send.md)，历史解释见[参考资料](../references/index.md)。
 
 ## 业务预览、发布及范围办理
 

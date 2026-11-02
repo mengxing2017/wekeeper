@@ -2,7 +2,7 @@
 
 已部署系统的日常操作请先看[使用手册](../guide/index.md)。本页面向安装、开发和部署人员。
 
-当前新业务使用[无环境前置批量任务 v5](../runbooks/dispatch-v5.md)。旧 v3/v4 文档仅适用于对应协议和历史在途任务。
+当前手机业务使用[共享手机通用发送](../runbooks/shared-mobile-send.md)，办理步骤见[手机使用管理](../guide/platform-admin/shared-mobile-resources.md)和[手机任务](../guide/operator/mobile-execution-tasks.md)。
 
 按目标选择入口，避免将临时开发数据误作生产持久数据。
 
