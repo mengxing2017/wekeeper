@@ -34,7 +34,7 @@ pub(super) async fn artifact(tx: &mut Tx<'_>, a: &Actor, v: ArtifactUpload) -> R
     Ok(json!({"id":id,"name":v.name,"kind":v.kind,"sha256":sha,"size_bytes":v.content.len()}))
 }
 // Only inspect ZIP directory records; never decompress untrusted APK content.
-fn apk_structure(b: &[u8]) -> bool {
+pub(super) fn apk_structure(b: &[u8]) -> bool {
     fn u16at(b: &[u8], i: usize) -> Option<usize> {
         Some(u16::from_le_bytes(b.get(i..i + 2)?.try_into().ok()?) as usize)
     }
