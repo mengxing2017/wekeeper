@@ -16,7 +16,6 @@ export const pageHelp: Record<string, string> = {
   'wecom-assets': 'platform-admin/directory-and-assets',
   'wecom-directory': 'platform-admin/directory-and-assets',
   'mobile-execution-tasks': 'operator/mobile-execution-tasks',
-  'mobile-execution-flows': 'operator/mobile-execution-flows',
   'mobile-targets': 'operator/mobile-targets',
   'shared-mobile-resources': 'platform-admin/shared-mobile-resources',
   'execution-devices': 'operator/execution-resources',
