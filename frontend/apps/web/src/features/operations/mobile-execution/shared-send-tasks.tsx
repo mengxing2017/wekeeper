@@ -11,6 +11,7 @@ import { UsageManagement } from '../../admin/mobile-resources/usage-management'
 const stateLabels:Record<string,string>={queued:'排队等待共享手机',leased:'手机已领取，准备中',prepared:'文字准备完成，等待单次许可',invocation_issued:'已发单次许可，等待手机结果',observed_sent:'手机观察到新的已发消息，未证明对方送达',unknown:'结果不确定，必须人工核对，禁止自动重发',failed_before_call:'调用前准备失败，未发出调用许可',invalidated:'执行依据已失效',cancelled:'未执行部分已取消',verified_not_sent:'人工核对确认未发送',manually_confirmed_sent:'人工核对确认已发送'}
 export function SharedSendTasks({ school, admin }: { school: string; admin: boolean }) {
   const cache = useQueryClient()
+  const [errorModal, errorContext] = Modal.useModal()
   const requestKeys=useRef(new Map<string,string>())
   function keyFor(kind:string,input:unknown){const identity=JSON.stringify([kind,input]);let key=requestKeys.current.get(identity);if(!key){key=createIdempotencyKey();requestKeys.current.set(identity,key)}return key}
   const [action,setAction]=useState<{kind:'stop'|'review'|'reassign';attempt?:SharedAttempt}>()
@@ -41,7 +42,7 @@ export function SharedSendTasks({ school, admin }: { school: string; admin: bool
     return result.preview
   }
   const inspect = useMutation({ mutationFn: () => generatePreview([]), onSuccess:p=>{setPreview(p);void refresh()} })
-  const confirm = useMutation({ mutationFn: () => sharedSend.confirm(school, preview!, keyFor("confirm",preview!.id)), onSuccess: t => { setDetail(t);  setDraft(undefined); setPreview(undefined); setMessage(''); setTargets([]); void refresh() } })
+  const confirm = useMutation({ mutationFn: () => sharedSend.confirm(school, preview!, keyFor("confirm",preview!.id)), onError: error => { errorModal.error({ title: '确认发送失败', content: taskError(error), okText: '知道了' }) }, onSuccess: t => { setDetail(t);  setDraft(undefined); setPreview(undefined); setMessage(''); setTargets([]); void refresh() } })
   const reselect=useMutation({mutationFn:(selections:Array<{target_id:string;device_id:string}>)=>generatePreview(selections),onSuccess:setPreview})
   const mutate=useMutation({mutationFn:async()=>{
     if(action!.kind==='stop')return sharedSend.stop(school,detail!.id,detail!.revision,reason,keyFor('stop',[detail!.id,detail!.revision,reason]))
@@ -54,6 +55,7 @@ export function SharedSendTasks({ school, admin }: { school: string; admin: bool
   const dirty = !!draft && (message.replace(/\r\n?/g, '\n') !== draft.message || targets.join() !== draft.target_ids.join() || gap!==draft.between_targets_seconds)
   const confirmationIssues = !admin ? ['当前账号没有本校管理员发送权限；平台管理员也需在学校成员管理中获得本校管理员角色'] : preview?.plan.items.flatMap(i => !i.selected ? [`${i.target.name}：请选择已绑定手机`] : i.blocker ? [`${i.target.name}：${i.blocker}`] : []) ?? []
   return <Card title="手机共享发送">
+    {errorContext}
     <Space orientation="vertical" style={{ width: '100%' }}>
       <Alert type="info" showIcon title="按目标群创建，逐群选择共享手机" description="填写文字和目标群后直接预览，系统自动保存草稿。核对预览后确认发送。管理员确认后进入队列。结果不确定时停止该设备，核对前不会自动重发。企业微信官方群发独立使用。" />
       {overview.data?.sending_status&&<Alert type={overview.data.sending_status.can_confirm?'info':'warning'} title={overview.data.sending_status.message}/>}

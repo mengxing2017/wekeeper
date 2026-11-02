@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { api, sharedSend, type SharedPreview } from './api'
 import { SharedSendTasks } from './shared-send-tasks'
@@ -30,7 +30,12 @@ it('本校管理员可点击确认，预览检查问题由提交接口明确反�
   expect(button.disabled).toBe(false)
   fireEvent.click(button)
   await waitFor(()=>expect(sharedSend.confirm).toHaveBeenCalledOnce())
-  expect(await screen.findByText('请选择已绑定手机')).toBeTruthy()
+  const dialog=await screen.findByRole('dialog')
+  expect(within(dialog).getAllByText('确认发送失败').length).toBeGreaterThan(0)
+  expect(within(dialog).getByText('请选择已绑定手机')).toBeTruthy()
+  fireEvent.click(within(dialog).getByRole('button',{name:'知道了'}))
+  await waitFor(()=>expect(screen.queryByRole('dialog')).toBeNull())
+  expect(screen.getByRole('button',{name:'确认发送'})).toBeTruthy()
 })
 
 it('手机授权状态未知与状态过期不阻止确认，也不要求重新授权',async()=>{
