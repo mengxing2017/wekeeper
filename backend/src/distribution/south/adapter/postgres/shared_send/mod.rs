@@ -185,7 +185,7 @@ impl Store for Repository {
             task(&mut tx, s, id).await?
         } else {
             let tasks:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(t) FROM mobile_shared_tasks t WHERE school_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100").bind(s).fetch_all(&mut *tx).await?;
-            let drafts:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(d) FROM mobile_shared_task_drafts d WHERE school_id=$1 AND NOT EXISTS(SELECT 1 FROM mobile_shared_tasks t WHERE t.draft_id=d.id) ORDER BY created_at DESC LIMIT 100").bind(s).fetch_all(&mut *tx).await?;
+            let drafts:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(d)||jsonb_build_object('targets',coalesce((SELECT jsonb_agg(jsonb_build_object('id',t.id,'name',coalesce(nullif(t.alias,''),t.search_text)) ORDER BY ids.n) FROM unnest(d.target_ids) WITH ORDINALITY ids(id,n) JOIN mobile_targets t ON t.id=ids.id AND t.school_id=d.school_id),'[]'::jsonb)) FROM mobile_shared_task_drafts d WHERE school_id=$1 AND NOT EXISTS(SELECT 1 FROM mobile_shared_tasks t WHERE t.draft_id=d.id) ORDER BY created_at DESC LIMIT 100").bind(s).fetch_all(&mut *tx).await?;
             let inspections:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(i)-'challenge' FROM mobile_shared_send_inspections i WHERE school_id=$1 ORDER BY id DESC LIMIT 100").bind(s).fetch_all(&mut *tx).await?;
             json!({"id":s,"tasks":tasks,"drafts":drafts,"inspections":inspections,"readiness":readiness::school(&mut tx,s).await?,"pool":readiness::pool(&mut tx,s).await?})
         };

@@ -154,6 +154,7 @@ impl IntoResponse for Error {
                 StatusCode::CONFLICT,code,match code {
                     "shared_send_key_required" => "平台尚未配置共享发送密钥，请联系部署维护人员配置后再开放发送",
                     "shared_send_not_released" => "当前政策尚未放行共享发送，请联系平台管理员核对发送阶段",
+                    "shared_send_device_not_ready" => "设备或检查条件已变化，请重新生成逐群预览并查看当前阻塞原因",
                     "shared_send_scope_not_accepted" => "该手机、学校、目标群与实际应用环境尚无有效真机验收记录，请联系产品验收人员完成测试",
                     "shared_send_runtime_required" => "等待手机上线、解锁并报告可执行状态；请检查长期托管、通知和无障碍权限",
                     "shared_send_review_required" => "原尝试必须先完成未发送核对并确认设备已停止，不能直接改派或重发",

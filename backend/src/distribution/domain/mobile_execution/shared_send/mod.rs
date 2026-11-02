@@ -491,3 +491,76 @@ pub struct PoolBindingInput {
     pub expected_access_revision: i64,
     pub search_text_override: Option<String>,
 }
+
+/// Display identity belongs to a target, even when no phone qualifies.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PreviewTarget {
+    pub id: Uuid,
+    pub name: String,
+    pub search_text: String,
+    pub locator_revision: i64,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PreviewItem {
+    pub position: usize,
+    pub target_id: Uuid,
+    pub target: PreviewTarget,
+    pub selected: Option<Value>,
+    pub candidates: Vec<Value>,
+    pub readiness: Vec<Value>,
+    pub blocker: Option<String>,
+}
+/// Expiry takes precedence over a historic stored state.
+pub fn inspection_state(
+    state: Option<&str>,
+    live: bool,
+    eligible: bool,
+    failures: i64,
+    cooling: bool,
+) -> &'static str {
+    match (state, live) {
+        (Some("passed"), true) => "passed",
+        (Some("pending"), true) => "queued",
+        (Some("leased"), true) => "running",
+        _ if !eligible => "waiting_prerequisites",
+        _ if failures >= 3 => "retry_exhausted",
+        _ if cooling => "retry_wait",
+        (Some("passed" | "pending" | "leased"), false) => "expired",
+        (Some("failed"), _) => "failed",
+        (Some("stale"), _) => "stale",
+        _ => "not_scheduled",
+    }
+}
+
+/// Preview and confirmation must not mistake an inspected phone for a ready phone.
+pub fn preview_blocker(device: Option<Uuid>, readiness: &[Value]) -> Option<String> {
+    let Some(device) = device else {
+        return Some(
+            if readiness.is_empty() {
+                "shared_binding_missing"
+            } else {
+                "device_not_eligible"
+            }
+            .into(),
+        );
+    };
+    match readiness
+        .iter()
+        .find(|r| r["device_id"] == serde_json::json!(device))
+    {
+        Some(r) if r["ready"] == true && r["blockers"].as_array().is_some_and(Vec::is_empty) => {
+            None
+        }
+        Some(r) => Some(
+            r["blockers"]
+                .as_array()
+                .and_then(|b| b.first())
+                .and_then(|b| b["code"].as_str())
+                .unwrap_or("device_not_eligible")
+                .into(),
+        ),
+        None => Some("device_not_eligible".into()),
+    }
+}

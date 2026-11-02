@@ -40,7 +40,7 @@ pub(super) async fn candidates(tx: &mut Tx<'_>, s: Uuid, target: Uuid) -> Result
     let mut devices = std::collections::BTreeSet::new();
     for mut row in rows {
         let deps = dependencies(&row);
-        let inspection:Option<Uuid>=sqlx::query_scalar("SELECT id FROM mobile_shared_send_inspections WHERE school_id=$1 AND device_id=$2 AND target_id=$3 AND state='passed' AND expires_at>clock_timestamp() AND dependencies=$4 ORDER BY id DESC LIMIT 1").bind(s).bind(uid(&row,"device_id")?).bind(target).bind(&deps).fetch_optional(&mut **tx).await?;
+        let inspection:Option<Uuid>=sqlx::query_scalar("SELECT id FROM (SELECT id,state,expires_at FROM mobile_shared_send_inspections WHERE school_id=$1 AND device_id=$2 AND target_id=$3 AND dependencies=$4 ORDER BY created_at DESC,id DESC LIMIT 1) latest WHERE state='passed' AND expires_at>clock_timestamp()").bind(s).bind(uid(&row,"device_id")?).bind(target).bind(&deps).fetch_optional(&mut **tx).await?;
         if let Some(id) = inspection
             && devices.insert(uid(&row, "device_id")?)
         {
@@ -137,7 +137,7 @@ pub(super) async fn write(
                 id
             };
             Ok(sqlx::query_scalar(
-                "SELECT to_jsonb(d) FROM mobile_shared_task_drafts d WHERE id=$1",
+                "SELECT to_jsonb(d)||jsonb_build_object('targets',coalesce((SELECT jsonb_agg(jsonb_build_object('id',t.id,'name',coalesce(nullif(t.alias,''),t.search_text)) ORDER BY ids.n) FROM unnest(d.target_ids) WITH ORDINALITY ids(id,n) JOIN mobile_targets t ON t.id=ids.id AND t.school_id=d.school_id),'[]'::jsonb)) FROM mobile_shared_task_drafts d WHERE id=$1",
             )
             .bind(id)
             .fetch_one(&mut **tx)
@@ -166,15 +166,40 @@ pub(super) async fn write(
             let mut items = Vec::new();
             for (position, target) in targets.iter().enumerate() {
                 let choices = candidates(tx, s, *target).await?;
+                let target_info:PreviewTarget = sqlx::query_scalar::<_,Value>("SELECT jsonb_build_object('id',id,'name',coalesce(nullif(alias,''),search_text),'search_text',search_text,'locator_revision',locator_revision) FROM mobile_targets WHERE id=$1 AND school_id=$2").bind(target).bind(s).fetch_optional(&mut **tx).await?.map(serde_json::from_value).transpose().map_err(|_|Error::Conflict)?.ok_or(Error::NotFound)?;
+                let target_status: Vec<Value> = status
+                    .iter()
+                    .filter(|r| r["target_id"] == json!(target))
+                    .cloned()
+                    .collect();
                 let selection = input.selections.iter().find(|v| v.target_id == *target);
                 let chosen = if let Some(v) = selection {
                     choices
                         .iter()
                         .find(|c| c["device_id"] == json!(v.device_id))
                 } else {
-                    choices.first()
+                    choices
+                        .iter()
+                        .find(|c| {
+                            target_status
+                                .iter()
+                                .any(|r| r["device_id"] == c["device_id"] && r["ready"] == true)
+                        })
+                        .or_else(|| choices.first())
                 };
-                items.push(json!({"position":position,"target_id":target,"selected":chosen,"candidates":choices,"readiness":status.iter().filter(|r|r["target_id"]==json!(target)).collect::<Vec<_>>(),"blocker":if chosen.is_none(){Some("target_inspection_or_binding_required")}else{None}}));
+                let blocker = preview_blocker(
+                    chosen.map(|c| uid(c, "device_id")).transpose()?,
+                    &target_status,
+                );
+                items.push(json!(PreviewItem {
+                    position,
+                    target_id: *target,
+                    target: target_info,
+                    selected: chosen.cloned(),
+                    candidates: choices,
+                    readiness: target_status,
+                    blocker
+                }));
             }
             let p = policy(tx).await?;
             let id = Uuid::now_v7();
@@ -208,7 +233,14 @@ pub(super) async fn write(
                 .ok_or(Error::Policy("shared_send_not_released"))?;
             require(current["id"] == p["policy_id"], "plan_dependency_changed")?;
             let items = plan["items"].as_array().ok_or(Error::Conflict)?;
+            let current_readiness = readiness::school(tx, s).await?;
             for item in items {
+                require(
+                    current_readiness.iter().any(|r| {
+                        r["binding_id"] == item["selected"]["binding_id"] && r["ready"] == true
+                    }),
+                    "shared_send_device_not_ready",
+                )?;
                 validate_plan(tx, s, &item["selected"]).await?;
             }
             let id = Uuid::now_v7();

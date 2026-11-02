@@ -1341,3 +1341,59 @@ async fn stable_delegation_and_school_pool_writes_require_identity() {
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
     }
 }
+
+#[test]
+fn preview_without_phone_keeps_target_identity_and_binding_names() {
+    use wekeeper_api::distribution::domain::mobile_execution::shared_send::PreviewItem;
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/shared-mobile-preview-item.json"
+    ))
+    .unwrap();
+    let item: PreviewItem = serde_json::from_value(fixture.clone()).unwrap();
+    assert!(item.selected.is_none());
+    assert_eq!(item.target.name, "家长通知群");
+    assert_eq!(serde_json::to_value(item).unwrap(), fixture);
+}
+#[test]
+fn inspection_projection_distinguishes_expiry_and_real_queue() {
+    use wekeeper_api::distribution::domain::mobile_execution::shared_send::inspection_state as state;
+    assert_eq!(state(None, false, false, 0, false), "waiting_prerequisites");
+    assert_eq!(state(None, false, true, 0, false), "not_scheduled");
+    assert_eq!(state(Some("leased"), false, true, 0, false), "expired");
+    assert_eq!(state(Some("passed"), false, true, 0, false), "expired");
+    assert_eq!(state(Some("pending"), true, true, 1, true), "queued");
+    assert_eq!(state(Some("leased"), true, true, 1, true), "running");
+    assert_eq!(state(Some("passed"), true, true, 3, true), "passed");
+    assert_eq!(state(Some("failed"), true, true, 1, true), "retry_wait");
+    assert_eq!(
+        state(Some("failed"), true, true, 3, true),
+        "retry_exhausted"
+    );
+}
+
+#[test]
+fn inspected_phone_requires_current_readiness_before_confirmation() {
+    use wekeeper_api::distribution::domain::mobile_execution::shared_send::preview_blocker;
+    let device = uuid::Uuid::from_u128(1);
+    assert_eq!(
+        preview_blocker(None, &[]).as_deref(),
+        Some("shared_binding_missing")
+    );
+    let blocked =
+        json!({"device_id":device,"ready":false,"blockers":[{"code":"acceptance_missing"}]});
+    assert_eq!(
+        preview_blocker(Some(device), &[blocked]).as_deref(),
+        Some("acceptance_missing")
+    );
+    assert_eq!(
+        preview_blocker(Some(device), &[]).as_deref(),
+        Some("device_not_eligible")
+    );
+    assert!(
+        preview_blocker(
+            Some(device),
+            &[json!({"device_id":device,"ready":true,"blockers":[]})]
+        )
+        .is_none()
+    );
+}
