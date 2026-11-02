@@ -37,7 +37,7 @@ export default defineConfig({
           { text: "通讯录与客户群目录", link: "/guide/platform-admin/directory-and-assets" },
         ] },
         { text: "移动端分发管理", items: [
-          { text: "手机任务（共享发送未开放）", link: "/guide/operator/mobile-execution-tasks" },
+          { text: "手机共享发送任务", link: "/guide/operator/mobile-execution-tasks" },
           { text: "手机目标群与设备绑定", link: "/guide/operator/mobile-targets" },
           { text: "共享手机资源维护", link: "/guide/platform-admin/shared-mobile-resources" },
           { text: "手机执行能力开通", link: "/guide/platform-admin/flow-maintenance" },
