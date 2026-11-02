@@ -24,29 +24,30 @@ it('正文保持空格与换行，未检查目标不能确认发送', async () =
   await compose()
   expect(screen.queryByRole('button',{name:'保存草稿'})).toBeNull();expect(screen.queryByLabelText('发送阶段')).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: '预览逐群执行计划' }))
-  await screen.findByText('等待绑定及自动检查就绪，请查看目标群的具体状态')
+  await screen.findByText('没有可选绑定，请核对本校目标群与手机的关联')
   expect((screen.getByRole('button', { name: '确认发送' }) as HTMLButtonElement).disabled).toBe(true)
   expect(sharedSend.confirm).not.toHaveBeenCalled()
 })
 
-it('已绑定但未授权的手机显示本机操作路径并保持禁止发送', async () => {
- const pending:SharedPreview=structuredClone(preview)
- pending.plan.items[0].readiness=[{device_name:'现场共享手机',target_name:'家长通知',search_text:'实际搜索文字',inspection_state:'waiting_prerequisites',retry_at:null,retry_remaining:3,binding_id:'binding',device_id:'bound-phone',target_id:'target',state:'waiting_initial_consent',ready:false,plan_selectable:true,confirmable:false,execution_ready:false,confirmable_stages:[],automatic:true,inspection:null,blockers:[{code:'waiting_initial_consent',message:'等待首次授权',owner:'device',automatic:false},{code:'acceptance_missing',message:'该范围尚未完成真机验收放行',owner:'engineering',automatic:false}]}]
+it('手机授权状态未知与状态过期不阻止确认，也不要求重新授权',async()=>{
+ const pending=structuredClone(preview)
+ const phone={target_id:'target',target_name:'家长通知',device_name:'测试手机',device_id:'phone',binding_id:'binding',binding_locator_revision:1,target_locator_revision:1,search_text:'实际搜索文字',search_source:'default' as const,access_revision:null,credential_generation:1,delegation_id:null,release_id:null,flow_digest:null,flow:null,confirmable:true}
+ pending.plan.items[0]={...pending.plan.items[0],selected:phone,candidates:[phone],blocker:null,readiness:[{binding_id:'binding',device_id:'phone',target_id:'target',device_name:'测试手机',target_name:'家长通知',search_text:'实际搜索文字',state:'runtime_stale',ready:false,plan_selectable:true,confirmable:true,execution_ready:false,confirmable_stages:['production_allowlist'],automatic:true,blockers:[],inspection:null,inspection_state:'waiting_prerequisites',retry_at:null,retry_remaining:3,consent_state:'unknown',runtime_state:'stale',execution_conditions:[{code:'runtime_stale',message:'手机执行状态已过期，不要求重新授权',owner:'system',automatic:true}]}]}
  vi.mocked(sharedSend.taskPreview).mockResolvedValue(response(pending))
- await compose()
- fireEvent.click(screen.getByRole('button',{name:'预览逐群执行计划'}))
- expect(await screen.findByText(/不会因 Web 预览自动弹窗/)).toBeTruthy()
- expect(screen.getByText('已绑定手机：现场共享手机')).toBeTruthy()
- expect(screen.getByText('系统支持状态：当前手机应用暂不支持执行，请在使用管理中报告问题。')).toBeTruthy()
- expect(screen.queryByText('无可用设备')).toBeNull()
- expect((screen.getByRole('button',{name:'确认发送'}) as HTMLButtonElement).disabled).toBe(true)
- expect(sharedSend.confirm).not.toHaveBeenCalled()
-})
+ vi.mocked(sharedSend.confirm).mockResolvedValue({id:'task',school_id:'school',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-03'})
+ await compose();fireEvent.click(screen.getByRole('button',{name:'预览逐群执行计划'}))
+ expect(await screen.findByText('手机托管：状态待同步，不代表未授权')).toBeTruthy()
+ expect(screen.getByText('执行状态：手机执行状态已过期，不要求重新授权')).toBeTruthy()
+ expect(screen.queryByText(/查看范围并启用托管/)).toBeNull()
+ const confirm=screen.getByRole('button',{name:'确认发送'}) as HTMLButtonElement
+ expect(confirm.disabled).toBe(false);fireEvent.click(confirm)
+ await waitFor(()=>expect(sharedSend.confirm).toHaveBeenCalledOnce())
+},60000)
 
 it('无手机候选仍显示群名和搜索文字，重新预览生成新操作并清除确认',async()=>{
  await compose()
  fireEvent.click(screen.getByRole('button',{name:'预览逐群执行计划'}))
- await screen.findByText('等待绑定及自动检查就绪，请查看目标群的具体状态')
+ await screen.findByText('没有可选绑定，请核对本校目标群与手机的关联')
  expect(screen.getAllByText('家长通知').length).toBeGreaterThanOrEqual(2)
  expect(screen.getByRole('cell',{name:'实际搜索文字'})).toBeTruthy()
  expect(screen.queryByRole('cell',{name:'target'})).toBeNull()
@@ -67,7 +68,7 @@ it('预览响应不明保持原键，成功后的主动预览使用新键',async
  fireEvent.click(screen.getByRole('button',{name:'预览逐群执行计划'}))
  await screen.findByText('预览响应不明')
  fireEvent.click(screen.getByRole('button',{name:'预览逐群执行计划'}))
- await screen.findByText('等待绑定及自动检查就绪，请查看目标群的具体状态')
+ await screen.findByText('没有可选绑定，请核对本校目标群与手机的关联')
  const calls=vi.mocked(sharedSend.taskPreview).mock.calls
  expect(calls[0][2]).toBe(calls[1][2])
  fireEvent.click(screen.getByRole('button',{name:'预览逐群执行计划'}))

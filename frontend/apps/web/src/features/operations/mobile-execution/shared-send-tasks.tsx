@@ -40,7 +40,7 @@ export function SharedSendTasks({ school, admin }: { school: string; admin: bool
     requestKeys.current.delete(JSON.stringify(['preview',input]))
     return result.preview
   }
-  const inspect = useMutation({ mutationFn: () => generatePreview([]), onSuccess:setPreview })
+  const inspect = useMutation({ mutationFn: () => generatePreview([]), onSuccess:p=>{setPreview(p);void refresh()} })
   const confirm = useMutation({ mutationFn: () => sharedSend.confirm(school, preview!, keyFor("confirm",preview!.id)), onSuccess: t => { setDetail(t);  setDraft(undefined); setPreview(undefined); setMessage(''); setTargets([]); void refresh() } })
   const reselect=useMutation({mutationFn:(selections:Array<{target_id:string;device_id:string}>)=>generatePreview(selections),onSuccess:setPreview})
   const mutate=useMutation({mutationFn:async()=>{
@@ -68,13 +68,27 @@ export function SharedSendTasks({ school, admin }: { school: string; admin: bool
       <Button type="primary" loading={inspect.isPending} disabled={!message.trim() || !targets.length || reselect.isPending || confirm.isPending} onClick={() => inspect.mutate()}>预览逐群执行计划</Button>
       {dirty && <Alert type="warning" title="文字或目标群已修改，请重新预览" />}
       {preview && !dirty && <>
-        {overview.data?.readiness.some(live=>{const old=preview.plan.items.flatMap(i=>i.readiness??[]).find(r=>r.binding_id===live.binding_id);return old && (old.state!==live.state || old.ready!==live.ready)}) && <Alert type="warning" title="手机条件已变化，当前预览仍为原快照" description={<Button onClick={()=>inspect.mutate()}>更新预览并重新确认</Button>}/>}
+        {overview.data?.readiness.some(live=>{const old=preview.plan.items.flatMap(i=>i.readiness??[]).find(r=>r.binding_id===live.binding_id);return old && (old.state!==live.state || old.ready!==live.ready)}) && <Alert type="warning" title="状态已更新；当前发送计划保持原快照" description={<Button onClick={()=>inspect.mutate()}>更新业务预览</Button>}/>}
         {preview.plan.sending_status&&!preview.plan.sending_status.can_confirm&&<Alert type="warning" title={preview.plan.sending_status.message}/>}
-        <p>当前为固定计划；条件变化后请重新点击“预览逐群执行计划”，并重新确认。计划有效期：{preview.expires_at}。以下为实际发送文字：</p><pre style={{ whiteSpace: 'pre-wrap' }}>{preview.plan.message}</pre>
+        <p>当前为固定计划；业务范围变化后请重新点击“预览逐群执行计划”，并重新确认。计划有效期：{preview.expires_at}。以下为实际发送文字：</p><pre style={{ whiteSpace: 'pre-wrap' }}>{preview.plan.message}</pre>
         <Table rowKey="target_id" pagination={false} dataSource={preview.plan.items} columns={[
           { title: '目标群', render:(_,i)=>i.target.name }, { title: '共享手机', render: (_, i) => <Select aria-label={`目标群 ${i.target_id} 的共享手机`} style={{minWidth:150}} disabled={reselect.isPending} value={i.selected?.device_id} placeholder={i.readiness?.length ? '选择已绑定手机（可离线）' : '无绑定设备'} options={(i.readiness ?? []).map(r=>({value:r.device_id,label:r.device_name,disabled:!i.candidates.some(c=>c.device_id===r.device_id) || r.plan_selectable===false}))} onChange={device_id=>reselect.mutate(previewSelections(preview.plan.items,i.target_id,device_id))} /> },
           { title: '实际搜索文字', render: (_, i) => i.selected?.search_text ?? i.target.search_text },
-          { title: '检查', render: (_, i) => i.blocker ? i.readiness?.length ? <Space orientation="vertical">{i.readiness.map(r=><div key={r.binding_id}><p>已绑定手机：{r.device_name}</p>{admin&&<Button onClick={()=>setUsageOpen(true)}>查看使用状态并报告问题</Button>}{r.retry_at && <p>下次自动评估时间：{new Date(r.retry_at).toLocaleString()}</p>}{r.blockers.map(b=><p key={b.code}>{b.owner==='device' ? '手机使用者' : b.owner==='engineering' ? '系统支持状态' : b.owner==='platform' ? '平台管理员' : b.owner==='school' ? '学校管理员' : b.owner==='administrator' ? '管理员' : '系统自动处理'}：{b.code==='waiting_initial_consent' ? '打开 keeper-otter → 设置授权与自动执行 → 查看范围并启用托管。在手机主动点击后才显示原生确认框，不会因 Web 预览自动弹窗。' : b.code==='waiting_device_ready' ? '设置通知和无障碍权限，保持手机解锁；后台服务在线后自动更新就绪状态。' : b.owner==='engineering' ? '当前手机应用暂不支持执行，请在使用管理中报告问题。' : b.message}</p>)}</div>)}</Space> : '等待绑定及自动检查就绪，请查看目标群的具体状态'  : '可以确认；缺少运行条件时任务将等待，并受确认有效期约束' },
+          { title: '受理检查与手机执行状态', render: (_, i) => <Space orientation="vertical">
+            <p>{i.blocker ? `受理检查：${i.blocker}` : '可以确认提交；手机执行条件不影响任务入队'}</p>
+            {(i.readiness ?? []).filter(r=>!i.selected||r.device_id===i.selected.device_id).map(snapshot=>{
+              const current=overview.data?.readiness.find(r=>r.binding_id===snapshot.binding_id) ?? snapshot
+              return <div key={snapshot.binding_id}>
+                <p>已绑定手机：{current.device_name}</p>
+                {i.blocker && snapshot.blockers.map(b=><p key={b.code}>受理条件：{b.message}</p>)}
+                <p>手机托管：{current.consent_state==='accepted'?'已同意':current.consent_state==='revoked'?'已撤回':'状态待同步，不代表未授权'}</p>
+                {current.runtime_observed_at&&<p>手机状态上报时间：{new Date(current.runtime_observed_at).toLocaleString()}</p>}
+                {(current.execution_conditions??[]).map(c=><p key={c.code}>执行状态：{c.message}</p>)}
+                {admin&&i.blocker&&<Button onClick={()=>setUsageOpen(true)}>查看本校使用范围</Button>}
+              </div>
+            })}
+            {i.blocker&&!(i.readiness?.length)&&<p>没有可选绑定，请核对本校目标群与手机的关联</p>}
+          </Space> },
         ]} />
         <Button type="primary" loading={confirm.isPending} disabled={!admin || reselect.isPending || inspect.isPending || preview.plan.items.some(i => !i.selected || i.blocker)} onClick={() => confirm.mutate()}>确认发送</Button>
       </>}
