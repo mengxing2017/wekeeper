@@ -15,11 +15,12 @@
 | `frontend/apps/miniapp/src/manifest.json` | 小程序 AppID 与平台构建配置 |
 | `devbox.json` | Rust/Node/pnpm 开发工具环境 |
 | `docs/package.json` / `.vitepress/config.ts` | 文档脚本、页面导航与本地搜索 |
-| 平台「规则与政策中心」 | 企业微信 v3 不可变页面规则、时间政策、人工基准及学校/设备发布范围 |
+| 平台「手机群消息使用管理 → 配置业务方案」 | 当前 v9 发送开关、时区、时段及四维业务额度；独立于产品技术交付 |
+| `mobile-capability` 部署工具 | 签名产品导入、激活、撤回及只读状态核对；不修改业务方案 |
 
 具体默认值和完整部署命令见 [Docker 配置手册](../runbooks/docker.md)，不要用不同文档中的示例覆盖已有生产配置。
 
-企业微信 v3 的客户端规则、冷却、额度、群间等待和会话时长存入数据库并按版本发布，不通过修改 APK 常量配置。创建、只读验证、发布、撤销及剩余项修订见 [规则配置与多群执行](../runbooks/configured-mobile-delivery.md)。
+历史企业微信 v3 配置仅供迁移与旧账恢复核对，不是当前共享发送的配置入口。其客户端规则、冷却、额度、群间等待和会话时长存入数据库并按版本发布，不通过修改 APK 常量配置。创建、只读验证、发布、撤销及剩余项修订见 [规则配置与多群执行](../runbooks/configured-mobile-delivery.md)。
 
 ## 变量分组
 
@@ -36,6 +37,7 @@
 | `WEKEEPER_WX_APP_ID` / `WEKEEPER_WX_SECRET` | 后端微信身份接入，Secret 不放入小程序包 |
 | `WEKEEPER_MOBILE_EXECUTION_ENABLED` | 默认 false，控制新手机 claim/permit；保留查询、结果与核对 |
 | `WEKEEPER_SHARED_SEND_KEY` | 共享手机发送恢复材料的后端加密密钥；`openssl rand -hex 32` 生成，跨重启/实例保持一致并配套备份；仅注入 API，详见 [Docker 配置](../runbooks/docker.md#共享手机发送密钥-首次配置与已有部署更新) |
+| `WEKEEPER_CAPABILITY_PUBLIC_KEY` | 产品交付 Ed25519 公钥（32 字节十六进制），工具验证签名；不是发送恢复加密密钥，私钥留在产品签名端 |
 | `WEKEEPER_TEST_DATABASE_URL` | 集成测试专用隔离库，不回退生产地址 |
 | `WEKEEPER_API_ORIGIN` | Vite 开发代理的 API 目标 |
 | `VITE_API_BASE_URL` | 小程序公开 HTTPS API origin，不含凭据和路径 |
