@@ -1571,3 +1571,29 @@ async fn product_workflow_routes_require_identity_before_any_database_access() {
         );
     }
 }
+
+#[test]
+fn platform_business_scheme_fixture_roundtrips_without_technical_inputs() {
+    use wekeeper_api::distribution::domain::mobile_execution::usage::BusinessSchemeInput;
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/mobile-business-scheme.json"
+    ))
+    .unwrap();
+    let input: BusinessSchemeInput = serde_json::from_value(fixture.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&input).unwrap(), fixture);
+    input.policy().unwrap();
+}
+#[tokio::test]
+async fn platform_business_scheme_route_requires_identity() {
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/platform/mobile-execution/business-schemes")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}

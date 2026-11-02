@@ -26,7 +26,7 @@ async fn permission(tx: &mut Tx<'_>, a: &Actor, s: Option<Uuid>, admin: bool) ->
     Ok(platform)
 }
 fn scheme(p: &Value) -> Value {
-    json!({"id":p["id"],"timezone":p["timezone"],"allowed_windows":p["allowed_windows"],"daily_max_calls":p["limits"]["school"]["daily_max_calls"],"interval_seconds":p["limits"]["target"]["interval_seconds"]})
+    json!({"id":p["id"],"limits":p["limits"],"timezone":p["timezone"],"allowed_windows":p["allowed_windows"],"daily_max_calls":p["limits"]["school"]["daily_max_calls"],"interval_seconds":p["limits"]["target"]["interval_seconds"]})
 }
 fn same_scheme(a: &Value, b: &Value) -> bool {
     let mut a = a.clone();
@@ -47,7 +47,7 @@ async fn options(tx: &mut Tx<'_>, a: &Actor, s: Option<Uuid>) -> Result<Value> {
     let p = policy(tx).await?;
     let ready:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_activations a JOIN mobile_capability_deliveries d ON d.release_id=a.release_id JOIN mobile_v9_acceptance_runs c ON c.id=d.acceptance_id AND c.release_id=a.release_id WHERE c.stage='production_allowlist' AND NOT EXISTS(SELECT 1 FROM mobile_v9_adapter_withdrawals w WHERE w.release_id=a.release_id))").fetch_one(&mut **tx).await?;
     Ok(
-        json!({"id":"usage-options","schools":schools,"devices":devices,"targets":targets,"scheme":p.map(|p|scheme(&p)),"delivery_available":ready}),
+        json!({"id":"usage-options","schools":schools,"devices":devices,"targets":targets,"scheme":p.as_ref().map(scheme),"delivery_available":ready,"sending_status":business_scheme::status(tx).await?,"business_scheme":if platform {p.clone()} else {None}}),
     )
 }
 fn selection_input(b: &Value) -> Result<UsageInput> {

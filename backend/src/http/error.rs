@@ -153,7 +153,15 @@ impl IntoResponse for Error {
             Self::Policy(code) if code.starts_with("shared_send_") => (
                 StatusCode::CONFLICT,code,match code {
                     "shared_send_key_required" => "平台尚未配置共享发送密钥，请联系部署维护人员配置后再开放发送",
-                    "shared_send_not_released" => "当前政策尚未放行共享发送，请联系平台管理员核对发送阶段",
+                    "shared_send_delivery_missing" => "产品尚未交付，请产品交付与部署人员完成交付；内容可以保存",
+                    "shared_send_delivery_inactive" => "产品已导入但尚未激活，请部署人员完成激活",
+                    "shared_send_delivery_withdrawn" => "产品已撤回，请产品交付与部署人员提供有效产品",
+                    "shared_send_scheme_missing" => "平台尚未配置业务方案，请平台管理员在手机群消息使用管理中配置",
+                    "shared_send_preparation_only" => "平台仅开放内容准备或预览，实际发送需平台管理员开放",
+                    "shared_send_scheme_unsupported" => "现有方案不支持当前发送业务，请平台管理员重新保存业务方案",
+                    "shared_send_platform_closed" => "平台已关闭新发送，请平台管理员核对业务方案",
+                    "shared_send_delivery_required" => "启用发送前需要有效产品交付，请联系产品交付与部署人员",
+                    "shared_send_not_released" => "平台尚未开放当前发送业务，请查看手机群消息使用管理中的交付状态和业务方案",
                     "shared_send_device_not_ready" => "设备或检查条件已变化，请重新生成逐群预览并查看当前阻塞原因",
                     "shared_send_scope_not_accepted" => "该学校、手机和目标群尚无有效的当前阶段业务放行范围，请联系平台管理员核对测试或生产范围",
                     "shared_send_runtime_required" => "等待手机上线、解锁并报告可执行状态；请检查长期托管、通知和无障碍权限",

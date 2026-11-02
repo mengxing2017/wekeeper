@@ -19,7 +19,6 @@ pub struct Delivery {
     pub soak_passed: bool,
     pub historical_debt_closed: bool,
     pub reviewer: String,
-    pub policy: PolicyInput,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -65,11 +64,6 @@ pub fn verify(envelope: Envelope, key: &str) -> Result<Delivery> {
 impl Delivery {
     pub fn validate(&self) -> Result<()> {
         self.flow.validate()?;
-        self.policy.validate()?;
-        require(
-            self.policy.allowed_stages == ["production_allowlist"] && self.policy.mode == "enabled",
-            "delivery_policy_invalid",
-        )?;
         crate::business::text(&self.name, 1, 200)?;
         crate::business::text(&self.version, 1, 100)?;
         crate::business::text(&self.reviewer, 1, 200)?;
@@ -139,11 +133,6 @@ pub async fn import(pool: &PgPool, actor: Uuid, d: Delivery) -> Result<Uuid> {
     let mut tx = pool.begin().await?;
     guard(&mut tx).await?;
     service_identity(&mut tx, actor).await?;
-    let current = policy(&mut tx)
-        .await?
-        .and_then(|p| p["revision"].as_i64())
-        .unwrap_or(0);
-    require(current == d.policy.expected_revision, "revision_conflict")?;
     let mut evidence = Vec::new();
     let mut apk_ids = Vec::new();
     for (kind, list) in [("evidence", &d.evidence), ("apk", &d.apks)] {
@@ -184,7 +173,7 @@ pub async fn import(pool: &PgPool, actor: Uuid, d: Delivery) -> Result<Uuid> {
     sqlx::query("INSERT INTO mobile_v9_baselines(id,flow_id,device_id,samples,evidence_ids,min_interval_ms,recorded_by,external_source) VALUES($1,$2,NULL,$3,$4,$5,$6,$7)").bind(baseline).bind(flow).bind(json!(d.samples_ms)).bind(&evidence).bind(d.samples_ms.iter().max().copied().unwrap()).bind(actor).bind(&provenance).execute(&mut *tx).await?;
     sqlx::query("INSERT INTO mobile_v9_adapter_releases(id,name,version,flow_id,flow,content_digest,baseline_id,evidence_ids,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)").bind(release).bind(&d.name).bind(&d.version).bind(flow).bind(&f).bind(&digest).bind(baseline).bind(&evidence).bind(actor).execute(&mut *tx).await?;
     sqlx::query("INSERT INTO mobile_v9_acceptance_runs(id,release_id,stage,apk_id,evidence_ids,validation_ids,cases,soak_hours,soak_passed,historical_debt_closed,reviewer_id,reason) VALUES($1,$2,'production_allowlist',$3,$4,'{}',$5,$6,true,true,$7,'核验签名的外部产品交付；原始验证见交付来源')").bind(acceptance).bind(release).bind(apk_ids[0]).bind(&evidence).bind(json!(d.cases)).bind(d.soak_hours).bind(actor).execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO mobile_capability_deliveries(release_id,acceptance_id,supported_apks,provenance,policy) VALUES($1,$2,$3,$4,$5)").bind(release).bind(acceptance).bind(d.apks.iter().map(|a|a.sha256.clone()).collect::<Vec<_>>()).bind(provenance).bind(json!(d.policy)).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO mobile_capability_deliveries(release_id,acceptance_id,supported_apks,provenance) VALUES($1,$2,$3,$4)").bind(release).bind(acceptance).bind(d.apks.iter().map(|a|a.sha256.clone()).collect::<Vec<_>>()).bind(provenance).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(release)
 }
@@ -205,27 +194,6 @@ pub async fn publish(
         sqlx::query("INSERT INTO mobile_v9_adapter_withdrawals(release_id,reason,created_by) VALUES($1,'产品交付撤回',$2) ON CONFLICT DO NOTHING").bind(release).bind(actor).execute(&mut *tx).await?;
     } else {
         require(sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM mobile_capability_deliveries d JOIN mobile_v9_acceptance_runs c ON c.id=d.acceptance_id AND c.release_id=d.release_id WHERE d.release_id=$1 AND c.stage='production_allowlist') AND NOT EXISTS(SELECT 1 FROM mobile_v9_adapter_withdrawals WHERE release_id=$1)").bind(release).fetch_one(&mut *tx).await?,"delivery_acceptance_required")?;
-        let p: PolicyInput = serde_json::from_value(
-            sqlx::query_scalar::<_, Value>(
-                "SELECT policy FROM mobile_capability_deliveries WHERE release_id=$1",
-            )
-            .bind(release)
-            .fetch_one(&mut *tx)
-            .await?,
-        )
-        .map_err(|_| Error::Conflict)?;
-        let current = policy(&mut tx)
-            .await?
-            .and_then(|p| p["revision"].as_i64())
-            .unwrap_or(0);
-        require(current == p.expected_revision, "policy_revision_conflict")?;
-        let valid: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_timezone_names WHERE name=$1)")
-                .bind(&p.timezone)
-                .fetch_one(&mut *tx)
-                .await?;
-        require(valid, "时区无效")?;
-        sqlx::query("INSERT INTO mobile_v9_send_policy_versions(id,revision,mode,limits,created_by,reason,timezone,allowed_windows,allowed_stages,confirmation_seconds,inspection_seconds,retry_seconds,retry_limit) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)").bind(Uuid::now_v7()).bind(current+1).bind(p.mode).bind(json!(p.limits)).bind(actor).bind(p.reason).bind(p.timezone).bind(json!(p.allowed_windows)).bind(json!(p.allowed_stages)).bind(p.confirmation_seconds).bind(p.inspection_seconds).bind(p.retry_seconds).bind(p.retry_limit).execute(&mut *tx).await?;
         let rev: i64 = sqlx::query_scalar(
             "SELECT revision FROM mobile_v9_activations WHERE capability='wecom.group_text'",
         )
@@ -239,6 +207,16 @@ pub async fn publish(
     super::usage::reconcile(&mut tx).await?;
     tx.commit().await?;
     Ok(())
+}
+
+/// Read-only deployment diagnosis. No artifacts, keys or account credentials are returned.
+pub async fn status(pool: &PgPool, actor: Uuid) -> Result<Value> {
+    let mut tx = pool.begin().await?;
+    service_identity(&mut tx, actor).await?;
+    let status = super::business_scheme::status(&mut tx).await?;
+    let activation:Option<Value>=sqlx::query_scalar("SELECT jsonb_build_object('release_id',release_id,'revision',revision) FROM mobile_v9_activations WHERE capability='wecom.group_text'").fetch_optional(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(json!({"status":status,"activation":activation}))
 }
 
 #[cfg(test)]

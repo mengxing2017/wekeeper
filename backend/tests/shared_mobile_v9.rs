@@ -478,7 +478,7 @@ async fn business_production_delivery_materializes_once_and_pausing_blocks_plans
     f.activate("activate-usage").await.unwrap();
     // All evidence in this test is synthetic and isolated; never used by delivery tooling.
     sqlx::query("INSERT INTO mobile_v9_acceptance_runs(id,release_id,stage,apk_id,evidence_ids,validation_ids,cases,soak_hours,soak_passed,historical_debt_closed,reviewer_id,reason) SELECT $1,release_id,'production_allowlist',apk_id,evidence_ids,validation_ids,cases,72,true,true,reviewer_id,'Synthetic business test only' FROM mobile_v9_acceptance_runs WHERE id=$2").bind(Uuid::now_v7()).bind(f.acceptance).execute(&f.pool).await.unwrap();
-    sqlx::query("INSERT INTO mobile_capability_deliveries(release_id,acceptance_id,supported_apks,policy,provenance) SELECT release_id,id,ARRAY[(SELECT sha256 FROM mobile_v9_artifacts WHERE id=apk_id)], '{}', '{\"synthetic_test\":true}' FROM mobile_v9_acceptance_runs WHERE stage='production_allowlist'").execute(&f.pool).await.unwrap();
+    sqlx::query("INSERT INTO mobile_capability_deliveries(release_id,acceptance_id,supported_apks,provenance) SELECT release_id,id,ARRAY[(SELECT sha256 FROM mobile_v9_artifacts WHERE id=apk_id)], '{\"synthetic_test\":true}' FROM mobile_v9_acceptance_runs WHERE stage='production_allowlist'").execute(&f.pool).await.unwrap();
     let p:PolicyInput=serde_json::from_value(json!({"expected_revision":0,"mode":"enabled","allowed_stages":["production_allowlist"],"confirmation_seconds":600,"inspection_seconds":600,"retry_seconds":300,"retry_limit":3,"timezone":"Asia/Shanghai","allowed_windows":[{"weekdays":[1,2,3,4,5,6,7],"start_minute":0,"end_minute":1440}],"limits":ObjectLimits::value(),"reason":"Synthetic test"})).unwrap();
     r.platform_write(&f.actor, "business-policy", PlatformCommand::Policy(p))
         .await
@@ -573,5 +573,72 @@ async fn business_production_delivery_materializes_once_and_pausing_blocks_plans
         .find(|r| r["target_id"] == json!(target))
         .unwrap();
     assert_eq!(row["confirmable"], false);
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn missing_delivery_allows_blocked_content_preview_and_closed_scheme_only() {
+    use wekeeper_api::distribution::domain::mobile_execution::usage::*;
+    let f = Fixture::new().await;
+    let r = f.repo();
+    let options = r
+        .usage_read(&f.actor, Some(f.school), None, true)
+        .await
+        .unwrap();
+    assert_eq!(options["sending_status"]["delivery"], "missing");
+    let result = r
+        .usage_write(
+            &f.actor,
+            f.school,
+            "blocked-preview",
+            UsageCommand::TaskPreview(UsageTaskInput {
+                draft_id: None,
+                expected_revision: None,
+                target_ids: vec![f.targets[0]],
+                message: "保存但不发送".into(),
+                between_targets_seconds: 30,
+                selections: vec![],
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(!result["draft"]["id"].is_null());
+    assert_eq!(
+        result["preview"]["plan"]["sending_status"]["can_confirm"],
+        false
+    );
+    assert!(!result["preview"]["plan"]["items"][0]["blocker"].is_null());
+    let mut input: BusinessSchemeInput = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/mobile-business-scheme.json"
+    ))
+    .unwrap();
+    r.platform_write(
+        &f.actor,
+        "closed-scheme",
+        PlatformCommand::Policy(input.clone().policy().unwrap()),
+    )
+    .await
+    .unwrap();
+    assert!(
+        r.platform_write(
+            &f.actor,
+            "stale-scheme",
+            PlatformCommand::Policy(input.clone().policy().unwrap())
+        )
+        .await
+        .is_err()
+    );
+    input.expected_revision = 1;
+    input.enabled = true;
+    assert!(
+        r.platform_write(
+            &f.actor,
+            "open-no-delivery",
+            PlatformCommand::Policy(input.policy().unwrap())
+        )
+        .await
+        .is_err()
+    );
     f.close().await;
 }

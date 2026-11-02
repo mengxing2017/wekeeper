@@ -12,6 +12,7 @@ use uuid::Uuid;
 type Tx<'a> = Transaction<'a, Postgres>;
 #[derive(Clone)]
 pub struct Repository(pub PgPool);
+mod business_scheme;
 mod delegation;
 pub mod delivery;
 mod device;
@@ -226,7 +227,7 @@ impl Store for Repository {
             let tasks:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(t) FROM mobile_v9_tasks t WHERE school_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100").bind(s).fetch_all(&mut *tx).await?;
             let drafts:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(d)||jsonb_build_object('targets',coalesce((SELECT jsonb_agg(jsonb_build_object('id',t.id,'name',coalesce(nullif(t.alias,''),t.search_text)) ORDER BY ids.n) FROM unnest(d.target_ids) WITH ORDINALITY ids(id,n) JOIN mobile_targets t ON t.id=ids.id AND t.school_id=d.school_id),'[]'::jsonb)) FROM mobile_v9_task_drafts d WHERE school_id=$1 AND NOT EXISTS(SELECT 1 FROM mobile_v9_tasks t WHERE t.draft_id=d.id) ORDER BY created_at DESC LIMIT 100").bind(s).fetch_all(&mut *tx).await?;
             let inspections:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(i)-'challenge' FROM mobile_v9_send_inspections i WHERE school_id=$1 ORDER BY id DESC LIMIT 100").bind(s).fetch_all(&mut *tx).await?;
-            json!({"id":s,"tasks":tasks,"drafts":drafts,"inspections":inspections,"readiness":readiness::school(&mut tx,s).await?,"pool":readiness::pool(&mut tx,s).await?})
+            json!({"id":s,"tasks":tasks,"drafts":drafts,"inspections":inspections,"readiness":readiness::school(&mut tx,s).await?,"pool":readiness::pool(&mut tx,s).await?,"sending_status":business_scheme::status(&mut tx).await?})
         };
         tx.commit().await?;
         Ok(v)
@@ -279,21 +280,7 @@ impl Store for Repository {
                 if matches!(v.mode.as_str(), "enabled") {
                     secrets::seal(&json!({}))?;
                 }
-                let valid_zone: bool = sqlx::query_scalar(
-                    "SELECT EXISTS(SELECT 1 FROM pg_timezone_names WHERE name=$1)",
-                )
-                .bind(&v.timezone)
-                .fetch_one(&mut *tx)
-                .await?;
-                require(valid_zone, "shared_send_policy_invalid")?;
-                let rev = policy(&mut tx)
-                    .await?
-                    .and_then(|p| p["revision"].as_i64())
-                    .unwrap_or(0);
-                require(rev == v.expected_revision, "revision_conflict")?;
-                let id = Uuid::now_v7();
-                sqlx::query("INSERT INTO mobile_v9_send_policy_versions(id,revision,mode,limits,created_by,reason,timezone,allowed_windows,allowed_stages,confirmation_seconds,inspection_seconds,retry_seconds,retry_limit) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)").bind(id).bind(rev+1).bind(v.mode).bind(json!(v.limits)).bind(a.id).bind(v.reason).bind(v.timezone).bind(json!(v.allowed_windows)).bind(json!(v.allowed_stages)).bind(v.confirmation_seconds).bind(v.inspection_seconds).bind(v.retry_seconds).bind(v.retry_limit).execute(&mut *tx).await?;
-                json!({"id":id,"revision":rev+1})
+                business_scheme::save(&mut tx, a, v).await?
             }
         };
         remember(&mut tx, a.id, 0, scope, key, &body, &v).await?;

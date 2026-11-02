@@ -557,8 +557,27 @@ async fn usage_task_preview(
             .await?,
     ))
 }
+async fn business_scheme(
+    State(a): State<Application>,
+    actor: Actor,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    let v: crate::distribution::domain::mobile_execution::usage::BusinessSchemeInput =
+        input.decode("mobile-business-schemes")?;
+    Ok(resource(
+        "mobile-business-schemes",
+        service(&a)
+            .platform_write(&actor, key(&h), PlatformCommand::Policy(v.policy()?))
+            .await?,
+    ))
+}
 fn usage_router() -> Router<Application> {
     Router::new()
+        .route(
+            "/api/v1/platform/mobile-execution/business-schemes",
+            post(business_scheme),
+        )
         .route(
             "/api/v1/schools/{school}/mobile-execution/usages/{id}/issues/{issue}/responses",
             post(usage_issue_update),

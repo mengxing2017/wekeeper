@@ -136,7 +136,7 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
                 "policy_not_enabled",
                 "使用方案尚未启用",
                 "platform",
-                "等待产品提供可用的使用方案",
+                "平台管理员在手机群消息使用管理中配置业务方案",
                 false,
             );
         }
@@ -156,9 +156,9 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
         {
             add(
                 "stage_not_allowed",
-                "政策允许阶段与有效业务范围不一致",
+                "当前业务方案与使用授权不匹配",
                 "platform",
-                "核对限定测试或生产阶段设置",
+                "平台管理员核对业务方案和使用授权",
                 false,
             );
         }
