@@ -1,0 +1,38 @@
+{
+  "position": 0,
+  "target_id": "00000000-0000-4000-8000-000000000011",
+  "target": {
+    "id": "00000000-0000-4000-8000-000000000011",
+    "name": "家长通知群",
+    "search_text": "手机内实际群名",
+    "locator_revision": 2
+  },
+  "selected": null,
+  "candidates": [],
+  "readiness": [
+    {
+      "binding_id": "00000000-0000-4000-8000-000000000012",
+      "device_id": "00000000-0000-4000-8000-000000000013",
+      "target_id": "00000000-0000-4000-8000-000000000011",
+      "device_name": "共享手机甲",
+      "target_name": "家长通知群",
+      "search_text": "手机内实际群名",
+      "state": "inspection_not_scheduled",
+      "ready": false,
+      "automatic": true,
+      "blockers": [
+        {
+          "code": "inspection_not_scheduled",
+          "message": "尚未建立可领取的检查任务，等待系统评估",
+          "owner": "system",
+          "automatic": true
+        }
+      ],
+      "inspection": null,
+      "inspection_state": "not_scheduled",
+      "retry_at": null,
+      "retry_remaining": 3
+    }
+  ],
+  "blocker": "device_not_eligible"
+}

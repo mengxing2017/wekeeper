@@ -1,3 +1,5 @@
+import previewItem from '../fixtures/shared-mobile-preview-item.json'
+import type {SharedPreview,SharedReadiness} from '../src/modules/mobile-execution/shared-send/client'
 import { createHash } from 'node:crypto'
 import delegation from '../fixtures/shared-mobile-delegation.json'
 import { describe, it, expect } from 'vitest'
@@ -37,4 +39,13 @@ it('scopes school self-service binding and revision-guards pool access', async (
  expect(calls[1][2]).toMatchObject({expected_revision:3,enabled:false})
  expect(resourceType(String(calls[0][0]))).toBe('mobile-shared-bindings')
  expect(resourceType(String(calls[1][0]))).toBe('mobile-shared-access')
+})
+
+it('keeps target and bound phone names independent from selectable phones',()=>{
+ const item:SharedPreview['plan']['items'][number]={...previewItem,readiness:previewItem.readiness as SharedReadiness[]}
+ expect(item.selected).toBeNull()
+ expect(item.candidates).toHaveLength(0)
+ expect(item.target.name).toBe('家长通知群')
+ expect(item.readiness![0].device_name).toBe('共享手机甲')
+ expect(item.readiness![0].inspection_state).toBe('not_scheduled')
 })
