@@ -192,3 +192,5 @@ pub mod device_control;
 pub mod mobile_execution;
 
 pub mod shared_send;
+
+pub mod shared_send_v2;
