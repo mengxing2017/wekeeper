@@ -10,6 +10,24 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct Service<R = Repository>(pub R);
 impl<R: Store> Service<R> {
+    pub async fn usage_read(
+        &self,
+        a: &Actor,
+        s: Option<Uuid>,
+        id: Option<Uuid>,
+        get_options: bool,
+    ) -> Result<Value> {
+        self.0.usage_read(a, s, id, get_options).await
+    }
+    pub async fn usage_write(
+        &self,
+        a: &Actor,
+        s: Uuid,
+        key: &str,
+        command: crate::distribution::domain::mobile_execution::usage::UsageCommand,
+    ) -> Result<Value> {
+        self.0.usage_write(a, s, &text(key, 1, 128)?, command).await
+    }
     pub async fn recover_claim(
         &self,
         event: crate::distribution::domain::mobile_execution::shared_send_v2::ClaimRecovery,

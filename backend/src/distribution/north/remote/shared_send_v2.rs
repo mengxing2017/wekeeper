@@ -53,63 +53,7 @@ async fn detail(
         service(&a).school_read(&actor, s, Some(id)).await?,
     ))
 }
-async fn draft(
-    State(a): State<Application>,
-    actor: Actor,
-    Path(s): Path<Uuid>,
-    h: HeaderMap,
-    input: Input,
-) -> Result<ApiResponse> {
-    Ok(resource(
-        "mobile-shared-drafts",
-        service(&a)
-            .school_write(
-                &actor,
-                s,
-                key(&h),
-                SchoolCommand::Draft(None, input.decode("mobile-shared-drafts")?),
-            )
-            .await?,
-    ))
-}
-async fn edit(
-    State(a): State<Application>,
-    actor: Actor,
-    Path((s, id)): Path<(Uuid, Uuid)>,
-    h: HeaderMap,
-    input: Input,
-) -> Result<ApiResponse> {
-    Ok(resource(
-        "mobile-shared-drafts",
-        service(&a)
-            .school_write(
-                &actor,
-                s,
-                key(&h),
-                SchoolCommand::Draft(Some(id), input.decode("mobile-shared-drafts")?),
-            )
-            .await?,
-    ))
-}
-async fn preview(
-    State(a): State<Application>,
-    actor: Actor,
-    Path(s): Path<Uuid>,
-    h: HeaderMap,
-    input: Input,
-) -> Result<ApiResponse> {
-    Ok(resource(
-        "mobile-shared-previews",
-        service(&a)
-            .school_write(
-                &actor,
-                s,
-                key(&h),
-                SchoolCommand::Preview(input.decode("mobile-shared-previews")?),
-            )
-            .await?,
-    ))
-}
+
 async fn confirm(
     State(a): State<Application>,
     actor: Actor,
@@ -120,11 +64,13 @@ async fn confirm(
     Ok(resource(
         "mobile-shared-tasks",
         service(&a)
-            .school_write(
+            .usage_write(
                 &actor,
                 s,
                 key(&h),
-                SchoolCommand::Confirm(input.decode("mobile-shared-tasks")?),
+                crate::distribution::domain::mobile_execution::usage::UsageCommand::TaskConfirm(
+                    input.decode("mobile-shared-tasks")?,
+                ),
             )
             .await?,
     ))
@@ -167,41 +113,7 @@ async fn review(
             .await?,
     ))
 }
-async fn platform(
-    State(a): State<Application>,
-    actor: Actor,
-    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
-) -> Result<ApiResponse> {
-    Ok(resource(
-        "mobile-shared-runtime",
-        service(&a)
-            .platform_read(
-                &actor,
-                q.get("page")
-                    .and_then(|s| s.parse().ok())
-                    .filter(|v| *v > 0 && *v <= 1000000)
-                    .unwrap_or(1),
-            )
-            .await?,
-    ))
-}
-async fn policy(
-    State(a): State<Application>,
-    actor: Actor,
-    h: HeaderMap,
-    input: Input,
-) -> Result<ApiResponse> {
-    Ok(resource(
-        "mobile-shared-policies",
-        service(&a)
-            .platform_write(
-                &actor,
-                key(&h),
-                PlatformCommand::Policy(input.decode("mobile-shared-policies")?),
-            )
-            .await?,
-    ))
-}
+
 async fn context(State(a): State<Application>, h: HeaderMap) -> Result<ApiResponse> {
     let c = credential(&a, &h).await?;
     Ok(resource(
@@ -299,61 +211,6 @@ async fn consent(State(a): State<Application>, h: HeaderMap, input: Input) -> Re
     ))
 }
 
-async fn pool_binding(
-    State(a): State<Application>,
-    actor: Actor,
-    Path(s): Path<Uuid>,
-    h: HeaderMap,
-    input: Input,
-) -> Result<ApiResponse> {
-    Ok(resource(
-        "mobile-shared-bindings",
-        service(&a)
-            .school_write(
-                &actor,
-                s,
-                key(&h),
-                SchoolCommand::PoolBinding(input.decode("mobile-shared-bindings")?),
-            )
-            .await?,
-    ))
-}
-async fn pool_unbind(
-    State(a): State<Application>,
-    actor: Actor,
-    Path((s, id)): Path<(Uuid, Uuid)>,
-    h: HeaderMap,
-    input: Input,
-) -> Result<ApiResponse> {
-    Ok(resource(
-        "mobile-shared-bindings",
-        service(&a)
-            .school_write(
-                &actor,
-                s,
-                key(&h),
-                SchoolCommand::Unbind(id, input.decode("mobile-shared-bindings")?),
-            )
-            .await?,
-    ))
-}
-async fn school_access(
-    State(a): State<Application>,
-    actor: Actor,
-    h: HeaderMap,
-    input: Input,
-) -> Result<ApiResponse> {
-    Ok(resource(
-        "mobile-shared-access",
-        service(&a)
-            .platform_write(
-                &actor,
-                key(&h),
-                PlatformCommand::Access(input.decode("mobile-shared-access")?),
-            )
-            .await?,
-    ))
-}
 async fn inspection(
     State(a): State<Application>,
     actor: Actor,
@@ -470,89 +327,7 @@ async fn recover_claim(State(a): State<Application>, input: Input) -> Result<Api
             .await?,
     ))
 }
-async fn school_support(
-    State(a): State<Application>,
-    actor: Actor,
-    Path(s): Path<Uuid>,
-    h: HeaderMap,
-    input: Input,
-) -> Result<ApiResponse> {
-    Ok(resource(
-        "mobile-v9-support",
-        service(&a)
-            .school_write(
-                &actor,
-                s,
-                key(&h),
-                SchoolCommand::Support(input.decode("mobile-v9-support")?),
-            )
-            .await?,
-    ))
-}
-async fn manage(
-    State(a): State<Application>,
-    actor: Actor,
-    h: HeaderMap,
-    input: Input,
-) -> Result<ApiResponse> {
-    Ok(resource(
-        "mobile-v9-management",
-        service(&a)
-            .platform_write(
-                &actor,
-                key(&h),
-                PlatformCommand::Manage(input.decode("mobile-v9-management")?),
-            )
-            .await?,
-    ))
-}
-async fn artifact(
-    State(a): State<Application>,
-    actor: Actor,
-    h: HeaderMap,
-    body: axum::body::Bytes,
-) -> Result<ApiResponse> {
-    let field = |k| {
-        h.get(k)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_owned()
-    };
-    Ok(resource(
-        "mobile-v9-artifacts",
-        service(&a)
-            .platform_write(
-                &actor,
-                key(&h),
-                PlatformCommand::Artifact(
-                    crate::distribution::domain::mobile_execution::shared_send_v2::ArtifactUpload {
-                        kind: field("x-artifact-kind"),
-                        name: field("x-artifact-name"),
-                        content: body.to_vec(),
-                    },
-                ),
-            )
-            .await?,
-    ))
-}
-async fn artifact_content(
-    State(a): State<Application>,
-    actor: Actor,
-    Path(id): Path<Uuid>,
-) -> Result<axum::response::Response> {
-    use axum::response::IntoResponse;
-    let bytes = service(&a).artifact_content(&actor, id).await?;
-    Ok((
-        [
-            (axum::http::header::CONTENT_TYPE, "application/octet-stream"),
-            (axum::http::header::CONTENT_DISPOSITION, "attachment"),
-            (axum::http::header::CACHE_CONTROL, "private, no-store"),
-            (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
-        ],
-        bytes,
-    )
-        .into_response())
-}
+
 async fn settle(State(a): State<Application>, h: HeaderMap, input: Input) -> Result<ApiResponse> {
     let c = credential(&a, &h).await?;
     Ok(resource(
@@ -598,21 +373,22 @@ async fn diagnostic(
 }
 pub fn router() -> Router<Application> {
     Router::new()
+        .merge(usage_router())
         .route(
             "/api/v1/schools/{school}/mobile-execution/shared-v2-support",
-            post(school_support),
+            post(retired),
         )
         .route(
             "/api/v1/platform/mobile-execution/shared-v2-management",
-            post(manage),
+            post(retired),
         )
         .route(
             "/api/v1/platform/mobile-execution/shared-v2-artifacts",
-            post(artifact).layer(axum::extract::DefaultBodyLimit::max(134217728)),
+            post(retired).layer(axum::extract::DefaultBodyLimit::max(134217728)),
         )
         .route(
             "/api/v1/platform/mobile-execution/shared-v2-artifacts/{id}/content",
-            get(artifact_content),
+            get(retired),
         )
         .route("/api/v9/device-execution/send-settlements", post(settle))
         .route("/api/v9/device-execution/human-samples", post(sample))
@@ -622,15 +398,15 @@ pub fn router() -> Router<Application> {
         )
         .route(
             "/api/v1/platform/mobile-execution/shared-v2-device-access",
-            post(school_access),
+            post(retired),
         )
         .route(
             "/api/v1/schools/{school}/mobile-execution/shared-v2-bindings",
-            post(pool_binding),
+            post(retired),
         )
         .route(
             "/api/v1/schools/{school}/mobile-execution/shared-v2-bindings/{id}/revocations",
-            post(pool_unbind),
+            post(retired),
         )
         .route(
             "/api/v9/device-execution/send-recoveries",
@@ -662,15 +438,15 @@ pub fn router() -> Router<Application> {
         )
         .route(
             "/api/v1/schools/{school}/mobile-execution/shared-v2-task-drafts",
-            post(draft),
+            post(retired),
         )
         .route(
             "/api/v1/schools/{school}/mobile-execution/shared-v2-task-drafts/{id}",
-            axum::routing::patch(edit),
+            axum::routing::patch(retired),
         )
         .route(
             "/api/v1/schools/{school}/mobile-execution/shared-v2-task-previews",
-            post(preview),
+            post(retired),
         )
         .route(
             "/api/v1/schools/{school}/mobile-execution/shared-v2-tasks",
@@ -690,11 +466,11 @@ pub fn router() -> Router<Application> {
         )
         .route(
             "/api/v1/platform/mobile-execution/shared-v2-readiness",
-            get(platform),
+            get(retired),
         )
         .route(
             "/api/v1/platform/mobile-execution/shared-v2-send-policies",
-            post(policy),
+            post(retired),
         )
         .route(
             "/api/v9/device-execution/protocol-capabilities",
@@ -723,4 +499,239 @@ pub fn router() -> Router<Application> {
             post(invoke),
         )
         .route("/api/v9/device-execution/send-results", post(result))
+}
+
+async fn retired() -> (axum::http::StatusCode, axum::Json<serde_json::Value>) {
+    (
+        axum::http::StatusCode::GONE,
+        axum::Json(
+            serde_json::json!({"errors":[{"code":"mobile_management_retired","detail":"此技术办理入口已停用，请使用学校使用管理"}]}),
+        ),
+    )
+}
+async fn usage_options(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(s): Path<Uuid>,
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "mobile-usage-options",
+        service(&a).usage_read(&actor, Some(s), None, true).await?,
+    ))
+}
+async fn usage_list(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(s): Path<Uuid>,
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "mobile-usages",
+        service(&a).usage_read(&actor, Some(s), None, false).await?,
+    ))
+}
+async fn usage_global(State(a): State<Application>, actor: Actor) -> Result<ApiResponse> {
+    Ok(resource(
+        "mobile-usages",
+        service(&a).usage_read(&actor, None, None, false).await?,
+    ))
+}
+async fn usage_global_options(State(a): State<Application>, actor: Actor) -> Result<ApiResponse> {
+    Ok(resource(
+        "mobile-usage-options",
+        service(&a).usage_read(&actor, None, None, true).await?,
+    ))
+}
+async fn usage_preview(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(s): Path<Uuid>,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "mobile-usage-previews",
+        service(&a)
+            .usage_write(
+                &actor,
+                s,
+                key(&h),
+                crate::distribution::domain::mobile_execution::usage::UsageCommand::Preview(
+                    input.decode("mobile-usage-previews")?,
+                ),
+            )
+            .await?,
+    ))
+}
+async fn usage_confirm(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(s): Path<Uuid>,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "mobile-usages",
+        service(&a)
+            .usage_write(
+                &actor,
+                s,
+                key(&h),
+                crate::distribution::domain::mobile_execution::usage::UsageCommand::Confirm(
+                    input.decode("mobile-usages")?,
+                ),
+            )
+            .await?,
+    ))
+}
+async fn usage_mutate(
+    State(a): State<Application>,
+    actor: Actor,
+    Path((s, id, operation)): Path<(Uuid, Uuid, String)>,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "mobile-usages",
+        service(&a)
+            .usage_write(
+                &actor,
+                s,
+                key(&h),
+                crate::distribution::domain::mobile_execution::usage::UsageCommand::Mutate {
+                    id,
+                    operation,
+                    mutation: input.decode("mobile-usages")?,
+                },
+            )
+            .await?,
+    ))
+}
+async fn usage_task_preview(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(s): Path<Uuid>,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "mobile-usage-task-previews",
+        service(&a)
+            .usage_write(
+                &actor,
+                s,
+                key(&h),
+                crate::distribution::domain::mobile_execution::usage::UsageCommand::TaskPreview(
+                    input.decode("mobile-usage-task-previews")?,
+                ),
+            )
+            .await?,
+    ))
+}
+fn usage_router() -> Router<Application> {
+    Router::new()
+        .route(
+            "/api/v1/schools/{school}/mobile-execution/usages/{id}/issues/{issue}/responses",
+            post(usage_issue_update),
+        )
+        .route(
+            "/api/v1/platform/mobile-execution/usage-requests",
+            get(usage_global),
+        )
+        .route(
+            "/api/v1/platform/mobile-execution/usage-options",
+            get(usage_global_options),
+        )
+        .route(
+            "/api/v1/schools/{school}/mobile-execution/usage-options",
+            get(usage_options),
+        )
+        .route(
+            "/api/v1/schools/{school}/mobile-execution/usage-previews",
+            post(usage_preview),
+        )
+        .route(
+            "/api/v1/schools/{school}/mobile-execution/usages",
+            get(usage_list).post(usage_confirm),
+        )
+        .route(
+            "/api/v1/schools/{school}/mobile-execution/usages/{id}",
+            get(usage_detail),
+        )
+        .route(
+            "/api/v1/schools/{school}/mobile-execution/usages/{id}/issues",
+            post(usage_issue),
+        )
+        .route(
+            "/api/v1/schools/{school}/mobile-execution/usages/{id}/{operation}",
+            post(usage_mutate),
+        )
+        .route(
+            "/api/v1/schools/{school}/mobile-execution/usage-task-previews",
+            post(usage_task_preview),
+        )
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UsageIssue {
+    description: String,
+}
+async fn usage_issue(
+    State(a): State<Application>,
+    actor: Actor,
+    Path((s, id)): Path<(Uuid, Uuid)>,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    let v: UsageIssue = input.decode("mobile-usage-issues")?;
+    Ok(resource(
+        "mobile-usage-issues",
+        service(&a)
+            .usage_write(
+                &actor,
+                s,
+                key(&h),
+                crate::distribution::domain::mobile_execution::usage::UsageCommand::Issue {
+                    id,
+                    description: v.description,
+                },
+            )
+            .await?,
+    ))
+}
+async fn usage_detail(
+    State(a): State<Application>,
+    actor: Actor,
+    Path((s, id)): Path<(Uuid, Uuid)>,
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "mobile-usages",
+        service(&a)
+            .usage_read(&actor, Some(s), Some(id), false)
+            .await?,
+    ))
+}
+
+async fn usage_issue_update(
+    State(a): State<Application>,
+    actor: Actor,
+    Path((s, id, issue_id)): Path<(Uuid, Uuid, Uuid)>,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "mobile-usages",
+        service(&a)
+            .usage_write(
+                &actor,
+                s,
+                key(&h),
+                crate::distribution::domain::mobile_execution::usage::UsageCommand::IssueUpdate {
+                    id,
+                    issue_id,
+                    input: input.decode("mobile-usage-issues")?,
+                },
+            )
+            .await?,
+    ))
 }
