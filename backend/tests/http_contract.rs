@@ -1397,3 +1397,67 @@ fn inspected_phone_requires_current_readiness_before_confirmation() {
         .is_none()
     );
 }
+
+#[test]
+fn mobile_usage_business_contract_rejects_technical_fields() {
+    use wekeeper_api::distribution::domain::mobile_execution::usage::*;
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/mobile-usage-input.json"
+    ))
+    .unwrap();
+    let input: UsageInput = serde_json::from_value(fixture.clone()).unwrap();
+    assert_eq!(serde_json::to_value(input).unwrap(), fixture);
+    for key in [
+        "stage",
+        "flow",
+        "release_id",
+        "acceptance_id",
+        "apk_id",
+        "cases",
+    ] {
+        let mut bad = fixture.clone();
+        bad[key] = json!("technical");
+        assert!(
+            serde_json::from_value::<UsageInput>(bad).is_err(),
+            "{key} must be rejected"
+        );
+    }
+    let send = json!({"target_ids":[],"message":"  原样\n","between_targets_seconds":30});
+    assert!(serde_json::from_value::<UsageTaskInput>(send.clone()).is_ok());
+    let mut bad = send;
+    bad["stage"] = json!("test_send");
+    assert!(serde_json::from_value::<UsageTaskInput>(bad).is_err());
+}
+#[tokio::test]
+async fn mobile_research_management_routes_are_gone() {
+    for (method, path) in [
+        (
+            "POST",
+            "/api/v1/platform/mobile-execution/shared-v2-management",
+        ),
+        (
+            "POST",
+            "/api/v1/platform/mobile-execution/shared-v2-artifacts",
+        ),
+        (
+            "GET",
+            "/api/v1/platform/mobile-execution/shared-v2-readiness",
+        ),
+        (
+            "POST",
+            "/api/v1/platform/mobile-execution/shared-v2-send-policies",
+        ),
+    ] {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::GONE, "{path}");
+    }
+}
