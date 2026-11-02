@@ -129,9 +129,22 @@ async fn serve_inner(
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         }
     });
+    let usages = crate::distribution::south::adapter::postgres::shared_send_v2::Repository(
+        application.pool.clone(),
+    );
+    let usage_worker = tokio::spawn(async move {
+        loop {
+            if usages.reconcile_usages().await.is_err() {
+                tracing::warn!("mobile usage reconciliation failed; persisted intents will retry");
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
+    });
     let result = axum::serve(listener, http::app_router(application))
         .with_graceful_shutdown(shutdown_signal())
         .await;
+    usage_worker.abort();
+    let _ = usage_worker.await;
     mobile_worker.abort();
     let _ = mobile_worker.await;
     broadcast_worker.abort();
