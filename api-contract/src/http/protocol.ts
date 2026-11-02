@@ -103,7 +103,10 @@ export function decodeResource(value: unknown): Record<string, unknown> {
 export function resourceType(path: string): string {
   const parts = path.split("?")[0].split("/").filter(Boolean);
   if (parts[3] === "mobile-execution" || parts[4] === "mobile-execution") {
-    const kind = parts[2] === "platform" ? parts[4] : parts[5];
+    const rawKind = parts[2] === "platform" ? parts[4] : parts[5];
+    const kind=rawKind?.replace(/^shared-v2-/,"shared-");
+    if(rawKind==="shared-v2-support")return "mobile-v9-support";
+    if(rawKind==="shared-v2-management")return "mobile-v9-management";
     switch (kind) {
       case "shared-task-drafts": return "mobile-shared-drafts";
       case "shared-task-previews": return "mobile-shared-previews";
