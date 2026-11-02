@@ -18,12 +18,10 @@ fn write_document(path: &str, mut body: Value) -> Value {
     let kind = match segments[2] {
         "auth" => "sessions",
         "accounts" | "profile" => "accounts",
-        "platform" => "resources",
+        "platform" => segments[3],
         "schools" => match segments.get(4).copied().unwrap_or("schools") {
             "members" => "accounts",
             "posts" if segments.get(6) == Some(&"comments") => "comments",
-            "templates" if segments.get(6) == Some(&"versions") => "template-versions",
-            "delivery-drafts" if segments.get(6) == Some(&"attempts") => "delivery-attempts",
             kind => kind,
         },
         _ => panic!("unmapped write route: {path}"),
@@ -94,11 +92,7 @@ async fn ok(app: &Router, method: &str, path: &str, token: &str, a: &Actor, v: V
     };
     if let Some(items) = v["data"].as_array() {
         let items: Vec<_> = items.iter().map(decode).collect();
-        if path.contains("/history") {
-            json!({"items":items,"blocked":v["meta"]["blocked"],"latest_attempt_id":v["meta"]["latest_attempt_id"]})
-        } else {
-            json!(items)
-        }
+        json!(items)
     } else if v["data"].is_null() {
         Value::Null
     } else {
@@ -394,13 +388,15 @@ async fn complete_business_flow_and_security_boundaries() {
         json!({"revision":1,"state":"resolved","resolution":"Reviewed"}),
     )
     .await;
+    let preview = ok(&app,"POST",&format!("{root}/resource-previews"),&admin_token,&admin,
+        json!({"kind":"blocked_word","title":"forbiddenword","revision":0,"active":true,"image_ref":null,"starts_at":null,"ends_at":null})).await;
     let resource = ok(
         &app,
         "POST",
-        &format!("{root}/resources"),
+        &format!("{root}/resource-publications"),
         &admin_token,
         &admin,
-        json!({"kind":"blocked_word","title":"forbiddenword","revision":0}),
+        json!({"preview_id":preview["id"],"digest":preview["digest"]}),
     )
     .await;
     assert_eq!(
@@ -451,7 +447,7 @@ async fn complete_business_flow_and_security_boundaries() {
     assert_eq!(call(&app, "POST", &format!("{root}/groups"), &admin_token, &admin.csrf,
         json!({"id":inactive["id"],"revision":1,"name":"Changed","corp_id":"corp-test","chat_id":"changed","active":false})).await.0,409);
     // Offline fixture only: active groups in production must pass upstream validation.
-    let group = a
+    let _group = a
         .schools
         .0
         .group(
@@ -461,498 +457,29 @@ async fn complete_business_flow_and_security_boundaries() {
         )
         .await
         .unwrap();
+    let preview = ok(&app, "POST", &format!("{root}/template-previews"), &admin_token, &admin,
+        json!({"revision":0,"name":"Daily","body":"{{school.name}}: {{post.title}}\n{{post.summary}}","note":"首次发布","sample_post_id":p,"publish":true})).await;
     let template = ok(
         &app,
         "POST",
-        &format!("{root}/templates"),
+        &format!("{root}/template-publications"),
         &admin_token,
         &admin,
-        json!({"name":"Daily"}),
+        json!({"preview_id":preview["id"],"digest":preview["digest"]}),
     )
     .await;
-    let version = ok(
-        &app,
-        "POST",
-        &format!("{root}/templates/{}/versions", id(&template)),
-        &admin_token,
-        &admin,
-        json!({"body":"{{school.name}}: {{post.title}}\n{{post.summary}}"}),
-    )
-    .await;
-    ok(
-        &app,
-        "POST",
-        &format!("{root}/template-versions/{}/publish", id(&version)),
-        &admin_token,
-        &admin,
-        json!({"revision":1}),
-    )
-    .await;
-    let draft_input =
-        json!({"group_id":id(&group),"template_version_id":id(&version),"post_ids":[p]});
-    // Construct an existing legacy snapshot to exercise historical reads after retirement.
-    let draft = a
-        .distribution
-        .draft(
-            &admin,
-            s,
-            serde_json::from_value(draft_input.clone()).unwrap(),
-            "http://localhost:5173",
-        )
-        .await
-        .unwrap();
-    assert_eq!(draft["content"], "School A: Campus\nHello");
-    let d = id(&draft);
-    let chat = group["chat_id"].as_str().unwrap();
-    // The old write route is retired even for an authenticated platform administrator.
-    assert_eq!(
-        call(
-            &app,
-            "POST",
-            &format!("{root}/delivery-drafts/{d}/attempts"),
-            &admin_token,
-            &admin.csrf,
-            json!({"current_chat_id":chat})
-        )
-        .await
-        .0,
-        422
-    );
-    let attempt = a
-        .distribution
-        .0
-        .attempt(&admin, s, d, "first", chat, None, "")
-        .await
-        .unwrap();
-    let at = id(&attempt);
-    assert_eq!(
-        call(
-            &app,
-            "PUT",
-            &format!("{root}/delivery-attempts/{at}/client-result"),
-            &admin_token,
-            &admin.csrf,
-            json!({"state":"client_reported_success"})
-        )
-        .await
-        .0,
-        422
-    );
-    assert_eq!(
-        call(
-            &app,
-            "PUT",
-            &format!("{root}/delivery-attempts/{at}/client-result"),
-            &admin_token,
-            &admin.csrf,
-            json!({"state":"cancelled"})
-        )
-        .await
-        .0,
-        422
-    );
-    let mut stale_identity = admin.clone();
-    stale_identity.wecom_binding_revision += 1;
-    assert!(
-        a.distribution
-            .0
-            .claim(&stale_identity, s, at)
-            .await
-            .is_err(),
-        "a stale enterprise binding cannot claim a prepared attempt"
-    );
-    a.distribution.0.claim(&admin, s, at).await.unwrap();
-    assert!(
-        a.distribution.0.claim(&admin, s, at).await.is_err(),
-        "one attempt cannot invoke SDK twice"
-    );
-
-    assert_eq!(
-        a.distribution
-            .0
-            .attempt(&admin, s, d, "first", chat, None, "")
-            .await
-            .unwrap()["id"],
-        attempt["id"]
-    );
-    assert!(
-        a.distribution
-            .0
-            .attempt(&admin, s, d, "second", chat, None, "")
-            .await
-            .is_err()
-    );
-    // Construct an existing legacy snapshot to exercise historical reads after retirement.
-    let other = a
-        .distribution
-        .draft(
-            &admin,
-            s,
-            serde_json::from_value(draft_input.clone()).unwrap(),
-            "http://localhost:5173",
-        )
-        .await
-        .unwrap();
-    assert!(
-        a.distribution
-            .0
-            .attempt(&admin, s, id(&other), "duplicate-draft", chat, None, "")
-            .await
-            .is_err()
-    );
-    sqlx::query("UPDATE delivery_attempts SET created_at=now()-interval '3 minutes' WHERE id=$1")
-        .bind(at)
-        .execute(&pool)
-        .await
-        .unwrap();
-    let history = a.distribution.0.attempts(s, 100, 0).await.unwrap();
-    assert_eq!(history[0]["state"], "unknown");
-    assert!(
-        a.distribution
-            .0
-            .attempt(&admin, s, d, "resend-unreconciled", chat, Some(at), "retry")
-            .await
-            .is_err()
-    );
-    ok(
-        &app,
-        "POST",
-        &format!("{root}/delivery-attempts/{at}/reconciliations"),
-        &admin_token,
-        &admin,
-        json!({"decision":"operator_rejected","reason":"Manually checked the group"}),
-    )
-    .await;
-    let late = ok(
-        &app,
-        "PUT",
-        &format!("{root}/delivery-attempts/{at}/client-result"),
-        &admin_token,
-        &admin,
-        json!({"state":"client_reported_success"}),
-    )
-    .await;
-    assert_eq!(late["reconciliation"], "operator_rejected");
-    assert_eq!(late["state"], "client_reported_success");
-    ok(
-        &app,
-        "PUT",
-        &format!("{root}/delivery-attempts/{at}/client-result"),
-        &admin_token,
-        &admin,
-        json!({"state":"client_reported_success"}),
-    )
-    .await;
-    let again = a
-        .distribution
-        .0
-        .attempt(
-            &admin,
-            s,
-            d,
-            "explicit-resend",
-            chat,
-            Some(at),
-            "Confirmed another share is needed",
-        )
-        .await
-        .unwrap();
-    assert_ne!(again["id"], attempt["id"]);
-    let old_detail = ok(
-        &app,
-        "GET",
-        &format!("{root}/delivery-drafts/{d}"),
-        &admin_token,
-        &admin,
-        Value::Null,
-    )
-    .await;
-    assert_eq!(old_detail["id"], draft["id"]);
-    let related = ok(
-        &app,
-        "GET",
-        &format!("{root}/delivery-drafts/{}/history?page[size]=1", id(&other)),
-        &admin_token,
-        &admin,
-        Value::Null,
-    )
-    .await;
-    assert_eq!(related["blocked"], true);
-    assert_eq!(related["latest_attempt_id"], again["id"]);
-    assert_eq!(related["items"].as_array().unwrap().len(), 1);
-    assert!(related["items"][0]["actor_name"].is_string());
-    assert_eq!(
-        call(
-            &app,
-            "GET",
-            &format!("{root}/delivery-drafts/{d}"),
-            &token,
-            &member.csrf,
-            Value::Null
-        )
-        .await
-        .0,
-        403
-    );
-    assert_eq!(
-        call(
-            &app,
-            "GET",
-            &format!("{root}/delivery-drafts/{d}/history"),
-            &token,
-            &member.csrf,
-            Value::Null
-        )
-        .await
-        .0,
-        403
-    );
-    let (status, first_page) = call(
-        &app,
-        "GET",
-        &format!("{root}/delivery-drafts?page[size]=1&page[number]=1"),
-        &admin_token,
-        &admin.csrf,
-        Value::Null,
-    )
-    .await;
-    assert_eq!(status, 200);
-    assert_eq!(
-        first_page["meta"]["page"],
-        json!({"number":1,"size":1,"has_more":true})
-    );
-    let page1 = &first_page["data"];
-    let page2 = ok(
-        &app,
-        "GET",
-        &format!("{root}/delivery-drafts?page[size]=1&page[number]=2"),
-        &admin_token,
-        &admin,
-        Value::Null,
-    )
-    .await;
-    assert_ne!(page1[0]["id"], page2[0]["id"]);
-    assert_eq!(
-        call(
-            &app,
-            "GET",
-            &format!("{root}/delivery-attempts?page[number]=0"),
-            &admin_token,
-            &admin.csrf,
-            Value::Null
-        )
-        .await
-        .0,
-        422
-    );
-
-    // A's unresolved result must block A+B even when B has a newer completed attempt.
-    sqlx::query("UPDATE delivery_attempts SET state='unknown',created_at=now()-interval '4 minutes' WHERE id=$1").bind(id(&again)).execute(&pool).await.unwrap();
-    let p_b = Uuid::now_v7();
-    sqlx::query("INSERT INTO posts(id,school_id,author_id,title,content,audit_status,visibility) VALUES($1,$2,$3,'B','B','approved','visible')").bind(p_b).bind(s).bind(admin.id).execute(&pool).await.unwrap();
-    let draft_b = a
-        .distribution
-        .0
-        .draft(
-            &admin,
-            s,
-            id(&group),
-            id(&version),
-            vec![p_b],
-            "http://localhost:5173",
-        )
-        .await
-        .unwrap();
-    let attempt_b = a
-        .distribution
-        .0
-        .attempt(&admin, s, id(&draft_b), "B-only", chat, None, "")
-        .await
-        .unwrap();
-    a.distribution
-        .0
-        .claim(&admin, s, id(&attempt_b))
-        .await
-        .unwrap();
-    a.distribution
-        .0
-        .result(
-            &admin,
-            s,
-            id(&attempt_b),
-            json!({"state":"client_reported_success"}),
-        )
-        .await
-        .unwrap();
-    let merged = a
-        .distribution
-        .0
-        .draft(
-            &admin,
-            s,
-            id(&group),
-            id(&version),
-            vec![p, p_b],
-            "http://localhost:5173",
-        )
-        .await
-        .unwrap();
-    assert!(
-        a.distribution
-            .0
-            .attempt(
-                &admin,
-                s,
-                id(&merged),
-                "merged-blocked",
-                chat,
-                Some(id(&attempt_b)),
-                "again"
-            )
-            .await
-            .is_err()
-    );
-    let related = a
-        .distribution
-        .0
-        .related(s, id(&merged), 1, 0)
-        .await
-        .unwrap();
-    assert!(related.blocked);
-    assert_eq!(related.latest_attempt_id, Some(id(&attempt_b)));
-    a.distribution
-        .0
-        .reconcile(
-            &admin,
-            s,
-            id(&again),
-            json!({"decision":"operator_rejected","reason":"checked A"}),
-        )
-        .await
-        .unwrap();
-    assert!(
-        !a.distribution
-            .0
-            .related(s, id(&merged), 1, 0)
-            .await
-            .unwrap()
-            .blocked
-    );
-    a.distribution
-        .0
-        .attempt(
-            &admin,
-            s,
-            id(&merged),
-            "merged-allowed",
-            chat,
-            Some(id(&attempt_b)),
-            "checked all",
-        )
-        .await
-        .unwrap();
-
-    let p_c = Uuid::now_v7();
-    sqlx::query("INSERT INTO posts(id,school_id,author_id,title,content,audit_status,visibility) VALUES($1,$2,$3,'C','C','approved','visible')").bind(p_c).bind(s).bind(admin.id).execute(&pool).await.unwrap();
-    let c1 = a
-        .distribution
-        .0
-        .draft(
-            &admin,
-            s,
-            id(&group),
-            id(&version),
-            vec![p_c],
-            "http://localhost:5173",
-        )
-        .await
-        .unwrap();
-    let c2 = a
-        .distribution
-        .0
-        .draft(
-            &admin,
-            s,
-            id(&group),
-            id(&version),
-            vec![p_c],
-            "http://localhost:5173",
-        )
-        .await
-        .unwrap();
-    let (left, right) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        tokio::join!(
-            a.distribution
-                .0
-                .attempt(&admin, s, id(&c1), "concurrent-left", chat, None, ""),
-            a.distribution
-                .0
-                .attempt(&admin, s, id(&c2), "concurrent-right", chat, None, "")
-        )
-    })
-    .await
-    .expect("overlapping drafts must not deadlock");
-    assert_eq!(
-        usize::from(left.is_ok()) + usize::from(right.is_ok()),
-        1,
-        "only one overlapping draft may be prepared"
-    );
-    sqlx::query("INSERT INTO delivery_drafts(id,school_id,group_id,template_version_id,creator_id,content,content_hash,created_at) SELECT gen_random_uuid(),school_id,group_id,template_version_id,creator_id,content,content_hash,now()+interval '1 second' FROM delivery_drafts CROSS JOIN generate_series(1,101) WHERE id=$1").bind(d).execute(&pool).await.unwrap();
-    let first = a.distribution.0.drafts(s, 100, 0).await.unwrap();
-    assert!(!first.iter().any(|r| r["id"] == draft["id"]));
-    assert_eq!(
-        ok(
-            &app,
-            "GET",
-            &format!("{root}/delivery-drafts/{d}"),
-            &admin_token,
-            &admin,
-            Value::Null
-        )
-        .await["id"],
-        draft["id"]
-    );
-    assert_eq!(
-        call(
-            &app,
-            "GET",
-            &format!("/api/v1/schools/{b}/delivery-drafts/{d}"),
-            &admin_token,
-            &admin.csrf,
-            Value::Null
-        )
-        .await
-        .0,
-        404
-    );
-    ok(
-        &app,
-        "PUT",
-        &format!("{root}/posts/{p}/visibility"),
-        &admin_token,
-        &admin,
-        json!({"revision":2,"visibility":"hidden","top_sort":0}),
-    )
-    .await;
-    assert!(
-        a.distribution
-            .0
-            .attempt(&admin, s, d, "stale", chat, Some(id(&again)), "no")
-            .await
-            .is_err()
-    );
-    assert!(
-        call(
-            &app,
-            "POST",
-            &format!("{root}/delivery-drafts"),
-            &admin_token,
-            &admin.csrf,
-            draft_input
-        )
-        .await
-        .0 >= 400
-    );
+    assert_eq!(template["published"], true);
+    for path in [
+        format!("{root}/delivery-drafts"),
+        format!("{root}/delivery-attempts"),
+    ] {
+        assert_eq!(
+            call(&app, "GET", &path, &admin_token, &admin.csrf, Value::Null)
+                .await
+                .0,
+            404
+        );
+    }
     // School revocation is effective on the next request; no stale roles are embedded in cookies.
     a.schools
         .grant(&admin, s, memberid, "revoked")
@@ -997,13 +524,15 @@ async fn complete_business_flow_and_security_boundaries() {
         .0,
         403
     );
+    let preview = ok(&app,"POST","/api/v1/platform/resource-previews",&admin_token,&admin,
+        json!({"kind":"legal","title":"Agreement","content":"Text","revision":0,"active":true,"image_ref":null,"starts_at":null,"ends_at":null})).await;
     let global = ok(
         &app,
         "POST",
-        "/api/v1/platform/resources",
+        "/api/v1/platform/resource-publications",
         &admin_token,
         &admin,
-        json!({"kind":"legal","title":"Agreement","content":"Text","revision":0}),
+        json!({"preview_id":preview["id"],"digest":preview["digest"]}),
     )
     .await;
     let resources = ok(
