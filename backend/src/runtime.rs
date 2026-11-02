@@ -140,9 +140,20 @@ async fn serve_inner(
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         }
     });
+    let artwork = crate::schools::south::adapter::postgres::Repository(application.pool.clone());
+    let artwork_worker = tokio::spawn(async move {
+        loop {
+            if artwork.cleanup_artwork().await.is_err() {
+                tracing::warn!("abandoned artwork cleanup failed; referenced assets retained");
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+        }
+    });
     let result = axum::serve(listener, http::app_router(application))
         .with_graceful_shutdown(shutdown_signal())
         .await;
+    artwork_worker.abort();
+    let _ = artwork_worker.await;
     usage_worker.abort();
     let _ = usage_worker.await;
     mobile_worker.abort();
