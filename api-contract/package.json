@@ -22,7 +22,8 @@
     "./distribution-content": "./src/modules/distribution-content/index.ts",
     "./wecom-distribution/client": "./src/modules/wecom-distribution/client.ts",
     "./mobile-execution/shared-send": "./src/modules/mobile-execution/shared-send/index.ts",
-    "./mobile-execution/shared-send/client": "./src/modules/mobile-execution/shared-send/client.ts"
+    "./mobile-execution/shared-send/client": "./src/modules/mobile-execution/shared-send/client.ts",
+    "./mobile-execution/shared-send/v2": "./src/modules/mobile-execution/shared-send/v2.ts"
   },
   "scripts": {
     "build": "tsc --noEmit && tsc -p tsconfig.platform.json",
