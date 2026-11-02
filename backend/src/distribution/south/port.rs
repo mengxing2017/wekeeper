@@ -103,3 +103,5 @@ pub mod mobile_execution;
 pub mod content_source;
 
 pub mod shared_send;
+
+pub mod shared_send_v2;
