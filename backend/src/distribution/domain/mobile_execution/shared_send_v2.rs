@@ -527,15 +527,6 @@ pub struct Settlement {
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct HumanSampleEvent {
-    pub sample_id: Uuid,
-    pub challenge: String,
-    pub operation: String,
-    pub elapsed_ms: i64,
-    pub runtime_epoch: Uuid,
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct Diagnostic {
     pub event_id: Uuid,
     pub inspection_id: Option<Uuid>,

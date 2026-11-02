@@ -38,26 +38,10 @@ CREATE TABLE mobile_usage_issues (
  description text NOT NULL, context jsonb NOT NULL, revision bigint NOT NULL DEFAULT 1, response text NOT NULL DEFAULT '', state text NOT NULL DEFAULT 'submitted' CHECK(state IN ('submitted','investigating','resolved','declined')), created_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
 CREATE INDEX mobile_usages_school ON mobile_usages(school_id,created_at DESC);
--- Existing genuine production scopes retain their original quota and immutable execution references.
-INSERT INTO mobile_usages(id,school_id,actor_id,approval,body,confirmed_until,expires_at,approved_by)
-SELECT g.id,g.school_id,g.created_by,'approved',jsonb_build_object('legacy',true,'max_calls',g.max_calls,'auto_targets',g.auto_targets,'device_ids',g.device_ids,'target_ids',g.target_ids),g.expires_at,g.expires_at,g.created_by
-FROM mobile_v9_scope_grants g JOIN mobile_v9_acceptance_runs a ON a.id=g.acceptance_id AND a.stage='production_allowlist'
-WHERE g.stage='production_allowlist' AND g.expires_at>clock_timestamp()
-AND NOT EXISTS(SELECT 1 FROM mobile_v9_scope_revocations r WHERE r.grant_id=g.id)
-AND NOT EXISTS(SELECT 1 FROM mobile_v9_adapter_withdrawals w WHERE w.release_id=g.release_id);
-INSERT INTO mobile_usage_scopes(scope_id,usage_id,release_id,target_id,device_id)
-SELECT g.id,g.id,g.release_id,g.target_ids[1],g.device_ids[1] FROM mobile_v9_scope_grants g JOIN mobile_usages u ON u.id=g.id
-;
--- Stop issuing laboratory work; existing fixed reports can still settle through recovery handlers.
-UPDATE mobile_v9_send_inspections SET state='stale' WHERE purpose='maintenance' AND state='pending';
-
 CREATE TRIGGER mobile_usage_events_immutable BEFORE UPDATE OR DELETE ON mobile_usage_events FOR EACH ROW EXECUTE FUNCTION mobile_capability_evidence_immutable();
 CREATE TRIGGER mobile_capability_deliveries_immutable BEFORE UPDATE OR DELETE ON mobile_capability_deliveries FOR EACH ROW EXECUTE FUNCTION mobile_capability_evidence_immutable();
 
 CREATE INDEX mobile_usages_budget ON mobile_usages(budget_root);
-
--- Historical test intent is not silently resumed as a production workflow; issued results still settle.
-UPDATE mobile_v9_tasks task SET stopped=true,revision=task.revision+1 FROM mobile_v9_task_drafts draft WHERE draft.id=task.draft_id AND draft.stage='test_send' AND NOT task.stopped;
 
 CREATE TABLE mobile_usage_confirmations (
  preview_id uuid PRIMARY KEY REFERENCES mobile_usage_previews(id), usage_id uuid NOT NULL REFERENCES mobile_usages(id)

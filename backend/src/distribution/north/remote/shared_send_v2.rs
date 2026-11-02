@@ -341,19 +341,6 @@ async fn settle(State(a): State<Application>, h: HeaderMap, input: Input) -> Res
             .await?,
     ))
 }
-async fn sample(State(a): State<Application>, h: HeaderMap, input: Input) -> Result<ApiResponse> {
-    let c = credential(&a, &h).await?;
-    Ok(resource(
-        "mobile-shared-human-samples",
-        service(&a)
-            .device_write(
-                &c,
-                key(&h),
-                DeviceCommand::HumanSample(input.decode("mobile-shared-human-samples")?),
-            )
-            .await?,
-    ))
-}
 async fn diagnostic(
     State(a): State<Application>,
     h: HeaderMap,
@@ -374,39 +361,10 @@ async fn diagnostic(
 pub fn router() -> Router<Application> {
     Router::new()
         .merge(usage_router())
-        .route(
-            "/api/v1/schools/{school}/mobile-execution/shared-v2-support",
-            post(retired),
-        )
-        .route(
-            "/api/v1/platform/mobile-execution/shared-v2-management",
-            post(retired),
-        )
-        .route(
-            "/api/v1/platform/mobile-execution/shared-v2-artifacts",
-            post(retired).layer(axum::extract::DefaultBodyLimit::max(134217728)),
-        )
-        .route(
-            "/api/v1/platform/mobile-execution/shared-v2-artifacts/{id}/content",
-            get(retired),
-        )
         .route("/api/v9/device-execution/send-settlements", post(settle))
-        .route("/api/v9/device-execution/human-samples", post(sample))
         .route(
             "/api/v9/device-execution/failure-diagnostics",
             post(diagnostic),
-        )
-        .route(
-            "/api/v1/platform/mobile-execution/shared-v2-device-access",
-            post(retired),
-        )
-        .route(
-            "/api/v1/schools/{school}/mobile-execution/shared-v2-bindings",
-            post(retired),
-        )
-        .route(
-            "/api/v1/schools/{school}/mobile-execution/shared-v2-bindings/{id}/revocations",
-            post(retired),
         )
         .route(
             "/api/v9/device-execution/send-recoveries",
@@ -437,18 +395,6 @@ pub fn router() -> Router<Application> {
             post(release),
         )
         .route(
-            "/api/v1/schools/{school}/mobile-execution/shared-v2-task-drafts",
-            post(retired),
-        )
-        .route(
-            "/api/v1/schools/{school}/mobile-execution/shared-v2-task-drafts/{id}",
-            axum::routing::patch(retired),
-        )
-        .route(
-            "/api/v1/schools/{school}/mobile-execution/shared-v2-task-previews",
-            post(retired),
-        )
-        .route(
             "/api/v1/schools/{school}/mobile-execution/shared-v2-tasks",
             get(list).post(confirm),
         )
@@ -463,14 +409,6 @@ pub fn router() -> Router<Application> {
         .route(
             "/api/v1/schools/{school}/mobile-execution/shared-v2-items/{id}/reviews",
             post(review),
-        )
-        .route(
-            "/api/v1/platform/mobile-execution/shared-v2-readiness",
-            get(retired),
-        )
-        .route(
-            "/api/v1/platform/mobile-execution/shared-v2-send-policies",
-            post(retired),
         )
         .route(
             "/api/v9/device-execution/protocol-capabilities",
@@ -501,14 +439,6 @@ pub fn router() -> Router<Application> {
         .route("/api/v9/device-execution/send-results", post(result))
 }
 
-async fn retired() -> (axum::http::StatusCode, axum::Json<serde_json::Value>) {
-    (
-        axum::http::StatusCode::GONE,
-        axum::Json(
-            serde_json::json!({"errors":[{"code":"mobile_management_retired","detail":"此技术办理入口已停用，请使用学校使用管理"}]}),
-        ),
-    )
-}
 async fn usage_options(
     State(a): State<Application>,
     actor: Actor,

@@ -37,40 +37,6 @@ pub(super) async fn settle(tx: &mut Tx<'_>, c: &Credential, v: Settlement) -> Re
     }
     Ok(json!({"id":v.receipt_id,"event_id":v.event_id,"settled":true}))
 }
-pub(super) async fn sample(tx: &mut Tx<'_>, c: &Credential, v: HumanSampleEvent) -> Result<Value> {
-    require(v.operation != "start", "人工采样已退出业务流程")?;
-    let r:Value=sqlx::query_scalar("SELECT to_jsonb(s) FROM mobile_v9_human_samples s WHERE id=$1 AND device_id=$2 AND credential_generation=$3 AND challenge=$4 AND expires_at>clock_timestamp()").bind(v.sample_id).bind(c.device_id).bind(c.generation).bind(&v.challenge).fetch_optional(&mut **tx).await?.ok_or(Error::Forbidden)?;
-    authorize(tx, uid(&r, "requested_by")?, None, true).await?;
-    if v.operation == "start" {
-        require(
-            r["state"] == "pending" && !inspections::busy(tx, c.device_id).await?,
-            "device_busy",
-        )?;
-        sqlx::query("UPDATE mobile_v9_human_samples SET state='running',runtime_epoch=$2,started_at=clock_timestamp() WHERE id=$1").bind(v.sample_id).bind(v.runtime_epoch).execute(&mut **tx).await?;
-        sqlx::query("INSERT INTO mobile_shared_device_leases(device_id,fence,holder_id,purpose,expires_at) VALUES($1,1,$2,'field_check',clock_timestamp()+interval '1 hour') ON CONFLICT(device_id) DO UPDATE SET fence=mobile_shared_device_leases.fence+1,holder_id=$2,purpose='field_check',expires_at=clock_timestamp()+interval '1 hour'").bind(c.device_id).bind(v.sample_id).execute(&mut **tx).await?;
-    } else if v.operation == "abort" {
-        require(
-            matches!(r["state"].as_str(), Some("pending" | "running")),
-            "shared_send_baseline_required",
-        )?;
-        sqlx::query("UPDATE mobile_v9_human_samples SET state='failed',completed_at=clock_timestamp() WHERE id=$1").bind(v.sample_id).execute(&mut **tx).await?;
-    } else {
-        require(
-            v.operation == "finish"
-                && r["state"] == "running"
-                && r["runtime_epoch"] == json!(v.runtime_epoch)
-                && (1000..=3600000).contains(&v.elapsed_ms),
-            "shared_send_baseline_required",
-        )?;
-        let time_ok:bool=sqlx::query_scalar("SELECT abs(extract(epoch FROM(clock_timestamp()-started_at))*1000-$2)<10000 FROM mobile_v9_human_samples WHERE id=$1").bind(v.sample_id).bind(v.elapsed_ms as f64).fetch_one(&mut **tx).await?;
-        require(time_ok, "shared_send_baseline_required")?;
-        sqlx::query("UPDATE mobile_v9_human_samples SET state='passed',elapsed_ms=$2,completed_at=clock_timestamp() WHERE id=$1").bind(v.sample_id).bind(v.elapsed_ms).execute(&mut **tx).await?;
-    }
-    if matches!(v.operation.as_str(), "finish" | "abort") {
-        sqlx::query("UPDATE mobile_shared_device_leases SET expires_at=clock_timestamp() WHERE device_id=$1 AND holder_id=$2").bind(c.device_id).bind(v.sample_id).execute(&mut **tx).await?;
-    }
-    Ok(json!({"id":v.sample_id,"recorded":true}))
-}
 pub(super) async fn diagnostic(tx: &mut Tx<'_>, c: &Credential, v: Diagnostic) -> Result<Value> {
     require(
         !v.code.is_empty()

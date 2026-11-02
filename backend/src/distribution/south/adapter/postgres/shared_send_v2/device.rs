@@ -10,7 +10,7 @@ pub(super) async fn read(repo: &Repository, c: &Credential) -> Result<Value> {
     let inspections:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',i.id,'target_id',i.target_id,'target_name',coalesce(nullif(t.alias,''),t.search_text),'state',i.state,'expires_at',i.expires_at) FROM mobile_v9_send_inspections i JOIN mobile_targets t ON t.id=i.target_id AND t.school_id=i.school_id WHERE i.device_id=$1 AND i.delegation_id=$2 AND i.purpose='automatic' AND i.state='pending' AND i.expires_at>clock_timestamp() AND NOT EXISTS(SELECT 1 FROM mobile_v9_plans p JOIN mobile_v9_attempts a ON a.plan_id=p.id JOIN mobile_v9_task_items ti ON ti.id=a.item_id JOIN mobile_v9_tasks task ON task.id=ti.task_id WHERE p.plan->>'binding_id'=i.binding_id::text AND a.current AND NOT task.stopped AND task.confirmed_until>clock_timestamp() AND (ti.position<>task.cursor_position OR task.next_eligible_at>clock_timestamp())) ORDER BY i.created_at,i.id").bind(c.device_id).bind(uid(&delegation,"id")?).fetch_all(&mut *tx).await?;
 
     let turns:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',a.id,'task_id',t.id,'position',i.position,'next_eligible_at',t.next_eligible_at,'interval_ms',CASE WHEN i.position=0 THEN 0 ELSE greatest((p.plan->>'between_targets_seconds')::bigint*1000,(p.plan->'flow'->'pacing'->>'between_targets_min_ms')::bigint,coalesce((SELECT max((lim.value->>'interval_seconds')::bigint)*1000 FROM mobile_v9_send_policy_versions policy,jsonb_each(policy.limits) lim WHERE policy.revision=(SELECT max(revision) FROM mobile_v9_send_policy_versions)),1000)) END) FROM mobile_v9_tasks t JOIN mobile_v9_task_items i ON i.task_id=t.id AND i.position=t.cursor_position JOIN mobile_v9_attempts a ON a.item_id=i.id AND a.current JOIN mobile_v9_plans p ON p.id=a.plan_id WHERE p.device_id=$1 AND a.state='queued' AND NOT t.stopped AND t.confirmed_until>clock_timestamp() ORDER BY t.created_at,t.id LIMIT 100").bind(c.device_id).fetch_all(&mut *tx).await?;
-    let v = json!({"turns":turns,"human_samples":[],"inspections":inspections,"id":c.device_id,"schema":SCHEMA,"authorization_schema":SCOPE,"protocol_version":9,"single_use_supported":true,"result_recovery_supported":true,"delegation":delegation,"recovery":work});
+    let v = json!({"turns":turns,"inspections":inspections,"id":c.device_id,"schema":SCHEMA,"authorization_schema":SCOPE,"protocol_version":9,"single_use_supported":true,"result_recovery_supported":true,"delegation":delegation,"recovery":work});
     tx.commit().await?;
     Ok(v)
 }
@@ -114,7 +114,6 @@ pub(super) async fn write(
     let (scope, body) = match &command {
         DeviceCommand::Runtime(v) => ("runtime".into(), json!(v)),
         DeviceCommand::Settle(v) => ("settle".into(), json!(v)),
-        DeviceCommand::HumanSample(v) => ("sample".into(), json!(v)),
         DeviceCommand::Diagnostic(v) => ("diagnostic".into(), json!(v)),
         DeviceCommand::Claim(v) => ("claim".into(), json!(v)),
         DeviceCommand::Prepare(id, v) => (format!("prepare:{id}"), json!(v)),
@@ -149,7 +148,6 @@ pub(super) async fn write(
     }
     let result = match command {
         DeviceCommand::Settle(v) => settlement::settle(&mut tx, c, v).await?,
-        DeviceCommand::HumanSample(v) => settlement::sample(&mut tx, c, v).await?,
         DeviceCommand::Diagnostic(v) => settlement::diagnostic(&mut tx, c, v).await?,
         DeviceCommand::InspectionClaim(v) => inspections::claim(&mut tx, c, v).await?,
         DeviceCommand::InspectionResult(v) => inspections::finish(&mut tx, c, v).await?,

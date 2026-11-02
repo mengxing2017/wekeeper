@@ -28,7 +28,6 @@ pub enum PlatformCommand {
 pub enum DeviceCommand {
     Runtime(RuntimeReport),
     Settle(Settlement),
-    HumanSample(HumanSampleEvent),
     Diagnostic(Diagnostic),
     Claim(ClaimRequest),
     Prepare(Uuid, Preparation),

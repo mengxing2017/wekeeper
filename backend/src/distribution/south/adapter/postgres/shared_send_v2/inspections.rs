@@ -101,50 +101,33 @@ async fn material(tx: &mut Tx<'_>, row: &Value) -> Result<Value> {
         candidate["accepted"] == true,
         "shared_send_consent_required",
     )?;
-    if row["purpose"] == "maintenance" {
-        authorize(tx, uid(row, "requested_by")?, None, true).await?;
-        require(
-            candidate["binding_locator_revision"]
-                == row["dependencies"]["binding_locator_revision"]
-                && candidate["credential_generation"]
-                    == row["dependencies"]["credential_generation"],
-            "plan_dependency_changed",
-        )?;
-        let mut c = candidate;
-        c["flow"] = sqlx::query_scalar("SELECT flow FROM mobile_v9_flows WHERE id=$1")
-            .bind(uid(row, "flow_id")?)
-            .fetch_one(&mut **tx)
-            .await?;
-        c["flow_digest"] = json!(digest(&c["flow"])?);
-        Ok(c)
-    } else {
-        // Automatic checks can serve an immutable task using a still-valid older release.
-        let release:Value=sqlx::query_scalar("SELECT jsonb_build_object('id',r.id,'flow',r.flow,'digest',r.content_digest) FROM mobile_v9_adapter_releases r WHERE r.id=$1 AND NOT EXISTS(SELECT 1 FROM mobile_v9_adapter_withdrawals w WHERE w.release_id=r.id)").bind(uid(row,"release_id")?).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("plan_dependency_changed"))?;
-        candidate["release_id"] = release["id"].clone();
-        candidate["flow"] = release["flow"].clone();
-        candidate["flow_digest"] = release["digest"].clone();
-        require(
-            tasks::grant(
-                tx,
-                uid(row, "school_id")?,
-                &candidate,
-                "production_allowlist",
-            )
-            .await?
-            .is_some(),
-            "plan_dependency_changed",
-        )?;
-        require(
-            tasks::dependencies(&candidate) == row["dependencies"],
-            "plan_dependency_changed",
-        )?;
-        Ok(candidate)
-    }
+    // Automatic checks can serve an immutable task using a still-valid older release.
+    let release:Value=sqlx::query_scalar("SELECT jsonb_build_object('id',r.id,'flow',r.flow,'digest',r.content_digest) FROM mobile_v9_adapter_releases r WHERE r.id=$1 AND NOT EXISTS(SELECT 1 FROM mobile_v9_adapter_withdrawals w WHERE w.release_id=r.id)").bind(uid(row,"release_id")?).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("plan_dependency_changed"))?;
+    candidate["release_id"] = release["id"].clone();
+    candidate["flow"] = release["flow"].clone();
+    candidate["flow_digest"] = release["digest"].clone();
+    require(
+        tasks::grant(
+            tx,
+            uid(row, "school_id")?,
+            &candidate,
+            "production_allowlist",
+        )
+        .await?
+        .is_some(),
+        "plan_dependency_changed",
+    )?;
+    require(
+        tasks::dependencies(&candidate) == row["dependencies"],
+        "plan_dependency_changed",
+    )?;
+    Ok(candidate)
 }
+
 pub(super) async fn claim(tx: &mut Tx<'_>, c: &Credential, v: InspectionClaim) -> Result<Value> {
     let row:Value=sqlx::query_scalar("SELECT to_jsonb(i) FROM mobile_v9_send_inspections i WHERE id=$1 AND device_id=$2 AND state='pending' AND purpose='automatic' AND expires_at>clock_timestamp()").bind(v.inspection_id).bind(c.device_id).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("inspection_expired"))?;
     let candidate = material(tx, &row).await?;
-    let compatible:bool=sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM mobile_capability_deliveries d WHERE d.release_id=$1 AND NOT EXISTS(SELECT 1 FROM mobile_v9_runtime_details r WHERE r.device_id=$2 AND r.credential_generation=$3 AND r.apk_sha256=ANY(d.supported_apks)))").bind(uid(&row,"release_id")?).bind(c.device_id).bind(c.generation).fetch_one(&mut **tx).await?;
+    let compatible:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_capability_deliveries d JOIN mobile_v9_runtime_details r ON r.apk_sha256=ANY(d.supported_apks) WHERE d.release_id=$1 AND r.device_id=$2 AND r.credential_generation=$3)").bind(uid(&row,"release_id")?).bind(c.device_id).bind(c.generation).fetch_one(&mut **tx).await?;
     require(compatible, "shared_send_helper_update_required")?;
     require(
         cursor_allows(tx, uid(&row, "binding_id")?).await?,
@@ -165,7 +148,7 @@ pub(super) async fn finish(tx: &mut Tx<'_>, c: &Credential, v: InspectionResult)
         !v.evidence.trim().is_empty() && v.evidence.len() <= 2000,
         "inspection_evidence_required",
     )?;
-    let row:Value=sqlx::query_scalar("SELECT to_jsonb(i) FROM mobile_v9_send_inspections i WHERE id=$1 AND device_id=$2 AND dependencies->>'credential_generation'=$3 AND state='leased'").bind(v.inspection_id).bind(c.device_id).bind(c.generation.to_string()).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("lease_superseded"))?;
+    let row:Value=sqlx::query_scalar("SELECT to_jsonb(i) FROM mobile_v9_send_inspections i WHERE id=$1 AND device_id=$2 AND dependencies->>'credential_generation'=$3 AND state='leased' AND purpose='automatic'").bind(v.inspection_id).bind(c.device_id).bind(c.generation.to_string()).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("lease_superseded"))?;
     require(
         row["runtime_epoch"] == json!(v.runtime_epoch)
             && row["lease_fence"] == v.lease_fence
@@ -175,17 +158,12 @@ pub(super) async fn finish(tx: &mut Tx<'_>, c: &Credential, v: InspectionResult)
     )?;
     let current = material(tx, &row).await.is_ok();
     let live:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_shared_device_leases l JOIN mobile_shared_runtime r ON r.device_id=l.device_id JOIN mobile_v9_runtime_details d ON d.device_id=l.device_id WHERE l.device_id=$1 AND l.holder_id=$2 AND l.fence=$3 AND l.expires_at>clock_timestamp() AND r.runtime_epoch=$4 AND r.credential_generation=$5 AND r.ui_ready AND NOT r.paused AND d.ui_context_epoch=$6 AND d.apk_sha256=$7 AND r.observed_at>clock_timestamp()-interval '30 seconds')").bind(c.device_id).bind(v.inspection_id).bind(v.lease_fence).bind(v.runtime_epoch).bind(c.generation).bind(&v.ui_context_epoch).bind(&v.apk_sha256).fetch_one(&mut **tx).await?;
-    let apk_ok = if row["purpose"] == "maintenance" {
-        sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM mobile_v9_artifacts WHERE id=$1 AND sha256=$2 AND kind='apk')").bind(uid(&row,"apk_id")?).bind(&v.apk_sha256).fetch_one(&mut **tx).await?
-    } else {
-        true
-    };
     let checks = crate::distribution::domain::mobile_execution::FLOW_CHECKS
         .iter()
         .all(|k| v.checks.get(*k) == Some(&true));
     let state = if !current || !live {
         "stale"
-    } else if v.passed && checks && apk_ok {
+    } else if v.passed && checks {
         "passed"
     } else {
         "failed"
