@@ -274,29 +274,22 @@ pub(super) async fn write(
                 .await?,
                 "quota_wait",
             )?;
-            // Binding-authorized tasks have no synthetic stage grant. Existing
-            // usage budgets still apply whenever this binding has a managed scope.
-            if let Some(scope) = tasks::grant(
+            // Meter current business roots independently of the internal grant. A
+            // missing projection must neither block a valid task nor bypass its limit.
+            let budgets = usage_budgets::check(
                 &mut tx,
                 uid(&cl, "school_id")?,
-                &cl["plan"],
-                cl["plan"]["stage"].as_str().ok_or(Error::Conflict)?,
+                c.device_id,
+                uid(&cl["plan"], "target_id")?,
             )
-            .await?
-            {
-                let scope_id = uid(&scope, "id")?;
-                let budget:bool=sqlx::query_scalar("SELECT (SELECT count(*) FROM mobile_v9_invocations i JOIN mobile_v9_attempts a ON a.id=i.attempt_id JOIN mobile_v9_plans p ON p.id=a.plan_id WHERE p.plan->>'scope_id'=$1::uuid::text )<g.max_calls FROM mobile_v9_scope_grants g WHERE g.id=$1 AND g.expires_at>clock_timestamp()+interval '15 seconds'").bind(scope_id).fetch_optional(&mut *tx).await?.unwrap_or(false);
-                require(
-                    budget && usage_budget(&mut tx, scope_id).await?,
-                    "quota_wait",
-                )?;
-            }
+            .await?;
             let inv = Uuid::now_v7();
             let timing:Value=sqlx::query_scalar("SELECT jsonb_build_object('server_time',clock_timestamp(),'not_before',clock_timestamp(),'execute_before',clock_timestamp()+interval '15 seconds') FROM mobile_v9_send_claims WHERE id=$1 AND expires_at>clock_timestamp()+interval '27 seconds' AND EXISTS(SELECT 1 FROM mobile_v9_tasks t JOIN mobile_v9_task_items i ON i.task_id=t.id JOIN mobile_v9_attempts a ON a.item_id=i.id WHERE a.id=mobile_v9_send_claims.attempt_id AND t.confirmed_until>clock_timestamp()+interval '15 seconds')").bind(id).fetch_optional(&mut *tx).await?.ok_or(Error::Policy("lease_expired"))?;
             let secret = secrets::token();
             let result_credential = secrets::token();
             let permit = json!({"id":inv,"schema":SCHEMA,"invocation_secret":secret,"result_credential":result_credential,"invocation_id":inv,"claim_id":id,"attempt_id":cl["attempt_id"],"device_id":c.device_id,"credential_generation":c.generation,"runtime_epoch":cl["runtime_epoch"],"lease_fence":v.lease_fence,"plan_digest":v.plan_digest,"content_digest":v.content_digest,"timing":timing});
             sqlx::query("INSERT INTO mobile_v9_invocations(id,school_id,attempt_id,claim_id,device_id,credential_generation,lease_fence,execute_before,state,response,encrypted_response,invocation_secret_hash,result_credential_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'risk_held',$9,$10,$11,$12)").bind(inv).bind(uid(&cl,"school_id")?).bind(uid(&cl,"attempt_id")?).bind(id).bind(c.device_id).bind(c.generation).bind(v.lease_fence).bind(timing["execute_before"].as_str().unwrap_or("").parse::<chrono::DateTime<chrono::Utc>>().map_err(|_|Error::Conflict)?).bind(json!({"id":inv,"claim_id":id})).bind(secrets::seal(&permit)?).bind(hash(&secret)).bind(hash(&result_credential)).execute(&mut *tx).await?;
+            usage_budgets::record(&mut tx, inv, &budgets).await?;
             sqlx::query("INSERT INTO mobile_v9_risk_guards SELECT i.school_id,i.intent_id,i.target_id,a.id,$2,'active' FROM mobile_v9_attempts a JOIN mobile_v9_task_items i ON i.id=a.item_id WHERE a.id=$1 ON CONFLICT(school_id,intent_id,target_id) DO UPDATE SET attempt_id=excluded.attempt_id,invocation_id=excluded.invocation_id,state='active' WHERE mobile_v9_risk_guards.state='closed'").bind(uid(&cl,"attempt_id")?).bind(inv).execute(&mut *tx).await?;
             sqlx::query("UPDATE mobile_v9_attempts SET state='invocation_issued',revision=revision+1 WHERE id=$1").bind(uid(&cl,"attempt_id")?).execute(&mut *tx).await?;
             sqlx::query("UPDATE mobile_v9_quota_reservations SET state='risk_held',recorded_at=clock_timestamp() WHERE attempt_id=$1").bind(uid(&cl,"attempt_id")?).execute(&mut *tx).await?;
@@ -571,9 +564,4 @@ async fn mutate_lease(
         sqlx::query("UPDATE mobile_shared_device_leases SET expires_at=(SELECT expires_at FROM mobile_v9_send_claims WHERE id=$2) WHERE device_id=$1 AND holder_id=$2 AND fence=$3").bind(c.device_id).bind(id).bind(v.lease_fence).execute(&mut **tx).await?;
     }
     Ok(json!({"id":id,"lease_fence":v.lease_fence,"state":if release{"closed"}else{"active"}}))
-}
-
-async fn usage_budget(tx: &mut Tx<'_>, scope: Uuid) -> Result<bool> {
-    let budget:Option<bool>=sqlx::query_scalar("SELECT (SELECT count(*) FROM mobile_v9_invocations i JOIN mobile_v9_attempts a ON a.id=i.attempt_id JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_usage_scopes x ON x.scope_id=(p.plan->>'scope_id')::uuid JOIN mobile_usages family ON family.id=x.usage_id WHERE family.budget_root=u.budget_root)<(u.body->>'max_calls')::bigint FROM mobile_usage_scopes m JOIN mobile_usages u ON u.id=m.usage_id WHERE m.scope_id=$1").bind(scope).fetch_optional(&mut **tx).await?;
-    Ok(budget.unwrap_or(true))
 }
