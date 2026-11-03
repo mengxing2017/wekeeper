@@ -224,6 +224,135 @@ async fn offline_binding_is_selectable_and_confirmable_without_environment_or_co
         .await
         .unwrap();
     let id: Uuid = serde_json::from_value(task["id"].clone()).unwrap();
+    // The inbox must include future groups without consent, runtime or a control connection.
+    let token_hash = wekeeper_api::business::hash("wk_device_inbox-synthetic");
+    sqlx::query("INSERT INTO device_credentials(token_hash,device_id,generation,expires_at) VALUES($1,$2,1,clock_timestamp()+interval '1 hour')").bind(&token_hash).bind(f.device).execute(&f.pool).await.unwrap();
+    let credential = wekeeper_api::distribution::domain::device_control::Credential {
+        device_id: f.device,
+        generation: 1,
+        token_hash,
+    };
+    let inbox = r
+        .inbox_read(
+            &credential,
+            InboxQuery {
+                limit: Some(1),
+                cursor: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(inbox["items"].as_array().unwrap().len(), 1);
+    assert_eq!(inbox["items"][0]["target_name"], "测试群");
+    assert_eq!(inbox["items"][0]["total"], 2);
+    assert!(inbox["items"][0].get("message").is_none());
+    let page2 = r
+        .inbox_read(
+            &credential,
+            InboxQuery {
+                limit: Some(1),
+                cursor: Some(inbox["page"]["next_cursor"].as_str().unwrap().into()),
+            },
+        )
+        .await
+        .unwrap();
+    assert_ne!(
+        inbox["items"][0]["attempt_id"],
+        page2["items"][0]["attempt_id"]
+    );
+    assert_eq!(page2["page"]["has_more"], false);
+    let aid: Uuid = serde_json::from_value(inbox["items"][0]["attempt_id"].clone()).unwrap();
+    let observed = InboxReceipt {
+        receipt_id: Uuid::new_v4(),
+        queue_revision: inbox["queue_revision"].as_i64().unwrap(),
+        items: vec![
+            InboxReceiptItem {
+                attempt_id: aid,
+                assignment_revision: 1,
+            },
+            InboxReceiptItem {
+                attempt_id: Uuid::new_v4(),
+                assignment_revision: 1,
+            },
+        ],
+    };
+    let receipt = r
+        .inbox_receipt(&credential, "inbox-receipt", observed.clone())
+        .await
+        .unwrap();
+    assert_eq!(receipt["accepted"].as_array().unwrap().len(), 1);
+    assert_eq!(receipt["rejected"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        receipt,
+        r.inbox_receipt(&credential, "inbox-receipt", observed.clone())
+            .await
+            .unwrap()
+    );
+    let mut changed = observed;
+    changed.queue_revision += 1;
+    assert!(
+        r.inbox_receipt(&credential, "inbox-receipt", changed)
+            .await
+            .is_err()
+    );
+    let after_receipt = r
+        .inbox_read(&credential, InboxQuery::default())
+        .await
+        .unwrap();
+    assert_eq!(after_receipt["queue_revision"], inbox["queue_revision"]);
+    assert!(
+        after_receipt["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|i| i["attempt_state"] == "queued")
+    );
+    let receipt_detail = r.school_read(&f.actor, f.school, Some(id)).await.unwrap();
+    assert!(
+        receipt_detail["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|i| i["attempts"].as_array().unwrap())
+            .any(|a| a["id"] == json!(aid) && a["device_received_at"].is_string())
+    );
+    r.dispatch_task_wakes().await.unwrap();
+    r.dispatch_task_wakes().await.unwrap();
+    let command_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM device_control_commands WHERE device_id=$1 AND kind='task_available'",
+    )
+    .bind(f.device)
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert!(command_count > 0);
+    // A rolled-back state change cannot leak a wake or change the page version.
+    let mut rolled = f.pool.begin().await.unwrap();
+    sqlx::query("UPDATE mobile_v9_attempts SET state='cancelled' WHERE id=$1")
+        .bind(aid)
+        .execute(&mut *rolled)
+        .await
+        .unwrap();
+    rolled.rollback().await.unwrap();
+    let stable = r
+        .inbox_read(&credential, InboxQuery::default())
+        .await
+        .unwrap();
+    assert_eq!(stable["queue_revision"], inbox["queue_revision"]);
+    let mut held = f.pool.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(78234610243)")
+        .execute(&mut *held)
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        r.inbox_read(&credential, InboxQuery::default()),
+    )
+    .await
+    .expect("read must not wait for execution recovery")
+    .unwrap();
+    held.rollback().await.unwrap();
+
     let detail = r.school_read(&f.actor, f.school, Some(id)).await.unwrap();
     let status = &detail["items"][0]["attempts"][0]["execution_status"];
     assert_eq!(status["phase"], "waiting");
