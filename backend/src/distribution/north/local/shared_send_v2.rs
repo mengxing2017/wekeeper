@@ -10,6 +10,21 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct Service<R = Repository>(pub R);
 impl<R: Store> Service<R> {
+    pub async fn inbox_read(
+        &self,
+        c: &Credential,
+        q: crate::distribution::domain::mobile_execution::shared_send_v2::InboxQuery,
+    ) -> Result<Value> {
+        self.0.inbox_read(c, q).await
+    }
+    pub async fn inbox_receipt(
+        &self,
+        c: &Credential,
+        key: &str,
+        v: crate::distribution::domain::mobile_execution::shared_send_v2::InboxReceipt,
+    ) -> Result<Value> {
+        self.0.inbox_receipt(c, &text(key, 1, 128)?, v).await
+    }
     pub async fn credential(&self, token: &str) -> Result<Credential> {
         self.0.credential(token).await
     }

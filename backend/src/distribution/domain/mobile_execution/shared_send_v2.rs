@@ -628,3 +628,55 @@ pub struct ArtifactUpload {
     pub name: String,
     pub content: Vec<u8>,
 }
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InboxQuery {
+    pub limit: Option<i64>,
+    pub cursor: Option<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InboxReceiptItem {
+    pub attempt_id: Uuid,
+    pub assignment_revision: i64,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InboxReceipt {
+    pub receipt_id: Uuid,
+    pub queue_revision: i64,
+    pub items: Vec<InboxReceiptItem>,
+}
+
+#[cfg(test)]
+mod inbox_contract_tests {
+    use super::*;
+    #[test]
+    fn shared_inbox_fixture_preserves_execution_status_and_assignment_identity() {
+        let f: Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../api-contract/fixtures/shared-task-inbox.json"
+        )))
+        .unwrap();
+        let item = &f["items"][0];
+        let status: ExecutionStatus =
+            serde_json::from_value(item["execution_status"].clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(status).unwrap(),
+            item["execution_status"]
+        );
+        let v = InboxReceipt {
+            receipt_id: Uuid::new_v4(),
+            queue_revision: f["queue_revision"].as_i64().unwrap(),
+            items: vec![InboxReceiptItem {
+                attempt_id: serde_json::from_value(item["attempt_id"].clone()).unwrap(),
+                assignment_revision: 1,
+            }],
+        };
+        let wire = serde_json::to_value(v).unwrap();
+        let parsed: InboxReceipt = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(serde_json::to_value(parsed).unwrap(), wire);
+        assert!(item.get("message").is_none());
+    }
+}

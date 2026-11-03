@@ -11,7 +11,7 @@ use crate::{
 };
 use axum::{
     Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::HeaderMap,
     routing::{get, post},
 };
@@ -120,6 +120,30 @@ async fn delegation_context(State(a): State<Application>, h: HeaderMap) -> Resul
     Ok(resource(
         "mobile-shared-delegation-contexts",
         service(&a).delegation_read(&c).await?,
+    ))
+}
+async fn inbox(
+    State(a): State<Application>,
+    h: HeaderMap,
+    Query(q): Query<crate::distribution::domain::mobile_execution::shared_send_v2::InboxQuery>,
+) -> Result<ApiResponse> {
+    let c = credential(&a, &h).await?;
+    Ok(resource(
+        "mobile-shared-task-inboxes",
+        service(&a).inbox_read(&c, q).await?,
+    ))
+}
+async fn inbox_receipt(
+    State(a): State<Application>,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    let c = credential(&a, &h).await?;
+    Ok(resource(
+        "mobile-shared-task-receipts",
+        service(&a)
+            .inbox_receipt(&c, key(&h), input.decode("mobile-shared-task-receipts")?)
+            .await?,
     ))
 }
 async fn context(State(a): State<Application>, h: HeaderMap) -> Result<ApiResponse> {
@@ -433,6 +457,11 @@ pub fn router() -> Router<Application> {
         .route(
             "/api/v9/device-execution/send-delegation-context",
             get(delegation_context),
+        )
+        .route("/api/v9/device-execution/shared-task-inbox", get(inbox))
+        .route(
+            "/api/v9/device-execution/shared-task-receipts",
+            post(inbox_receipt),
         )
         .route("/api/v9/device-execution/runtime-reports", post(runtime))
         .route(

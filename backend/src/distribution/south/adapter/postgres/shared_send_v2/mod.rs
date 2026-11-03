@@ -17,6 +17,7 @@ mod delegation;
 pub mod delivery;
 mod device;
 mod execution_status;
+mod inbox;
 mod inspections;
 mod platform;
 mod readiness;
@@ -108,10 +109,30 @@ fn uid(v: &Value, k: &str) -> Result<Uuid> {
 }
 async fn task(tx: &mut Tx<'_>, s: Uuid, id: Uuid) -> Result<Value> {
     let mut value: Value = sqlx::query_scalar("SELECT to_jsonb(t)||jsonb_build_object('items',coalesce((SELECT jsonb_agg(to_jsonb(i)||jsonb_build_object('attempts',(SELECT jsonb_agg(to_jsonb(a)||jsonb_build_object('plan',p.plan,'plan_digest',p.digest,'result_reason',(SELECT e.body->>'reason' FROM mobile_v9_send_events e WHERE e.attempt_id=a.id AND e.receipt->>'disposition'<>'archived' ORDER BY e.created_at DESC,e.id DESC LIMIT 1)) ORDER BY a.attempt_no) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id WHERE a.item_id=i.id)) ORDER BY i.position) FROM mobile_v9_task_items i WHERE i.task_id=t.id),'[]'::jsonb)) FROM mobile_v9_tasks t WHERE t.school_id=$1 AND t.id=$2").bind(s).bind(id).fetch_optional(&mut **tx).await?.ok_or(Error::NotFound)?;
+    let receipts:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('attempt_id',r.attempt_id,'received_at',r.received_at) FROM mobile_v9_task_receipts r JOIN mobile_v9_attempts a ON a.id=r.attempt_id JOIN mobile_v9_task_items i ON i.id=a.item_id WHERE i.task_id=$1").bind(id).fetch_all(&mut **tx).await?;
+    if let Some(items) = value["items"].as_array_mut() {
+        for item in items {
+            if let Some(attempts) = item["attempts"].as_array_mut() {
+                for attempt in attempts {
+                    attempt["device_received_at"] = receipts
+                        .iter()
+                        .find(|r| r["attempt_id"] == attempt["id"])
+                        .map(|r| r["received_at"].clone())
+                        .unwrap_or(Value::Null);
+                }
+            }
+        }
+    }
     execution_status::task(tx, s, &mut value).await?;
     Ok(value)
 }
 impl Store for Repository {
+    async fn inbox_read(&self, c: &Credential, q: InboxQuery) -> Result<Value> {
+        inbox::read(self, c, q).await
+    }
+    async fn inbox_receipt(&self, c: &Credential, key: &str, v: InboxReceipt) -> Result<Value> {
+        inbox::receipt(self, c, key, v).await
+    }
     async fn credential(&self, token: &str) -> Result<Credential> {
         if !token.starts_with("wk_device_") || token.len() > 256 {
             return Err(Error::Unauthorized);

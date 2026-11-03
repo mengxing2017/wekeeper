@@ -134,6 +134,9 @@ async fn serve_inner(
     );
     let usage_worker = tokio::spawn(async move {
         loop {
+            if usages.dispatch_task_wakes().await.is_err() {
+                tracing::warn!("shared task wake dispatch will retry");
+            }
             if usages.reconcile_usages().await.is_err() {
                 tracing::warn!("mobile usage reconciliation failed; persisted intents will retry");
             }

@@ -40,6 +40,17 @@ pub enum DeviceCommand {
     Release(Uuid, LeaseMutation),
 }
 pub trait Store: Clone + Send + Sync {
+    fn inbox_read(
+        &self,
+        c: &Credential,
+        q: InboxQuery,
+    ) -> impl Future<Output = Result<Value>> + Send;
+    fn inbox_receipt(
+        &self,
+        c: &Credential,
+        key: &str,
+        v: InboxReceipt,
+    ) -> impl Future<Output = Result<Value>> + Send;
     fn credential(&self, token: &str) -> impl Future<Output = Result<Credential>> + Send;
     fn usage_read(
         &self,
