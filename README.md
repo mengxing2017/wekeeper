@@ -353,12 +353,6 @@ devbox run -- make dev-embedded
 
 直接文本由本校 operator/admin 保存草稿，仅 admin 可确认提交；社区内容沿用原权限。当前基线在建表时同时定义帖子与纯文本来源约束，重复启动不改写任务与正文哈希。升级须停止旧 API/worker 并配套部署新版前后端，不能在文本任务出现后混跑旧 worker。
 
-### 服务端手机执行接口
+### 手机共享发送
 
-已提供独立设备身份、逐群草稿/人工确认、领取/准备/单次资格/回报接口及 TypeScript HTTP client，不包含手机执行代码。默认关闭 `WEKEEPER_MOBILE_EXECUTION_ENABLED`；逐校启用与核对操作见 [手机执行运行手册](docs/runbooks/mobile-delivery.md) 和 [ADR 0005](docs/adr/0005-mobile-delivery.md)。
-
-## 企业微信指定群手动策略
-
-手机执行增加 `ui_visible` 可见资料模式：按手机可见企业/账号、完整群名和群上下文登记并人工核对，不要求企业微信外部业务 ID 或控件 ID。学校管理员可配置指定账号、v2 手机、群及纯文本的手动策略；“执行一次”先建立幂等草稿，仍须预览和人工确认。旧 v1/demo 链路和 unknown 账本保留。
-
-Otter 已接入双协议及非 ID 适配代码；实际企业微信版本及节点规则尚未验收，真实发送保持阻断。迁移、使用顺序、检查结果及所需补充材料见 [47-编码实施记录](report/47-企业微信指定群策略发送编码实施记录.md)；设计依据见 [46-联合实施方案](report/46-企业微信指定群策略发送联合实施方案.md)。
+手机为平台共享资源，学校维护独立目标群。管理员核对群、实际搜索名、手机和正文后确认任务；执行遵守手机现场条件、业务额度、单次许可及 unknown 核对，不办理研发验收或发行放行。操作见[手机任务](docs/guide/operator/mobile-execution-tasks.md)和[使用管理](docs/guide/platform-admin/shared-mobile-resources.md)。协议以 `api-contract/src/modules/mobile-execution/shared-send/` 和 Rust 契约测试为准。
