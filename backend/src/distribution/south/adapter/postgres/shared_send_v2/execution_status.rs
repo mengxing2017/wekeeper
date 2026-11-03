@@ -304,7 +304,7 @@ pub(super) async fn assess(
                 }
             }
         }
-        if !device::quota(
+        let quota_available = match device::quota(
             tx,
             school,
             device,
@@ -312,8 +312,23 @@ pub(super) async fn assess(
             uid(attempt, "id")?,
             false,
         )
-        .await?
+        .await
         {
+            Ok(available) => available,
+            Err(Error::Policy(code)) => {
+                add(
+                    &mut conditions,
+                    code,
+                    "发送政策暂不可执行，请管理员查看政策配置；任务已保留",
+                    "school",
+                    false,
+                    device,
+                );
+                true
+            }
+            Err(error) => return Err(error),
+        };
+        if !quota_available {
             add(
                 &mut conditions,
                 "quota_wait",
