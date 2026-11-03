@@ -214,6 +214,33 @@ async fn offline_binding_is_selectable_and_confirmable_without_environment_or_co
         )
         .await
         .unwrap();
+    let id: Uuid = serde_json::from_value(task["id"].clone()).unwrap();
+    let detail = r.school_read(&f.actor, f.school, Some(id)).await.unwrap();
+    let status = &detail["items"][0]["attempts"][0]["execution_status"];
+    assert_eq!(status["phase"], "waiting");
+    assert!(
+        status["conditions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["code"] == "consent_unknown")
+    );
+    assert!(
+        status["conditions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["code"] == "runtime_stale")
+    );
+    assert!(status["device_state_observed_at"].is_null());
+    let reservations: i64 = sqlx::query_scalar("SELECT count(*) FROM mobile_v9_quota_reservations")
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        reservations, 0,
+        "reading live waiting status must never reserve quota"
+    );
     assert_eq!(task["cursor_position"], 0);
     assert_eq!(task["items"].as_array().unwrap().len(), 2);
     assert_eq!(
@@ -1012,6 +1039,141 @@ async fn usage_overrides_reuse_and_renewal_keep_one_business_family() {
         )
         .await
         .is_err()
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn delegation_discovery_and_consent_ignore_the_global_housekeeping_lock() {
+    use wekeeper_api::distribution::domain::device_control::Credential;
+    let f = Fixture::with_adapter(false).await;
+    let token = "wk_device_synthetic-discovery-test";
+    let hash = wekeeper_api::business::hash(token);
+    sqlx::query("INSERT INTO device_credentials(token_hash,device_id,generation,expires_at) VALUES($1,$2,1,clock_timestamp()+interval '1 hour')").bind(&hash).bind(f.device).execute(&f.pool).await.unwrap();
+    let r = f.repo();
+    let c = Credential {
+        device_id: f.device,
+        generation: 1,
+        token_hash: hash,
+    };
+    let mut held = f.pool.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(78234610243)")
+        .execute(&mut *held)
+        .await
+        .unwrap();
+    let one = tokio::time::timeout(std::time::Duration::from_secs(2), r.delegation_read(&c))
+        .await
+        .expect("discovery must not wait for unrelated housekeeping")
+        .unwrap();
+    let two = r.delegation_read(&c).await.unwrap();
+    assert_eq!(one["delegation"]["id"], two["delegation"]["id"]);
+    let input = ConsentInput {
+        delegation_id: serde_json::from_value(one["delegation"]["id"].clone()).unwrap(),
+        scope_digest: one["delegation"]["scope_digest"].as_str().unwrap().into(),
+        expected_revision: 0,
+        accepted: true,
+    };
+    let decision = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        r.device_write(&c, "stable-consent", DeviceCommand::Consent(input.clone())),
+    )
+    .await
+    .expect("consent must not wait for global housekeeping")
+    .unwrap();
+    assert_eq!(decision["accepted"], true);
+    assert_eq!(
+        decision,
+        r.device_write(&c, "stable-consent", DeviceCommand::Consent(input))
+            .await
+            .unwrap()
+    );
+    held.rollback().await.unwrap();
+    sqlx::query("UPDATE execution_devices SET enabled=false WHERE id=$1")
+        .bind(f.device)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    assert!(
+        r.credential(token).await.is_ok(),
+        "valid credential must remain usable for read/legitimate finalization"
+    );
+    assert_eq!(
+        r.delegation_read(&c).await.unwrap()["delegation"]["decision"]["accepted"],
+        true
+    );
+    sqlx::query("UPDATE device_credentials SET revoked_at=clock_timestamp() WHERE device_id=$1")
+        .bind(f.device)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    assert!(r.credential(token).await.is_err());
+    assert!(r.delegation_read(&c).await.is_err());
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn one_check_insert_failure_does_not_roll_back_another_target_and_is_retried() {
+    let f = Fixture::new().await;
+    let r = f.repo();
+    let token = "wk_device_synthetic-check-isolation";
+    sqlx::query("INSERT INTO device_credentials(token_hash,device_id,generation,expires_at) VALUES($1,$2,1,clock_timestamp()+interval '1 hour')").bind(wekeeper_api::business::hash(token)).bind(f.device).execute(&f.pool).await.unwrap();
+    let c = r.credential(token).await.unwrap();
+    let context = r.delegation_read(&c).await.unwrap();
+    r.device_write(
+        &c,
+        "consent",
+        DeviceCommand::Consent(ConsentInput {
+            delegation_id: serde_json::from_value(context["delegation"]["id"].clone()).unwrap(),
+            scope_digest: context["delegation"]["scope_digest"]
+                .as_str()
+                .unwrap()
+                .into(),
+            expected_revision: 0,
+            accepted: true,
+        }),
+    )
+    .await
+    .unwrap();
+    sqlx::query(&format!("CREATE FUNCTION reject_one_check() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.target_id='{}'::uuid THEN RAISE EXCEPTION 'synthetic check insert failure'; END IF; RETURN NEW; END $$",f.targets[0])).execute(&f.pool).await.unwrap();
+    sqlx::query("CREATE TRIGGER reject_one_check BEFORE INSERT ON mobile_v9_send_inspections FOR EACH ROW EXECUTE FUNCTION reject_one_check()").execute(&f.pool).await.unwrap();
+    let mut global = f.pool.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(78234610243)")
+        .execute(&mut *global)
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), r.reconcile_usages())
+        .await
+        .expect("check scheduling must not need the global execution lock")
+        .unwrap();
+    global.rollback().await.unwrap();
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM mobile_v9_send_inspections WHERE target_id=$1 AND state='pending'",
+    )
+    .bind(f.targets[1])
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        count, 1,
+        "a database exception on a neighbouring binding must not roll back this check"
+    );
+    sqlx::query("DROP TRIGGER reject_one_check ON mobile_v9_send_inspections")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    r.reconcile_usages().await.unwrap();
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM mobile_v9_send_inspections WHERE target_id=$1 AND state='pending'",
+    )
+    .bind(f.targets[0])
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        count, 1,
+        "durable binding must automatically retry after the injected fault is removed"
     );
     f.close().await;
 }
