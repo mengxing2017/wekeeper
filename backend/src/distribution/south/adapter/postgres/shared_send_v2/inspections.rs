@@ -18,6 +18,7 @@ pub(super) async fn request(
 }
 // Enabled bindings are durable desired checks, including while offline or awaiting consent.
 pub(super) async fn reconcile(tx: &mut Tx<'_>, device: Uuid) -> Result<()> {
+    tasks::resolve_waiting_rules(tx, device).await?;
     // Revoke queued work immediately, including bindings excluded from the active scan.
     sqlx::query("UPDATE mobile_v9_send_inspections i SET state='stale' WHERE i.automatic AND i.state='pending' AND i.device_id=$1 AND NOT EXISTS(SELECT 1 FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id JOIN schools s ON s.id=b.school_id JOIN execution_devices d ON d.id=b.device_id JOIN mobile_shared_delegations m ON m.id=i.delegation_id WHERE b.id=i.binding_id AND b.enabled AND t.enabled AND t.archived_at IS NULL AND s.active AND d.enabled AND m.credential_generation=d.credential_generation AND (b.source='platform' OR EXISTS(SELECT 1 FROM mobile_shared_school_access a WHERE a.device_id=b.device_id AND a.school_id=b.school_id AND a.enabled)))").bind(device).execute(&mut **tx).await?;
     let bindings:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(b) FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id JOIN schools s ON s.id=b.school_id WHERE b.enabled AND t.enabled AND t.archived_at IS NULL AND s.active AND b.device_id=$1 ORDER BY b.id").bind(device).fetch_all(&mut **tx).await?;
@@ -92,6 +93,9 @@ async fn reconcile_binding(tx: &mut Tx<'_>, b: &Value) -> Result<()> {
 
 pub(super) async fn busy(tx: &mut Tx<'_>, device: Uuid) -> Result<bool> {
     Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_send_claims WHERE device_id=$1 AND state='active' AND expires_at>clock_timestamp()) OR EXISTS(SELECT 1 FROM mobile_v9_invocations WHERE device_id=$1 AND state='risk_held') OR EXISTS(SELECT 1 FROM mobile_shared_device_leases WHERE device_id=$1 AND expires_at>clock_timestamp()) OR EXISTS(SELECT 1 FROM mobile_shared_runtime WHERE device_id=$1 AND NOT quiescent)").bind(device).fetch_one(&mut **tx).await?)
+}
+pub(super) async fn busy_sources(tx: &mut Tx<'_>, device: Uuid) -> Result<Vec<Value>> {
+    sqlx::query_scalar("SELECT jsonb_build_object('code',code,'id',id,'observed_at',observed_at,'expires_at',expires_at) FROM (SELECT 'device_claim_active' AS code,id,created_at AS observed_at,expires_at FROM mobile_v9_send_claims WHERE device_id=$1 AND state='active' AND expires_at>clock_timestamp() UNION ALL SELECT 'device_invocation_risk',id,NULL::timestamptz,NULL::timestamptz FROM mobile_v9_invocations WHERE device_id=$1 AND state='risk_held' UNION ALL SELECT 'device_lease_active',holder_id,NULL::timestamptz,expires_at FROM mobile_shared_device_leases WHERE device_id=$1 AND expires_at>clock_timestamp() UNION ALL SELECT CASE WHEN observed_at<clock_timestamp()-interval '30 seconds' THEN 'device_idle_unconfirmed' ELSE 'device_ui_active' END,device_id,observed_at,NULL::timestamptz FROM mobile_shared_runtime WHERE device_id=$1 AND NOT quiescent) facts LIMIT 100").bind(device).fetch_all(&mut **tx).await.map_err(Into::into)
 }
 // A task owns its whole remaining target sequence. Background future-group checks wait too.
 pub(super) async fn cursor_allows(tx: &mut Tx<'_>, binding: Uuid) -> Result<bool> {
