@@ -40,6 +40,7 @@ pub enum DeviceCommand {
     Release(Uuid, LeaseMutation),
 }
 pub trait Store: Clone + Send + Sync {
+    fn credential(&self, token: &str) -> impl Future<Output = Result<Credential>> + Send;
     fn usage_read(
         &self,
         a: &Actor,
@@ -88,5 +89,6 @@ pub trait Store: Clone + Send + Sync {
         key: &str,
         command: DeviceCommand,
     ) -> impl Future<Output = Result<Value>> + Send;
+    fn delegation_read(&self, c: &Credential) -> impl Future<Output = Result<Value>> + Send;
     fn device_read(&self, c: &Credential) -> impl Future<Output = Result<Value>> + Send;
 }
