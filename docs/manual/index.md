@@ -2,7 +2,7 @@
 
 已部署系统的日常操作请先看[使用手册](../guide/index.md)。本页面向安装、开发和部署人员。
 
-当前手机业务使用[共享手机通用发送](../runbooks/shared-mobile-send.md)，办理步骤见[手机使用管理](../guide/platform-admin/shared-mobile-resources.md)和[手机任务](../guide/operator/mobile-execution-tasks.md)。
+当前手机业务使用[手机共享发送使用手册](../guide/operator/mobile-execution-tasks.md)，办理步骤见[手机使用管理](../guide/platform-admin/shared-mobile-resources.md)和[手机任务](../guide/operator/mobile-execution-tasks.md)。
 
 按目标选择入口，避免将临时开发数据误作生产持久数据。
 
@@ -14,6 +14,6 @@
 | Web 与小程序开发 | [前端说明](../development/frontend.md) | 独立构建，真实微信身份和真机另验收 |
 | 学校运营与历史切换 | [业务运行手册](../runbooks/business.md) | 学校授权、审核、迁移及历史记录核验 |
 | 企业微信接入 | [接入手册](../runbooks/wecom.md) | 官方权限、可信域名、OAuth 和真机确认 |
-| 手机执行接口联调 | [手机执行手册](../runbooks/mobile-delivery.md) | 独立 keeper-otter；服务端测试不等于手机适配验收 |
+| 手机任务操作 | [手机共享发送使用手册](../guide/operator/mobile-execution-tasks.md) | 预览、确认、逐群执行及结果核对 |
 
 先建立隔离开发/测试环境，再执行真实平台及生产数据切换。文档启动与应用启动分别管理，见 [开发命令](../development/index.md)。

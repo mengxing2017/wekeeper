@@ -343,7 +343,7 @@ docker compose --env-file .env -f compose.yaml ps api
 
 **备份和故障处理：** 密钥与数据库配套受控备份，所有 API 实例使用相同值，后续重启、迁移或换服务器继续使用原值。丢失或换错密钥会导致已有加密材料无法恢复，重新生成不能解开旧密文。当前没有在线轮换机制，存在未结算任务或需要恢复的历史响应时不得直接替换。缺失/格式错误可能出现 `shared_send_key_required`，解密失败可能出现 `shared_send_secret_invalid`；先核对原部署密钥和实例配置，不清表、不重发消息。日常使用 `config --quiet`，不要分享包含完整环境变量的配置输出。
 
-完整执行与验收流程见[手机共享发送运行手册](shared-mobile-send.md)。
+手机任务操作见[手机共享发送使用手册](../guide/operator/mobile-execution-tasks.md)。
 
 ### 5.5 独立 Docker / 1Panel：分别配置三个容器
 
@@ -677,7 +677,3 @@ Web 镜像同时构建 React 与独立 docs 包。访问站点 `/docs/` 阅读�
 源码构建必须保留 docs 目录、独立锁文件与构建脚本。可通过 Docker build 参数 `WEKEEPER_BUILD_VERSION` 写入版本；未指定显示“开发构建”。文档与业务 Web 随同镜像回退，不回退数据库 migration。
 
 发布后运行 `make smoke`，再使用浏览器检查帮助入口、搜索、深链接、复制和 CSP。构建及安全头生成见[文档发布](../development/docs-publishing.md)。
-
-## 共享手机业务与维护工具的边界
-
-API 镜像包含同版本 `mobile-capability`，通过一次性 `docker compose run --rm --entrypoint /usr/local/bin/mobile-capability api ...` 使用，无需安装 Cargo 或增加常驻服务。只读状态、导入、激活与撤回的完整命令见[产品交付工具](mobile-capability-delivery.md#docker-标准部署)。该工具仅用于维护已有执行规则，不是业务部署、开通授权或发送的必做步骤。正常业务不查询其交付/验收/激活记录，不要求登记 APK 摘要。管理员在使用管理批准手机和群范围即可；未配置发送方案时使用系统默认设置，平台可按需调整实际执行限制；规则缺失需要产品补齐实际应用适配，不能通过插入虚假验收记录放行。

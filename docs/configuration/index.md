@@ -1,6 +1,6 @@
 # 配置索引
 
-当前手机业务使用[共享手机通用发送](../runbooks/shared-mobile-send.md)，办理步骤见[手机使用管理](../guide/platform-admin/shared-mobile-resources.md)和[手机任务](../guide/operator/mobile-execution-tasks.md)。
+当前手机业务使用[手机共享发送使用手册](../guide/operator/mobile-execution-tasks.md)，办理步骤见[手机使用管理](../guide/platform-admin/shared-mobile-resources.md)和[手机任务](../guide/operator/mobile-execution-tasks.md)。
 
 ## 配置来源
 
@@ -16,11 +16,9 @@
 | `devbox.json` | Rust/Node/pnpm 开发工具环境 |
 | `docs/package.json` / `.vitepress/config.ts` | 文档脚本、页面导航与本地搜索 |
 | 平台「手机群消息使用管理 → 配置业务方案」 | 当前 v9 发送开关、时区、时段及四维业务额度；独立于产品技术交付 |
-| `mobile-capability` 部署工具 | 产品导入、激活、撤回及只读状态核对；不修改业务方案 |
 
 具体默认值和完整部署命令见 [Docker 配置手册](../runbooks/docker.md)，不要用不同文档中的示例覆盖已有生产配置。
 
-历史企业微信 v3 配置仅供迁移与旧账恢复核对，不是当前共享发送的配置入口。其客户端规则、冷却、额度、群间等待和会话时长存入数据库并按版本发布，不通过修改 APK 常量配置。创建、只读验证、发布、撤销及剩余项修订见 [规则配置与多群执行](../runbooks/configured-mobile-delivery.md)。
 
 ## 变量分组
 

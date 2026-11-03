@@ -1,6 +1,6 @@
 # 业务与发送流程
 
-当前手机业务使用[共享手机通用发送](../runbooks/shared-mobile-send.md)，办理步骤见[手机使用管理](../guide/platform-admin/shared-mobile-resources.md)和[手机任务](../guide/operator/mobile-execution-tasks.md)。
+当前手机业务使用[手机共享发送使用手册](../guide/operator/mobile-execution-tasks.md)，办理步骤见[手机使用管理](../guide/platform-admin/shared-mobile-resources.md)和[手机任务](../guide/operator/mobile-execution-tasks.md)。
 
 ## 身份、学校与内容
 
@@ -21,9 +21,9 @@
 
 人工确认冻结逐群任务 → 独立设备凭据领取 → 观察身份并准备 → 获取一次性 permit → 原生本地消费后单次动作 → 固定结果回报 → unknown 人工核对。
 
-Android 为独立 keeper-otter 项目，WeKeeper 不新增电脑网关或任意远控服务。后端实现不代表微信/企业微信原生适配已验收，真实应用可用范围必须以匹配执行端及已发布流程的真机验收为准，不能由服务端编译结果推断。
+Android 为独立 keeper-otter 项目，WeKeeper 不新增电脑网关或任意远控服务。后端实现不代表微信/企业微信原生适配已验收，执行依赖实际 UI 规则和手机现场条件；测试结果不能代替实际发送回执，研发验收记录不参与运行时放行。
 
-跨通道共享规范账号/群、额度、去重和 unknown 记录，不能切换设备或通道规避历史。设备接口、学校版本审批和回退顺序见 [手机执行手册](../runbooks/mobile-delivery.md)。
+跨通道共享规范账号/群、额度、去重和 unknown 记录，不能切换设备或通道规避历史。手机发送确认和结果处理见 [手机共享发送使用手册](../guide/operator/mobile-execution-tasks.md)。
 
 ## 验收边界
 
