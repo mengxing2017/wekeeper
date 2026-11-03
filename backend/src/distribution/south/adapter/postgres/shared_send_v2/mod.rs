@@ -16,6 +16,7 @@ mod business_scheme;
 mod delegation;
 pub mod delivery;
 mod device;
+mod execution_status;
 mod inspections;
 mod platform;
 mod readiness;
@@ -25,6 +26,7 @@ mod tasks;
 mod usage;
 mod usage_locators;
 async fn expire(tx: &mut Tx<'_>) -> Result<()> {
+    sqlx::query("UPDATE mobile_v9_send_claims c SET state='closed' WHERE c.state='active' AND c.expires_at<clock_timestamp() AND NOT EXISTS(SELECT 1 FROM mobile_v9_invocations i WHERE i.claim_id=c.id)").execute(&mut **tx).await?;
     sqlx::query("UPDATE mobile_v9_attempts a SET state='failed_before_call',revision=revision+1 FROM mobile_v9_send_claims c WHERE a.id=c.attempt_id AND a.state IN ('leased','prepared') AND c.expires_at<clock_timestamp() AND NOT EXISTS(SELECT 1 FROM mobile_v9_invocations i WHERE i.claim_id=c.id)").execute(&mut **tx).await?;
     sqlx::query("UPDATE mobile_v9_quota_reservations q SET state='released' FROM mobile_v9_attempts a WHERE q.attempt_id=a.id AND q.state='reserved' AND a.state='failed_before_call'").execute(&mut **tx).await?;
 
@@ -104,9 +106,24 @@ fn uid(v: &Value, k: &str) -> Result<Uuid> {
     serde_json::from_value(v[k].clone()).map_err(|_| Error::Conflict)
 }
 async fn task(tx: &mut Tx<'_>, s: Uuid, id: Uuid) -> Result<Value> {
-    sqlx::query_scalar("SELECT to_jsonb(t)||jsonb_build_object('items',coalesce((SELECT jsonb_agg(to_jsonb(i)||jsonb_build_object('attempts',(SELECT jsonb_agg(to_jsonb(a)||jsonb_build_object('plan',p.plan,'plan_digest',p.digest,'result_reason',(SELECT e.body->>'reason' FROM mobile_v9_send_events e WHERE e.attempt_id=a.id AND e.receipt->>'disposition'<>'archived' ORDER BY e.created_at DESC,e.id DESC LIMIT 1)) ORDER BY a.attempt_no) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id WHERE a.item_id=i.id)) ORDER BY i.position) FROM mobile_v9_task_items i WHERE i.task_id=t.id),'[]'::jsonb)) FROM mobile_v9_tasks t WHERE t.school_id=$1 AND t.id=$2").bind(s).bind(id).fetch_optional(&mut **tx).await?.ok_or(Error::NotFound)
+    let mut value: Value = sqlx::query_scalar("SELECT to_jsonb(t)||jsonb_build_object('items',coalesce((SELECT jsonb_agg(to_jsonb(i)||jsonb_build_object('attempts',(SELECT jsonb_agg(to_jsonb(a)||jsonb_build_object('plan',p.plan,'plan_digest',p.digest,'result_reason',(SELECT e.body->>'reason' FROM mobile_v9_send_events e WHERE e.attempt_id=a.id AND e.receipt->>'disposition'<>'archived' ORDER BY e.created_at DESC,e.id DESC LIMIT 1)) ORDER BY a.attempt_no) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id WHERE a.item_id=i.id)) ORDER BY i.position) FROM mobile_v9_task_items i WHERE i.task_id=t.id),'[]'::jsonb)) FROM mobile_v9_tasks t WHERE t.school_id=$1 AND t.id=$2").bind(s).bind(id).fetch_optional(&mut **tx).await?.ok_or(Error::NotFound)?;
+    execution_status::task(tx, s, &mut value).await?;
+    Ok(value)
 }
 impl Store for Repository {
+    async fn credential(&self, token: &str) -> Result<Credential> {
+        if !token.starts_with("wk_device_") || token.len() > 256 {
+            return Err(Error::Unauthorized);
+        }
+        let token_hash = crate::business::hash(token);
+        let (device_id,generation):(Uuid,i64)=sqlx::query_as("SELECT c.device_id,c.generation FROM device_credentials c JOIN execution_devices d ON d.id=c.device_id WHERE c.token_hash=$1 AND c.revoked_at IS NULL AND c.expires_at>clock_timestamp() AND d.credential_generation=c.generation").bind(&token_hash).fetch_optional(&self.0).await?.ok_or(Error::Unauthorized)?;
+        Ok(Credential {
+            device_id,
+            generation,
+            token_hash,
+        })
+    }
+
     async fn usage_read(
         &self,
         a: &Actor,
@@ -230,10 +247,7 @@ impl Store for Repository {
     }
     async fn school_read(&self, a: &Actor, s: Uuid, id: Option<Uuid>) -> Result<Value> {
         let mut tx = self.0.begin().await?;
-        guard(&mut tx).await?;
         authorize(&mut tx, a.id, Some(s), false).await?;
-        expire(&mut tx).await?;
-        usage::reconcile(&mut tx).await?;
         let v = if let Some(id) = id {
             task(&mut tx, s, id).await?
         } else {
@@ -285,7 +299,6 @@ impl Store for Repository {
                     sqlx::query("INSERT INTO mobile_shared_access_events(id,device_id,school_id,revision,enabled,actor_id) VALUES($1,$2,$3,$4,$5,$6)").bind(Uuid::now_v7()).bind(v.device_id).bind(v.school_id).bind(next).bind(v.enabled).bind(a.id).execute(&mut *tx).await?;
                     next
                 };
-                inspections::reconcile(&mut tx, Some(v.device_id), None).await?;
                 json!({"id":v.device_id,"school_id":v.school_id,"revision":revision,"enabled":v.enabled})
             }
             PlatformCommand::Policy(v) => {
@@ -302,10 +315,7 @@ impl Store for Repository {
     }
     async fn platform_read(&self, a: &Actor, page: u32) -> Result<Value> {
         let mut tx = self.0.begin().await?;
-        guard(&mut tx).await?;
         authorize(&mut tx, a.id, None, true).await?;
-        expire(&mut tx).await?;
-        usage::reconcile(&mut tx).await?;
         let mut v = platform::read(&mut tx, page).await?;
         v["id"] = json!("current");
         v["policy"] = json!(policy(&mut tx).await?);
@@ -330,15 +340,17 @@ impl Store for Repository {
     ) -> Result<Value> {
         device::write(self, c, key, command).await
     }
+    async fn delegation_read(&self, c: &Credential) -> Result<Value> {
+        let mut tx = self.0.begin().await?;
+        authenticate(&mut tx, c, false).await?;
+        let delegation = delegation::context(&mut tx, c).await?;
+        let value = json!({"id":c.device_id,"device_id":c.device_id,"credential_generation":c.generation,"authorization_schema":SCOPE,"delegation":delegation,"observed_at":chrono::Utc::now()});
+        tx.commit().await?;
+        Ok(value)
+    }
     async fn device_read(&self, c: &Credential) -> Result<Value> {
         device::read(self, c).await
     }
-}
-
-/// Resource mutation callers already hold the shared transaction guard.
-pub(super) async fn reconcile_resources(tx: &mut Transaction<'_, Postgres>) -> Result<()> {
-    usage::reconcile(tx).await?;
-    inspections::reconcile(tx, None, None).await
 }
 
 fn hash_bytes(bytes: &[u8]) -> String {
