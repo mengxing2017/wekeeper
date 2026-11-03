@@ -102,6 +102,10 @@ export function decodeResource(value: unknown): Record<string, unknown> {
 /** Explicit aliases for action routes whose target resource differs from the URL leaf. */
 export function resourceType(path: string): string {
   const parts = path.split("?")[0].split("/").filter(Boolean);
+  if(parts[0]==='api' && parts[1]==='v9' && parts[2]==='device-execution') {
+    if(parts[3]==='shared-task-inbox')return 'mobile-shared-task-inboxes';
+    if(parts[3]==='shared-task-receipts')return 'mobile-shared-task-receipts';
+  }
   const productKind=parts[2]==='platform'?parts[3]:parts[2]==='schools'?parts[4]:undefined;
   if(productKind && ['resource-previews','resource-publications','resource-qrcodes','template-previews','template-publications','official-usage-previews','official-usages','broadcast-task-previews','broadcast-access-requests','broadcast-issues','member-policy-previews','member-policies'].includes(productKind)) return productKind;
   if (parts[3] === "mobile-execution" || parts[4] === "mobile-execution") {
