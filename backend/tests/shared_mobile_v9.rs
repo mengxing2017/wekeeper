@@ -1359,3 +1359,500 @@ async fn one_check_insert_failure_does_not_roll_back_another_target_and_is_retri
     );
     f.close().await;
 }
+
+// ---- §9 regression acceptance: business control state is resolved by version ----
+// These cover the false-block review: history/pending/superseded records and generic
+// technical revision drift must never act as an implicit disable, while an explicit
+// pause, revocation or expiry on the operative version must still block accurately.
+
+/// Insert a synthetic business usage row covering exactly (device,target) so a test can
+/// drive the operative-version resolution without depending on reconcile internals.
+#[allow(clippy::too_many_arguments)] // One row versions a single business usage.
+async fn seed_usage(
+    f: &Fixture,
+    id: Uuid,
+    approval: &str,
+    state: &str,
+    device: Uuid,
+    target: Uuid,
+    budget_root: Uuid,
+    created_at: chrono::DateTime<chrono::Utc>,
+    expires_at: chrono::DateTime<chrono::Utc>,
+    supersedes: Option<Uuid>,
+) {
+    let body = json!({
+        "device_ids": [device],
+        "auto_targets": false,
+        "targets": [{"id": target}],
+        "max_calls": 5,
+    });
+    sqlx::query("INSERT INTO mobile_usages(id,school_id,actor_id,approval,state,revision,body,confirmed_until,expires_at,created_at,budget_root,approved_by,supersedes) VALUES($1,$2,$3,$4,$5,1,$6,$7,$8,$9,$10,$11,$12)")
+        .bind(id).bind(f.school).bind(f.actor.id).bind(approval).bind(state).bind(&body)
+        .bind(expires_at).bind(expires_at).bind(created_at).bind(budget_root).bind(f.actor.id).bind(supersedes)
+        .execute(&f.pool).await.unwrap();
+}
+
+/// The readiness row for one device/target pair.
+fn readiness_row(overview: &Value, device: Uuid, target: Uuid) -> Value {
+    overview["readiness"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["device_id"] == json!(device) && v["target_id"] == json!(target))
+        .expect("readiness row for the seeded binding")
+        .clone()
+}
+
+fn scope_blocker(row: &Value) -> Option<String> {
+    row["blockers"].as_array().unwrap().iter().find_map(|b| {
+        b["code"]
+            .as_str()
+            .filter(|c| c.starts_with("business_scope_"))
+            .map(|c| c.to_string())
+    })
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn pending_declined_history_does_not_implicitly_disable_a_valid_binding() {
+    let f = Fixture::with_adapter(false).await;
+    let r = f.repo();
+    let (device, target) = (f.device, f.targets[0]);
+    // A pending application and a declined one both mention this device/target, but
+    // neither is an approved operative version, so they are history — not a disable.
+    seed_usage(
+        &f,
+        Uuid::now_v7(),
+        "pending",
+        "active",
+        device,
+        target,
+        Uuid::new_v4(),
+        chrono::Utc::now() - chrono::Duration::hours(3),
+        chrono::Utc::now() + chrono::Duration::days(1),
+        None,
+    )
+    .await;
+    seed_usage(
+        &f,
+        Uuid::now_v7(),
+        "declined",
+        "active",
+        device,
+        target,
+        Uuid::new_v4(),
+        chrono::Utc::now() - chrono::Duration::hours(2),
+        chrono::Utc::now() + chrono::Duration::days(1),
+        None,
+    )
+    .await;
+    let overview = r.school_read(&f.actor, f.school, None).await.unwrap();
+    let row = readiness_row(&overview, device, target);
+    assert_eq!(row["plan_selectable"], true);
+    assert_eq!(
+        row["confirmable"], true,
+        "history must never manufacture an implicit disable"
+    );
+    assert_eq!(scope_blocker(&row), None);
+    // Exercise the failing path as well as its readiness explanation: a pending
+    // application must not prevent preview and confirmation of the bound task.
+    let draft = r
+        .school_write(
+            &f.actor,
+            f.school,
+            "history-draft",
+            SchoolCommand::Draft(
+                None,
+                DraftInput {
+                    target_ids: vec![target],
+                    message: "历史申请不影响下发".into(),
+                    content_type: "text/plain".into(),
+                    expected_revision: None,
+                    stage: "production_allowlist".into(),
+                    between_targets_seconds: 30,
+                },
+            ),
+        )
+        .await
+        .unwrap();
+    let preview = r
+        .school_write(
+            &f.actor,
+            f.school,
+            "history-preview",
+            SchoolCommand::Preview(PreviewInput {
+                draft_id: serde_json::from_value(draft["id"].clone()).unwrap(),
+                expected_revision: 1,
+                selections: vec![],
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(preview["plan"]["items"][0]["blocker"].is_null());
+    let task = r
+        .school_write(
+            &f.actor,
+            f.school,
+            "history-confirm",
+            SchoolCommand::Confirm(Confirmation {
+                preview_id: serde_json::from_value(preview["id"].clone()).unwrap(),
+                preview_digest: preview["digest"].as_str().unwrap().into(),
+                confirmed: true,
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(task["items"].as_array().unwrap().len(), 1);
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn paused_revoked_and_expired_operative_usage_block_with_accurate_reasons() {
+    let f = Fixture::with_adapter(false).await;
+    let r = f.repo();
+    let (device, target) = (f.device, f.targets[0]);
+    let id = Uuid::now_v7();
+    seed_usage(
+        &f,
+        id,
+        "approved",
+        "active",
+        device,
+        target,
+        Uuid::new_v4(),
+        chrono::Utc::now(),
+        chrono::Utc::now() + chrono::Duration::days(1),
+        None,
+    )
+    .await;
+    let overview = r.school_read(&f.actor, f.school, None).await.unwrap();
+    assert_eq!(
+        readiness_row(&overview, device, target)["confirmable"],
+        true
+    );
+
+    for (state, expires, expected) in [
+        ("paused", chrono::Duration::days(1), "business_scope_paused"),
+        (
+            "revoked",
+            chrono::Duration::days(1),
+            "business_scope_revoked",
+        ),
+        (
+            "active",
+            chrono::Duration::days(-1),
+            "business_scope_expired",
+        ),
+    ] {
+        sqlx::query("UPDATE mobile_usages SET state=$2,expires_at=clock_timestamp()+$3::interval WHERE id=$1")
+            .bind(id)
+            .bind(state)
+            .bind(format!("{} days", expires.num_days()))
+            .execute(&f.pool)
+            .await
+            .unwrap();
+        let overview = r.school_read(&f.actor, f.school, None).await.unwrap();
+        let row = readiness_row(&overview, device, target);
+        assert_eq!(
+            row["confirmable"], false,
+            "{state} operative usage must block confirmation"
+        );
+        assert_eq!(scope_blocker(&row).as_deref(), Some(expected));
+    }
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn superseded_lineage_resolves_to_the_operative_version() {
+    let f = Fixture::with_adapter(false).await;
+    let r = f.repo();
+    let (device, target) = (f.device, f.targets[0]);
+    let root = Uuid::new_v4();
+    let older = Uuid::now_v7();
+    // The older version already expired, but it is superseded within the same budget
+    // root, so its expiry is history and must not leak into the current decision.
+    seed_usage(
+        &f,
+        older,
+        "approved",
+        "active",
+        device,
+        target,
+        root,
+        chrono::Utc::now() - chrono::Duration::hours(2),
+        chrono::Utc::now() - chrono::Duration::hours(1),
+        None,
+    )
+    .await;
+    let newer = Uuid::now_v7();
+    seed_usage(
+        &f,
+        newer,
+        "approved",
+        "active",
+        device,
+        target,
+        root,
+        chrono::Utc::now(),
+        chrono::Utc::now() + chrono::Duration::days(1),
+        Some(older),
+    )
+    .await;
+    let overview = r.school_read(&f.actor, f.school, None).await.unwrap();
+    let row = readiness_row(&overview, device, target);
+    assert_eq!(row["confirmable"], true, "the live renewal is operative");
+    assert_eq!(scope_blocker(&row), None);
+
+    // Revoking only the operative version blocks; the expired ancestor stays history.
+    sqlx::query("UPDATE mobile_usages SET state='revoked' WHERE id=$1")
+        .bind(newer)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let overview = r.school_read(&f.actor, f.school, None).await.unwrap();
+    let row = readiness_row(&overview, device, target);
+    assert_eq!(row["confirmable"], false);
+    assert_eq!(
+        scope_blocker(&row).as_deref(),
+        Some("business_scope_revoked")
+    );
+    // Revoked roots can be opened again as a new business family. Old revocation
+    // history must not make that explicit reopening unusable forever.
+    seed_usage(
+        &f,
+        Uuid::now_v7(),
+        "approved",
+        "active",
+        device,
+        target,
+        Uuid::new_v4(),
+        chrono::Utc::now(),
+        chrono::Utc::now() + chrono::Duration::days(1),
+        None,
+    )
+    .await;
+    let overview = r.school_read(&f.actor, f.school, None).await.unwrap();
+    assert_eq!(
+        readiness_row(&overview, device, target)["confirmable"],
+        true
+    );
+    // An explicit newer revoke must still win, including an action on an ancestor.
+    sqlx::query("INSERT INTO mobile_usage_events(id,usage_id,actor_id,action,body) VALUES($1,$2,$3,'revoke','{}')")
+        .bind(Uuid::now_v7()).bind(older).bind(f.actor.id).execute(&f.pool).await.unwrap();
+    let overview = r.school_read(&f.actor, f.school, None).await.unwrap();
+    assert_eq!(
+        scope_blocker(&readiness_row(&overview, device, target)).as_deref(),
+        Some("business_scope_revoked")
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn repeated_identical_pool_binding_save_does_not_advance_locator_revision() {
+    let f = Fixture::with_adapter(false).await;
+    let r = f.repo();
+    // A school-pool device shared into the school, bound to an existing target.
+    let pool_device = Uuid::now_v7();
+    let target = f.targets[0];
+    sqlx::query("INSERT INTO execution_devices(id,name,enabled,credential_generation) VALUES($1,'共享池手机',true,1)").bind(pool_device).execute(&f.pool).await.unwrap();
+    sqlx::query("INSERT INTO mobile_shared_school_access(device_id,school_id,enabled,revision,updated_by) VALUES($1,$2,true,1,$3)").bind(pool_device).bind(f.school).bind(f.actor.id).execute(&f.pool).await.unwrap();
+
+    async fn locator(pool: &PgPool, device: Uuid, target: Uuid) -> i64 {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT locator_revision FROM mobile_device_target_bindings WHERE device_id=$1 AND target_id=$2",
+        )
+        .bind(device)
+        .bind(target)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    // First save establishes the locator.
+    r.school_write(
+        &f.actor,
+        f.school,
+        "pool-bind-1",
+        SchoolCommand::PoolBinding(PoolBindingInput {
+            target_id: target,
+            device_id: pool_device,
+            expected_access_revision: 1,
+            search_text_override: Some("共享池群".into()),
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(locator(&f.pool, pool_device, target).await, 1);
+
+    // Re-saving identical content must not advance locator_revision.
+    r.school_write(
+        &f.actor,
+        f.school,
+        "pool-bind-2",
+        SchoolCommand::PoolBinding(PoolBindingInput {
+            target_id: target,
+            device_id: pool_device,
+            expected_access_revision: 1,
+            search_text_override: Some("共享池群".into()),
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        locator(&f.pool, pool_device, target).await,
+        1,
+        "re-saving identical content must not advance locator_revision"
+    );
+
+    // A genuine effective-locator change does advance it.
+    r.school_write(
+        &f.actor,
+        f.school,
+        "pool-bind-3",
+        SchoolCommand::PoolBinding(PoolBindingInput {
+            target_id: target,
+            device_id: pool_device,
+            expected_access_revision: 1,
+            search_text_override: Some("共享池群改名".into()),
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        locator(&f.pool, pool_device, target).await,
+        2,
+        "a genuine effective-locator change advances locator_revision"
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn device_reenable_and_projection_drift_do_not_permanently_invalidate_scope() {
+    use wekeeper_api::distribution::domain::mobile_execution::usage::*;
+    let f = Fixture::with_adapter(false).await;
+    let r = f.repo();
+    // Establish a real approved business usage through the normal preview/confirm flow.
+    let input = UsageInput {
+        device_ids: vec![f.device],
+        targets: vec![UsageTarget {
+            id: None,
+            name: "漂移测试群".into(),
+            search_text: "漂移测试群".into(),
+        }],
+        max_calls: 5,
+        expires_at: chrono::Utc::now() + chrono::Duration::days(3),
+        auto_targets: false,
+        renewal_of: None,
+        expected_revision: None,
+    };
+    let p = r
+        .usage_write(
+            &f.actor,
+            f.school,
+            "drift-preview",
+            UsageCommand::Preview(input),
+        )
+        .await
+        .unwrap();
+    let u = r
+        .usage_write(
+            &f.actor,
+            f.school,
+            "drift-confirm",
+            UsageCommand::Confirm(UsageConfirm {
+                preview_id: serde_json::from_value(p["id"].clone()).unwrap(),
+                digest: p["digest"].as_str().unwrap().into(),
+            }),
+        )
+        .await
+        .unwrap();
+    let usage_id: Uuid = serde_json::from_value(u["items"][0]["id"].clone()).unwrap();
+    let target: Uuid =
+        serde_json::from_value(u["items"][0]["body"]["targets"][0]["id"].clone()).unwrap();
+    r.reconcile_usages().await.unwrap();
+    r.reconcile_usages().await.unwrap();
+    let scope_before: Uuid = sqlx::query_scalar(
+        "SELECT scope_id FROM mobile_usage_scopes WHERE usage_id=$1 AND release_id IS NULL AND device_id=$2 AND target_id=$3",
+    )
+    .bind(usage_id).bind(f.device).bind(target).fetch_one(&f.pool).await.unwrap();
+
+    // Simulate generic technical churn: a device credential/enable revision bump and a
+    // locator revision drift with no effective search-text change. Neither is a disable.
+    sqlx::query("UPDATE execution_devices SET revision=revision+1 WHERE id=$1")
+        .bind(f.device)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE mobile_device_target_bindings SET locator_revision=locator_revision+1 WHERE device_id=$1 AND target_id=$2")
+        .bind(f.device)
+        .bind(target)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    r.reconcile_usages().await.unwrap();
+    r.reconcile_usages().await.unwrap();
+
+    // The projection healed in place: same scope_id (budget root preserved), snapshot
+    // refreshed, and still exactly one business scope.
+    let scope_after: Uuid = sqlx::query_scalar(
+        "SELECT scope_id FROM mobile_usage_scopes WHERE usage_id=$1 AND release_id IS NULL AND device_id=$2 AND target_id=$3",
+    )
+    .bind(usage_id).bind(f.device).bind(target).fetch_one(&f.pool).await.unwrap();
+    assert_eq!(
+        scope_before, scope_after,
+        "healing must keep the same scope_id"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_usage_scopes WHERE usage_id=$1")
+            .bind(usage_id)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        1
+    );
+    let snapshot: Value =
+        sqlx::query_scalar("SELECT resource_snapshot FROM mobile_usage_scopes WHERE scope_id=$1")
+            .bind(scope_after)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(snapshot["binding_locator_revision"].as_i64(), Some(2));
+
+    let overview = r.school_read(&f.actor, f.school, None).await.unwrap();
+    let row = readiness_row(&overview, f.device, target);
+    assert_eq!(
+        row["confirmable"], true,
+        "technical drift must not permanently invalidate a valid scope"
+    );
+    assert_eq!(scope_blocker(&row), None);
+
+    // A matching old grant must never override another current explicit disable.
+    seed_usage(
+        &f,
+        Uuid::now_v7(),
+        "approved",
+        "paused",
+        f.device,
+        target,
+        Uuid::new_v4(),
+        chrono::Utc::now(),
+        chrono::Utc::now() + chrono::Duration::days(1),
+        None,
+    )
+    .await;
+    let overview = r.school_read(&f.actor, f.school, None).await.unwrap();
+    let row = readiness_row(&overview, f.device, target);
+    assert_eq!(
+        row["confirmable"], false,
+        "an old valid grant must not bypass a pause"
+    );
+    assert_eq!(
+        scope_blocker(&row).as_deref(),
+        Some("business_scope_paused")
+    );
+    f.close().await;
+}
