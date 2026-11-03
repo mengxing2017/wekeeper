@@ -75,18 +75,7 @@ impl Fixture {
         let release = Uuid::new_v4();
         let acceptance = Uuid::new_v4();
         if seed_adapter {
-            let flow = Uuid::new_v4();
-            let artifact = Uuid::new_v4();
-            let baseline = Uuid::new_v4();
-            let fixture: Value = serde_json::from_str(include_str!(
-                "../../api-contract/fixtures/shared-mobile-send-v9.json"
-            ))
-            .unwrap();
-            sqlx::query("INSERT INTO mobile_v9_flows(id,name,flow,digest,created_by) VALUES($1,'Synthetic',$2,$3,$4)").bind(flow).bind(&fixture["flow"]).bind(fixture["flow_digest"].as_str()).bind(actor_id).execute(&pool).await.unwrap();
-            sqlx::query("INSERT INTO mobile_v9_artifacts(id,kind,name,sha256,content,created_by) VALUES($1,'apk','Synthetic',repeat('a',64),$2,$3)").bind(artifact).bind(vec![1u8]).bind(actor_id).execute(&pool).await.unwrap();
-            sqlx::query("INSERT INTO mobile_v9_baselines(id,flow_id,device_id,samples,evidence_ids,min_interval_ms,recorded_by) VALUES($1,$2,$3,'[]',ARRAY[$4]::uuid[],1000,$5)").bind(baseline).bind(flow).bind(device).bind(artifact).bind(actor_id).execute(&pool).await.unwrap();
-            sqlx::query("INSERT INTO mobile_v9_adapter_releases(id,name,version,flow_id,flow,content_digest,baseline_id,evidence_ids,created_by) VALUES($1,'Synthetic','1',$2,$3,$4,$5,ARRAY[$6]::uuid[],$7)").bind(release).bind(flow).bind(&fixture["flow"]).bind(fixture["flow_digest"].as_str()).bind(baseline).bind(artifact).bind(actor_id).execute(&pool).await.unwrap();
-            sqlx::query("INSERT INTO mobile_v9_acceptance_runs(id,release_id,stage,apk_id,evidence_ids,validation_ids,cases,soak_hours,soak_passed,historical_debt_closed,reviewer_id,reason) VALUES($1,$2,'test_send',$3,ARRAY[$3]::uuid[],'{}','{}',0,false,false,$4,'Synthetic test only')").bind(acceptance).bind(release).bind(artifact).bind(actor_id).execute(&pool).await.unwrap();
+            Self::seed_adapter(&pool, actor_id, device, release, acceptance).await;
         }
         let actor=serde_json::from_value(json!({"id":actor_id,"username":"v9-admin","display_name":"Admin","platform_admin":true,"grants":[],"wecom_authenticated":false})).unwrap();
         Self {
@@ -100,6 +89,26 @@ impl Fixture {
             release,
             acceptance,
         }
+    }
+    async fn seed_adapter(
+        pool: &PgPool,
+        actor_id: Uuid,
+        device: Uuid,
+        release: Uuid,
+        acceptance: Uuid,
+    ) {
+        let flow = Uuid::new_v4();
+        let artifact = Uuid::new_v4();
+        let baseline = Uuid::new_v4();
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../api-contract/fixtures/shared-mobile-send-v9.json"
+        ))
+        .unwrap();
+        sqlx::query("INSERT INTO mobile_v9_flows(id,name,flow,digest,created_by) VALUES($1,'Synthetic',$2,$3,$4)").bind(flow).bind(&fixture["flow"]).bind(fixture["flow_digest"].as_str()).bind(actor_id).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO mobile_v9_artifacts(id,kind,name,sha256,content,created_by) VALUES($1,'apk','Synthetic',repeat('a',64),$2,$3)").bind(artifact).bind(vec![1u8]).bind(actor_id).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO mobile_v9_baselines(id,flow_id,device_id,samples,evidence_ids,min_interval_ms,recorded_by) VALUES($1,$2,$3,'[]',ARRAY[$4]::uuid[],1000,$5)").bind(baseline).bind(flow).bind(device).bind(artifact).bind(actor_id).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO mobile_v9_adapter_releases(id,name,version,flow_id,flow,content_digest,baseline_id,evidence_ids,created_by) VALUES($1,'Synthetic','1',$2,$3,$4,$5,ARRAY[$6]::uuid[],$7)").bind(release).bind(flow).bind(&fixture["flow"]).bind(fixture["flow_digest"].as_str()).bind(baseline).bind(artifact).bind(actor_id).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO mobile_v9_acceptance_runs(id,release_id,stage,apk_id,evidence_ids,validation_ids,cases,soak_hours,soak_passed,historical_debt_closed,reviewer_id,reason) VALUES($1,$2,'test_send',$3,ARRAY[$3]::uuid[],'{}','{}',0,false,false,$4,'Synthetic test only')").bind(acceptance).bind(release).bind(artifact).bind(actor_id).execute(pool).await.unwrap();
     }
     async fn close(self) {
         self.pool.close().await;
@@ -888,6 +897,179 @@ async fn approved_business_resources_exist_without_any_adapter_or_delivery_recor
         .unwrap();
     assert_eq!(task["items"][0]["attempts"][0]["state"], "queued");
     assert!(task["items"][0]["attempts"][0]["plan"]["flow"].is_null());
+    // Missing rules must never create a physical owner or reserve quota.
+    use wekeeper_api::distribution::domain::device_control::Credential;
+    let hash = wekeeper_api::business::hash("synthetic-rule-wait");
+    sqlx::query("INSERT INTO device_credentials(token_hash,device_id,generation,expires_at) VALUES($1,$2,1,clock_timestamp()+interval '1 hour')").bind(&hash).bind(f.device).execute(&f.pool).await.unwrap();
+    let credential = Credential {
+        device_id: f.device,
+        generation: 1,
+        token_hash: hash,
+    };
+    let epoch = Uuid::new_v4();
+    sqlx::query("INSERT INTO device_control_sessions(device_id,connection_id,transport,credential_generation,connected,last_heartbeat_at) VALUES($1,$2,'https',1,true,clock_timestamp())").bind(f.device).bind(Uuid::new_v4()).execute(&f.pool).await.unwrap();
+    r.device_write(
+        &credential,
+        "rules-idle",
+        DeviceCommand::Runtime(RuntimeReport {
+            schema: SCHEMA.into(),
+            runtime_epoch: epoch,
+            ui_ready: true,
+            paused: false,
+            quiescent: true,
+            ui_context_epoch: "synthetic".into(),
+            apk_sha256: "a".repeat(64),
+            conditions: Default::default(),
+        }),
+    )
+    .await
+    .unwrap();
+    let mut enabled: BusinessSchemeInput = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/mobile-business-scheme.json"
+    ))
+    .unwrap();
+    enabled.enabled = true;
+    enabled.expected_revision =
+        sqlx::query_scalar("SELECT max(revision) FROM mobile_v9_send_policy_versions")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    r.platform_write(
+        &f.actor,
+        "restore-rules-test",
+        PlatformCommand::Policy(enabled.policy().unwrap()),
+    )
+    .await
+    .unwrap();
+    let attempt: Uuid =
+        serde_json::from_value(task["items"][0]["attempts"][0]["id"].clone()).unwrap();
+    assert!(
+        r.device_read(&credential).await.unwrap()["turns"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "unsupported tasks must not ask the phone to prepare a UI"
+    );
+    let waiting = r
+        .device_write(
+            &credential,
+            "no-rules-claim",
+            DeviceCommand::Claim(ClaimRequest {
+                runtime_epoch: epoch,
+                eligible_attempt_ids: vec![attempt],
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(waiting["state"], "waiting");
+    assert_eq!(waiting["reason"], "shared_send_adapter_unavailable");
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_v9_send_claims")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_shared_device_leases")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_v9_quota_reservations")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        0
+    );
+    // A later supported release resolves only untouched intent, preserving its immutable old plan.
+    let old_plan: Uuid = sqlx::query_scalar("SELECT plan_id FROM mobile_v9_attempts WHERE id=$1")
+        .bind(attempt)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    Fixture::seed_adapter(&f.pool, f.actor.id, f.device, f.release, f.acceptance).await;
+    r.reconcile_usages().await.unwrap();
+    let new_plan: Uuid = sqlx::query_scalar("SELECT plan_id FROM mobile_v9_attempts WHERE id=$1")
+        .bind(attempt)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    assert_ne!(old_plan, new_plan);
+    assert_eq!(
+        sqlx::query_scalar::<_, Value>("SELECT plan->'flow' FROM mobile_v9_plans WHERE id=$1")
+            .bind(old_plan)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        Value::Null
+    );
+    assert!(
+        sqlx::query_scalar::<_, Value>("SELECT plan->'flow' FROM mobile_v9_plans WHERE id=$1")
+            .bind(new_plan)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap()
+            .is_object()
+    );
+    // Simulate a pre-permit interrupted owner. Recovery requires fresh idle and releases only its own fence.
+    let claim = Uuid::new_v4();
+    let secret = "b".repeat(64);
+    sqlx::query("INSERT INTO mobile_v9_send_claims(id,school_id,attempt_id,device_id,credential_generation,runtime_epoch,lease_fence,recovery_credential_hash,state,expires_at) VALUES($1,$2,$3,$4,1,$5,7,$6,'active',clock_timestamp()+interval '60 seconds')").bind(claim).bind(f.school).bind(attempt).bind(f.device).bind(epoch).bind(wekeeper_api::business::hash(&secret)).execute(&f.pool).await.unwrap();
+    sqlx::query("UPDATE mobile_v9_attempts SET state='leased' WHERE id=$1")
+        .bind(attempt)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO mobile_shared_device_leases(device_id,holder_id,purpose,fence,expires_at) VALUES($1,$2,'send',7,clock_timestamp()+interval '60 seconds')").bind(f.device).bind(claim).execute(&f.pool).await.unwrap();
+    sqlx::query("UPDATE mobile_shared_runtime SET quiescent=false WHERE device_id=$1")
+        .bind(f.device)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let recovery =
+        wekeeper_api::distribution::domain::mobile_execution::shared_send::ClaimRecovery {
+            claim_id: claim,
+            recovery_credential: secret,
+        };
+    assert!(r.recover_claim(recovery.clone()).await.is_err());
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT state FROM mobile_v9_send_claims WHERE id=$1")
+            .bind(claim)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        "active"
+    );
+    sqlx::query("UPDATE mobile_shared_runtime SET quiescent=true,observed_at=clock_timestamp() WHERE device_id=$1").bind(f.device).execute(&f.pool).await.unwrap();
+    assert_eq!(
+        r.recover_claim(recovery.clone()).await.unwrap()["state"],
+        "failed_before_call"
+    );
+    assert!(!sqlx::query_scalar::<_,bool>("SELECT expires_at>clock_timestamp() FROM mobile_shared_device_leases WHERE device_id=$1").bind(f.device).fetch_one(&f.pool).await.unwrap());
+    let other = Uuid::new_v4();
+    sqlx::query("UPDATE mobile_shared_device_leases SET holder_id=$2,fence=8,expires_at=clock_timestamp()+interval '60 seconds' WHERE device_id=$1").bind(f.device).bind(other).execute(&f.pool).await.unwrap();
+    r.recover_claim(recovery).await.unwrap();
+    assert!(sqlx::query_scalar::<_,bool>("SELECT expires_at>clock_timestamp() FROM mobile_shared_device_leases WHERE device_id=$1 AND holder_id=$2 AND fence=8").bind(f.device).bind(other).fetch_one(&f.pool).await.unwrap());
+
+    // Even if an operator requeues a previously claimed item, its rules are not rewritten.
+    sqlx::query("UPDATE mobile_v9_attempts SET state='queued',plan_id=$2 WHERE id=$1")
+        .bind(attempt)
+        .bind(old_plan)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    r.reconcile_usages().await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, Uuid>("SELECT plan_id FROM mobile_v9_attempts WHERE id=$1")
+            .bind(attempt)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        old_plan
+    );
 
     assert!(
         row["blockers"]
