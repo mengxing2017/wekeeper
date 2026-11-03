@@ -291,33 +291,27 @@ fn execution_conditions(row: &Value, consent: &str, busy: bool, mode: Option<&st
     conditions
 }
 async fn scope_issue(tx: &mut Tx<'_>, school: Uuid, device: Uuid, target: Uuid) -> Result<Value> {
-    let usage:Option<Value>=sqlx::query_scalar("SELECT to_jsonb(u)||jsonb_build_object('expired',u.expires_at<=clock_timestamp(),'mapped',EXISTS(SELECT 1 FROM mobile_usage_scopes m WHERE m.usage_id=u.id AND m.device_id=$2 AND m.target_id=$3)) FROM mobile_usages u WHERE u.school_id=$1 AND u.body->'device_ids' @> jsonb_build_array($2::uuid) AND (u.body->'auto_targets'='true'::jsonb OR EXISTS(SELECT 1 FROM jsonb_array_elements(u.body->'targets') t WHERE t->>'id'=$3::uuid::text)) ORDER BY (u.approval='approved' AND u.state='active' AND u.expires_at>clock_timestamp()) DESC,u.created_at DESC,u.id DESC LIMIT 1").bind(school).bind(device).bind(target).fetch_optional(&mut **tx).await?;
-    let (code, message) = match usage.as_ref() {
-        None => (
-            "business_scope_missing",
-            "当前学校尚未批准此手机与目标群的使用范围",
-        ),
-        Some(u) if u["state"] == "revoked" => (
+    // Reuse the single business judgment that also gates preview, confirm and claim,
+    // so the readiness page never guesses a different reason than the real rejection.
+    // Only an explicit pause, revocation or expiry blocks; pending, declined and
+    // superseded history, or a projection still being reconciled, are not a disable.
+    let (code, message) = match tasks::scope_control(tx, school, device, target).await? {
+        tasks::ScopeControl::Revoked => (
             "business_scope_revoked",
             "此学校使用范围已撤销，手机托管同意不受此状态说明影响",
         ),
-        Some(u) if u["state"] == "paused" => (
+        tasks::ScopeControl::Paused => (
             "business_scope_paused",
             "此学校使用范围已暂停，请在使用管理恢复",
         ),
-        Some(u) if u["expired"] == true => {
+        tasks::ScopeControl::Expired => {
             ("business_scope_expired", "此学校使用范围已到期，请办理续期")
         }
-        Some(u) if u["approval"] != "approved" => {
-            ("business_scope_pending", "此学校使用范围尚未批准")
-        }
-        Some(u) if u["mapped"] != true => (
+        // Authorized never reaches here because validate_scope already passed; kept as
+        // a non-blocking note should the execution projection still be reconciling.
+        tasks::ScopeControl::Authorized => (
             "business_scope_sync_pending",
             "使用范围已批准，后台正在关联手机与目标群",
-        ),
-        _ => (
-            "business_scope_changed",
-            "使用范围存在，但手机资格或群定位已变化，请核对当前业务范围",
         ),
     };
     Ok(condition(

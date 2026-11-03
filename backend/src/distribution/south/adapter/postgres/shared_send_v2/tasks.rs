@@ -44,27 +44,107 @@ pub(super) async fn grant(
     row: &Value,
     stage: &str,
 ) -> Result<Option<Value>> {
-    sqlx::query_scalar("SELECT to_jsonb(g) FROM mobile_v9_scope_grants g WHERE g.school_id=$1 AND $2=ANY(g.device_ids) AND ($3=ANY(g.target_ids) OR g.auto_targets) AND ($5='production_allowlist' OR ((g.release_id IS NULL OR g.release_id=$4) AND g.stage=$5)) AND ($6::uuid IS NULL OR g.id=$6) AND g.expires_at>clock_timestamp() AND ($5<>'production_allowlist' OR EXISTS(SELECT 1 FROM mobile_usage_scopes us JOIN mobile_usages u ON u.id=us.usage_id WHERE us.scope_id=g.id AND u.approval='approved' AND u.state='active' AND u.expires_at>clock_timestamp() AND EXISTS(SELECT 1 FROM execution_devices ud JOIN mobile_device_target_bindings ub ON ub.device_id=ud.id JOIN mobile_targets ut ON ut.id=ub.target_id WHERE ud.id=$2 AND ut.id=$3 AND ub.school_id=$1 AND us.resource_snapshot=jsonb_build_object('device_revision',ud.revision,'binding_locator_revision',ub.locator_revision,'target_locator_revision',CASE WHEN ub.search_text_override IS NULL THEN ut.locator_revision ELSE NULL END,'search_text',coalesce(ub.search_text_override,ut.search_text))))) AND NOT EXISTS(SELECT 1 FROM mobile_v9_scope_revocations r WHERE r.grant_id=g.id) AND (NOT (g.resource_revisions ? $2::uuid::text) OR (g.resource_revisions->>$2::uuid::text)::bigint=coalesce((SELECT revision FROM mobile_shared_school_access WHERE device_id=$2 AND school_id=$1 AND enabled),0)) ORDER BY g.created_at DESC,g.id DESC LIMIT 1")
+    // The grant is an execution and metering projection keyed on the phone's real
+    // locator identity, never on a generic device or access revision: re-enabling a
+    // resource must not permanently invalidate an otherwise valid business scope.
+    sqlx::query_scalar("SELECT to_jsonb(g) FROM mobile_v9_scope_grants g WHERE g.school_id=$1 AND $2=ANY(g.device_ids) AND ($3=ANY(g.target_ids) OR g.auto_targets) AND ($5='production_allowlist' OR ((g.release_id IS NULL OR g.release_id=$4) AND g.stage=$5)) AND ($6::uuid IS NULL OR g.id=$6) AND g.expires_at>clock_timestamp() AND ($5<>'production_allowlist' OR EXISTS(SELECT 1 FROM mobile_usage_scopes us JOIN mobile_usages u ON u.id=us.usage_id WHERE us.scope_id=g.id AND u.approval='approved' AND u.state='active' AND u.expires_at>clock_timestamp() AND NOT EXISTS(SELECT 1 FROM mobile_usages n WHERE n.school_id=u.school_id AND n.budget_root=u.budget_root AND n.approval='approved' AND (n.created_at,n.id)>(u.created_at,u.id)) AND EXISTS(SELECT 1 FROM execution_devices ud JOIN mobile_device_target_bindings ub ON ub.device_id=ud.id JOIN mobile_targets ut ON ut.id=ub.target_id WHERE ud.id=$2 AND ut.id=$3 AND ub.school_id=$1 AND us.resource_snapshot=jsonb_build_object('binding_locator_revision',ub.locator_revision,'target_locator_revision',CASE WHEN ub.search_text_override IS NULL THEN ut.locator_revision ELSE NULL END,'search_text',coalesce(ub.search_text_override,ut.search_text))))) AND NOT EXISTS(SELECT 1 FROM mobile_v9_scope_revocations r WHERE r.grant_id=g.id) ORDER BY g.created_at DESC,g.id DESC LIMIT 1")
     .bind(s).bind(uid(row,"device_id")?).bind(uid(row,"target_id")?).bind(row["release_id"].as_str().and_then(|v|v.parse::<Uuid>().ok())).bind(stage).bind(row.get("scope_id").map(|_|uid(row,"scope_id")).transpose()?).fetch_optional(&mut **tx).await.map_err(Into::into)
 }
+/// Current business control state for a school/device/target, resolved from the
+/// operative approved usage version of each budget root. Pending, declined and
+/// superseded applications are history and never act as an implicit disable; only
+/// an explicit pause, revocation or a real expiry on the operative version blocks.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum ScopeControl {
+    /// No operative approved usage, or an active unexpired one: the effective
+    /// binding (platform, or enabled school-pool access) authorizes this target.
+    Authorized,
+    Paused,
+    Revoked,
+    Expired,
+}
+
+pub(super) async fn scope_control(
+    tx: &mut Tx<'_>,
+    s: Uuid,
+    device: Uuid,
+    target: Uuid,
+) -> Result<ScopeControl> {
+    let usages = operative_usages(tx, s, device, target).await?;
+    Ok(scope_decision(&usages))
+}
+
+fn scope_decision(usages: &[Value]) -> ScopeControl {
+    let control_time = |u: &Value| {
+        u["control_at"]
+            .as_str()
+            .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok())
+            .unwrap_or(chrono::DateTime::<chrono::Utc>::MIN_UTC)
+    };
+    let latest_live = usages
+        .iter()
+        .filter(|u| {
+            u["state"] == "active" && u["expired"] == false && u["projection_revoked"] != true
+        })
+        .map(control_time)
+        .max();
+    // A later explicit reopening can replace an older revoked business root.
+    // Conversely, a pause/revocation performed after that reopening still wins.
+    let current_disable = |u: &&Value| latest_live.is_none_or(|t| control_time(u) >= t);
+    if usages
+        .iter()
+        .filter(current_disable)
+        .any(|u| u["state"] == "revoked" || u["projection_revoked"] == true)
+    {
+        ScopeControl::Revoked
+    } else if usages
+        .iter()
+        .filter(current_disable)
+        .any(|u| u["state"] == "paused")
+    {
+        ScopeControl::Paused
+    } else if latest_live.is_some() {
+        ScopeControl::Authorized
+    } else if usages
+        .iter()
+        .any(|u| u["state"] == "active" && u["expired"] == true)
+    {
+        ScopeControl::Expired
+    } else {
+        ScopeControl::Authorized
+    }
+}
+
+/// Resolve current approved versions before matching resources, so a superseded
+/// record cannot keep controlling a target removed from its successor.
+pub(super) async fn operative_usages(
+    tx: &mut Tx<'_>,
+    school: Uuid,
+    device: Uuid,
+    target: Uuid,
+) -> Result<Vec<Value>> {
+    sqlx::query_scalar("SELECT to_jsonb(u)||jsonb_build_object('expired',u.expires_at<=clock_timestamp(),'control_at',greatest(u.created_at,coalesce((SELECT max(e.created_at) FROM mobile_usage_events e JOIN mobile_usages eu ON eu.id=e.usage_id WHERE eu.school_id=u.school_id AND eu.budget_root=u.budget_root AND e.action IN ('pause','resume','revoke','approve','approved')),u.created_at),coalesce((SELECT max(r.created_at) FROM mobile_usage_scopes m JOIN mobile_v9_scope_revocations r ON r.grant_id=m.scope_id WHERE m.usage_id=u.id AND m.device_id=$2 AND m.target_id=$3),u.created_at)),'projection_revoked',EXISTS(SELECT 1 FROM mobile_usage_scopes m JOIN mobile_v9_scope_revocations r ON r.grant_id=m.scope_id WHERE m.usage_id=u.id AND m.device_id=$2 AND m.target_id=$3)) FROM mobile_usages u WHERE u.school_id=$1 AND u.approval='approved' AND (u.body->'device_ids' @> jsonb_build_array($2::uuid) AND (u.body->'auto_targets'='true'::jsonb OR EXISTS(SELECT 1 FROM jsonb_array_elements(u.body->'targets') t WHERE t->>'id'=$3::uuid::text))) AND NOT EXISTS(SELECT 1 FROM mobile_usages n WHERE n.school_id=u.school_id AND n.budget_root=u.budget_root AND n.approval='approved' AND (n.created_at,n.id)>(u.created_at,u.id))")
+        .bind(school).bind(device).bind(target).fetch_all(&mut **tx).await.map_err(Into::into)
+}
+
 /// A platform binding (or enabled school-pool access) already authorizes this
-/// school/device/target. Internal stage grants are not an extra opening step.
-/// Existing business usage restrictions must still be respected.
+/// school/device/target. The internal stage grant is an execution and metering
+/// projection, not an extra opening step: a missing or drifted projection never
+/// blocks a currently authorized task. Only a real pause, revocation or expiry on
+/// the operative business usage version is enforced here.
 pub(super) async fn validate_scope(
     tx: &mut Tx<'_>,
     s: Uuid,
     plan: &Value,
-    stage: &str,
+    _stage: &str,
 ) -> Result<()> {
-    if grant(tx, s, plan, stage).await?.is_some() {
-        return Ok(());
+    // Current explicit controls always win, even if an older grant still matches.
+    match scope_control(tx, s, uid(plan, "device_id")?, uid(plan, "target_id")?).await? {
+        ScopeControl::Authorized => Ok(()),
+        ScopeControl::Paused => Err(Error::Policy("shared_send_usage_paused")),
+        ScopeControl::Revoked => Err(Error::Policy("shared_send_usage_revoked")),
+        ScopeControl::Expired => Err(Error::Policy("shared_send_usage_expired")),
     }
-    let managed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_usages u WHERE u.school_id=$1 AND ((u.body->'device_ids' @> jsonb_build_array($2::uuid) AND (u.body->'auto_targets'='true'::jsonb OR EXISTS(SELECT 1 FROM jsonb_array_elements(u.body->'targets') t WHERE t->>'id'=$3::uuid::text))) OR EXISTS(SELECT 1 FROM mobile_usage_scopes m WHERE m.usage_id=u.id AND m.device_id=$2 AND m.target_id=$3)))")
-        .bind(s).bind(uid(plan,"device_id")?).bind(uid(plan,"target_id")?).fetch_one(&mut **tx).await?;
-    require(
-        !plan.get("scope_id").is_some_and(Value::is_string) && !managed,
-        "shared_send_usage_unavailable",
-    )
 }
 
 /// A business task can be delivered even when this product build lacks its UI rules.
@@ -554,6 +634,55 @@ mod candidate_selection_tests {
                 Some(uid(&choices[0], "device_id").unwrap())
             ),
             Some(&choices[0])
+        );
+    }
+}
+
+#[cfg(test)]
+mod scope_control_tests {
+    use super::*;
+    #[test]
+    fn explicit_controls_win_over_another_live_grant() {
+        let active = json!({"state":"active","expired":false});
+        assert_eq!(
+            scope_decision(&[active.clone(), json!({"state":"paused"})]),
+            ScopeControl::Paused
+        );
+        assert_eq!(
+            scope_decision(&[active.clone(), json!({"state":"revoked"})]),
+            ScopeControl::Revoked
+        );
+        assert_eq!(
+            scope_decision(&[
+                active,
+                json!({"state":"active","expired":false,"projection_revoked":true})
+            ]),
+            ScopeControl::Revoked
+        );
+    }
+    #[test]
+    fn reopening_replaces_an_older_revocation_but_a_later_pause_still_wins() {
+        let reopened =
+            json!({"state":"active","expired":false,"control_at":"2026-11-03T12:00:00Z"});
+        let revoked = json!({"state":"revoked","control_at":"2026-11-02T12:00:00Z"});
+        assert_eq!(
+            scope_decision(&[revoked, reopened.clone()]),
+            ScopeControl::Authorized
+        );
+        let paused = json!({"state":"paused","control_at":"2026-11-03T13:00:00Z"});
+        assert_eq!(scope_decision(&[reopened, paused]), ScopeControl::Paused);
+    }
+    #[test]
+    fn live_business_outweighs_expired_history_but_not_an_explicit_disable() {
+        let expired = json!({"state":"active","expired":true});
+        assert_eq!(scope_decision(&[]), ScopeControl::Authorized);
+        assert_eq!(
+            scope_decision(std::slice::from_ref(&expired)),
+            ScopeControl::Expired
+        );
+        assert_eq!(
+            scope_decision(&[expired, json!({"state":"active","expired":false})]),
+            ScopeControl::Authorized
         );
     }
 }
