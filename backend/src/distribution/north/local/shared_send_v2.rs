@@ -10,6 +10,9 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct Service<R = Repository>(pub R);
 impl<R: Store> Service<R> {
+    pub async fn credential(&self, token: &str) -> Result<Credential> {
+        self.0.credential(token).await
+    }
     pub async fn usage_read(
         &self,
         a: &Actor,
@@ -93,6 +96,9 @@ impl<R: Store> Service<R> {
         command: DeviceCommand,
     ) -> Result<Value> {
         self.0.device_write(c, &text(key, 1, 128)?, command).await
+    }
+    pub async fn delegation_read(&self, c: &Credential) -> Result<Value> {
+        self.0.delegation_read(c).await
     }
     pub async fn device_read(&self, c: &Credential) -> Result<Value> {
         self.0.device_read(c).await

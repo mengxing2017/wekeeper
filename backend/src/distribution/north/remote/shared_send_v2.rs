@@ -25,13 +25,14 @@ fn key(h: &HeaderMap) -> &str {
         .unwrap_or("")
 }
 async fn credential(a: &Application, h: &HeaderMap) -> Result<Credential> {
-    a.control_credential(
-        h.get("authorization")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "))
-            .ok_or(Error::Unauthorized)?,
-    )
-    .await
+    service(a)
+        .credential(
+            h.get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .ok_or(Error::Unauthorized)?,
+        )
+        .await
 }
 async fn list(
     State(a): State<Application>,
@@ -114,6 +115,13 @@ async fn review(
     ))
 }
 
+async fn delegation_context(State(a): State<Application>, h: HeaderMap) -> Result<ApiResponse> {
+    let c = credential(&a, &h).await?;
+    Ok(resource(
+        "mobile-shared-delegation-contexts",
+        service(&a).delegation_read(&c).await?,
+    ))
+}
 async fn context(State(a): State<Application>, h: HeaderMap) -> Result<ApiResponse> {
     let c = credential(&a, &h).await?;
     Ok(resource(
@@ -421,6 +429,10 @@ pub fn router() -> Router<Application> {
         .route(
             "/api/v9/device-execution/send-recovery-context",
             get(context),
+        )
+        .route(
+            "/api/v9/device-execution/send-delegation-context",
+            get(delegation_context),
         )
         .route("/api/v9/device-execution/runtime-reports", post(runtime))
         .route(
