@@ -9,7 +9,8 @@ import { previewSelections } from './shared-preview-model'
 import { UsageManagement } from '../../admin/mobile-resources/usage-management'
 
 const stateLabels:Record<string,string>={queued:'排队等待共享手机',leased:'手机已领取，准备中',prepared:'文字准备完成，等待单次许可',invocation_issued:'已发单次许可，等待手机结果',observed_sent:'手机观察到新的已发消息，未证明对方送达',unknown:'结果不确定，必须人工核对，禁止自动重发',failed_before_call:'调用前准备失败，未发出调用许可',invalidated:'执行依据已失效',cancelled:'未执行部分已取消',verified_not_sent:'人工核对确认未发送',manually_confirmed_sent:'人工核对确认已发送'}
-export function SharedSendTasks({ school, admin }: { school: string; admin: boolean }) {
+export function SharedSendTasks(props:{school:string;admin:boolean}) { return <SchoolSharedSendTasks key={props.school} {...props}/> }
+function SchoolSharedSendTasks({ school, admin }: { school: string; admin: boolean }) {
   const cache = useQueryClient()
   const [errorModal, errorContext] = Modal.useModal()
   const requestKeys=useRef(new Map<string,string>())
@@ -28,7 +29,14 @@ export function SharedSendTasks({ school, admin }: { school: string; admin: bool
   const [targets, setTargets] = useState<string[]>([])
   const [draft, setDraft] = useState<SharedDraft>()
   const [preview, setPreview] = useState<SharedPreview>()
-  const [detail, setDetail] = useState<SharedTask>()
+  const [selected, setSelected] = useState<{school:string;id:string}>()
+  const detailKey=['mobile-execution',school,'shared-task',selected?.school===school?selected.id:undefined]
+  const detailQuery=useQuery({queryKey:detailKey,queryFn:()=>sharedSend.task(school,selected!.id),enabled:!!selected&&selected.school===school,refetchInterval:5_000,refetchOnWindowFocus:'always'})
+  const detail=selected?.school===school?detailQuery.data:undefined
+  function setDetail(value:SharedTask|undefined) {
+    if(value){cache.setQueryData(['mobile-execution',school,'shared-task',value.id],value);setSelected({school,id:value.id})}
+    else setSelected(undefined)
+  }
   const bindings=useQuery({queryKey:['mobile-execution',school,'shared-reassign-bindings'],queryFn:()=>api.bindings(school,1),enabled:action?.kind==='reassign'})
   const overview = useQuery({ queryKey: ['mobile-execution', school, 'shared-tasks'], queryFn: () => sharedSend.overview(school), refetchInterval: 20_000 })
   const options = useQuery({ queryKey: ['mobile-execution', school, 'shared-targets',targetPage,targetSearch], queryFn: () => api.targets(school, targetPage,targetSearch) })
@@ -50,8 +58,7 @@ export function SharedSendTasks({ school, admin }: { school: string; admin: bool
     if(action!.kind==='review'){await sharedSend.review(school,a.id,a.revision,decision,reason,keyFor('review',[a.id,a.revision,decision,reason]));return sharedSend.task(school,detail!.id)}
     return sharedSend.reassign(school,a.id,a.revision,device!,reason,keyFor('reassign',[a.id,a.revision,device,reason]))
   },onSuccess:t=>{setDetail(t);setAction(undefined);setReason('');setDevice(undefined);void refresh()}})
-  const read = useMutation({ mutationFn: (id: string) => sharedSend.task(school, id), onSuccess: setDetail })
-  const error = overview.error || options.error || inspect.error || confirm.error || read.error || reselect.error || mutate.error || bindings.error
+  const error = overview.error || options.error || inspect.error || confirm.error || detailQuery.error || reselect.error || mutate.error || bindings.error
   const dirty = !!draft && (message.replace(/\r\n?/g, '\n') !== draft.message || targets.join() !== draft.target_ids.join() || gap!==draft.between_targets_seconds)
   const confirmationIssues = !admin ? ['当前账号没有本校管理员发送权限；平台管理员也需在学校成员管理中获得本校管理员角色'] : preview?.plan.items.flatMap(i => !i.selected ? [`${i.target.name}：请选择已绑定手机`] : i.blocker ? [`${i.target.name}：${i.blocker}`] : []) ?? []
   return <Card title="手机共享发送">
@@ -98,15 +105,18 @@ export function SharedSendTasks({ school, admin }: { school: string; admin: bool
       </>}
       <Table<SharedTask> rowKey="id" loading={overview.isFetching} dataSource={overview.data?.tasks ?? []} pagination={{ pageSize: 10 }} columns={[
         { title: '任务', dataIndex: 'id' }, { title: '创建时间', dataIndex: 'created_at' }, { title: '状态', render: (_, t) => t.stopped ? '已停止领取' : '查看逐群进度' },
-        { title: '操作', render: (_, t) => <Button onClick={() => read.mutate(t.id)}>查看计划与结果</Button> },
+        { title: '操作', render: (_, t) => <Button onClick={() => setSelected({school,id:t.id})}>查看计划与结果</Button> },
       ]} />
     </Space>
     <Modal title="手机群消息使用管理" open={usageOpen} footer={null} width={1000} onCancel={()=>setUsageOpen(false)}><UsageManagement school={school} admin={admin}/></Modal>
-    <Modal title="共享任务逐群进度" open={!!detail} footer={null} onCancel={() => setDetail(undefined)}>
+    <Modal title="共享任务逐群进度" open={!!selected && selected.school===school} footer={null} onCancel={() => setDetail(undefined)}>
+      {detailQuery.isPending && <p>正在读取逐群进度…</p>}
+      {!!detailQuery.dataUpdatedAt && <p>最近获取时间：{new Date(detailQuery.dataUpdatedAt).toLocaleString()}</p>}
+      {detailQuery.error && <Alert type="warning" title="进度读取失败，以下为上次获取的快照" description={taskError(detailQuery.error)}/>}
       {detail && <p>确认有效至：{detail.confirmed_until ?? '待核对'}；当前顺序：{(detail.cursor_position??0)+1}；下一群最早安排：{detail.next_eligible_at??'待核对'}。已到期的任务需要复制为新草稿并重新确认。</p>}
       {detail?.items?.length && <Button onClick={()=>{const items=[...detail.items!].sort((a,b)=>a.position-b.position);const plans=items.map(i=>i.attempts.find(a=>a.current)?.plan);const first=plans[0];if(!first)return;setDraft(undefined);setTargets(items.map(i=>i.target_id));setTargetNames(Object.fromEntries(plans.filter(p=>!!p).map(p=>[p.target_id,p.target_name??p.search_text])));setMessage(first.message);setGap(first.between_targets_seconds);setPreview(undefined);setDetail(undefined)}}>复制原意图为新草稿（需重新确认）</Button>}
       {detail && admin && !detail.stopped && <Button danger onClick={()=>setAction({kind:'stop'})}>停止尚未发放许可的任务</Button>}
-      {detail?.items?.map(i => <div key={i.id}><p>目标群：{i.target_id}</p>{i.attempts?.map(a => <p key={a.id}>{a.plan.search_text} / {a.plan.device_name || a.plan.device_id} / {stateLabels[a.state]}{a.result_reason==='shared_send_adapter_unavailable' && '：手机执行组件缺少应用适配，尚未发送；请更新手机助手后重新安排'}{admin && a.current && a.state==='unknown' && <Button onClick={()=>setAction({kind:'review',attempt:a})}>人工核对结果</Button>}{admin && a.current && ['failed_before_call','verified_not_sent','invalidated'].includes(a.state) && <Button onClick={()=>setAction({kind:'reassign',attempt:a})}>核对后重新安排设备</Button>}</p>)}</div>)}
+      {detail?.items?.map(i => <div key={i.id}><p>目标群：{i.target_id}</p>{i.attempts?.map(a => <p key={a.id}>{a.plan.search_text} / {a.plan.device_name || a.plan.device_id} / {stateLabels[a.state]}{a.execution_status?.conditions.map(c=><span key={c.code}>；{c.message}（{c.owner==='system'?'系统自动处理':c.owner==='device'?'手机端处理':c.owner==='engineering'?'交付处理':'管理员处理'}）</span>)}{a.result_reason==='shared_send_adapter_unavailable' && '：手机执行组件缺少应用适配，尚未发送；请更新手机助手后重新安排'}{admin && a.current && a.state==='unknown' && <Button onClick={()=>setAction({kind:'review',attempt:a})}>人工核对结果</Button>}{admin && a.current && ['failed_before_call','verified_not_sent','invalidated'].includes(a.state) && <Button onClick={()=>setAction({kind:'reassign',attempt:a})}>核对后重新安排设备</Button>}</p>)}</div>)}
     </Modal>
     <Modal title={action?.kind==='stop'?'停止新领取':action?.kind==='review'?'人工核对原发送结果':'重新安排原目标群'} open={!!action} confirmLoading={mutate.isPending} onCancel={()=>setAction(undefined)} okButtonProps={{disabled:!reason.trim() || (action?.kind==='reassign'&&!device)}} onOk={()=>mutate.mutate()}>
       <p>此操作保留原计划和全部尝试记录。停止不会撤回已发出的调用许可；改派还需旧设备已静止且新设备就绪且使用授权有效。</p>
