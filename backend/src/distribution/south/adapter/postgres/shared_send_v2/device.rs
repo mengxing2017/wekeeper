@@ -1,13 +1,24 @@
 use super::*;
 pub(super) async fn read(repo: &Repository, c: &Credential) -> Result<Value> {
     let mut tx = repo.0.begin().await?;
-    guard(&mut tx).await?;
     authenticate(&mut tx, c, false).await?;
-    usage::reconcile(&mut tx).await?;
     let delegation = delegation::context(&mut tx, c).await?;
-    inspections::reconcile(&mut tx, Some(c.device_id), None).await?;
+
     let work:Vec<Value>=sqlx::query_scalar("SELECT (to_jsonb(c)-'recovery_credential_hash'-'encrypted_response')||jsonb_build_object('attempt_state',a.state,'invocation_id',i.id,'execute_before',i.execute_before) FROM mobile_v9_send_claims c JOIN mobile_v9_attempts a ON a.id=c.attempt_id LEFT JOIN mobile_v9_invocations i ON i.claim_id=c.id WHERE c.device_id=$1 AND (c.state='active' OR a.state='unknown') ORDER BY c.created_at LIMIT 100").bind(c.device_id).fetch_all(&mut *tx).await?;
-    let inspections:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',i.id,'target_id',i.target_id,'target_name',coalesce(nullif(t.alias,''),t.search_text),'state',i.state,'expires_at',i.expires_at) FROM mobile_v9_send_inspections i JOIN mobile_targets t ON t.id=i.target_id AND t.school_id=i.school_id WHERE i.device_id=$1 AND i.delegation_id=$2 AND i.purpose='automatic' AND i.state='pending' AND i.expires_at>clock_timestamp() AND NOT EXISTS(SELECT 1 FROM mobile_v9_plans p JOIN mobile_v9_attempts a ON a.plan_id=p.id JOIN mobile_v9_task_items ti ON ti.id=a.item_id JOIN mobile_v9_tasks task ON task.id=ti.task_id WHERE p.plan->>'binding_id'=i.binding_id::text AND a.current AND NOT task.stopped AND task.confirmed_until>clock_timestamp() AND (ti.position<>task.cursor_position OR task.next_eligible_at>clock_timestamp())) ORDER BY i.created_at,i.id").bind(c.device_id).bind(uid(&delegation,"id")?).fetch_all(&mut *tx).await?;
+    let pending:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(i)-'challenge' FROM mobile_v9_send_inspections i WHERE i.device_id=$1 AND i.delegation_id=$2 AND i.purpose='automatic' AND i.state='pending' AND i.expires_at>clock_timestamp() ORDER BY EXISTS(SELECT 1 FROM mobile_v9_plans p JOIN mobile_v9_attempts a ON a.plan_id=p.id JOIN mobile_v9_task_items ti ON ti.id=a.item_id JOIN mobile_v9_tasks t ON t.id=ti.task_id WHERE p.plan->>'binding_id'=i.binding_id::text AND a.current AND a.state='queued' AND ti.position=t.cursor_position AND NOT t.stopped) DESC,i.created_at,i.id LIMIT 100").bind(c.device_id).bind(uid(&delegation,"id")?).fetch_all(&mut *tx).await?;
+    let mut inspections = Vec::new();
+    for mut item in pending {
+        if inspections::cursor_allows(&mut tx, uid(&item, "binding_id")?).await? {
+            let name: Option<String> = sqlx::query_scalar(
+                "SELECT coalesce(nullif(alias,''),search_text) FROM mobile_targets WHERE id=$1",
+            )
+            .bind(uid(&item, "target_id")?)
+            .fetch_optional(&mut *tx)
+            .await?;
+            item["target_name"] = json!(name);
+            inspections.push(item);
+        }
+    }
 
     let turns:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',a.id,'task_id',t.id,'position',i.position,'next_eligible_at',t.next_eligible_at,'interval_ms',CASE WHEN i.position=0 THEN 0 ELSE greatest((p.plan->>'between_targets_seconds')::bigint*1000,(p.plan->'flow'->'pacing'->>'between_targets_min_ms')::bigint,coalesce((SELECT max((lim.value->>'interval_seconds')::bigint)*1000 FROM mobile_v9_send_policy_versions policy,jsonb_each(policy.limits) lim WHERE policy.revision=(SELECT max(revision) FROM mobile_v9_send_policy_versions)),1000)) END) FROM mobile_v9_tasks t JOIN mobile_v9_task_items i ON i.task_id=t.id AND i.position=t.cursor_position JOIN mobile_v9_attempts a ON a.item_id=i.id AND a.current JOIN mobile_v9_plans p ON p.id=a.plan_id WHERE p.device_id=$1 AND a.state='queued' AND NOT t.stopped AND t.confirmed_until>clock_timestamp() ORDER BY t.created_at,t.id LIMIT 100").bind(c.device_id).fetch_all(&mut *tx).await?;
     let v = json!({"turns":turns,"inspections":inspections,"id":c.device_id,"schema":SCHEMA,"authorization_schema":SCOPE,"protocol_version":9,"single_use_supported":true,"result_recovery_supported":true,"delegation":delegation,"recovery":work});
@@ -29,6 +40,7 @@ async fn live_claim(tx: &mut Tx<'_>, c: &Credential, id: Uuid) -> Result<Value> 
         "shared_send_consent_required",
     )?;
     tasks::validate_plan(tx, school, &v["plan"]).await?;
+    tasks::validate_risk(tx, school, &v["plan"]).await?;
     business_scheme::ensure_open(tx).await?;
     tasks::validate_execution_rules(tx, &v["plan"]).await?;
     require(
@@ -39,23 +51,31 @@ async fn live_claim(tx: &mut Tx<'_>, c: &Credential, id: Uuid) -> Result<Value> 
     require(checked, "shared_send_inspection_required")?;
     Ok(v)
 }
-async fn quota(
+pub(super) async fn quota(
     tx: &mut Tx<'_>,
     s: Uuid,
     device: Uuid,
     target: Uuid,
     attempt: Uuid,
+    reserve: bool,
 ) -> Result<bool> {
     let p = policy(tx)
         .await?
         .ok_or(Error::Policy("shared_send_not_released"))?;
     let frozen:Option<Value>=sqlx::query_scalar("SELECT coalesce(to_jsonb(policy),nullif(u.body->'scheme','null'::jsonb),to_jsonb(task_policy),$2::jsonb) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id LEFT JOIN mobile_usage_scopes m ON m.scope_id=(p.plan->>'scope_id')::uuid LEFT JOIN mobile_usages u ON u.id=m.usage_id LEFT JOIN mobile_v9_send_policy_versions policy ON policy.id=(u.body->>'scheme_id')::uuid LEFT JOIN mobile_v9_send_policy_versions task_policy ON task_policy.id=(p.plan->>'policy_id')::uuid WHERE a.id=$1").bind(attempt).bind(default_policy()).fetch_optional(&mut **tx).await?;
     if let Some(original) = frozen.filter(|p| p.is_object())
-        && !quota_policy(tx, s, device, target, attempt, &original).await?
+        && !quota_policy(tx, s, device, target, attempt, &original, false).await?
     {
         return Ok(false);
     }
-    quota_policy(tx, s, device, target, attempt, &p).await
+    if !quota_policy(tx, s, device, target, attempt, &p, false).await? {
+        return Ok(false);
+    }
+    if reserve {
+        quota_policy(tx, s, device, target, attempt, &p, true).await
+    } else {
+        Ok(true)
+    }
 }
 async fn quota_policy(
     tx: &mut Tx<'_>,
@@ -64,6 +84,7 @@ async fn quota_policy(
     target: Uuid,
     attempt: Uuid,
     p: &Value,
+    reserve: bool,
 ) -> Result<bool> {
     let limits: Limits = serde_json::from_value(p["limits"].clone())
         .map_err(|_| Error::Policy("shared_send_policy_invalid"))?;
@@ -92,6 +113,9 @@ async fn quota_policy(
             return Ok(false);
         }
     }
+    if !reserve {
+        return Ok(true);
+    }
     for (key, _) in keys {
         sqlx::query("INSERT INTO mobile_v9_quota_reservations(attempt_id,dimension_key,state) VALUES($1,$2,'reserved') ON CONFLICT(attempt_id,dimension_key) DO UPDATE SET state='reserved',recorded_at=clock_timestamp() WHERE mobile_v9_quota_reservations.state='released'").bind(attempt).bind(key).execute(&mut **tx).await?;
     }
@@ -104,17 +128,33 @@ pub(super) async fn write(
     command: DeviceCommand,
 ) -> Result<Value> {
     let mut tx = repo.0.begin().await?;
-    guard(&mut tx).await?;
+    // Consent shares only the device fence with execution; it never waits for global housekeeping.
+    if !matches!(
+        &command,
+        DeviceCommand::Consent(_) | DeviceCommand::Diagnostic(_) | DeviceCommand::Runtime(_)
+    ) {
+        guard(&mut tx).await?;
+    }
+    if !matches!(&command, DeviceCommand::Diagnostic(_)) {
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,72))")
+            .bind(c.device_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+    }
     authenticate(
         &mut tx,
         c,
         !matches!(
             &command,
-            DeviceCommand::Result(_) | DeviceCommand::Runtime(_)
+            DeviceCommand::Result(_)
+                | DeviceCommand::Runtime(_)
+                | DeviceCommand::Settle(_)
+                | DeviceCommand::InspectionResult(_)
+                | DeviceCommand::Consent(_)
         ),
     )
     .await?;
-    expire(&mut tx).await?;
+
     let (scope, body) = match &command {
         DeviceCommand::Runtime(v) => ("runtime".into(), json!(v)),
         DeviceCommand::Settle(v) => ("settle".into(), json!(v)),
@@ -229,6 +269,7 @@ pub(super) async fn write(
                     c.device_id,
                     uid(&cl["plan"], "target_id")?,
                     uid(&cl, "attempt_id")?,
+                    true,
                 )
                 .await?,
                 "quota_wait",
@@ -302,15 +343,21 @@ async fn claim(tx: &mut Tx<'_>, c: &Credential, v: ClaimRequest) -> Result<Value
         );
     }
     let rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(a)||jsonb_build_object('plan',p.plan,'plan_digest',p.digest,'content_digest',p.content_digest,'confirmed_by',a.confirmed_by) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id LEFT JOIN mobile_v9_scheduler_turns turn ON turn.device_id=p.device_id AND turn.school_id=a.school_id WHERE p.device_id=$1 AND a.id=ANY($2) AND a.current AND a.state='queued' AND a.not_before<=clock_timestamp() AND NOT t.stopped AND t.confirmed_until>clock_timestamp() AND i.position=t.cursor_position AND t.next_eligible_at<=clock_timestamp() AND (i.position<>0 OR NOT EXISTS(SELECT 1 FROM mobile_v9_task_items other JOIN mobile_v9_attempts oa ON oa.item_id=other.id AND oa.current JOIN mobile_v9_plans op ON op.id=oa.plan_id LEFT JOIN mobile_shared_runtime rt ON rt.device_id=op.device_id LEFT JOIN mobile_shared_device_leases l ON l.device_id=op.device_id WHERE other.task_id=t.id AND ((l.expires_at>clock_timestamp()) OR NOT coalesce(rt.quiescent,true)))) ORDER BY coalesce(turn.sequence,0),t.created_at,i.position,a.id").bind(c.device_id).bind(&v.eligible_attempt_ids).fetch_all(&mut **tx).await?;
+    let mut reason = "task_cursor_wait";
     for row in rows {
         let s = uid(&row, "school_id")?;
         let plan = &row["plan"];
-        if authorize(tx, uid(&row, "confirmed_by")?, Some(s), true)
-            .await
-            .is_err()
-            || tasks::validate_plan(tx, s, plan).await.is_err()
-        {
-            sqlx::query("UPDATE mobile_v9_attempts SET state='invalidated',revision=revision+1 WHERE id=$1 AND state='queued'").bind(uid(&row,"id")?).execute(&mut **tx).await?;
+        let invalid = match authorize(tx, uid(&row, "confirmed_by")?, Some(s), true).await {
+            Ok(()) => match tasks::validate_plan(tx, s, plan).await {
+                Ok(()) => None,
+                Err(Error::Policy(code)) => Some(code),
+                Err(e) => return Err(e),
+            },
+            Err(Error::Forbidden) => Some("confirmation_permission_changed"),
+            Err(e) => return Err(e),
+        };
+        if let Some(code) = invalid {
+            sqlx::query("UPDATE mobile_v9_attempts SET state='invalidated',invalidation_reason=$2,revision=revision+1 WHERE id=$1 AND state='queued'").bind(uid(&row,"id")?).bind(code).execute(&mut **tx).await?;
             continue;
         }
         let valid_inspection:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_send_inspections i JOIN mobile_v9_runtime_details r ON r.device_id=i.device_id WHERE i.device_id=$1 AND i.binding_id=$2 AND i.dependencies=$3 AND i.state='passed' AND i.purpose='automatic' AND i.expires_at>clock_timestamp() AND i.result->>'ui_context_epoch'=r.ui_context_epoch)").bind(c.device_id).bind(uid(plan,"binding_id")?).bind(tasks::dependencies(plan)).fetch_one(&mut **tx).await?;
@@ -318,15 +365,30 @@ async fn claim(tx: &mut Tx<'_>, c: &Credential, v: ClaimRequest) -> Result<Value
         if (!valid_inspection && !tasks::missing_rules(plan))
             || accepted["decision"]["accepted"] != true
         {
+            reason = if accepted["decision"]["accepted"] != true {
+                "consent_unknown"
+            } else {
+                "waiting_inspection"
+            };
             continue;
+        }
+        match tasks::validate_risk(tx, s, plan).await {
+            Ok(()) => {}
+            Err(Error::Policy(_)) => {
+                reason = "risk_held";
+                continue;
+            }
+            Err(e) => return Err(e),
         }
         let target = uid(plan, "target_id")?;
         let risk:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_risk_guards WHERE school_id=$1 AND target_id=$2 AND state='active')").bind(s).bind(target).fetch_one(&mut **tx).await?;
         if risk {
+            reason = "risk_held";
             continue;
         }
         let aid = uid(&row, "id")?;
-        if !quota(tx, s, c.device_id, target, aid).await? {
+        if !quota(tx, s, c.device_id, target, aid, true).await? {
+            reason = "quota_wait";
             continue;
         }
         let id = Uuid::now_v7();
@@ -356,7 +418,10 @@ async fn claim(tx: &mut Tx<'_>, c: &Credential, v: ClaimRequest) -> Result<Value
             .await?;
         return Ok(response);
     }
-    Ok(json!({"id":c.device_id,"state":"idle","retry_after":20}))
+    let queued:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE p.device_id=$1 AND a.current AND a.state='queued' AND NOT t.stopped AND t.confirmed_until>clock_timestamp())").bind(c.device_id).fetch_one(&mut **tx).await?;
+    Ok(
+        json!({"id":c.device_id,"state":if queued{"waiting"}else{"idle"},"reason":if queued{Some(reason)}else{None},"retry_after":20}),
+    )
 }
 pub(super) async fn result(tx: &mut Tx<'_>, c: &Credential, v: ResultEvent) -> Result<Value> {
     v.validate()?;
