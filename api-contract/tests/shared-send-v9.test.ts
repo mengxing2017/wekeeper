@@ -59,3 +59,20 @@ it('Rust and TS share the execution observation contract and lightweight delegat
  await client.delegationContext()
  expect(calls).toEqual([['/api/v9/device-execution/send-delegation-context']])
 })
+
+it('device inbox encodes cursors and receipt resources without creating send claims',async()=>{
+ const {createSharedTaskInboxClient}=await import('../src/modules/mobile-execution/shared-send/v2')
+ const {default:fixture}=await import('../fixtures/shared-task-inbox.json')
+ const calls:Array<{path:string;body:unknown;key:string|undefined}>=[]
+ const client=createClient(async r=>{calls.push({path:r.path,body:r.body?JSON.parse(r.body as string):null,key:r.headers['Idempotency-Key']});return {status:200,headers:{'content-type':'application/vnd.api+json'},body:{data:{type:r.method==='GET'?'mobile-shared-task-inboxes':'mobile-shared-task-receipts',id:fixture.id,attributes:Object.fromEntries(Object.entries(fixture).filter(([key])=>key!=='id'))}}}})
+ const inbox=createSharedTaskInboxClient(client)
+ const value=await inbox.inbox(50,'{"revision":2}')
+ expect(value.items[0].target_name).toBe('合成测试群')
+ expect(calls[0].path).toContain('cursor=%7B%22revision%22%3A2%7D')
+ const input={receipt_id:fixture.id,queue_revision:2,items:[{attempt_id:fixture.items[0].attempt_id,assignment_revision:1 as const}]}
+ await inbox.receipt(input,'fixed-receipt')
+ expect(calls[1].body).toEqual({data:{type:'mobile-shared-task-receipts',attributes:input}})
+ expect(calls[1].key).toBe('fixed-receipt')
+ expect(calls.some(c=>c.path.includes('send-claims'))).toBe(false)
+ expect(fixture.items[0]).not.toHaveProperty('message')
+})
