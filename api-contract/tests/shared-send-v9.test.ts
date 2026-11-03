@@ -47,3 +47,15 @@ it('opening summary exposes the actual phone locator without requiring default l
  expect(locator.target_locator_revision).toBeNull()
  expect(locator.binding_locator_revision).toBe(2)
 })
+
+
+it('Rust and TS share the execution observation contract and lightweight delegation endpoint',async()=>{
+ const {default:fixture}=await import('../fixtures/shared-execution-status.json')
+ const wire:import('../src/modules/mobile-execution/shared-send/v2').SharedExecutionStatus={...fixture,phase:'waiting'}
+ expect(wire.conditions[0].code).toBe('runtime_stale')
+ expect(wire.device_state_observed_at).toBeNull();expect(wire.consent_observed_at).not.toBeNull()
+ const calls:unknown[]=[]
+ const client=createSharedSendV2Client({requestResource:async(...args)=>{calls.push(args);return {} as never}})
+ await client.delegationContext()
+ expect(calls).toEqual([['/api/v9/device-execution/send-delegation-context']])
+})
