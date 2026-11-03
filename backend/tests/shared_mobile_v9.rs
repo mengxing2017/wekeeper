@@ -682,7 +682,10 @@ async fn business_configuration_does_not_require_technical_delivery() {
         result["preview"]["plan"]["sending_status"]["can_confirm"],
         true
     );
-    assert!(result["preview"]["plan"]["items"][0]["blocker"].is_null());
+    assert_eq!(
+        result["preview"]["plan"]["items"][0]["blocker"],
+        "执行配置缺失或损坏，本次不能确认发送"
+    );
     assert!(
         result["preview"]["plan"]["items"][0]["selected"]
             .get("scope_id")
@@ -700,9 +703,13 @@ async fn business_configuration_does_not_require_technical_delivery() {
                 confirmed: true,
             }),
         )
-        .await
-        .unwrap();
-    assert_eq!(task["items"][0]["attempts"][0]["state"], "queued");
+        .await;
+    assert!(matches!(
+        task,
+        Err(wekeeper_api::business::Error::Policy(
+            "shared_send_execution_configuration_invalid"
+        ))
+    ));
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_v9_scope_grants")
             .fetch_one(&f.pool)
@@ -864,7 +871,8 @@ async fn approved_business_resources_exist_without_any_adapter_or_delivery_recor
         .find(|v| v["target_id"] == json!(target))
         .unwrap();
     assert_eq!(row["plan_selectable"], true);
-    assert_eq!(row["confirmable"], true); // Business confirmation does not gate on an implementation bug.
+    // Resource approval is independent of technical delivery. Invalid execution
+    // configuration is reported before accepting work, never as a delivery queue.
     let p = r
         .usage_write(
             &f.actor,
@@ -881,8 +889,11 @@ async fn approved_business_resources_exist_without_any_adapter_or_delivery_recor
         )
         .await
         .unwrap();
-    assert!(p["preview"]["plan"]["items"][0]["blocker"].is_null());
-    let task = r
+    assert_eq!(
+        p["preview"]["plan"]["items"][0]["blocker"],
+        "执行配置缺失或损坏，本次不能确认发送"
+    );
+    let result = r
         .usage_write(
             &f.actor,
             f.school,
@@ -893,127 +904,98 @@ async fn approved_business_resources_exist_without_any_adapter_or_delivery_recor
                 confirmed: true,
             }),
         )
-        .await
-        .unwrap();
-    assert_eq!(task["items"][0]["attempts"][0]["state"], "queued");
-    assert!(task["items"][0]["attempts"][0]["plan"]["flow"].is_null());
-    // Missing rules must never create a physical owner or reserve quota.
-    use wekeeper_api::distribution::domain::device_control::Credential;
-    let hash = wekeeper_api::business::hash("synthetic-rule-wait");
-    sqlx::query("INSERT INTO device_credentials(token_hash,device_id,generation,expires_at) VALUES($1,$2,1,clock_timestamp()+interval '1 hour')").bind(&hash).bind(f.device).execute(&f.pool).await.unwrap();
-    let credential = Credential {
-        device_id: f.device,
-        generation: 1,
-        token_hash: hash,
-    };
-    let epoch = Uuid::new_v4();
-    sqlx::query("INSERT INTO device_control_sessions(device_id,connection_id,transport,credential_generation,connected,last_heartbeat_at) VALUES($1,$2,'https',1,true,clock_timestamp())").bind(f.device).bind(Uuid::new_v4()).execute(&f.pool).await.unwrap();
-    r.device_write(
-        &credential,
-        "rules-idle",
-        DeviceCommand::Runtime(RuntimeReport {
-            schema: SCHEMA.into(),
-            runtime_epoch: epoch,
-            ui_ready: true,
-            paused: false,
-            quiescent: true,
-            ui_context_epoch: "synthetic".into(),
-            apk_sha256: "a".repeat(64),
-            conditions: Default::default(),
-        }),
-    )
-    .await
-    .unwrap();
-    let mut enabled: BusinessSchemeInput = serde_json::from_str(include_str!(
-        "../../api-contract/fixtures/mobile-business-scheme.json"
-    ))
-    .unwrap();
-    enabled.enabled = true;
-    enabled.expected_revision =
-        sqlx::query_scalar("SELECT max(revision) FROM mobile_v9_send_policy_versions")
+        .await;
+    assert!(matches!(
+        result,
+        Err(wekeeper_api::business::Error::Policy(
+            "shared_send_execution_configuration_invalid"
+        ))
+    ));
+    for table in [
+        "mobile_v9_tasks",
+        "mobile_v9_send_claims",
+        "mobile_shared_device_leases",
+        "mobile_v9_quota_reservations",
+    ] {
+        let count: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
             .fetch_one(&f.pool)
             .await
             .unwrap();
-    r.platform_write(
-        &f.actor,
-        "restore-rules-test",
-        PlatformCommand::Policy(enabled.policy().unwrap()),
-    )
-    .await
-    .unwrap();
-    let attempt: Uuid =
-        serde_json::from_value(task["items"][0]["attempts"][0]["id"].clone()).unwrap();
-    assert!(
-        r.device_read(&credential).await.unwrap()["turns"]
-            .as_array()
-            .unwrap()
-            .is_empty(),
-        "unsupported tasks must not ask the phone to prepare a UI"
-    );
-    let waiting = r
-        .device_write(
-            &credential,
-            "no-rules-claim",
-            DeviceCommand::Claim(ClaimRequest {
-                runtime_epoch: epoch,
-                eligible_attempt_ids: vec![attempt],
+        assert_eq!(count, 0, "no unsupported work accepted in {table}");
+    }
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn interrupted_claim_recovery_preserves_physical_owner_and_frozen_plan() {
+    use wekeeper_api::distribution::domain::mobile_execution::usage::*;
+    let f = Fixture::new().await;
+    let r = f.repo();
+    let p = r
+        .usage_write(
+            &f.actor,
+            f.school,
+            "recovery-preview",
+            UsageCommand::TaskPreview(UsageTaskInput {
+                draft_id: None,
+                expected_revision: None,
+                target_ids: f.targets.clone(),
+                message: "恢复测试".into(),
+                between_targets_seconds: 30,
+                selections: vec![],
             }),
         )
         .await
         .unwrap();
-    assert_eq!(waiting["state"], "waiting");
-    assert_eq!(waiting["reason"], "shared_send_adapter_unavailable");
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_v9_send_claims")
-            .fetch_one(&f.pool)
-            .await
-            .unwrap(),
-        0
-    );
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_shared_device_leases")
-            .fetch_one(&f.pool)
-            .await
-            .unwrap(),
-        0
-    );
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_v9_quota_reservations")
-            .fetch_one(&f.pool)
-            .await
-            .unwrap(),
-        0
-    );
-    // A later supported release resolves only untouched intent, preserving its immutable old plan.
+    let task = r
+        .usage_write(
+            &f.actor,
+            f.school,
+            "recovery-confirm",
+            UsageCommand::TaskConfirm(Confirmation {
+                preview_id: serde_json::from_value(p["preview"]["id"].clone()).unwrap(),
+                preview_digest: p["preview"]["digest"].as_str().unwrap().into(),
+                confirmed: true,
+            }),
+        )
+        .await
+        .unwrap();
+    let attempt: Uuid =
+        serde_json::from_value(task["items"][0]["attempts"][0]["id"].clone()).unwrap();
     let old_plan: Uuid = sqlx::query_scalar("SELECT plan_id FROM mobile_v9_attempts WHERE id=$1")
         .bind(attempt)
         .fetch_one(&f.pool)
         .await
         .unwrap();
-    Fixture::seed_adapter(&f.pool, f.actor.id, f.device, f.release, f.acceptance).await;
-    r.reconcile_usages().await.unwrap();
-    let new_plan: Uuid = sqlx::query_scalar("SELECT plan_id FROM mobile_v9_attempts WHERE id=$1")
+    // A legacy task with no configuration terminates instead of awaiting delivery.
+    let legacy_plan = Uuid::new_v4();
+    sqlx::query("INSERT INTO mobile_v9_plans(id,school_id,item_id,target_id,device_id,snapshot_id,plan,digest,content_digest) SELECT $2,school_id,item_id,target_id,device_id,snapshot_id,plan||'{\"release_id\":null,\"flow\":null,\"flow_digest\":null}'::jsonb,digest,content_digest FROM mobile_v9_plans WHERE id=$1")
+        .bind(old_plan).bind(legacy_plan).execute(&f.pool).await.unwrap();
+    sqlx::query("UPDATE mobile_v9_attempts SET plan_id=$2 WHERE id=$1")
         .bind(attempt)
-        .fetch_one(&f.pool)
+        .bind(legacy_plan)
+        .execute(&f.pool)
         .await
         .unwrap();
-    assert_ne!(old_plan, new_plan);
+    r.reconcile_usages().await.unwrap();
+    let legacy = r
+        .school_read(
+            &f.actor,
+            f.school,
+            Some(serde_json::from_value(task["id"].clone()).unwrap()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(legacy["items"][0]["attempts"][0]["state"], "invalidated");
     assert_eq!(
-        sqlx::query_scalar::<_, Value>("SELECT plan->'flow' FROM mobile_v9_plans WHERE id=$1")
-            .bind(old_plan)
-            .fetch_one(&f.pool)
-            .await
-            .unwrap(),
-        Value::Null
+        legacy["items"][0]["attempts"][0]["invalidation_reason"],
+        "shared_send_execution_configuration_invalid"
     );
-    assert!(
-        sqlx::query_scalar::<_, Value>("SELECT plan->'flow' FROM mobile_v9_plans WHERE id=$1")
-            .bind(new_plan)
-            .fetch_one(&f.pool)
-            .await
-            .unwrap()
-            .is_object()
-    );
+    // Restore a valid fixture to exercise claim recovery independently.
+    sqlx::query("UPDATE mobile_v9_attempts SET state='queued',invalidation_reason=NULL,plan_id=$2 WHERE id=$1").bind(attempt).bind(old_plan).execute(&f.pool).await.unwrap();
+    let epoch = Uuid::new_v4();
+    sqlx::query("INSERT INTO mobile_shared_runtime(device_id,credential_generation,runtime_epoch,ui_ready,paused,quiescent,observed_at) VALUES($1,1,$2,true,false,true,clock_timestamp())").bind(f.device).bind(epoch).execute(&f.pool).await.unwrap();
     // Simulate a pre-permit interrupted owner. Recovery requires fresh idle and releases only its own fence.
     let claim = Uuid::new_v4();
     let secret = "b".repeat(64);
@@ -1071,20 +1053,6 @@ async fn approved_business_resources_exist_without_any_adapter_or_delivery_recor
         old_plan
     );
 
-    assert!(
-        row["blockers"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|v| v["code"] != "release_missing")
-    );
-    assert!(
-        !row["blockers"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|v| v["code"] == "business_scope_missing")
-    );
     f.close().await;
 }
 
@@ -1415,7 +1383,7 @@ fn scope_blocker(row: &Value) -> Option<String> {
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn pending_declined_history_does_not_implicitly_disable_a_valid_binding() {
-    let f = Fixture::with_adapter(false).await;
+    let f = Fixture::new().await;
     let r = f.repo();
     let (device, target) = (f.device, f.targets[0]);
     // A pending application and a declined one both mention this device/target, but
@@ -1509,7 +1477,7 @@ async fn pending_declined_history_does_not_implicitly_disable_a_valid_binding() 
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn paused_revoked_and_expired_operative_usage_block_with_accurate_reasons() {
-    let f = Fixture::with_adapter(false).await;
+    let f = Fixture::new().await;
     let r = f.repo();
     let (device, target) = (f.device, f.targets[0]);
     let id = Uuid::now_v7();
@@ -1566,7 +1534,7 @@ async fn paused_revoked_and_expired_operative_usage_block_with_accurate_reasons(
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn superseded_lineage_resolves_to_the_operative_version() {
-    let f = Fixture::with_adapter(false).await;
+    let f = Fixture::new().await;
     let r = f.repo();
     let (device, target) = (f.device, f.targets[0]);
     let root = Uuid::new_v4();
@@ -1733,7 +1701,7 @@ async fn repeated_identical_pool_binding_save_does_not_advance_locator_revision(
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn device_reenable_and_projection_drift_do_not_permanently_invalidate_scope() {
     use wekeeper_api::distribution::domain::mobile_execution::usage::*;
-    let f = Fixture::with_adapter(false).await;
+    let f = Fixture::new().await;
     let r = f.repo();
     // Establish a real approved business usage through the normal preview/confirm flow.
     let input = UsageInput {
