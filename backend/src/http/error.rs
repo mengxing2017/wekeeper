@@ -161,6 +161,7 @@ impl IntoResponse for Error {
                     "shared_send_scheme_unsupported" => "现有方案不支持当前发送业务，请平台管理员重新保存业务方案",
                     "shared_send_platform_closed" => "平台已关闭新发送，请平台管理员核对业务方案",
                     "shared_send_delivery_required" => "当前手机发送功能暂不可用，可在使用管理中报告问题",
+                    "shared_send_execution_configuration_invalid" => "执行配置缺失或损坏，本次未执行，请核对配置后重新预览",
                     "shared_send_not_released" => "平台尚未开放当前发送业务，请查看手机群消息使用管理中的使用状态和业务方案",
                     "shared_send_device_not_ready" => "设备或检查条件已变化，请重新生成逐群预览并查看当前阻塞原因",
                     "shared_send_usage_paused" => "本校此手机与目标群的使用范围已暂停，请在使用管理恢复后再发送",

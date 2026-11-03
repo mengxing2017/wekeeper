@@ -18,7 +18,7 @@ pub(super) async fn request(
 }
 // Enabled bindings are durable desired checks, including while offline or awaiting consent.
 pub(super) async fn reconcile(tx: &mut Tx<'_>, device: Uuid) -> Result<()> {
-    tasks::resolve_waiting_rules(tx, device).await?;
+    tasks::retire_unconfigured_tasks(tx, device).await?;
     // Revoke queued work immediately, including bindings excluded from the active scan.
     sqlx::query("UPDATE mobile_v9_send_inspections i SET state='stale' WHERE i.automatic AND i.state='pending' AND i.device_id=$1 AND NOT EXISTS(SELECT 1 FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id JOIN schools s ON s.id=b.school_id JOIN execution_devices d ON d.id=b.device_id JOIN mobile_shared_delegations m ON m.id=i.delegation_id WHERE b.id=i.binding_id AND b.enabled AND t.enabled AND t.archived_at IS NULL AND s.active AND d.enabled AND m.credential_generation=d.credential_generation AND (b.source='platform' OR EXISTS(SELECT 1 FROM mobile_shared_school_access a WHERE a.device_id=b.device_id AND a.school_id=b.school_id AND a.enabled)))").bind(device).execute(&mut **tx).await?;
     let bindings:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(b) FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id JOIN schools s ON s.id=b.school_id WHERE b.enabled AND t.enabled AND t.archived_at IS NULL AND s.active AND b.device_id=$1 ORDER BY b.id").bind(device).fetch_all(&mut **tx).await?;

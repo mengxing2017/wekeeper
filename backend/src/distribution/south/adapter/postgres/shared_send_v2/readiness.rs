@@ -114,8 +114,19 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
             busy,
             policy.as_ref().and_then(|p| p["mode"].as_str()),
         );
-        let missing_rules = candidate.as_ref().is_some_and(tasks::missing_rules);
-        if !passed && !missing_rules {
+        let rules_valid = candidate
+            .as_ref()
+            .is_some_and(|c| !tasks::missing_rules(c) && tasks::validate_embedded_rules(c).is_ok());
+        if !rules_valid {
+            blockers.push(condition(
+                "shared_send_execution_configuration_invalid",
+                "执行配置缺失或损坏，本次不能确认发送",
+                "system",
+                "核对执行配置后重新预览",
+                false,
+            ));
+        }
+        if !passed && rules_valid {
             execution_conditions.push(condition(
                 if exhausted {
                     "inspection_budget_exhausted"
@@ -144,9 +155,10 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
             && accepted
             && row["online"] == true
             && row["ui_ready"] == true
-            && (passed || missing_rules);
-        let inspection_state = if missing_rules {
-            "check_on_execution"
+            && passed
+            && rules_valid;
+        let inspection_state = if !rules_valid {
+            "not_scheduled"
         } else if passed {
             "passed"
         } else if exhausted {
@@ -164,7 +176,7 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
                 _ => "not_scheduled",
             }
         };
-        result.push(json!({"binding_id":row["id"],"device_id":row["device_id"],"target_id":row["target_id"],"device_name":row["device_name"],"target_name":row["target_name"],"search_text":row["search_text"],"plan_selectable":selectable,"confirmable":!stages.is_empty(),"confirmable_stages":stages,"execution_ready":ready,"ready":ready,"state":if ready{json!("ready_for_task")}else{blockers.first().or_else(||execution_conditions.first()).map(|b|b["code"].clone()).unwrap_or(json!("waiting"))},"consent_state":consent_state,"runtime_state":runtime_state(&row),"runtime_observed_at":row["runtime_observed_at"],"execution_conditions":execution_conditions,"blockers":blockers,"inspection":inspection,"inspection_state":inspection_state,"retry_remaining":remaining,"retry_at":retry_at,"automatic":true}));
+        result.push(json!({"binding_id":row["id"],"device_id":row["device_id"],"target_id":row["target_id"],"device_name":row["device_name"],"target_name":row["target_name"],"search_text":row["search_text"],"plan_selectable":selectable,"confirmable":!stages.is_empty() && rules_valid,"confirmable_stages":stages,"execution_ready":ready,"ready":ready,"state":if ready{json!("ready_for_task")}else{blockers.first().or_else(||execution_conditions.first()).map(|b|b["code"].clone()).unwrap_or(json!("waiting"))},"consent_state":consent_state,"runtime_state":runtime_state(&row),"runtime_observed_at":row["runtime_observed_at"],"execution_conditions":execution_conditions,"blockers":blockers,"inspection":inspection,"inspection_state":inspection_state,"retry_remaining":remaining,"retry_at":retry_at,"automatic":true}));
     }
     Ok(result)
 }
