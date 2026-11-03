@@ -160,7 +160,11 @@ impl Store for Repository {
         )?;
         let mut tx = self.0.begin().await?;
         guard(&mut tx).await?;
-        let row:Value=sqlx::query_scalar("SELECT jsonb_build_object('id',c.id,'school_id',c.school_id,'attempt_id',c.attempt_id,'device_id',c.device_id) FROM mobile_v9_send_claims c WHERE c.id=$1 AND c.recovery_credential_hash=$2").bind(event.claim_id).bind(hash(&event.recovery_credential)).fetch_optional(&mut *tx).await?.ok_or(Error::Unauthorized)?;
+        let row:Value=sqlx::query_scalar("SELECT jsonb_build_object('id',c.id,'school_id',c.school_id,'attempt_id',c.attempt_id,'device_id',c.device_id,'lease_fence',c.lease_fence) FROM mobile_v9_send_claims c WHERE c.id=$1 AND c.recovery_credential_hash=$2").bind(event.claim_id).bind(hash(&event.recovery_credential)).fetch_optional(&mut *tx).await?.ok_or(Error::Unauthorized)?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,72))")
+            .bind(uid(&row, "device_id")?.to_string())
+            .execute(&mut *tx)
+            .await?;
         let encrypted: Option<Vec<u8>> = sqlx::query_scalar(
             "SELECT encrypted_response FROM mobile_v9_invocations WHERE claim_id=$1",
         )
@@ -175,6 +179,9 @@ impl Store for Repository {
         if permit.is_some() {
             sqlx::query("UPDATE mobile_v9_attempts SET state='unknown',revision=revision+1 WHERE id=$1 AND state='invocation_issued'").bind(uid(&row,"attempt_id")?).execute(&mut *tx).await?;
         } else {
+            let idle:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_shared_runtime r JOIN execution_devices d ON d.id=r.device_id WHERE r.device_id=$1 AND r.credential_generation=d.credential_generation AND r.quiescent AND r.observed_at>clock_timestamp()-interval '30 seconds')").bind(uid(&row,"device_id")?).fetch_one(&mut *tx).await?;
+            require(idle, "shared_send_runtime_required")?;
+            sqlx::query("UPDATE mobile_shared_device_leases SET expires_at=clock_timestamp() WHERE device_id=$1 AND holder_id=$2 AND fence=$3").bind(uid(&row,"device_id")?).bind(event.claim_id).bind(row["lease_fence"].as_i64().ok_or(Error::Conflict)?).execute(&mut *tx).await?;
             sqlx::query("UPDATE mobile_v9_attempts SET state='failed_before_call',revision=revision+1 WHERE id=$1 AND state IN ('leased','prepared')").bind(uid(&row,"attempt_id")?).execute(&mut *tx).await?;
             sqlx::query("UPDATE mobile_v9_quota_reservations SET state='released' WHERE attempt_id=$1 AND state='reserved'").bind(uid(&row,"attempt_id")?).execute(&mut *tx).await?;
         }
