@@ -1,0 +1,22 @@
+{
+  "phase": "waiting",
+  "observed_at": "2026-11-03T08:00:00Z",
+  "device_state_observed_at": null,
+  "consent_observed_at": "2026-11-03T07:58:00Z",
+  "conditions": [
+    {
+      "code": "runtime_stale",
+      "category": "execution",
+      "affected_action": "claim",
+      "scope_type": "device",
+      "scope_id": "22222222-2222-4222-8222-222222222222",
+      "owner": "system",
+      "message": "等待手机上报当前执行条件，不要求重新授权",
+      "automatic": true,
+      "next_action": "等待系统自动处理",
+      "observed_at": "2026-11-03T08:00:00Z",
+      "valid_until": null,
+      "retry_at": null
+    }
+  ]
+}
