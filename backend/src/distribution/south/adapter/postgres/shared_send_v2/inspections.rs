@@ -9,8 +9,6 @@ pub(super) async fn request(
     let exists:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_device_target_bindings WHERE school_id=$1 AND target_id=$2 AND device_id=$3 AND enabled)").bind(s).bind(v.target_id).bind(v.device_id).fetch_one(&mut **tx).await?;
     require(exists, "shared_binding_missing")?;
     let _ = a;
-    let binding:Uuid=sqlx::query_scalar("SELECT id FROM mobile_device_target_bindings WHERE school_id=$1 AND target_id=$2 AND device_id=$3 AND enabled").bind(s).bind(v.target_id).bind(v.device_id).fetch_one(&mut **tx).await?;
-    reconcile(tx, Some(v.device_id), Some(binding)).await?;
     let status = readiness::school(tx, s)
         .await?
         .into_iter()
@@ -19,77 +17,85 @@ pub(super) async fn request(
     Ok(json!({"id":status["binding_id"],"state":status["state"],"readiness":status}))
 }
 // Enabled bindings are durable desired checks, including while offline or awaiting consent.
-pub(super) async fn reconcile(
-    tx: &mut Tx<'_>,
-    device: Option<Uuid>,
-    _force: Option<Uuid>,
-) -> Result<()> {
+pub(super) async fn reconcile(tx: &mut Tx<'_>, device: Uuid) -> Result<()> {
     // Revoke queued work immediately, including bindings excluded from the active scan.
-    sqlx::query("UPDATE mobile_v9_send_inspections i SET state='stale' WHERE i.automatic AND i.state='pending' AND ($1::uuid IS NULL OR i.device_id=$1) AND NOT EXISTS(SELECT 1 FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id JOIN schools s ON s.id=b.school_id JOIN execution_devices d ON d.id=b.device_id JOIN mobile_shared_delegations m ON m.id=i.delegation_id WHERE b.id=i.binding_id AND b.enabled AND t.enabled AND t.archived_at IS NULL AND s.active AND d.enabled AND m.credential_generation=d.credential_generation AND (b.source='platform' OR EXISTS(SELECT 1 FROM mobile_shared_school_access a WHERE a.device_id=b.device_id AND a.school_id=b.school_id AND a.enabled)))").bind(device).execute(&mut **tx).await?;
-    let bindings:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(b) FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id JOIN schools s ON s.id=b.school_id WHERE b.enabled AND t.enabled AND t.archived_at IS NULL AND s.active AND ($1::uuid IS NULL OR b.device_id=$1) ORDER BY b.id").bind(device).fetch_all(&mut **tx).await?;
+    sqlx::query("UPDATE mobile_v9_send_inspections i SET state='stale' WHERE i.automatic AND i.state='pending' AND i.device_id=$1 AND NOT EXISTS(SELECT 1 FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id JOIN schools s ON s.id=b.school_id JOIN execution_devices d ON d.id=b.device_id JOIN mobile_shared_delegations m ON m.id=i.delegation_id WHERE b.id=i.binding_id AND b.enabled AND t.enabled AND t.archived_at IS NULL AND s.active AND d.enabled AND m.credential_generation=d.credential_generation AND (b.source='platform' OR EXISTS(SELECT 1 FROM mobile_shared_school_access a WHERE a.device_id=b.device_id AND a.school_id=b.school_id AND a.enabled)))").bind(device).execute(&mut **tx).await?;
+    let bindings:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(b) FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id JOIN schools s ON s.id=b.school_id WHERE b.enabled AND t.enabled AND t.archived_at IS NULL AND s.active AND b.device_id=$1 ORDER BY b.id").bind(device).fetch_all(&mut **tx).await?;
     for b in bindings {
-        let candidate = tasks::raw_candidates(tx, uid(&b, "school_id")?, uid(&b, "target_id")?)
-            .await?
-            .into_iter()
-            .find(|c| c["device_id"] == b["device_id"]);
-        let Some(mut c) = candidate else {
-            sqlx::query("UPDATE mobile_v9_send_inspections SET state='stale' WHERE binding_id=$1 AND automatic AND state='pending'").bind(uid(&b,"id")?).execute(&mut **tx).await?;
-            continue;
-        };
-        // A confirmed cursor keeps its original release; activation never rewrites intent.
-        let frozen:Option<Value>=sqlx::query_scalar("SELECT p.plan FROM mobile_v9_plans p JOIN mobile_v9_attempts a ON a.plan_id=p.id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE p.plan->>'binding_id'=$1::uuid::text AND a.current AND a.state='queued' AND i.position=t.cursor_position AND NOT t.stopped AND t.confirmed_until>clock_timestamp() ORDER BY t.created_at,t.id LIMIT 1").bind(uid(&b,"id")?).fetch_optional(&mut **tx).await?;
-        if let Some(plan) = frozen {
-            if tasks::validate_plan(tx, uid(&b, "school_id")?, &plan)
-                .await
-                .is_err()
-            {
-                continue;
-            }
-            for key in ["release_id", "flow_digest", "flow"] {
-                c[key] = plan[key].clone();
+        use sqlx::Acquire;
+        let mut item = tx.begin().await?;
+        match reconcile_binding(&mut item, &b).await {
+            Ok(()) => item.commit().await?,
+            Err(_) => {
+                item.rollback().await?;
+                tracing::warn!("automatic check reconciliation failed for one binding");
             }
         }
-        if c["accepted"] != true || c["release_id"].is_null() {
-            continue;
-        }
-        if tasks::validate_scope(tx, uid(&b, "school_id")?, &c, "production_allowlist")
+    }
+    Ok(())
+}
+async fn reconcile_binding(tx: &mut Tx<'_>, b: &Value) -> Result<()> {
+    let candidate = tasks::raw_candidates(tx, uid(b, "school_id")?, uid(b, "target_id")?)
+        .await?
+        .into_iter()
+        .find(|c| c["device_id"] == b["device_id"]);
+    let Some(mut c) = candidate else {
+        sqlx::query("UPDATE mobile_v9_send_inspections SET state='stale' WHERE binding_id=$1 AND automatic AND state='pending'").bind(uid(b,"id")?).execute(&mut **tx).await?;
+        return Ok(());
+    };
+    // A confirmed cursor keeps its original release; activation never rewrites intent.
+    let frozen:Option<Value>=sqlx::query_scalar("SELECT p.plan FROM mobile_v9_plans p JOIN mobile_v9_attempts a ON a.plan_id=p.id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE p.plan->>'binding_id'=$1::uuid::text AND a.current AND a.state='queued' AND i.position=t.cursor_position AND NOT t.stopped AND t.confirmed_until>clock_timestamp() ORDER BY t.created_at,t.id LIMIT 1").bind(uid(b,"id")?).fetch_optional(&mut **tx).await?;
+    if let Some(plan) = frozen {
+        if tasks::validate_plan(tx, uid(b, "school_id")?, &plan)
             .await
             .is_err()
         {
-            sqlx::query("UPDATE mobile_v9_send_inspections SET state='stale' WHERE binding_id=$1 AND automatic AND state='pending'").bind(uid(&b,"id")?).execute(&mut **tx).await?;
-            continue;
+            return Ok(());
         }
-        let p = policy(tx).await?;
-        let retry_seconds = p
-            .as_ref()
-            .and_then(|v| v["retry_seconds"].as_i64())
-            .unwrap_or(300);
-        let retry_limit = p
-            .as_ref()
-            .and_then(|v| v["retry_limit"].as_i64())
-            .unwrap_or(3);
-        let deps = tasks::dependencies(&c);
-        sqlx::query("UPDATE mobile_v9_send_inspections SET state='stale' WHERE binding_id=$1 AND state='pending' AND dependencies<>$2").bind(uid(&b,"id")?).bind(&deps).execute(&mut **tx).await?;
-        let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_send_inspections WHERE binding_id=$1 AND dependencies=$2 AND ((state='passed' AND expires_at>clock_timestamp()+interval '5 minutes') OR (state IN ('pending','leased') AND expires_at>clock_timestamp())))").bind(uid(&b,"id")?).bind(&deps).fetch_one(&mut **tx).await?;
-        if valid {
-            continue;
+        for key in ["release_id", "flow_digest", "flow"] {
+            c[key] = plan[key].clone();
         }
-        let (failures,recent):(i64,bool)=sqlx::query_as("SELECT count(*),coalesce(bool_or(created_at>clock_timestamp()-make_interval(secs=>$3::double precision)),false) FROM mobile_v9_send_inspections WHERE binding_id=$1 AND dependencies=$2 AND state IN ('failed','stale','pending','leased') AND created_at>clock_timestamp()-interval '24 hours'").bind(uid(&b,"id")?).bind(&deps).bind(retry_seconds as f64).fetch_one(&mut **tx).await?;
-        // A manual refresh reevaluates desired work; it never resets its retry budget.
-        if failures >= retry_limit || recent {
-            continue;
-        }
-        sqlx::query("INSERT INTO mobile_v9_send_inspections(id,school_id,device_id,target_id,binding_id,delegation_id,dependencies,requested_by,challenge,automatic,expires_at,purpose,release_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,true,clock_timestamp()+interval '24 hours','automatic',$10)").bind(Uuid::now_v7()).bind(uid(&b,"school_id")?).bind(uid(&b,"device_id")?).bind(uid(&b,"target_id")?).bind(uid(&b,"id")?).bind(uid(&c,"delegation_id")?).bind(deps).bind(uid(&b,"updated_by")?).bind(Uuid::new_v4().simple().to_string()).bind(uid(&c,"release_id")?).execute(&mut **tx).await?;
     }
+    if c["accepted"] != true || c["release_id"].is_null() {
+        return Ok(());
+    }
+    if tasks::validate_scope(tx, uid(b, "school_id")?, &c, "production_allowlist")
+        .await
+        .is_err()
+    {
+        sqlx::query("UPDATE mobile_v9_send_inspections SET state='stale' WHERE binding_id=$1 AND automatic AND state='pending'").bind(uid(b,"id")?).execute(&mut **tx).await?;
+        return Ok(());
+    }
+    let p = policy(tx).await?;
+    let retry_seconds = p
+        .as_ref()
+        .and_then(|v| v["retry_seconds"].as_i64())
+        .unwrap_or(300);
+    let retry_limit = p
+        .as_ref()
+        .and_then(|v| v["retry_limit"].as_i64())
+        .unwrap_or(3);
+    let deps = tasks::dependencies(&c);
+    sqlx::query("UPDATE mobile_v9_send_inspections SET state='stale' WHERE binding_id=$1 AND state='pending' AND dependencies<>$2").bind(uid(b,"id")?).bind(&deps).execute(&mut **tx).await?;
+    let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_send_inspections WHERE binding_id=$1 AND dependencies=$2 AND ((state='passed' AND expires_at>clock_timestamp()+interval '5 minutes') OR (state IN ('pending','leased') AND expires_at>clock_timestamp())))").bind(uid(b,"id")?).bind(&deps).fetch_one(&mut **tx).await?;
+    if valid {
+        return Ok(());
+    }
+    let (failures,recent):(i64,bool)=sqlx::query_as("SELECT count(*),coalesce(bool_or(created_at>clock_timestamp()-make_interval(secs=>$3::double precision)),false) FROM mobile_v9_send_inspections WHERE binding_id=$1 AND dependencies=$2 AND state IN ('failed','stale','pending','leased') AND created_at>clock_timestamp()-interval '24 hours'").bind(uid(b,"id")?).bind(&deps).bind(retry_seconds as f64).fetch_one(&mut **tx).await?;
+    // A manual refresh reevaluates desired work; it never resets its retry budget.
+    if failures >= retry_limit || recent {
+        return Ok(());
+    }
+    sqlx::query("INSERT INTO mobile_v9_send_inspections(id,school_id,device_id,target_id,binding_id,delegation_id,dependencies,requested_by,challenge,automatic,expires_at,purpose,release_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,true,clock_timestamp()+interval '24 hours','automatic',$10)").bind(Uuid::now_v7()).bind(uid(b,"school_id")?).bind(uid(b,"device_id")?).bind(uid(b,"target_id")?).bind(uid(b,"id")?).bind(uid(&c,"delegation_id")?).bind(deps).bind(uid(b,"updated_by")?).bind(Uuid::new_v4().simple().to_string()).bind(uid(&c,"release_id")?).execute(&mut **tx).await?;
     Ok(())
 }
 
 pub(super) async fn busy(tx: &mut Tx<'_>, device: Uuid) -> Result<bool> {
-    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_send_claims WHERE device_id=$1 AND state='active') OR EXISTS(SELECT 1 FROM mobile_shared_send_claims WHERE device_id=$1 AND state='active') OR EXISTS(SELECT 1 FROM mobile_shared_invocations WHERE device_id=$1 AND state='risk_held') OR EXISTS(SELECT 1 FROM mobile_v9_invocations WHERE device_id=$1 AND state='risk_held') OR EXISTS(SELECT 1 FROM mobile_shared_device_leases WHERE device_id=$1 AND expires_at>clock_timestamp()) OR EXISTS(SELECT 1 FROM mobile_shared_runtime WHERE device_id=$1 AND NOT quiescent) OR EXISTS(SELECT 1 FROM mobile_execution_claims c JOIN mobile_delivery_items i ON i.id=c.item_id WHERE c.device_id=$1 AND (c.state IN ('claimed','prepared','permit_issued') OR i.state='unknown')) OR EXISTS(SELECT 1 FROM automation_flow_validations WHERE device_id=$1 AND state='accepted' AND expires_at>clock_timestamp()) OR EXISTS(SELECT 1 FROM device_validation_jobs WHERE device_id=$1 AND state IN ('accepted','running') AND expires_at>clock_timestamp())").bind(device).fetch_one(&mut **tx).await?)
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_send_claims WHERE device_id=$1 AND state='active' AND expires_at>clock_timestamp()) OR EXISTS(SELECT 1 FROM mobile_v9_invocations WHERE device_id=$1 AND state='risk_held') OR EXISTS(SELECT 1 FROM mobile_shared_device_leases WHERE device_id=$1 AND expires_at>clock_timestamp()) OR EXISTS(SELECT 1 FROM mobile_shared_runtime WHERE device_id=$1 AND NOT quiescent)").bind(device).fetch_one(&mut **tx).await?)
 }
 // A task owns its whole remaining target sequence. Background future-group checks wait too.
-async fn cursor_allows(tx: &mut Tx<'_>, binding: Uuid) -> Result<bool> {
-    Ok(!sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM mobile_v9_plans p JOIN mobile_v9_attempts a ON a.plan_id=p.id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE p.plan->>'binding_id'=$1::uuid::text AND a.current AND NOT t.stopped AND t.confirmed_until>clock_timestamp() AND (i.position<>t.cursor_position OR t.next_eligible_at>clock_timestamp()))").bind(binding).fetch_one(&mut **tx).await?)
+pub(super) async fn cursor_allows(tx: &mut Tx<'_>, binding: Uuid) -> Result<bool> {
+    Ok(sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM mobile_v9_plans p JOIN mobile_v9_attempts a ON a.plan_id=p.id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE p.plan->>'binding_id'=$1::uuid::text AND a.current AND a.state='queued' AND NOT t.stopped AND t.confirmed_until>clock_timestamp()) OR EXISTS(SELECT 1 FROM mobile_v9_plans p JOIN mobile_v9_attempts a ON a.plan_id=p.id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE p.plan->>'binding_id'=$1::uuid::text AND a.current AND a.state='queued' AND NOT t.stopped AND t.confirmed_until>clock_timestamp() AND i.position=t.cursor_position AND t.next_eligible_at<=clock_timestamp())").bind(binding).fetch_one(&mut **tx).await?)
 }
 async fn material(tx: &mut Tx<'_>, row: &Value) -> Result<Value> {
     let mut candidate = tasks::raw_candidates(tx, uid(row, "school_id")?, uid(row, "target_id")?)
