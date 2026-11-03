@@ -388,13 +388,6 @@ impl Store for Repository {
             .bind(result["id"].as_str().and_then(|s|s.parse::<Uuid>().ok()).unwrap_or(resource)).bind(actor.id).bind(action).bind(json!({"input":input,"result":result})).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO mobile_execution_operations(actor_id,scope,idempotency_key,payload_hash,result) VALUES($1,$2,$3,$4,$5)")
             .bind(actor.id).bind(scope).bind(key).bind(digest).bind(&result).execute(&mut *tx).await?;
-        if matches!(
-            action,
-            "bind" | "update-binding" | "revoke-binding" | "update-target" | "archive-target"
-        ) {
-            super::shared_send::reconcile_resources(&mut tx).await?;
-            super::shared_send_v2::reconcile_resources(&mut tx).await?;
-        }
         tx.commit().await?;
         Ok(result)
     }

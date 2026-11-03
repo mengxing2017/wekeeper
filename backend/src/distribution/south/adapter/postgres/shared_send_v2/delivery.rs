@@ -190,7 +190,6 @@ pub async fn publish(
         sqlx::query("INSERT INTO mobile_v9_activations(capability,release_id,revision,updated_by) VALUES('wecom.group_text',$1,$2,$3) ON CONFLICT(capability) DO UPDATE SET release_id=$1,revision=$2,updated_by=$3").bind(release).bind(rev+1).bind(actor).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO mobile_v9_activation_events(id,release_id,revision,actor_id,reason) VALUES($1,$2,$3,$4,'产品交付发布')").bind(Uuid::now_v7()).bind(release).bind(rev+1).bind(actor).execute(&mut *tx).await?;
     }
-    super::usage::reconcile(&mut tx).await?;
     tx.commit().await?;
     Ok(())
 }

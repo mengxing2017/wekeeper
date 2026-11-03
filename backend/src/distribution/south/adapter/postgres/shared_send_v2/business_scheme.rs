@@ -28,7 +28,6 @@ pub(super) async fn save(tx: &mut Tx<'_>, a: &Actor, v: PolicyInput) -> Result<V
     require(revision == v.expected_revision, "revision_conflict")?;
     let id = Uuid::now_v7();
     sqlx::query("INSERT INTO mobile_v9_send_policy_versions(id,revision,mode,limits,created_by,reason,timezone,allowed_windows,allowed_stages,confirmation_seconds,inspection_seconds,retry_seconds,retry_limit) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)").bind(id).bind(revision+1).bind(v.mode).bind(json!(v.limits)).bind(a.id).bind(v.reason).bind(v.timezone).bind(json!(v.allowed_windows)).bind(json!(v.allowed_stages)).bind(v.confirmation_seconds).bind(v.inspection_seconds).bind(v.retry_seconds).bind(v.retry_limit).execute(&mut **tx).await?;
-    usage::reconcile(tx).await?;
     Ok(json!({"id":id,"revision":revision+1}))
 }
 

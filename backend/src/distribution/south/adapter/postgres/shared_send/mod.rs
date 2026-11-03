@@ -279,8 +279,3 @@ impl Store for Repository {
         device::read(self, c).await
     }
 }
-
-/// Resource mutation callers already hold the shared transaction guard.
-pub(super) async fn reconcile_resources(tx: &mut Transaction<'_, Postgres>) -> Result<()> {
-    inspections::reconcile(tx, None, None).await
-}
