@@ -20,7 +20,7 @@ pub(super) async fn read(repo: &Repository, c: &Credential) -> Result<Value> {
         }
     }
 
-    let turns:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',a.id,'task_id',t.id,'position',i.position,'next_eligible_at',t.next_eligible_at,'interval_ms',CASE WHEN i.position=0 THEN 0 ELSE greatest((p.plan->>'between_targets_seconds')::bigint*1000,(p.plan->'flow'->'pacing'->>'between_targets_min_ms')::bigint,coalesce((SELECT max((lim.value->>'interval_seconds')::bigint)*1000 FROM mobile_v9_send_policy_versions policy,jsonb_each(policy.limits) lim WHERE policy.revision=(SELECT max(revision) FROM mobile_v9_send_policy_versions)),1000)) END) FROM mobile_v9_tasks t JOIN mobile_v9_task_items i ON i.task_id=t.id AND i.position=t.cursor_position JOIN mobile_v9_attempts a ON a.item_id=i.id AND a.current JOIN mobile_v9_plans p ON p.id=a.plan_id WHERE p.device_id=$1 AND a.state='queued' AND NOT t.stopped AND t.confirmed_until>clock_timestamp() ORDER BY t.created_at,t.id LIMIT 100").bind(c.device_id).fetch_all(&mut *tx).await?;
+    let turns:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',a.id,'task_id',t.id,'position',i.position,'next_eligible_at',t.next_eligible_at,'interval_ms',CASE WHEN i.position=0 THEN 0 ELSE greatest((p.plan->>'between_targets_seconds')::bigint*1000,(p.plan->'flow'->'pacing'->>'between_targets_min_ms')::bigint,coalesce((SELECT max((lim.value->>'interval_seconds')::bigint)*1000 FROM mobile_v9_send_policy_versions policy,jsonb_each(policy.limits) lim WHERE policy.revision=(SELECT max(revision) FROM mobile_v9_send_policy_versions)),1000)) END) FROM mobile_v9_tasks t JOIN mobile_v9_task_items i ON i.task_id=t.id AND i.position=t.cursor_position JOIN mobile_v9_attempts a ON a.item_id=i.id AND a.current JOIN mobile_v9_plans p ON p.id=a.plan_id WHERE p.device_id=$1 AND a.state='queued' AND p.plan->'flow'<>'null'::jsonb AND EXISTS(SELECT 1 FROM mobile_v9_adapter_releases ar WHERE ar.id=(p.plan->>'release_id')::uuid AND NOT EXISTS(SELECT 1 FROM mobile_v9_adapter_withdrawals w WHERE w.release_id=ar.id)) AND NOT t.stopped AND t.confirmed_until>clock_timestamp() ORDER BY t.created_at,t.id LIMIT 100").bind(c.device_id).fetch_all(&mut *tx).await?;
     let v = json!({"turns":turns,"inspections":inspections,"id":c.device_id,"schema":SCHEMA,"authorization_schema":SCOPE,"protocol_version":9,"single_use_supported":true,"result_recovery_supported":true,"delegation":delegation,"recovery":work});
     tx.commit().await?;
     Ok(v)
@@ -360,11 +360,21 @@ async fn claim(tx: &mut Tx<'_>, c: &Credential, v: ClaimRequest) -> Result<Value
             sqlx::query("UPDATE mobile_v9_attempts SET state='invalidated',invalidation_reason=$2,revision=revision+1 WHERE id=$1 AND state='queued'").bind(uid(&row,"id")?).bind(code).execute(&mut **tx).await?;
             continue;
         }
+        if tasks::missing_rules(plan) {
+            reason = "shared_send_adapter_unavailable";
+            continue;
+        }
+        match tasks::validate_execution_rules(tx, plan).await {
+            Ok(()) => {}
+            Err(Error::Policy(_)) => {
+                reason = "shared_send_rules_unavailable";
+                continue;
+            }
+            Err(e) => return Err(e),
+        }
         let valid_inspection:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_send_inspections i JOIN mobile_v9_runtime_details r ON r.device_id=i.device_id WHERE i.device_id=$1 AND i.binding_id=$2 AND i.dependencies=$3 AND i.state='passed' AND i.purpose='automatic' AND i.expires_at>clock_timestamp() AND i.result->>'ui_context_epoch'=r.ui_context_epoch)").bind(c.device_id).bind(uid(plan,"binding_id")?).bind(tasks::dependencies(plan)).fetch_one(&mut **tx).await?;
         let accepted = delegation::context(tx, c).await?;
-        if (!valid_inspection && !tasks::missing_rules(plan))
-            || accepted["decision"]["accepted"] != true
-        {
+        if !valid_inspection || accepted["decision"]["accepted"] != true {
             reason = if accepted["decision"]["accepted"] != true {
                 "consent_unknown"
             } else {
