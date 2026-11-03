@@ -111,8 +111,8 @@ async fn material(tx: &mut Tx<'_>, row: &Value) -> Result<Value> {
         candidate["accepted"] == true,
         "shared_send_consent_required",
     )?;
-    // Automatic checks can serve an immutable task using a still-valid older release.
-    let release:Value=sqlx::query_scalar("SELECT jsonb_build_object('id',r.id,'flow',r.flow,'digest',r.content_digest) FROM mobile_v9_adapter_releases r WHERE r.id=$1 AND NOT EXISTS(SELECT 1 FROM mobile_v9_adapter_withdrawals w WHERE w.release_id=r.id)").bind(uid(row,"release_id")?).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("plan_dependency_changed"))?;
+    // Automatic checks use the immutable configuration already frozen by the task.
+    let release:Value=sqlx::query_scalar("SELECT jsonb_build_object('id',r.id,'flow',r.flow,'digest',r.content_digest) FROM mobile_v9_adapter_releases r WHERE r.id=$1").bind(uid(row,"release_id")?).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("plan_dependency_changed"))?;
     candidate["release_id"] = release["id"].clone();
     candidate["flow"] = release["flow"].clone();
     candidate["flow_digest"] = release["digest"].clone();

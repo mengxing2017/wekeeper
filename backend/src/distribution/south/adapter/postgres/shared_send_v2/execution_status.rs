@@ -253,21 +253,12 @@ pub(super) async fn assess(
             Err(Error::Policy(_)) => false,
             Err(e) => return Err(e),
         };
-        if tasks::missing_rules(plan) {
+        if !rules_valid {
             add(
                 &mut conditions,
-                "shared_send_adapter_unavailable",
-                "本任务尚未取得可用执行规则，等待产品支持完成",
-                "engineering",
-                false,
-                device,
-            );
-        } else if !rules_valid {
-            add(
-                &mut conditions,
-                "shared_send_rules_unavailable",
-                "本任务执行规则已不可用，等待产品支持核对",
-                "engineering",
+                "shared_send_execution_configuration_invalid",
+                "执行配置缺失或损坏，本次未执行",
+                "system",
                 false,
                 device,
             );
@@ -299,7 +290,7 @@ pub(super) async fn assess(
                         add(
                             &mut conditions,
                             "inspection_retry_exhausted",
-                            "当前群自动检查已达到重试预算，等待交付核对检查失败原因",
+                            "当前群自动检查已达到重试预算，请查看检查失败原因",
                             "engineering",
                             false,
                             device,
@@ -339,7 +330,11 @@ pub(super) async fn assess(
             attempt["invalidation_reason"]
                 .as_str()
                 .unwrap_or("plan_dependency_changed"),
-            "执行依据已失效，请核对原计划后重新安排",
+            if attempt["invalidation_reason"] == "shared_send_execution_configuration_invalid" {
+                "执行配置缺失或损坏，本次未执行，请重新创建任务"
+            } else {
+                "执行依据已失效，请核对原计划后重新安排"
+            },
             "school",
             false,
             device,
