@@ -11,6 +11,93 @@ pub fn delegation_scope(platform: Uuid, device: Uuid, generation: i64) -> Value 
         "package_name":"com.tencent.wework","capability":"group_text","resource_policy":"platform_managed_school_targets",
         "background_collection":true,"automatic_inspection":true,"text_input":true,"single_use_send":true})
 }
+/// A read observation; it never grants a lease, consent or a send permission.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionStatus {
+    pub phase: ExecutionPhase,
+    pub observed_at: chrono::DateTime<chrono::Utc>,
+    pub device_state_observed_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub consent_observed_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub conditions: Vec<ExecutionCondition>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionPhase {
+    Waiting,
+    Ready,
+    Executing,
+    Completed,
+    Blocked,
+    Unknown,
+}
+impl ExecutionPhase {
+    pub fn project(state: &str, current: bool, waiting: bool) -> Self {
+        match state {
+            "queued" if !current => Self::Blocked,
+            "queued" if waiting => Self::Waiting,
+            "queued" => Self::Ready,
+            "leased" | "prepared" | "invocation_issued" => Self::Executing,
+            "unknown" => Self::Unknown,
+            "observed_sent" | "manually_confirmed_sent" => Self::Completed,
+            _ => Self::Blocked,
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionCondition {
+    pub code: String,
+    pub category: String,
+    pub affected_action: String,
+    pub scope_type: String,
+    pub scope_id: Uuid,
+    pub owner: String,
+    pub message: String,
+    pub automatic: bool,
+    pub next_action: String,
+    pub observed_at: chrono::DateTime<chrono::Utc>,
+    pub valid_until: Option<chrono::DateTime<chrono::Utc>>,
+    pub retry_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[cfg(test)]
+mod execution_status_tests {
+    use super::*;
+    #[test]
+    fn serialization_matches_the_shared_wire_fixture() {
+        let fixture: Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../api-contract/fixtures/shared-execution-status.json"
+        )))
+        .unwrap();
+        let status: ExecutionStatus = serde_json::from_value(fixture.clone()).unwrap();
+        assert_eq!(serde_json::to_value(status).unwrap(), fixture);
+    }
+    #[test]
+    fn observations_do_not_turn_unknown_or_obsolete_attempts_into_ready_work() {
+        assert_eq!(
+            ExecutionPhase::project("queued", true, true),
+            ExecutionPhase::Waiting
+        );
+        assert_eq!(
+            ExecutionPhase::project("queued", true, false),
+            ExecutionPhase::Ready
+        );
+        assert_eq!(
+            ExecutionPhase::project("queued", false, false),
+            ExecutionPhase::Blocked
+        );
+        assert_eq!(
+            ExecutionPhase::project("unknown", true, false),
+            ExecutionPhase::Unknown
+        );
+        assert_eq!(
+            ExecutionPhase::project("prepared", true, true),
+            ExecutionPhase::Executing
+        );
+    }
+}
 pub const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
 /// No-op decisions keep checks stable; stale accepts must not undo a later withdrawal.
 pub fn next_decision_revision(
