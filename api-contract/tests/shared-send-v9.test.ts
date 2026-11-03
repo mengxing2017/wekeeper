@@ -39,3 +39,11 @@ it('business scheme has its own authenticated platform endpoint, without technic
  expect(calls[0]).toEqual(['/api/v1/platform/mobile-execution/business-schemes','POST',input,undefined,{'Idempotency-Key':'scheme-key'}])
  expect(input).not.toHaveProperty('allowed_stages');expect(input).not.toHaveProperty('release_id')
 })
+
+it('opening summary exposes the actual phone locator without requiring default locator revision',async()=>{
+ const {default:fixture}=await import('../fixtures/mobile-usage-locator.json')
+ const locator:import('../src/modules/mobile-execution/shared-send/v2').UsageLocator={...fixture,search_source:'override'}
+ expect(locator.search_text).toBe('手机专用家长群')
+ expect(locator.target_locator_revision).toBeNull()
+ expect(locator.binding_locator_revision).toBe(2)
+})
