@@ -1613,3 +1613,16 @@ fn shared_submission_status_separates_defaults_and_execution_pause() {
     assert_eq!(paused["can_confirm"], true);
     assert!(paused["message"].as_str().unwrap().contains("任务仍可提交"));
 }
+
+#[test]
+fn usage_summary_preserves_per_phone_override_and_ignores_unused_default_revision() {
+    use wekeeper_api::distribution::domain::mobile_execution::usage::UsageLocator;
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/mobile-usage-locator.json"
+    ))
+    .unwrap();
+    let output: UsageLocator = serde_json::from_value(fixture.clone()).unwrap();
+    assert_eq!(output.search_source, "override");
+    assert!(output.target_locator_revision.is_none());
+    assert_eq!(serde_json::to_value(output).unwrap(), fixture);
+}

@@ -3,6 +3,20 @@ use super::shared_send_v2::{Selection, require};
 use crate::business::{Result, text};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+/// Server-resolved location shown in the opening summary, never a client input.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UsageLocator {
+    pub device_id: Uuid,
+    pub device_name: String,
+    pub target_id: Option<Uuid>,
+    pub target_index: usize,
+    pub target_name: String,
+    pub search_text: String,
+    pub search_source: String,
+    pub binding_locator_revision: Option<i64>,
+    pub target_locator_revision: Option<i64>,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UsageTarget {

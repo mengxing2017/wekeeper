@@ -878,3 +878,140 @@ async fn approved_business_resources_exist_without_any_adapter_or_delivery_recor
     );
     f.close().await;
 }
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn usage_overrides_reuse_and_renewal_keep_one_business_family() {
+    use wekeeper_api::distribution::domain::mobile_execution::usage::*;
+    let f = Fixture::with_adapter(false).await;
+    let r = f.repo();
+    let second = Uuid::now_v7();
+    sqlx::query("INSERT INTO execution_devices(id,name,enabled,credential_generation) VALUES($1,'第二台手机',true,1)").bind(second).execute(&f.pool).await.unwrap();
+    sqlx::query("INSERT INTO mobile_device_target_bindings(id,school_id,device_id,target_id,search_text_override,created_by,updated_by) VALUES($1,$2,$3,$4,'第二台专用群',$5,$5)").bind(Uuid::now_v7()).bind(f.school).bind(second).bind(f.targets[0]).bind(f.actor.id).execute(&f.pool).await.unwrap();
+    sqlx::query("UPDATE mobile_device_target_bindings SET search_text_override='手机专用群',locator_revision=locator_revision+1 WHERE device_id=$1 AND target_id=$2").bind(f.device).bind(f.targets[0]).execute(&f.pool).await.unwrap();
+    let input = UsageInput {
+        device_ids: vec![f.device, second],
+        targets: vec![UsageTarget {
+            id: Some(f.targets[0]),
+            name: "测试群".into(),
+            search_text: "测试群".into(),
+        }],
+        max_calls: 10,
+        expires_at: chrono::Utc::now() + chrono::Duration::days(10),
+        auto_targets: false,
+        renewal_of: None,
+        expected_revision: None,
+    };
+    let p = r
+        .usage_write(
+            &f.actor,
+            f.school,
+            "override-preview",
+            UsageCommand::Preview(input.clone()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(p["body"]["locators"][0]["search_text"], "手机专用群");
+    assert_eq!(p["body"]["locators"][1]["search_text"], "第二台专用群");
+    assert!(p["body"]["locators"][0]["target_locator_revision"].is_null());
+    // Display aliases and unused default names are not the phone's location.
+    sqlx::query("UPDATE mobile_targets SET alias='显示名已更新',search_text='无关默认搜索名',locator_revision=locator_revision+1 WHERE id=$1").bind(f.targets[0]).execute(&f.pool).await.unwrap();
+    let opened = r
+        .usage_write(
+            &f.actor,
+            f.school,
+            "override-confirm",
+            UsageCommand::Confirm(UsageConfirm {
+                preview_id: serde_json::from_value(p["id"].clone()).unwrap(),
+                digest: p["digest"].as_str().unwrap().into(),
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(opened["items"][0]["delivery"], "available");
+    let id: Uuid = serde_json::from_value(opened["items"][0]["id"].clone()).unwrap();
+    let root = opened["items"][0]["budget_root"].clone();
+    let p = r
+        .usage_write(
+            &f.actor,
+            f.school,
+            "repeat-preview",
+            UsageCommand::Preview(input.clone()),
+        )
+        .await
+        .unwrap();
+    let reused = r
+        .usage_write(
+            &f.actor,
+            f.school,
+            "repeat-confirm",
+            UsageCommand::Confirm(UsageConfirm {
+                preview_id: serde_json::from_value(p["id"].clone()).unwrap(),
+                digest: p["digest"].as_str().unwrap().into(),
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(reused["items"][0]["id"], json!(id));
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_usages")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        1
+    );
+    r.usage_write(
+        &f.actor,
+        f.school,
+        "pause-family",
+        UsageCommand::Mutate {
+            id,
+            operation: "pause".into(),
+            mutation: UsageMutation {
+                expected_revision: 1,
+                reason: "暂停使用".into(),
+            },
+        },
+    )
+    .await
+    .unwrap();
+    let mut renewal = input;
+    renewal.renewal_of = Some(id);
+    renewal.expected_revision = Some(2);
+    renewal.expires_at += chrono::Duration::days(30);
+    let p = r
+        .usage_write(
+            &f.actor,
+            f.school,
+            "renew-override-preview",
+            UsageCommand::Preview(renewal.clone()),
+        )
+        .await
+        .unwrap();
+    let renewed = r
+        .usage_write(
+            &f.actor,
+            f.school,
+            "renew-override-confirm",
+            UsageCommand::Confirm(UsageConfirm {
+                preview_id: serde_json::from_value(p["id"].clone()).unwrap(),
+                digest: p["digest"].as_str().unwrap().into(),
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(renewed["items"][0]["supersedes"], json!(id));
+    assert_eq!(renewed["items"][0]["budget_root"], root);
+    assert_eq!(renewed["items"][0]["state"], "paused");
+    assert!(
+        r.usage_write(
+            &f.actor,
+            f.school,
+            "fork-preview",
+            UsageCommand::Preview(renewal)
+        )
+        .await
+        .is_err()
+    );
+    f.close().await;
+}

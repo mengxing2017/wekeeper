@@ -29,16 +29,9 @@ fn scheme(p: &Value) -> Value {
     json!({"id":p["id"],"limits":p["limits"],"timezone":p["timezone"],"allowed_windows":p["allowed_windows"],"daily_max_calls":p["limits"]["school"]["daily_max_calls"],"interval_seconds":p["limits"]["target"]["interval_seconds"]})
 }
 fn same_resource_scope(a: &Value, b: &Value) -> bool {
-    let mut a = a.clone();
-    let mut b = b.clone();
-    for v in [&mut a, &mut b] {
-        if let Some(o) = v.as_object_mut() {
-            o.remove("scheme");
-            o.remove("scheme_id");
-        }
-    }
-    a == b
+    usage_locators::comparison_body(a) == usage_locators::comparison_body(b)
 }
+
 async fn options(tx: &mut Tx<'_>, a: &Actor, s: Option<Uuid>) -> Result<Value> {
     let platform = permission(tx, a, s, false).await?;
     let devices:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',d.id,'name',d.name,'revision',d.revision,'online',coalesce(cp.state='online' AND cp.last_control_heartbeat_at>clock_timestamp()-interval '30 seconds',false)) FROM execution_devices d LEFT JOIN device_control_presence cp ON cp.id=d.id WHERE d.enabled AND ($1 OR EXISTS(SELECT 1 FROM mobile_shared_school_access x WHERE x.device_id=d.id AND x.school_id=$2 AND x.enabled)) ORDER BY d.name,d.id").bind(platform).bind(s).fetch_all(&mut **tx).await?;
@@ -66,7 +59,17 @@ fn covers(parent: &Value, input: &Value) -> bool {
         ts.iter().all(|t| {
             parent["targets"].as_array().is_some_and(|original| {
                 match original.iter().find(|v| v["id"] == t["id"]) {
-                    Some(v) => v == t,
+                    Some(v) => {
+                        if let (Some(old), Some(new)) =
+                            (parent["locators"].as_array(), input["locators"].as_array())
+                        {
+                            new.iter()
+                                .filter(|l| l["target_id"] == t["id"])
+                                .all(|l| old.iter().any(|o| usage_locators::same_locator(o, l)))
+                        } else {
+                            v["search_text"] == t["search_text"] && v["revision"] == t["revision"]
+                        }
+                    }
                     None => parent["auto_targets"] == true,
                 }
             })
@@ -104,7 +107,7 @@ async fn event(tx: &mut Tx<'_>, id: Uuid, a: Uuid, action: &str, body: &Value) -
 async fn valid_selection(tx: &mut Tx<'_>, a: &Actor, s: Uuid, v: &UsageInput) -> Result<Value> {
     v.validate()?;
     if let Some(id) = v.renewal_of {
-        let ok:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_usages WHERE id=$1 AND school_id=$2 AND revision=$3 AND approval='approved' AND state<>'revoked')").bind(id).bind(s).bind(v.expected_revision).fetch_one(&mut **tx).await?;
+        let ok:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_usages WHERE id=$1 AND school_id=$2 AND revision=$3 AND state<>'revoked')").bind(id).bind(s).bind(v.expected_revision).fetch_one(&mut **tx).await?;
         require(ok, "原授权已变化，请刷新后重新申请")?;
     }
     let o = options(tx, a, Some(s)).await?;
@@ -118,18 +121,29 @@ async fn valid_selection(tx: &mut Tx<'_>, a: &Actor, s: Uuid, v: &UsageInput) ->
     }
     let mut body = json!(v);
     for t in body["targets"].as_array_mut().ok_or(Error::Conflict)? {
-        if !t["id"].is_null() {
+        if t["id"].is_null() {
+            let matching: Vec<_> = o["targets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|x| x["search_text"] == t["search_text"] && x["name"] == t["name"])
+                .collect();
+            require(matching.len() <= 1, "存在多个同名目标群，请选择已有群")?;
+            if let Some(found) = matching.first() {
+                t["id"] = found["id"].clone();
+            }
+        }
+        if t["id"].is_string() {
             let found = o["targets"]
                 .as_array()
                 .and_then(|ts| ts.iter().find(|x| x["id"] == t["id"]))
                 .ok_or(Error::Policy("目标群资料已变化"))?;
-            require(
-                found["search_text"] == t["search_text"] && found["name"] == t["name"],
-                "目标群资料已变化",
-            )?;
+            t["name"] = found["name"].clone();
+            t["search_text"] = found["search_text"].clone();
             t["revision"] = found["revision"].clone();
         }
     }
+    usage_locators::resolve(tx, s, &mut body).await?;
     body["scheme_id"] = o["scheme"]["id"].clone();
     body["scheme"] = o["scheme"].clone();
     body["device_revisions"] = json!(
@@ -202,6 +216,10 @@ impl Repository {
         }
         let result = match command {
             UsageCommand::Preview(v) => {
+                if let Some(source) = v.renewal_of {
+                    let branched:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_usages WHERE supersedes=$1 AND school_id=$2)").bind(source).bind(s).fetch_one(&mut *tx).await?;
+                    require(!branched, "已有后续申请，请从最新记录继续操作")?;
+                }
                 let b = valid_selection(&mut tx, a, s, &v).await?;
                 let id = Uuid::now_v7();
                 let h = digest(&b)?;
@@ -240,10 +258,16 @@ impl Repository {
                         t["revision"] = json!(1);
                     }
                 }
-                // A school never creates another budget by copying an existing approval. Covered requests reuse it.
+                // New target IDs are now known; preserve each phone's resolved locator.
+                let resolved_targets = b["targets"].as_array().unwrap().clone();
+                for l in b["locators"].as_array_mut().unwrap() {
+                    l["target_id"] = resolved_targets[l["target_index"].as_u64().unwrap() as usize]
+                        ["id"]
+                        .clone();
+                }
+                // Repeated openings share the same authorization and budget, for every role.
                 let parents:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(u) FROM mobile_usages u WHERE school_id=$1 AND approval='approved' AND state='active' AND expires_at>=$2 ORDER BY created_at").bind(s).bind(input.expires_at).fetch_all(&mut *tx).await?;
-                if !platform
-                    && input.renewal_of.is_none()
+                if input.renewal_of.is_none()
                     && let Some(parent) = parents.iter().find(|u| covers(&u["body"], &b))
                 {
                     let id = uid(parent, "id")?;
@@ -261,14 +285,43 @@ impl Repository {
                     tx.commit().await?;
                     return Ok(r);
                 }
-                let budget: Option<Uuid> = if let Some(previous) = input.renewal_of {
-                    Some(sqlx::query_scalar("SELECT budget_root FROM mobile_usages WHERE id=$1 AND school_id=$2 AND revision=$3 FOR UPDATE").bind(previous).bind(s).bind(input.expected_revision).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?)
+                let previous: Option<Value> = if let Some(previous) = input.renewal_of {
+                    let branched:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_usages WHERE supersedes=$1 AND school_id=$2)").bind(previous).bind(s).fetch_one(&mut *tx).await?;
+                    require(!branched, "已有后续申请，请从最新记录继续操作")?;
+                    Some(sqlx::query_scalar("SELECT to_jsonb(u) FROM mobile_usages u WHERE id=$1 AND school_id=$2 AND revision=$3 FOR UPDATE").bind(previous).bind(s).bind(input.expected_revision).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?)
                 } else {
+                    let existing: Vec<Value> = sqlx::query_scalar(
+                        "SELECT body FROM mobile_usages WHERE school_id=$1 AND state<>'revoked'",
+                    )
+                    .bind(s)
+                    .fetch_all(&mut *tx)
+                    .await?;
+                    require(
+                        !existing
+                            .iter()
+                            .any(|u| usage_locators::same_bindings(u, &b)),
+                        "此使用范围已存在，请从原记录续期、调整范围或重新申请",
+                    )?;
                     None
                 };
+                if let Some(ref old) = previous
+                    && old["approval"] == "approved"
+                    && usage_locators::same_bindings(&old["body"], &b)
+                {
+                    require(
+                        input.expires_at >= date(old, "expires_at")?,
+                        "续期不能缩短原使用有效期",
+                    )?;
+                    require(
+                        input.expires_at > date(old, "expires_at")?
+                            || old["body"]["max_calls"] != b["max_calls"]
+                            || !covers(&old["body"], &b),
+                        "使用范围和额度未扩大，请延长有效期后续期，无需重复开通",
+                    )?;
+                }
                 let id = Uuid::now_v7();
                 let approval = if platform { "approved" } else { "pending" };
-                sqlx::query("INSERT INTO mobile_usages(id,school_id,actor_id,approval,body,confirmed_until,expires_at,approved_by,supersedes,budget_root) VALUES($1,$2,$3,$4,$5,clock_timestamp()+interval '24 hours',$6,$7,$8,$9)").bind(id).bind(s).bind(a.id).bind(approval).bind(&b).bind(input.expires_at).bind(platform.then_some(a.id)).bind(input.renewal_of).bind(budget.unwrap_or(id)).execute(&mut *tx).await?;
+                sqlx::query("INSERT INTO mobile_usages(id,school_id,actor_id,approval,body,confirmed_until,expires_at,approved_by,supersedes,budget_root,state) VALUES($1,$2,$3,$4,$5,clock_timestamp()+interval '24 hours',$6,$7,$8,$9,$10)").bind(id).bind(s).bind(a.id).bind(approval).bind(&b).bind(input.expires_at).bind(platform.then_some(a.id)).bind(input.renewal_of).bind(previous.as_ref().map(|u|uid(u,"budget_root")).transpose()?.unwrap_or(id)).bind(if previous.as_ref().is_some_and(|u|u["state"]=="paused"){"paused"}else{"active"}).execute(&mut *tx).await?;
                 sqlx::query(
                     "INSERT INTO mobile_usage_confirmations(preview_id,usage_id) VALUES($1,$2)",
                 )
@@ -297,7 +350,11 @@ impl Repository {
                 )?;
                 match operation.as_str() {
                     "approve" => {
-                        let input = selection_input(&old["body"])?;
+                        let has_child:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_usages WHERE supersedes=$1 AND school_id=$2)").bind(id).bind(s).fetch_one(&mut *tx).await?;
+                        require(!has_child, "请审批最新申请，当前申请已有后续版本")?;
+                        let mut input = selection_input(&old["body"])?;
+                        input.renewal_of = None;
+                        input.expected_revision = None;
                         require(
                             same_resource_scope(
                                 &valid_selection(&mut tx, a, s, &input).await?,
@@ -307,7 +364,7 @@ impl Repository {
                         )?;
                         require(
                             old["approval"] == "pending"
-                                && old["state"] == "active"
+                                && old["state"] != "revoked"
                                 && date(&old, "confirmed_until")? > Utc::now()
                                 && date(&old, "expires_at")? > Utc::now(),
                             "申请已失效，请重新确认",
@@ -329,10 +386,11 @@ impl Repository {
                             _ => "active",
                         };
                         sqlx::query(
-                            "UPDATE mobile_usages SET state=$2,revision=revision+1 WHERE id=$1",
+                            "UPDATE mobile_usages SET state=$2,revision=revision+1 WHERE budget_root=$1 AND school_id=$3 AND state<>'revoked'",
                         )
-                        .bind(id)
+                        .bind(uid(&old,"budget_root")?)
                         .bind(state)
+                        .bind(s)
                         .execute(&mut *tx)
                         .await?;
                     }
@@ -443,67 +501,105 @@ pub(super) async fn reconcile(tx: &mut Tx<'_>) -> Result<()> {
     let usages:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(u) FROM mobile_usages u WHERE approval='approved' AND state='active' AND expires_at>clock_timestamp() ORDER BY id").fetch_all(&mut **tx).await?;
     for u in usages {
         let id = uid(&u, "id")?;
-        let s = uid(&u, "school_id")?;
-        let b = &u["body"];
-        let mut reason = "";
-        if reason.is_empty() {
-            let devices: Vec<Uuid> =
-                serde_json::from_value(b["device_ids"].clone()).map_err(|_| Error::Conflict)?;
-            let mut targets = b["targets"].as_array().cloned().unwrap_or_default();
-            if b["auto_targets"] == true {
-                targets=sqlx::query_scalar("SELECT jsonb_build_object('id',id,'search_text',search_text,'revision',locator_revision) FROM mobile_targets WHERE school_id=$1 AND enabled AND archived_at IS NULL ORDER BY id").bind(s).fetch_all(&mut **tx).await?;
-            }
-            for device in devices {
-                for t in &targets {
-                    let target = uid(t, "id")?;
-                    let exists:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_usage_scopes WHERE usage_id=$1 AND release_id IS NULL AND target_id=$2 AND device_id=$3)").bind(id).bind(target).bind(device).fetch_one(&mut **tx).await?;
-                    if exists {
-                        continue;
-                    }
-                    let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM execution_devices d,schools s,mobile_targets t WHERE d.id=$1 AND d.enabled AND s.id=$2 AND s.active AND t.id=$3 AND t.school_id=s.id AND t.enabled AND t.archived_at IS NULL AND t.locator_revision=$4)").bind(device).bind(s).bind(target).bind(t["revision"].as_i64().unwrap_or(1)).fetch_one(&mut **tx).await?;
-                    let device_revision: i64 =
-                        sqlx::query_scalar("SELECT revision FROM execution_devices WHERE id=$1")
-                            .bind(device)
-                            .fetch_one(&mut **tx)
-                            .await?;
-                    let device_ok = b["device_revisions"].as_array().is_some_and(|ds| {
-                        ds.iter()
-                            .any(|x| x["id"] == json!(device) && x["revision"] == device_revision)
-                    });
-                    if !valid || !device_ok {
-                        reason = "资源已变化，请重新核对";
-                        continue;
-                    }
-                    let old_access:Option<(bool,i64)>=sqlx::query_as("SELECT enabled,revision FROM mobile_shared_school_access WHERE device_id=$1 AND school_id=$2").bind(device).bind(s).fetch_optional(&mut **tx).await?;
-                    if old_access.is_some_and(|x| !x.0) {
-                        reason = "手机使用资格已停用，请平台核对";
-                        continue;
-                    }
-                    let actor = uid(&u, "approved_by")?;
-                    sqlx::query("INSERT INTO mobile_shared_school_access(device_id,school_id,enabled,revision,updated_by) VALUES($1,$2,true,1,$3) ON CONFLICT DO NOTHING").bind(device).bind(s).bind(actor).execute(&mut **tx).await?;
-                    let old_binding:Option<bool>=sqlx::query_scalar("SELECT enabled FROM mobile_device_target_bindings WHERE device_id=$1 AND target_id=$2").bind(device).bind(target).fetch_optional(&mut **tx).await?;
-                    let actual_search:Option<String>=sqlx::query_scalar("SELECT coalesce(search_text_override,(SELECT search_text FROM mobile_targets WHERE id=$2)) FROM mobile_device_target_bindings WHERE device_id=$1 AND target_id=$2").bind(device).bind(target).fetch_optional(&mut **tx).await?;
-                    if actual_search
-                        .as_ref()
-                        .is_some_and(|v| json!(v) != t["search_text"])
-                    {
-                        reason = "手机群搜索名已变化，请重新核对";
-                        continue;
-                    }
-                    if old_binding == Some(false) {
-                        reason = "目标绑定已停用，请重新核对";
-                        continue;
-                    }
-                    sqlx::query("INSERT INTO mobile_device_target_bindings(id,school_id,device_id,target_id,created_by,updated_by,source) VALUES($1,$2,$3,$4,$5,$5,'school_pool') ON CONFLICT DO NOTHING").bind(Uuid::now_v7()).bind(s).bind(device).bind(target).bind(actor).execute(&mut **tx).await?;
-                    let revision:i64=sqlx::query_scalar("SELECT revision FROM mobile_shared_school_access WHERE device_id=$1 AND school_id=$2").bind(device).bind(s).fetch_one(&mut **tx).await?;
-                    let scope = Uuid::now_v7();
-                    sqlx::query("INSERT INTO mobile_v9_scope_grants(id,school_id,release_id,acceptance_id,stage,device_ids,target_ids,auto_targets,max_calls,expires_at,reason,created_by,resource_revisions) VALUES($1,$2,$3,$4,'production_allowlist',ARRAY[$5]::uuid[],ARRAY[$6]::uuid[],false,$7,$8,'使用授权自动关联',$9,$10)").bind(scope).bind(s).bind(None::<Uuid>).bind(None::<Uuid>).bind(device).bind(target).bind(b["max_calls"].as_i64().unwrap_or(1)).bind(date(&u,"expires_at")?).bind(actor).bind(json!({device.to_string():revision})).execute(&mut **tx).await?;
-                    let snapshot:Value=sqlx::query_scalar("SELECT jsonb_build_object('device_revision',d.revision,'binding_locator_revision',b.locator_revision,'target_locator_revision',CASE WHEN b.search_text_override IS NULL THEN t.locator_revision ELSE NULL END,'search_text',coalesce(b.search_text_override,t.search_text)) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id WHERE b.device_id=$1 AND b.target_id=$2").bind(device).bind(target).fetch_one(&mut **tx).await?;
-                    sqlx::query("INSERT INTO mobile_usage_scopes(scope_id,usage_id,release_id,target_id,device_id,resource_snapshot) VALUES($1,$2,$3,$4,$5,$6)").bind(scope).bind(id).bind(None::<Uuid>).bind(target).bind(device).bind(snapshot).execute(&mut **tx).await?;
+        let school = uid(&u, "school_id")?;
+        let body = &u["body"];
+        let devices: Vec<Uuid> =
+            serde_json::from_value(body["device_ids"].clone()).map_err(|_| Error::Conflict)?;
+        let mut targets = body["targets"].as_array().cloned().unwrap_or_default();
+        if body["auto_targets"] == true {
+            targets=sqlx::query_scalar("SELECT jsonb_build_object('id',id,'name',coalesce(nullif(alias,''),search_text),'search_text',search_text,'revision',locator_revision) FROM mobile_targets WHERE school_id=$1 AND enabled AND archived_at IS NULL ORDER BY id").bind(school).fetch_all(&mut **tx).await?;
+        }
+        let total = devices.len() * targets.len();
+        let mut ready = 0;
+        let mut failures = Vec::new();
+        if total == 0 {
+            failures.push("当前没有可用目标群，请调整使用范围".into());
+        }
+        for device in devices {
+            let (device_name, device_revision): (String, i64) =
+                sqlx::query_as("SELECT name,revision FROM execution_devices WHERE id=$1")
+                    .bind(device)
+                    .fetch_one(&mut **tx)
+                    .await?;
+            for target in &targets {
+                let target_id = uid(target, "id")?;
+                let label = format!(
+                    "{} / {}",
+                    device_name,
+                    target["name"].as_str().unwrap_or("目标群")
+                );
+                let expected = body["locators"].as_array().and_then(|ls| {
+                    ls.iter().find(|l| {
+                        l["device_id"] == json!(device) && l["target_id"] == json!(target_id)
+                    })
+                });
+                let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM execution_devices d JOIN schools s ON s.id=$2 JOIN mobile_targets t ON t.school_id=s.id LEFT JOIN mobile_device_target_bindings b ON b.device_id=d.id AND b.target_id=t.id WHERE d.id=$1 AND d.enabled AND s.active AND t.id=$3 AND t.enabled AND t.archived_at IS NULL AND (b.search_text_override IS NOT NULL OR t.locator_revision=$4))").bind(device).bind(school).bind(target_id).bind(expected.and_then(|l|l["target_locator_revision"].as_i64()).or_else(||target["revision"].as_i64()).unwrap_or(1)).fetch_one(&mut **tx).await?;
+                let device_ok = body["device_revisions"].as_array().is_some_and(|ds| {
+                    ds.iter()
+                        .any(|d| d["id"] == json!(device) && d["revision"] == device_revision)
+                });
+                if !valid || !device_ok {
+                    failures.push(format!("{label}：资源已变化，请重新预览调整范围"));
+                    continue;
                 }
+                let access:Option<bool>=sqlx::query_scalar("SELECT enabled FROM mobile_shared_school_access WHERE device_id=$1 AND school_id=$2").bind(device).bind(school).fetch_optional(&mut **tx).await?;
+                if access == Some(false) {
+                    failures.push(format!("{label}：手机使用资格已停用"));
+                    continue;
+                }
+                let binding:Option<Value>=sqlx::query_scalar("SELECT to_jsonb(b)||jsonb_build_object('effective_search_text',coalesce(b.search_text_override,t.search_text)) FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id WHERE b.school_id=$1 AND b.device_id=$2 AND b.target_id=$3").bind(school).bind(device).bind(target_id).fetch_optional(&mut **tx).await?;
+                if binding.as_ref().is_some_and(|b| b["enabled"] != true) {
+                    failures.push(format!("{label}：目标绑定已停用"));
+                    continue;
+                }
+                if let (Some(expected), Some(binding)) = (expected, binding.as_ref()) {
+                    let source = if binding["search_text_override"].is_null() {
+                        "default"
+                    } else {
+                        "override"
+                    };
+                    if expected["search_text"] != binding["effective_search_text"]
+                        || expected["search_source"] != source
+                        || (expected["binding_locator_revision"].is_number()
+                            && expected["binding_locator_revision"] != binding["locator_revision"])
+                    {
+                        failures.push(format!(
+                            "{label}：手机有效搜索名或定位版本已变化，请重新预览调整范围"
+                        ));
+                        continue;
+                    }
+                }
+                let snapshot:Option<Value>=sqlx::query_scalar("SELECT jsonb_build_object('device_revision',d.revision,'binding_locator_revision',b.locator_revision,'target_locator_revision',CASE WHEN b.search_text_override IS NULL THEN t.locator_revision ELSE NULL END,'search_text',coalesce(b.search_text_override,t.search_text)) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id WHERE b.school_id=$1 AND b.device_id=$2 AND b.target_id=$3").bind(school).bind(device).bind(target_id).fetch_optional(&mut **tx).await?;
+                let existing:Option<Value>=sqlx::query_scalar("SELECT jsonb_build_object('snapshot',m.resource_snapshot,'active',EXISTS(SELECT 1 FROM mobile_v9_scope_grants g WHERE g.id=m.scope_id AND g.expires_at>clock_timestamp() AND NOT EXISTS(SELECT 1 FROM mobile_v9_scope_revocations r WHERE r.grant_id=g.id))) FROM mobile_usage_scopes m WHERE m.usage_id=$1 AND m.release_id IS NULL AND m.target_id=$2 AND m.device_id=$3").bind(id).bind(target_id).bind(device).fetch_optional(&mut **tx).await?;
+                if let Some(existing) = existing {
+                    if snapshot.as_ref() == Some(&existing["snapshot"])
+                        && existing["active"] == true
+                    {
+                        ready += 1;
+                    } else {
+                        failures.push(format!(
+                            "{label}：已关联定位或使用范围已变化，请重新预览调整范围"
+                        ));
+                    }
+                    continue;
+                }
+                let actor = uid(&u, "approved_by")?;
+                sqlx::query("INSERT INTO mobile_shared_school_access(device_id,school_id,enabled,revision,updated_by) VALUES($1,$2,true,1,$3) ON CONFLICT DO NOTHING").bind(device).bind(school).bind(actor).execute(&mut **tx).await?;
+                sqlx::query("INSERT INTO mobile_device_target_bindings(id,school_id,device_id,target_id,created_by,updated_by,source) VALUES($1,$2,$3,$4,$5,$5,'school_pool') ON CONFLICT DO NOTHING").bind(Uuid::now_v7()).bind(school).bind(device).bind(target_id).bind(actor).execute(&mut **tx).await?;
+                let revision:i64=sqlx::query_scalar("SELECT revision FROM mobile_shared_school_access WHERE device_id=$1 AND school_id=$2").bind(device).bind(school).fetch_one(&mut **tx).await?;
+                let scope = Uuid::now_v7();
+                sqlx::query("INSERT INTO mobile_v9_scope_grants(id,school_id,release_id,acceptance_id,stage,device_ids,target_ids,auto_targets,max_calls,expires_at,reason,created_by,resource_revisions) VALUES($1,$2,NULL,NULL,'production_allowlist',ARRAY[$3]::uuid[],ARRAY[$4]::uuid[],false,$5,$6,'使用授权自动关联',$7,$8)").bind(scope).bind(school).bind(device).bind(target_id).bind(body["max_calls"].as_i64().unwrap_or(1)).bind(date(&u,"expires_at")?).bind(actor).bind(json!({device.to_string():revision})).execute(&mut **tx).await?;
+                let snapshot:Value=sqlx::query_scalar("SELECT jsonb_build_object('device_revision',d.revision,'binding_locator_revision',b.locator_revision,'target_locator_revision',CASE WHEN b.search_text_override IS NULL THEN t.locator_revision ELSE NULL END,'search_text',coalesce(b.search_text_override,t.search_text)) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id WHERE b.device_id=$1 AND b.target_id=$2").bind(device).bind(target_id).fetch_one(&mut **tx).await?;
+                sqlx::query("INSERT INTO mobile_usage_scopes(scope_id,usage_id,release_id,target_id,device_id,resource_snapshot) VALUES($1,$2,NULL,$3,$4,$5)").bind(scope).bind(id).bind(target_id).bind(device).bind(snapshot).execute(&mut **tx).await?;
+                ready += 1;
             }
         }
-        sqlx::query("INSERT INTO mobile_usage_jobs(usage_id,state,reason) VALUES($1,$2,$3) ON CONFLICT(usage_id) DO UPDATE SET state=$2,reason=$3,updated_at=clock_timestamp()").bind(id).bind(if reason.is_empty(){"ready"}else{"waiting"}).bind(if reason.is_empty(){"已批准，手机就绪及目标检查通过后可执行"}else{reason}).execute(&mut **tx).await?;
+        let reason = if failures.is_empty() {
+            format!("已关联 {ready}/{total} 项，手机现场条件自动检查")
+        } else {
+            format!("已关联 {ready}/{total} 项；{}", failures.join("；"))
+        };
+        sqlx::query("INSERT INTO mobile_usage_jobs(usage_id,state,reason) VALUES($1,$2,$3) ON CONFLICT(usage_id) DO UPDATE SET state=$2,reason=$3,updated_at=clock_timestamp()").bind(id).bind(if failures.is_empty(){"ready"}else{"waiting"}).bind(reason).execute(&mut **tx).await?;
     }
     Ok(())
 }
@@ -522,6 +618,21 @@ impl Repository {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn summary_depends_on_effective_phone_locator_not_unused_default_or_alias() {
+        let original = json!({"targets":[{"id":"group","name":"旧显示名","search_text":"默认群","revision":1}],"locators":[{"device_id":"phone","target_id":"group","target_index":0,"device_name":"手机","target_name":"旧显示名","search_text":"手机专用群","search_source":"override","binding_locator_revision":2,"target_locator_revision":null}]});
+        let mut renamed = original.clone();
+        renamed["targets"][0]["name"] = json!("新显示名");
+        renamed["targets"][0]["search_text"] = json!("新默认值");
+        renamed["targets"][0]["revision"] = json!(99);
+        renamed["locators"][0]["target_name"] = json!("新显示名");
+        assert!(same_resource_scope(&original, &renamed));
+        renamed["locators"][0]["search_text"] = json!("另一群");
+        assert!(!same_resource_scope(&original, &renamed));
+        renamed = original.clone();
+        renamed["locators"][0]["binding_locator_revision"] = json!(3);
+        assert!(!same_resource_scope(&original, &renamed));
+    }
     #[test]
     fn explicit_future_groups_share_budget_but_changed_locators_require_approval() {
         let parent = json!({"device_ids":["phone"],"device_revisions":[{"id":"phone","revision":1}],"targets":[{"id":"old","name":"原群","search_text":"原群","revision":1}],"max_calls":10,"auto_targets":true,"scheme":{"interval_seconds":30}});

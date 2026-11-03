@@ -1,0 +1,23 @@
+-- Rollback-only regression for per-phone locators, snapshot stability and lineage.
+BEGIN;
+INSERT INTO accounts(id,username,display_name,platform_admin) VALUES('10000000-0000-4000-8000-000000000001','locator-version-test','Synthetic',true);
+INSERT INTO schools(id,name) VALUES('10000000-0000-4000-8000-000000000002','Synthetic locator school');
+INSERT INTO execution_devices(id,name) VALUES('10000000-0000-4000-8000-000000000003','Phone A'),('10000000-0000-4000-8000-000000000004','Phone B');
+INSERT INTO mobile_targets(id,school_id,alias,search_text,created_by,updated_by) VALUES('10000000-0000-4000-8000-000000000005','10000000-0000-4000-8000-000000000002','Display name','Default search','10000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001');
+INSERT INTO mobile_device_target_bindings(id,school_id,device_id,target_id,search_text_override,created_by,updated_by) VALUES('10000000-0000-4000-8000-000000000006','10000000-0000-4000-8000-000000000002','10000000-0000-4000-8000-000000000003','10000000-0000-4000-8000-000000000005','Phone A search','10000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001'),('10000000-0000-4000-8000-000000000007','10000000-0000-4000-8000-000000000002','10000000-0000-4000-8000-000000000004','10000000-0000-4000-8000-000000000005','Phone B search','10000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001');
+CREATE TEMP TABLE original_locators ON COMMIT DROP AS SELECT b.id,jsonb_build_object('device_revision',d.revision,'binding_locator_revision',b.locator_revision,'target_locator_revision',CASE WHEN b.search_text_override IS NULL THEN t.locator_revision ELSE NULL END,'search_text',coalesce(b.search_text_override,t.search_text)) AS snapshot FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id WHERE b.school_id='10000000-0000-4000-8000-000000000002';
+DO $$ BEGIN
+ IF (SELECT count(DISTINCT snapshot->>'search_text') FROM original_locators)<>2 THEN RAISE EXCEPTION 'Different phone locators collapsed'; END IF;
+ IF EXISTS(SELECT 1 FROM original_locators WHERE snapshot->>'search_text'='Default search' OR snapshot->>'target_locator_revision' IS NOT NULL) THEN RAISE EXCEPTION 'Unused default leaked into override locator'; END IF;
+ UPDATE mobile_targets SET alias='Renamed display',search_text='Changed unused default',locator_revision=locator_revision+1 WHERE id='10000000-0000-4000-8000-000000000005';
+ IF EXISTS(SELECT 1 FROM original_locators o JOIN mobile_device_target_bindings b ON b.id=o.id JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id WHERE o.snapshot<>jsonb_build_object('device_revision',d.revision,'binding_locator_revision',b.locator_revision,'target_locator_revision',CASE WHEN b.search_text_override IS NULL THEN t.locator_revision ELSE NULL END,'search_text',coalesce(b.search_text_override,t.search_text))) THEN RAISE EXCEPTION 'Unchanged phone locator invalidated by default/alias'; END IF;
+ UPDATE mobile_device_target_bindings SET search_text_override='Actual changed phone search',locator_revision=locator_revision+1 WHERE id='10000000-0000-4000-8000-000000000006';
+ IF NOT EXISTS(SELECT 1 FROM original_locators o JOIN mobile_device_target_bindings b ON b.id=o.id WHERE o.snapshot->>'search_text'<>b.search_text_override AND (o.snapshot->>'binding_locator_revision')::bigint<>b.locator_revision) THEN RAISE EXCEPTION 'Actual phone change was ignored'; END IF;
+END $$;
+INSERT INTO mobile_usages(id,school_id,actor_id,approval,state,body,confirmed_until,expires_at,budget_root) VALUES('10000000-0000-4000-8000-000000000008','10000000-0000-4000-8000-000000000002','10000000-0000-4000-8000-000000000001','approved','paused','{}',clock_timestamp()+interval '1 day',clock_timestamp()+interval '10 days','10000000-0000-4000-8000-000000000008');
+INSERT INTO mobile_usages(id,school_id,actor_id,approval,state,body,confirmed_until,expires_at,budget_root,supersedes) SELECT '10000000-0000-4000-8000-000000000009',school_id,actor_id,'pending',state,'{}',clock_timestamp()+interval '1 day',clock_timestamp()+interval '40 days',budget_root,id FROM mobile_usages WHERE id='10000000-0000-4000-8000-000000000008';
+DO $$ BEGIN
+ IF (SELECT count(DISTINCT budget_root) FROM mobile_usages WHERE school_id='10000000-0000-4000-8000-000000000002')<>1 THEN RAISE EXCEPTION 'Renewal reset business family'; END IF;
+ IF NOT EXISTS(SELECT 1 FROM mobile_usages WHERE supersedes='10000000-0000-4000-8000-000000000008' AND state='paused') THEN RAISE EXCEPTION 'Paused renewal resumed implicitly'; END IF;
+END $$;
+ROLLBACK;
