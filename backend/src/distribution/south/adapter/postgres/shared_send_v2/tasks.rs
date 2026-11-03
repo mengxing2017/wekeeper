@@ -73,6 +73,48 @@ pub(super) fn missing_rules(plan: &Value) -> bool {
         .iter()
         .all(|k| plan.get(*k).is_some_and(Value::is_null))
 }
+// Resolve technical rules only for untouched queued intent. Keep old plans immutable.
+// The caller owns the device advisory lock, shared with claim issuance.
+pub(super) async fn resolve_waiting_rules(tx: &mut Tx<'_>, device: Uuid) -> Result<()> {
+    let rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(p)||jsonb_build_object('attempt_id',a.id,'target_count',(SELECT count(*) FROM mobile_v9_task_items WHERE task_id=t.id)) FROM mobile_v9_plans p JOIN mobile_v9_attempts a ON a.plan_id=p.id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE p.device_id=$1 AND a.current AND a.state='queued' AND NOT t.stopped AND t.confirmed_until>clock_timestamp() AND p.plan->'release_id'='null'::jsonb AND p.plan->'flow'='null'::jsonb AND p.plan->'flow_digest'='null'::jsonb AND NOT EXISTS(SELECT 1 FROM mobile_v9_send_claims WHERE attempt_id=a.id) ORDER BY a.id LIMIT 100 FOR UPDATE OF a").bind(device).fetch_all(&mut **tx).await?;
+    for row in rows {
+        use sqlx::Acquire;
+        let mut item = tx.begin().await?;
+        match resolve_waiting_plan(&mut item, device, &row).await {
+            Ok(()) => item.commit().await?,
+            Err(_) => {
+                item.rollback().await?;
+                tracing::warn!("one queued plan remains waiting for usable rules");
+            }
+        }
+    }
+    Ok(())
+}
+async fn resolve_waiting_plan(tx: &mut Tx<'_>, device: Uuid, row: &Value) -> Result<()> {
+    let school = uid(row, "school_id")?;
+    let Some(candidate) = raw_candidates(tx, school, uid(row, "target_id")?)
+        .await?
+        .into_iter()
+        .find(|c| c["device_id"] == json!(device) && !missing_rules(c))
+    else {
+        return Ok(());
+    };
+    let mut plan = row["plan"].clone();
+    for key in ["release_id", "flow", "flow_digest"] {
+        plan[key] = candidate[key].clone();
+    }
+    if row["target_count"].as_i64().unwrap_or(i64::MAX)
+        > plan["flow"]["max_targets"].as_i64().unwrap_or(0)
+    {
+        return Ok(());
+    }
+    validate_plan(tx, school, &plan).await?;
+    validate_execution_rules(tx, &plan).await?;
+    let id = Uuid::now_v7();
+    sqlx::query("INSERT INTO mobile_v9_plans(id,school_id,item_id,target_id,device_id,snapshot_id,plan,digest,content_digest) SELECT $2,school_id,item_id,target_id,device_id,snapshot_id,$3,$4,content_digest FROM mobile_v9_plans WHERE id=$1").bind(uid(row,"id")?).bind(id).bind(&plan).bind(digest(&plan)?).execute(&mut **tx).await?;
+    sqlx::query("UPDATE mobile_v9_attempts SET plan_id=$2,revision=revision+1 WHERE id=$1 AND state='queued'").bind(uid(row,"attempt_id")?).bind(id).execute(&mut **tx).await?;
+    Ok(())
+}
 pub(super) async fn validate_execution_rules(tx: &mut Tx<'_>, plan: &Value) -> Result<()> {
     if !missing_rules(plan) {
         let release:Option<Value>=sqlx::query_scalar("SELECT jsonb_build_object('flow',r.flow,'digest',r.content_digest) FROM mobile_v9_adapter_releases r WHERE r.id=$1 AND NOT EXISTS(SELECT 1 FROM mobile_v9_adapter_withdrawals w WHERE w.release_id=r.id)").bind(uid(plan,"release_id")?).fetch_optional(&mut **tx).await?;
