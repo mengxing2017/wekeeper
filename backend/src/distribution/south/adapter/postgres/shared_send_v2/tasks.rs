@@ -360,8 +360,14 @@ pub(super) async fn write(
                             .get(&uid(choice, "device_id")?)
                             .map(String::as_str)
                         {
-                            Some("shared_send_usage_unavailable") => {
-                                "本校尚无此手机与目标群的有效使用范围，请在使用管理核对审批、有效期及资源变更"
+                            Some("shared_send_usage_paused") => {
+                                "本校此手机与目标群的使用范围已暂停，请在使用管理恢复后再确认"
+                            }
+                            Some("shared_send_usage_revoked") => {
+                                "本校此手机与目标群的使用范围已撤销，请在使用管理核对"
+                            }
+                            Some("shared_send_usage_expired") => {
+                                "本校此手机与目标群的使用范围已到期，请在使用管理办理续期"
                             }
                             Some("shared_send_review_required") => {
                                 "存在未核对的发送结果，请先核对原任务"

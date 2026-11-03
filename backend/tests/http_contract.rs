@@ -1178,6 +1178,9 @@ async fn phone_task_blockers_explain_concrete_next_steps() {
     for (code, expected) in [
         ("mobile_target_unresolved", "不要换设备"),
         ("shared_send_usage_unavailable", "使用管理"),
+        ("shared_send_usage_paused", "已暂停"),
+        ("shared_send_usage_revoked", "已撤销"),
+        ("shared_send_usage_expired", "已到期"),
         ("shared_send_scope_not_accepted", "使用管理"),
     ] {
         let response = wekeeper_api::business::Error::Policy(code).into_response();
