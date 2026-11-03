@@ -112,7 +112,10 @@ pub(super) async fn validate_plan(tx: &mut Tx<'_>, s: Uuid, plan: &Value) -> Res
         .as_str()
         .ok_or(Error::Policy("shared_send_stage_invalid"))?;
     validate_scope(tx, s, plan, stage).await?;
-    let risk:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_invocations WHERE device_id=$1 AND state='risk_held') OR EXISTS(SELECT 1 FROM mobile_shared_invocations WHERE device_id=$1 AND state='risk_held') OR EXISTS(SELECT 1 FROM mobile_shared_risk_guards WHERE school_id=$2 AND target_id=$3 AND state='active') OR EXISTS(SELECT 1 FROM mobile_v9_risk_guards WHERE school_id=$2 AND target_id=$3 AND state='active')").bind(uid(plan,"device_id")?).bind(s).bind(uid(plan,"target_id")?).fetch_one(&mut **tx).await?;
+    Ok(())
+}
+pub(super) async fn validate_risk(tx: &mut Tx<'_>, s: Uuid, plan: &Value) -> Result<()> {
+    let risk:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_invocations WHERE device_id=$1 AND state='risk_held') OR EXISTS(SELECT 1 FROM mobile_v9_risk_guards WHERE school_id=$2 AND target_id=$3 AND state='active')").bind(uid(plan,"device_id")?).bind(s).bind(uid(plan,"target_id")?).fetch_one(&mut **tx).await?;
     require(!risk, "shared_send_review_required")
 }
 pub(super) async fn write(
@@ -140,7 +143,6 @@ pub(super) async fn write(
             require(allowed, "shared_pool_access_required")?;
             let id:Option<Uuid>=sqlx::query_scalar("INSERT INTO mobile_device_target_bindings(id,school_id,device_id,target_id,search_text_override,created_by,updated_by,source) VALUES($1,$2,$3,$4,$5,$6,$6,'school_pool') ON CONFLICT(device_id,target_id) DO UPDATE SET enabled=true,search_text_override=$5,updated_by=$6,revision=mobile_device_target_bindings.revision+1,locator_revision=mobile_device_target_bindings.locator_revision+1 WHERE mobile_device_target_bindings.source='school_pool' RETURNING id").bind(Uuid::now_v7()).bind(s).bind(v.device_id).bind(v.target_id).bind(v.search_text_override).bind(a.id).fetch_optional(&mut **tx).await?;
             let id = id.ok_or(Error::Policy("shared_binding_platform_managed"))?;
-            inspections::reconcile(tx, Some(v.device_id), None).await?;
             Ok(json!({"id":id,"state":"automatic_check_queued"}))
         }
         SchoolCommand::Unbind(id, v) => {
