@@ -165,3 +165,21 @@ it('打开详情持续轮询，失败保留快照与输入，关闭和切校停�
  expect(sharedSend.task).toHaveBeenCalledTimes(count)
  client.clear()
 },60000)
+
+
+it('排队任务分别显示平台已创建与手机已接收，接收回执不改变执行条件',async()=>{
+ const task={id:'task',school_id:'school',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-04',items:[{id:'item',target_id:'target-uuid',position:0,attempts:[{id:'attempt',state:'queued',revision:1,current:true,attempt_no:1,plan_digest:'hash',plan:{target_name:'冻结群名',search_text:'专用搜索文字',device_id:'phone',device_name:'测试手机'},execution_status:{conditions:[{code:'runtime_stale',message:'等待手机执行条件更新',owner:'system'}]}}]}]} as unknown as Awaited<ReturnType<typeof sharedSend.task>>
+ vi.mocked(sharedSend.overview).mockResolvedValue({id:'school',tasks:[task],drafts:[],readiness:[],pool:[],inspections:[]})
+ vi.mocked(sharedSend.task).mockResolvedValue(task)
+ const client=new QueryClient({defaultOptions:{queries:{retry:false}}})
+ render(<QueryClientProvider client={client}><SharedSendTasks school="school" admin/></QueryClientProvider>)
+ fireEvent.click(await screen.findByRole('button',{name:'查看计划与结果'},{timeout:10_000}))
+ expect(await screen.findByText(/平台已创建，等待手机同步/,{},{timeout:10_000})).toBeTruthy()
+ expect(screen.getByText(/冻结群名/)).toBeTruthy()
+ const received=structuredClone(task);received.items![0].attempts[0].device_received_at='2026-11-04T00:00:00Z'
+ act(()=>{client.setQueryData(['mobile-execution','school','shared-task','task'],received)})
+ expect(await screen.findByText(/手机已接收，等待执行条件/,{},{timeout:10_000})).toBeTruthy()
+ expect(screen.getByText(/等待手机执行条件更新/)).toBeTruthy()
+ expect(sharedSend.confirm).not.toHaveBeenCalled()
+ client.clear()
+},60000)
