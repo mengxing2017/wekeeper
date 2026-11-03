@@ -495,7 +495,7 @@ impl Repository {
 
 /// Serialize this desired intent only; a busy intent is retried on the next worker cycle.
 async fn reconcile_selected(tx: &mut Tx<'_>, id: Uuid) -> Result<()> {
-    let u:Option<Value>=sqlx::query_scalar("SELECT to_jsonb(u) FROM mobile_usages u WHERE id=$1 AND approval='approved' AND state='active' AND expires_at>clock_timestamp() FOR UPDATE SKIP LOCKED").bind(id).fetch_optional(&mut **tx).await?;
+    let u:Option<Value>=sqlx::query_scalar("SELECT to_jsonb(u) FROM mobile_usages u WHERE id=$1 AND approval='approved' AND state='active' AND expires_at>clock_timestamp() AND NOT EXISTS(SELECT 1 FROM mobile_usages n WHERE n.school_id=u.school_id AND n.budget_root=u.budget_root AND n.approval='approved' AND (n.created_at,n.id)>(u.created_at,u.id)) FOR UPDATE OF u SKIP LOCKED").bind(id).fetch_optional(&mut **tx).await?;
     if let Some(u) = u {
         reconcile_usage(tx, &u).await?;
     }
@@ -518,8 +518,8 @@ async fn reconcile_usage(tx: &mut Tx<'_>, u: &Value) -> Result<()> {
         failures.push("当前没有可用目标群，请调整使用范围".into());
     }
     for device in devices {
-        let (device_name, device_revision): (String, i64) =
-            sqlx::query_as("SELECT name,revision FROM execution_devices WHERE id=$1")
+        let device_name: String =
+            sqlx::query_scalar("SELECT name FROM execution_devices WHERE id=$1")
                 .bind(device)
                 .fetch_one(&mut **tx)
                 .await?;
@@ -530,17 +530,12 @@ async fn reconcile_usage(tx: &mut Tx<'_>, u: &Value) -> Result<()> {
                 device_name,
                 target["name"].as_str().unwrap_or("目标群")
             );
-            let expected = body["locators"].as_array().and_then(|ls| {
-                ls.iter()
-                    .find(|l| l["device_id"] == json!(device) && l["target_id"] == json!(target_id))
-            });
-            let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM execution_devices d JOIN schools s ON s.id=$2 JOIN mobile_targets t ON t.school_id=s.id LEFT JOIN mobile_device_target_bindings b ON b.device_id=d.id AND b.target_id=t.id WHERE d.id=$1 AND d.enabled AND s.active AND t.id=$3 AND t.enabled AND t.archived_at IS NULL AND (b.search_text_override IS NOT NULL OR t.locator_revision=$4))").bind(device).bind(school).bind(target_id).bind(expected.and_then(|l|l["target_locator_revision"].as_i64()).or_else(||target["revision"].as_i64()).unwrap_or(1)).fetch_one(&mut **tx).await?;
-            let device_ok = body["device_revisions"].as_array().is_some_and(|ds| {
-                ds.iter()
-                    .any(|d| d["id"] == json!(device) && d["revision"] == device_revision)
-            });
-            if !valid || !device_ok {
-                failures.push(format!("{label}：资源已变化，请重新预览调整范围"));
+            // Business membership follows resource identity and enabled state.
+            // Search locators are execution dependencies, checked against each frozen
+            // task separately; they are not a reason to reopen business authorization.
+            let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM execution_devices d JOIN schools s ON s.id=$2 JOIN mobile_targets t ON t.school_id=s.id WHERE d.id=$1 AND d.enabled AND s.active AND t.id=$3 AND t.enabled AND t.archived_at IS NULL)").bind(device).bind(school).bind(target_id).fetch_one(&mut **tx).await?;
+            if !valid {
+                failures.push(format!("{label}：学校、手机或目标群已停用"));
                 continue;
             }
             let access:Option<bool>=sqlx::query_scalar("SELECT enabled FROM mobile_shared_school_access WHERE device_id=$1 AND school_id=$2").bind(device).bind(school).fetch_optional(&mut **tx).await?;
@@ -553,33 +548,37 @@ async fn reconcile_usage(tx: &mut Tx<'_>, u: &Value) -> Result<()> {
                 failures.push(format!("{label}：目标绑定已停用"));
                 continue;
             }
-            if let (Some(expected), Some(binding)) = (expected, binding.as_ref()) {
-                let source = if binding["search_text_override"].is_null() {
-                    "default"
-                } else {
-                    "override"
-                };
-                if expected["search_text"] != binding["effective_search_text"]
-                    || expected["search_source"] != source
-                    || (expected["binding_locator_revision"].is_number()
-                        && expected["binding_locator_revision"] != binding["locator_revision"])
-                {
-                    failures.push(format!(
-                        "{label}：手机有效搜索名或定位版本已变化，请重新预览调整范围"
-                    ));
+            let snapshot:Option<Value>=sqlx::query_scalar("SELECT jsonb_build_object('binding_locator_revision',b.locator_revision,'target_locator_revision',CASE WHEN b.search_text_override IS NULL THEN t.locator_revision ELSE NULL END,'search_text',coalesce(b.search_text_override,t.search_text)) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id WHERE b.school_id=$1 AND b.device_id=$2 AND b.target_id=$3").bind(school).bind(device).bind(target_id).fetch_optional(&mut **tx).await?;
+            let existing:Option<Value>=sqlx::query_scalar("SELECT jsonb_build_object('scope_id',m.scope_id,'snapshot',m.resource_snapshot,'revoked',EXISTS(SELECT 1 FROM mobile_v9_scope_revocations r WHERE r.grant_id=m.scope_id),'active',EXISTS(SELECT 1 FROM mobile_v9_scope_grants g WHERE g.id=m.scope_id AND g.expires_at>clock_timestamp() AND NOT EXISTS(SELECT 1 FROM mobile_v9_scope_revocations r2 WHERE r2.grant_id=g.id))) FROM mobile_usage_scopes m WHERE m.usage_id=$1 AND m.release_id IS NULL AND m.target_id=$2 AND m.device_id=$3").bind(id).bind(target_id).bind(device).fetch_optional(&mut **tx).await?;
+            if let Some(existing) = existing {
+                // An explicit platform revocation of this projection is a real disable.
+                if existing["revoked"] == true {
+                    failures.push(format!("{label}：已关联使用范围已撤销，请在使用管理核对"));
                     continue;
                 }
-            }
-            let snapshot:Option<Value>=sqlx::query_scalar("SELECT jsonb_build_object('device_revision',d.revision,'binding_locator_revision',b.locator_revision,'target_locator_revision',CASE WHEN b.search_text_override IS NULL THEN t.locator_revision ELSE NULL END,'search_text',coalesce(b.search_text_override,t.search_text)) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id WHERE b.school_id=$1 AND b.device_id=$2 AND b.target_id=$3").bind(school).bind(device).bind(target_id).fetch_optional(&mut **tx).await?;
-            let existing:Option<Value>=sqlx::query_scalar("SELECT jsonb_build_object('snapshot',m.resource_snapshot,'active',EXISTS(SELECT 1 FROM mobile_v9_scope_grants g WHERE g.id=m.scope_id AND g.expires_at>clock_timestamp() AND NOT EXISTS(SELECT 1 FROM mobile_v9_scope_revocations r WHERE r.grant_id=g.id))) FROM mobile_usage_scopes m WHERE m.usage_id=$1 AND m.release_id IS NULL AND m.target_id=$2 AND m.device_id=$3").bind(id).bind(target_id).bind(device).fetch_optional(&mut **tx).await?;
-            if let Some(existing) = existing {
-                if snapshot.as_ref() == Some(&existing["snapshot"]) && existing["active"] == true {
+                let Some(current) = snapshot.as_ref() else {
+                    failures.push(format!("{label}：目标绑定已变化，请重新预览调整范围"));
+                    continue;
+                };
+                if current == &existing["snapshot"] && existing["active"] == true {
                     ready += 1;
-                } else {
-                    failures.push(format!(
-                        "{label}：已关联定位或使用范围已变化，请重新预览调整范围"
-                    ));
+                    continue;
                 }
+                // Business membership is valid; project the current execution locator.
+                // Frozen task plans and their dependency checks remain unchanged. Heal
+                // the mutable scope snapshot in place and keep the same scope_id, so the
+                // budget root and cumulative metering are never reset. The grant row is
+                // immutable evidence and its expiry already tracks this usage; a renewal
+                // is a new usage that reconciles its own new grant under the same root.
+                let scope_id = uid(&existing, "scope_id")?;
+                sqlx::query(
+                    "UPDATE mobile_usage_scopes SET resource_snapshot=$2 WHERE scope_id=$1",
+                )
+                .bind(scope_id)
+                .bind(current)
+                .execute(&mut **tx)
+                .await?;
+                ready += 1;
                 continue;
             }
             let actor = uid(u, "approved_by")?;
@@ -588,7 +587,7 @@ async fn reconcile_usage(tx: &mut Tx<'_>, u: &Value) -> Result<()> {
             let revision:i64=sqlx::query_scalar("SELECT revision FROM mobile_shared_school_access WHERE device_id=$1 AND school_id=$2").bind(device).bind(school).fetch_one(&mut **tx).await?;
             let scope = Uuid::now_v7();
             sqlx::query("INSERT INTO mobile_v9_scope_grants(id,school_id,release_id,acceptance_id,stage,device_ids,target_ids,auto_targets,max_calls,expires_at,reason,created_by,resource_revisions) VALUES($1,$2,NULL,NULL,'production_allowlist',ARRAY[$3]::uuid[],ARRAY[$4]::uuid[],false,$5,$6,'使用授权自动关联',$7,$8)").bind(scope).bind(school).bind(device).bind(target_id).bind(body["max_calls"].as_i64().unwrap_or(1)).bind(date(u,"expires_at")?).bind(actor).bind(json!({device.to_string():revision})).execute(&mut **tx).await?;
-            let snapshot:Value=sqlx::query_scalar("SELECT jsonb_build_object('device_revision',d.revision,'binding_locator_revision',b.locator_revision,'target_locator_revision',CASE WHEN b.search_text_override IS NULL THEN t.locator_revision ELSE NULL END,'search_text',coalesce(b.search_text_override,t.search_text)) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id WHERE b.device_id=$1 AND b.target_id=$2").bind(device).bind(target_id).fetch_one(&mut **tx).await?;
+            let snapshot:Value=sqlx::query_scalar("SELECT jsonb_build_object('binding_locator_revision',b.locator_revision,'target_locator_revision',CASE WHEN b.search_text_override IS NULL THEN t.locator_revision ELSE NULL END,'search_text',coalesce(b.search_text_override,t.search_text)) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id WHERE b.device_id=$1 AND b.target_id=$2").bind(device).bind(target_id).fetch_one(&mut **tx).await?;
             sqlx::query("INSERT INTO mobile_usage_scopes(scope_id,usage_id,release_id,target_id,device_id,resource_snapshot) VALUES($1,$2,NULL,$3,$4,$5)").bind(scope).bind(id).bind(target_id).bind(device).bind(snapshot).execute(&mut **tx).await?;
             ready += 1;
         }
@@ -606,7 +605,7 @@ impl Repository {
     pub async fn reconcile_usages(&self) -> Result<()> {
         // Persisted approved intents and enabled bindings ARE the durable desired queue.
         // Each intent/device commits independently; one bad row cannot roll back its neighbours.
-        let ids:Vec<Uuid>=sqlx::query_scalar("SELECT id FROM mobile_usages WHERE approval='approved' AND state='active' AND expires_at>clock_timestamp() ORDER BY id").fetch_all(&self.0).await?;
+        let ids:Vec<Uuid>=sqlx::query_scalar("SELECT u.id FROM mobile_usages u WHERE approval='approved' AND state='active' AND expires_at>clock_timestamp() AND NOT EXISTS(SELECT 1 FROM mobile_usages n WHERE n.school_id=u.school_id AND n.budget_root=u.budget_root AND n.approval='approved' AND (n.created_at,n.id)>(u.created_at,u.id)) ORDER BY u.id").fetch_all(&self.0).await?;
         for id in ids {
             let mut tx = self.0.begin().await?;
             sqlx::query("SET LOCAL statement_timeout='2s'")
@@ -614,9 +613,9 @@ impl Repository {
                 .await?;
             match reconcile_selected(&mut tx, id).await {
                 Ok(()) => tx.commit().await?,
-                Err(_) => {
+                Err(e) => {
                     tx.rollback().await?;
-                    tracing::warn!("one mobile usage remains pending reconciliation");
+                    tracing::warn!(error=%e, usage=%id, "one mobile usage remains pending reconciliation");
                 }
             }
         }
