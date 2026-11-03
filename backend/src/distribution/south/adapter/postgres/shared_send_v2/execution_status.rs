@@ -203,15 +203,35 @@ pub(super) async fn assess(
                 false,
                 device,
             );
-        } else if inspections::busy(tx, device).await? {
-            add(
-                &mut conditions,
-                "device_busy",
-                "等待设备当前界面工作完成并确认静止",
-                "device",
-                true,
-                device,
-            );
+        } else {
+            for source in inspections::busy_sources(tx, device).await? {
+                let code = source["code"].as_str().ok_or(Error::Conflict)?;
+                let message = match code {
+                    "device_claim_active" => "手机仍持有原任务领取，等待安全恢复",
+                    "device_lease_active" => "等待原界面租约安全释放",
+                    "device_idle_unconfirmed" => "手机静止状态已过期，等待重新核验",
+                    "device_invocation_risk" => "原调用结果待核对，禁止重新发送",
+                    _ => "等待手机当前界面操作停止并确认静止",
+                };
+                add(&mut conditions, code, message, "system", true, device);
+                if let Some(condition) = conditions.last_mut() {
+                    condition.valid_until = serde_json::from_value(source["expires_at"].clone())
+                        .map_err(|e| Error::Invalid(e.to_string()))?;
+                    condition.retry_at = condition.valid_until;
+                    if let Ok(at) = serde_json::from_value(source["observed_at"].clone()) {
+                        condition.observed_at = at;
+                    }
+                    condition.scope_type = if code == "device_claim_active" {
+                        "claim"
+                    } else {
+                        "device"
+                    }
+                    .into();
+                    if code == "device_claim_active" {
+                        condition.scope_id = uid(&source, "id")?;
+                    }
+                }
+            }
         }
         let closed = match business_scheme::ensure_open(tx).await {
             Ok(()) => false,
@@ -228,11 +248,25 @@ pub(super) async fn assess(
                 device,
             );
         }
+        let rules_valid = match tasks::validate_execution_rules(tx, plan).await {
+            Ok(()) => true,
+            Err(Error::Policy(_)) => false,
+            Err(e) => return Err(e),
+        };
         if tasks::missing_rules(plan) {
             add(
                 &mut conditions,
                 "shared_send_adapter_unavailable",
-                "手机助手尚缺当前操作支持，需由交付处理",
+                "本任务尚未取得可用执行规则，等待产品支持完成",
+                "engineering",
+                false,
+                device,
+            );
+        } else if !rules_valid {
+            add(
+                &mut conditions,
+                "shared_send_rules_unavailable",
+                "本任务执行规则已不可用，等待产品支持核对",
                 "engineering",
                 false,
                 device,
