@@ -27,7 +27,7 @@ export interface BroadcastAction {
     preview_digest?: string; revision?: number; batch_id?: string; decision?: 'not_created'|'sent'|'linked'|'stop_confirmed'|'reminder_reviewed'; evidence_id?:string; reason?: string;
 }
 export interface BroadcastEvent {id:string;actor_name:string;description:string;reason:string;created_at:string}
-export interface BroadcastCapability {id: string; broadcast_available: boolean; management_available: boolean; reason: string|null; reason_code?:string; delivery_state?:string; can_edit_draft?:boolean; can_preview?:boolean; can_confirm?:boolean; can_refresh?:boolean; can_stop?:boolean; request?:import('../product-workflows/client').BusinessRequest|null}
+export interface BroadcastCapability {id: string; broadcast_available: boolean; management_available: boolean; reason: string|null; reason_code?:string; health_state?:string;control?:{paused:boolean;revision:number}|null; can_edit_draft?:boolean; can_preview?:boolean; can_confirm?:boolean; can_refresh?:boolean; can_stop?:boolean; request?:import('../product-workflows/client').BusinessRequest|null}
 const broadcastPath = (s: string, id?: string) => scope(s, `broadcast-tasks${id ? `/${part(id)}` : ''}`);
 export interface BroadcastPreview {id:string; revision:number; digest:string; expires_at:string; content:string; target_count:number; channel:'wecom'}
 

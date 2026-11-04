@@ -36,3 +36,10 @@ it('consumers always use published resources and cannot switch into management v
  const fetch=mock();await product.resources.list('school')
  expect(fetch.mock.calls[0][0]).toBe('/api/v1/schools/school/published-resources')
 })
+
+it('channel pause is a revisioned platform business action, without delivery approval inputs',async()=>{
+ const fetch=mock();const input=fixture.channel_control
+ await product.officialChannelControl(input)
+ expect(fetch.mock.calls[0][0]).toBe('/api/v1/platform/official-channel-controls')
+ expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({data:{type:'official-channel-controls',attributes:input}})
+})

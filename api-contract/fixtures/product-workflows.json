@@ -59,5 +59,10 @@
   "confirmation": {
     "preview_id": "00000000-0000-4000-8000-000000000001",
     "digest": "preview-digest"
+  },
+  "channel_control": {
+    "paused": true,
+    "expected_revision": 0,
+    "reason": "运营暂停新发送"
   }
 }

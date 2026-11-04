@@ -17,6 +17,8 @@ export function createProductClient(client:Pick<Client,'requestResource'|'reques
  const {requestResource:r,requestCollection:c}=client
  const root=(s?:string)=>s?`/api/v1/schools/${encodeURIComponent(s)}`:'/api/v1/platform'
  return {
+ officialChannelStatus:()=>r<{id:string;configured:boolean;paused:boolean;revision:number;health_state:'available'|'checking'|'paused';health:{checked_at:string|null;last_success_at:string|null;last_failure_at:string|null}|null}>('/api/v1/platform/official-channel-controls'),
+ officialChannelControl:(input:{paused:boolean;expected_revision:number;reason:string})=>r<{id:string;paused:boolean;revision:number}>('/api/v1/platform/official-channel-controls','POST',input),
  resources:{
  list:(school?:string)=>r<PublishedResource[]>(`${root(school)}/${school?'published-resources':'resources'}`),
  preview:(school:string|undefined,input:ResourceInput)=>r<BusinessPreview<ResourceInput>>(`${root(school)}/resource-previews`,'POST',{...input,id:input.id??undefined}),
