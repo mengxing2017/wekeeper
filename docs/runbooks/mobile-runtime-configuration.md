@@ -41,15 +41,20 @@ mobile-runtime-config install --package /opt/wekeeper/runtime-resources/wecom-gr
 
 # 只读。配置不存在或校验不通过返回非零。
 mobile-runtime-config status
+
+# 只读。要求当前配置与本次部署包的 UUID、版本、摘要全部一致；不一致返回非零。
+mobile-runtime-config verify --package /opt/wekeeper/runtime-resources/wecom-group-text.json
 ```
 
 Compose 中相应使用 `docker compose exec api mobile-runtime-config ...`。不使用 `mobile-capability import/activate` 来提供业务运行配置；原研发交付工具保留供研发使用，其发布、撤回不会代替或改写当前运行配置。
 
-诊断仅输出能力、是否可用、配置 UUID/版本/摘要、错误代码及位置，不输出 flow、业务正文、APK 或凭据。原因包括 `configuration_missing`、`configuration_structure_invalid`、`configuration_constraints_invalid`、`configuration_digest_mismatch`、`configuration_engine_unsupported`。包身份冲突或文件不可读在安装入口明确失败。先验证文件再执行安装，防止将旧有效配置状态误当作新包已安装。
+诊断仅输出能力、是否可用、配置 UUID/版本/摘要、错误代码及位置，不输出 flow、业务正文、APK 或凭据。原因包括 `configuration_missing`、`configuration_structure_invalid`、`configuration_constraints_invalid`、`configuration_digest_mismatch`、`configuration_engine_unsupported`。包身份冲突或文件不可读在安装入口明确失败。先验证文件、执行安装，再用 `verify` 比对期望包；仅 `status` 为可用不能证明本次包已安装。状态同时输出服务端观测时间和来源 `platform_runtime_configuration`。
 
 ## 业务与手机状态
 
 预览、readiness 和新自动检查从同一当前引用解析配置，确认时复核依赖。确认后的实际规则冻结到计划，后续替换运行配置不修改已确认消息、原调用身份或 unknown 结果。不读取研发验收表选择规则，也不按最新研发 release 的创建时间猜当前版本。
+
+学校概览和受理预览单独返回平台配置状态，不依赖候选手机绑定。没有有效候选绑定时报告资源不可用，不附加配置损坏的误诊。配置根因和手机上报各有来源及时间；当前状态请求失败或未找到原绑定时，界面明确标为预览快照，不复用快照冒充实时状态。配置修复后须重新预览并人工确认。
 
 手机上报独立的屏幕交互、键盘锁、安全锁事实，以及本机自动唤醒同意、屏幕锁是否持有、准备阶段、最近失败和重试时间。安全密码锁等待本人解锁；屏幕关闭与非安全键盘锁可在已同意自动唤醒且有有效待办时尝试准备，后台启动被系统拒绝时显示具体原因。手机托管同意不代表自动唤醒同意。
 
