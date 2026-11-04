@@ -20,7 +20,7 @@ Web 使用 Cookie/Origin/CSRF，小程序和设备使用各自独立 Bearer；�
 | --- | --- |
 | [ADR 0001](../adr/0001-foundation.md) | 初始 Rust/React 骨架；初始 envelope/认证说明已被后续实现替代 |
 | [ADR 0002](../adr/0002-business-migration.md) | 社区、学校、身份、媒体、官方任务与迁移边界 |
-| [ADR 0005](../adr/0005-mobile-delivery.md) | 手机执行、共享账本、单次资格与 unknown |
+| [ADR 0005](../adr/0005-mobile-delivery.md) | 旧手机执行历史决策（当前实现见开发文档） |
 | [ADR 0006](../adr/0006-frontend-clients.md) | React Web 与 uni-app Vue 3 客户端分离 |
 
 历史 ADR 用于解释阶段决策，不把早期“尚未实现”或协议示意当作当前事实。正式操作以站内当前运行手册和代码为准，验收记录按日期说明适用范围。

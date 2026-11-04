@@ -33,7 +33,6 @@
 | `WEKEEPER_WECOM_AGENT_ID` | 旧配置识别兼容；当前目录、群发与 OAuth 不要求 |
 | `WEKEEPER_WECOM_DIRECTORY_INTERVAL_SECONDS` / `WEKEEPER_WECOM_ASSET_SYNC_INTERVAL_SECONDS` | 周期同步；0 关闭周期调度，不关闭手工同步 |
 | `WEKEEPER_WX_APP_ID` / `WEKEEPER_WX_SECRET` | 后端微信身份接入，Secret 不放入小程序包 |
-| `WEKEEPER_MOBILE_EXECUTION_ENABLED` | 默认 false，控制新手机 claim/permit；保留查询、结果与核对 |
 | `WEKEEPER_SHARED_SEND_KEY` | 共享手机发送恢复材料的后端加密密钥；`openssl rand -hex 32` 生成，跨重启/实例保持一致并配套备份；仅注入 API，详见 [Docker 配置](../runbooks/docker.md#共享手机发送密钥-首次配置与已有部署更新) |
 | `WEKEEPER_TEST_DATABASE_URL` | 集成测试专用隔离库，不回退生产地址 |
 | `WEKEEPER_API_ORIGIN` | Vite 开发代理的 API 目标 |
