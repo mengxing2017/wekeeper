@@ -86,14 +86,14 @@ it('empty target directory still permits text preview and saves a recoverable dr
  expect(broadcast.action).not.toHaveBeenCalled()
 })
 
-it('explains the actual deployment block next to the disabled submission action',async()=>{
- show(true,task,'企业微信群发开关未开启。')
+it('explains missing server credentials next to the disabled submission action',async()=>{
+ show(true,task,'官方渠道服务端凭据未配置，可保存草稿。')
  fireEvent.click(await screen.findByRole('button',{name:'查看任务 123456'}))
  // Wait for the task payload before scanning the drawer's accessible controls.
  const detail=within(await screen.findByRole('dialog'))
  await detail.findByText('冻结通知')
  const button=detail.getByRole('button',{name:'确认创建企业微信群发任务'})
  expect((button as HTMLButtonElement).disabled).toBe(true)
- expect(screen.getAllByText('企业微信群发开关未开启。').length).toBe(2)
+ expect(screen.getAllByText('官方渠道服务端凭据未配置，可保存草稿。').length).toBe(2)
  expect(broadcast.action).not.toHaveBeenCalled()
 })
