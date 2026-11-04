@@ -3,11 +3,13 @@ import type { Json } from '../../business/types'
 export const SHARED_SEND_SCHEMA = 'shared_mobile_send/2' as const
 export interface SharedDraftInput { target_ids:string[]; message:string; content_type:'text/plain'; expected_revision?:number;between_targets_seconds:number }
 export interface SharedDraft extends SharedDraftInput { targets:Array<{id:string;name:string}>;id:string; school_id:string; intent_id:string; revision:number; content_digest:string }
+/** UI adaptation and local configuration are owned exclusively by the phone. */
+export interface DeviceExecutionIntent {contract:'device_owned/1';capability:'wecom.group_text'}
 export interface SharedCandidate {
  target_id:string; target_name:string;device_name:string;device_id:string; binding_id:string; binding_locator_revision:number;
  target_locator_revision:number|null; search_text:string; search_source:'default'|'override';
- consent_state?:'accepted'|'revoked'|'unknown';access_revision:number|null;credential_generation:number; delegation_id:string|null; release_id:string|null; flow_digest:string|null;
- configuration_version?:string|null;scope_id?:string;confirmable?:boolean;flow:Record<string,Json>|null;
+ consent_state?:'accepted'|'revoked'|'unknown';access_revision:number|null;credential_generation:number; delegation_id:string|null; /** Historical snapshots only. New tasks never carry UI rules. */ release_id?:string|null; flow_digest?:string|null;
+ configuration_version?:string|null;scope_id?:string;confirmable?:boolean;flow?:Record<string,Json>|null;execution?:DeviceExecutionIntent;
 }
 export interface SharedPlan extends SharedCandidate {schema:typeof SHARED_SEND_SCHEMA;school_id:string;intent_id:string;item_id:string;attempt_id:string;message:string;content_digest:string;selection_policy:'first_group_result';between_targets_seconds:number;policy_id:string}
 export interface SharedConfigurationIssue {code:string;path:string}
@@ -28,6 +30,7 @@ export interface SharedWakeDiagnostics {request_id:string;source:'accessibility_
 export interface SharedDevicePreparation {observed_at?:string|null;wake_diagnostics?:SharedWakeDiagnostics|null;automatic_wake_enabled:boolean;screen_awake_active:boolean;screen_awake_reason:string|null;stage:string;last_error:string|null;retry_after_ms:number}
 export interface SharedScreenConditions extends Record<string,boolean> {interactive:boolean;keyguard_locked:boolean;device_locked:boolean;keyguard_secure:boolean;unlocked:boolean;accessibility:boolean;notification:boolean}
 export interface SharedRuntimeReport {schema:typeof SHARED_SEND_SCHEMA;runtime_epoch:string;ready_reason?:string|null;ui_ready:boolean;paused:boolean;quiescent:boolean;ui_context_epoch:string;apk_sha256:string;conditions:SharedScreenConditions;preparation?:SharedDevicePreparation|null}
+export interface SharedPreparationInput {attempt_id:string;lease_fence:number;plan_digest:string;content_digest:string;input_matches:boolean;page_digest:string;/** Legacy frozen plans only. */ flow_digest?:string}
 export interface SharedResultEvent {result_credential:string|null;schema:typeof SHARED_SEND_SCHEMA;event_id:string;claim_id:string;attempt_id:string;invocation_id:string|null;credential_generation:number;lease_fence:number;plan_digest:string;content_digest:string;outcome:'observed_sent'|'unknown'|'failed_before_call';reason:string;consumed:boolean;calling_marked:boolean;evidence:string}
 export interface SharedReceipt {id:string;event_id:string;claim_id:string;attempt_id:string;invocation_id:string|null;device_id:string;credential_generation:number;lease_fence:number;plan_digest:string;content_digest:string;body_hash:string;disposition:'observed_sent'|'unknown'|'failed_before_call'|'archived'}
 export function createSharedSendV2Client(client:Pick<Client,'requestResource'>) {

@@ -1,0 +1,14 @@
+{
+  "execution": {
+    "contract": "device_owned/1",
+    "capability": "wecom.group_text"
+  },
+  "preparation": {
+    "attempt_id": "00000000-0000-4000-8000-000000000001",
+    "lease_fence": 7,
+    "plan_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "content_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "input_matches": true,
+    "page_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  }
+}

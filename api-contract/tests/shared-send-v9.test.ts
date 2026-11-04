@@ -114,3 +114,12 @@ it('delegation context negotiates diagnostic fields independently of consent',as
  expect(oldContext).not.toHaveProperty('runtime_report_version')
  expect(oldContext.delegation).toEqual(context.delegation)
 })
+
+it('device-owned execution preparation contains no platform UI configuration',async()=>{
+ const {default:f}=await import('../fixtures/device-owned-execution.json')
+ const intent:import('../src/modules/mobile-execution/shared-send/v2').DeviceExecutionIntent={contract:'device_owned/1',capability:'wecom.group_text'}
+ const preparation:import('../src/modules/mobile-execution/shared-send/v2').SharedPreparationInput=f.preparation
+ expect(f.execution).toEqual(intent)
+ expect(preparation).not.toHaveProperty('flow_digest')
+ expect(preparation.input_matches).toBe(true)
+})
