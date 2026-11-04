@@ -217,6 +217,33 @@ pub struct Review {
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct DevicePreparationReport {
+    pub automatic_wake_enabled: bool,
+    pub screen_awake_active: bool,
+    pub screen_awake_reason: Option<String>,
+    pub stage: String,
+    pub last_error: Option<String>,
+    pub retry_after_ms: u32,
+}
+impl DevicePreparationReport {
+    pub fn validate(&self) -> Result<()> {
+        let code = |s: &str| {
+            !s.is_empty()
+                && s.len() <= 100
+                && s.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+        };
+        require(
+            code(&self.stage)
+                && self.screen_awake_reason.as_deref().is_none_or(code)
+                && self.last_error.as_deref().is_none_or(code)
+                && self.retry_after_ms <= 120_000,
+            "send_protocol_unsupported",
+        )
+    }
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct RuntimeReport {
     pub runtime_epoch: Uuid,
     pub schema: String,
@@ -225,6 +252,7 @@ pub struct RuntimeReport {
     pub quiescent: bool,
     pub ui_context_epoch: String,
     pub conditions: std::collections::BTreeMap<String, bool>,
+    pub preparation: Option<DevicePreparationReport>,
     pub apk_sha256: String,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
