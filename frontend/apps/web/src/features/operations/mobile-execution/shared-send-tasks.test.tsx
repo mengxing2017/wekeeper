@@ -203,3 +203,19 @@ it('群名变化必须重新预览，手机配置不是受理条件',async()=>{
  expect((screen.getByRole('button',{name:'确认发送'}) as HTMLButtonElement).disabled).toBe(true)
  expect(sharedSend.confirm).not.toHaveBeenCalled()
 },60000)
+
+it('展示授权候选和自动换机轨迹，历史尝试结果冲突仍可核对',async()=>{
+ const task={id:'task',school_id:'school',intent_id:'intent',dispatch_mode:'candidate_pool',revision:1,stopped:false,created_at:'2026-11-04',items:[{id:'item',target_id:'target',position:0,dispatch:{state:'needs_review',candidates:[{device_name:'候选甲',search_text:'甲备注群名'},{device_name:'候选乙',search_text:'乙备注群名'}],assignments:[{id:'assignment',source:'automatic',from_device_name:'候选甲',to_device_name:'候选乙',created_at:'2026-11-04T00:00:00Z'}]},attempts:[{id:'old',state:'unknown',current:false,attempt_no:1,revision:3,plan:{search_text:'甲备注群名',device_name:'候选甲'}},{id:'new',state:'queued',current:true,attempt_no:2,revision:1,plan:{search_text:'乙备注群名',device_name:'候选乙'}}]}]} as unknown as Awaited<ReturnType<typeof sharedSend.task>>
+ vi.mocked(sharedSend.overview).mockResolvedValue({id:'school',tasks:[task],drafts:[],readiness:[],pool:[],inspections:[]})
+ vi.mocked(sharedSend.task).mockResolvedValue(task)
+ const client=new QueryClient({defaultOptions:{queries:{retry:false}}})
+ render(<QueryClientProvider client={client}><SharedSendTasks school="school" admin/></QueryClientProvider>)
+ fireEvent.click(await screen.findByRole('button',{name:'查看计划与结果'},{timeout:10_000}))
+ expect(await screen.findByText('目标调度：本目标结果待核对，其他目标继续调度',{},{timeout:10_000})).toBeTruthy()
+ expect(screen.getByText('授权候选：候选甲（甲备注群名）、候选乙（乙备注群名）')).toBeTruthy()
+ expect(screen.getByText(/自动换机：候选甲 → 候选乙/)).toBeTruthy()
+ expect(screen.getByText(/平台已受理，按授权候选调度/)).toBeTruthy()
+ expect(screen.getByRole('button',{name:'人工核对结果'})).toBeTruthy()
+ expect(sharedSend.confirm).not.toHaveBeenCalled()
+ client.clear()
+},60000)

@@ -17,3 +17,7 @@ export function isUsageBlocker(code:string) {
 export function currentReadiness(snapshot:SharedReadiness,overview:SharedOverview|undefined,synchronized:boolean) {
   return synchronized ? overview?.readiness.find(r=>r.binding_id===snapshot.binding_id) : undefined
 }
+
+export function dispatchLabel(state:string) {
+  return ({scheduling:'平台已受理，正在调度',assigned:'已分配可用候选手机',waiting_resources:'已受理，持续寻找可用候选手机',executing:'手机正在处理本次尝试',completed:'目标结果已记录',needs_review:'本目标结果待核对，其他目标继续调度',stopped:'已停止调度',confirmation_expired:'业务确认已到期'} as Record<string,string>)[state]??'正在同步调度状态'
+}
