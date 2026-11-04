@@ -2,7 +2,7 @@
 use super::*;
 pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> {
     let policy = policy(tx).await?;
-    let rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(b)||jsonb_build_object('device_name',d.name,'target_name',coalesce(nullif(t.alias,''),t.search_text),'search_text',coalesce(b.search_text_override,t.search_text),'online',coalesce(cp.state='online' AND cp.last_control_heartbeat_at>clock_timestamp()-interval '30 seconds',false),'ui_ready',coalesce(rt.ui_ready AND NOT rt.paused AND rt.credential_generation=d.credential_generation AND rt.observed_at>clock_timestamp()-interval '30 seconds' AND NOT cp.desired_paused,false),'context_epoch',rd.ui_context_epoch,'runtime_observed_at',rt.observed_at,'runtime_fresh',coalesce(rt.credential_generation=d.credential_generation AND rd.credential_generation=d.credential_generation AND rt.observed_at>clock_timestamp()-interval '30 seconds' AND rd.observed_at>clock_timestamp()-interval '30 seconds',false),'runtime_conditions',rd.conditions,'preparation',rd.preparation,'paused',coalesce(rt.paused,false) OR coalesce(cp.desired_paused,false)) FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id JOIN execution_devices d ON d.id=b.device_id LEFT JOIN device_control_presence cp ON cp.id=d.id LEFT JOIN mobile_shared_runtime rt ON rt.device_id=d.id LEFT JOIN mobile_v9_runtime_details rd ON rd.device_id=d.id WHERE b.school_id=$1 ORDER BY d.name,b.id").bind(school).fetch_all(&mut **tx).await?;
+    let rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(b)||jsonb_build_object('device_name',d.name,'target_name',coalesce(nullif(t.alias,''),t.search_text),'search_text',coalesce(b.search_text_override,t.search_text),'online',coalesce(cp.state='online' AND cp.last_control_heartbeat_at>clock_timestamp()-interval '30 seconds',false),'ui_ready',coalesce(rt.ui_ready AND NOT rt.paused AND rt.credential_generation=d.credential_generation AND rt.observed_at>clock_timestamp()-interval '30 seconds' AND NOT cp.desired_paused,false),'context_epoch',rd.ui_context_epoch,'runtime_observed_at',rt.observed_at,'runtime_fresh',coalesce(rt.credential_generation=d.credential_generation AND rd.credential_generation=d.credential_generation AND rt.observed_at>clock_timestamp()-interval '30 seconds' AND rd.observed_at>clock_timestamp()-interval '30 seconds',false),'runtime_conditions',rd.conditions,'runtime_reason',rd.ready_reason,'preparation',rd.preparation,'paused',coalesce(rt.paused,false) OR coalesce(cp.desired_paused,false)) FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id JOIN execution_devices d ON d.id=b.device_id LEFT JOIN device_control_presence cp ON cp.id=d.id LEFT JOIN mobile_shared_runtime rt ON rt.device_id=d.id LEFT JOIN mobile_v9_runtime_details rd ON rd.device_id=d.id WHERE b.school_id=$1 ORDER BY d.name,b.id").bind(school).fetch_all(&mut **tx).await?;
     let mut result = Vec::new();
     for row in rows {
         let candidate = tasks::raw_candidates(tx, school, uid(&row, "target_id")?)
@@ -156,7 +156,7 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
             && confirmable
             && accepted
             && row["online"] == true
-            && row["ui_ready"] == true
+            && runtime_state(&row) == "ready"
             && passed
             && rules_valid;
         let inspection_state = if !rules_valid {
@@ -165,7 +165,7 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
             "passed"
         } else if exhausted {
             "retry_exhausted"
-        } else if !accepted || row["online"] != true || row["ui_ready"] != true {
+        } else if !accepted || row["online"] != true || runtime_state(&row) != "ready" {
             "waiting_prerequisites"
         } else {
             match inspection.as_ref().and_then(|i| i["state"].as_str()) {
@@ -178,7 +178,7 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
                 _ => "not_scheduled",
             }
         };
-        result.push(json!({"binding_id":row["id"],"device_id":row["device_id"],"target_id":row["target_id"],"device_name":row["device_name"],"target_name":row["target_name"],"search_text":row["search_text"],"plan_selectable":selectable,"confirmable":confirmable && rules_valid,"execution_ready":ready,"ready":ready,"state":if ready{json!("ready_for_task")}else{blockers.first().or_else(||execution_conditions.first()).map(|b|b["code"].clone()).unwrap_or(json!("waiting"))},"consent_state":consent_state,"configuration_id":candidate.as_ref().map(|c| &c["release_id"]),"configuration_digest":candidate.as_ref().map(|c| &c["flow_digest"]),"configuration_version":candidate.as_ref().map(|c| &c["configuration_version"]),"configuration_issue":configuration_issue,"configuration_observed_at":chrono::Utc::now(),"configuration_source":"platform_runtime_configuration","preparation":row["preparation"],"runtime_state":runtime_state(&row),"runtime_observed_at":row["runtime_observed_at"],"execution_conditions":execution_conditions,"blockers":blockers,"inspection":inspection,"inspection_state":inspection_state,"retry_remaining":remaining,"retry_at":retry_at,"automatic":true}));
+        result.push(json!({"binding_id":row["id"],"device_id":row["device_id"],"target_id":row["target_id"],"device_name":row["device_name"],"target_name":row["target_name"],"search_text":row["search_text"],"plan_selectable":selectable,"confirmable":confirmable && rules_valid,"execution_ready":ready,"ready":ready,"state":if ready{json!("ready_for_task")}else{blockers.first().or_else(||execution_conditions.first()).map(|b|b["code"].clone()).unwrap_or(json!("waiting"))},"consent_state":consent_state,"configuration_id":candidate.as_ref().map(|c| &c["release_id"]),"configuration_digest":candidate.as_ref().map(|c| &c["flow_digest"]),"configuration_version":candidate.as_ref().map(|c| &c["configuration_version"]),"configuration_issue":configuration_issue,"configuration_observed_at":chrono::Utc::now(),"configuration_source":"platform_runtime_configuration","preparation":row["preparation"],"runtime_state":runtime_state(&row),"runtime_reason":row["runtime_reason"],"runtime_observed_at":row["runtime_observed_at"],"execution_conditions":execution_conditions,"blockers":blockers,"inspection":inspection,"inspection_state":inspection_state,"retry_remaining":remaining,"retry_at":retry_at,"automatic":true}));
     }
     Ok(result)
 }
@@ -196,6 +196,8 @@ fn runtime_state(row: &Value) -> &'static str {
         "stale"
     } else if row["paused"] == true {
         "paused"
+    } else if !super::screen::facts_complete(&row["runtime_conditions"]) {
+        "unknown"
     } else if let Some(state) = super::screen::state(&row["runtime_conditions"]) {
         state
     } else if row["runtime_conditions"]["accessibility"] == false {
@@ -245,7 +247,10 @@ fn execution_conditions(row: &Value, consent: &str, busy: bool, mode: Option<&st
             true,
         ));
     }
-    let screen_issue = if row["runtime_fresh"] == true && row["paused"] != true {
+    let screen_issue = if row["runtime_fresh"] == true
+        && row["paused"] != true
+        && (row["ui_ready"] != true || super::screen::state(&row["runtime_conditions"]).is_some())
+    {
         super::screen::issue(&row["runtime_conditions"], &row["preparation"])
     } else {
         None
@@ -286,9 +291,13 @@ fn execution_conditions(row: &Value, consent: &str, busy: bool, mode: Option<&st
             "在手机检查通知权限",
         ),
         "secure_locked" | "screen_off" | "keyguard_locked" => ("", "", "", ""),
+        "waiting" if super::screen::runtime_issue(&row["runtime_reason"]).is_some() => {
+            let (code, message) = super::screen::runtime_issue(&row["runtime_reason"]).unwrap();
+            (code, message, "device", "等待手机完成当前处理")
+        }
         "waiting" => (
             "waiting_device_ready",
-            "手机暂未就绪，可能正在处理其他工作；不要求重新授权",
+            "尚未收到明确就绪原因，系统正在同步；不要求重新授权",
             "system",
             "等待手机更新状态",
         ),
@@ -344,6 +353,32 @@ async fn scope_issue(tx: &mut Tx<'_>, school: Uuid, device: Uuid, target: Uuid) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn false_readiness_is_not_busy_and_missing_screen_facts_are_unknown() {
+        let mut row = serde_json::json!({"online":true,"runtime_observed_at":"now","runtime_fresh":true,"ui_ready":false,"runtime_conditions":{"interactive":true,"keyguard_locked":false,"device_locked":false,"keyguard_secure":false}});
+        let conditions = execution_conditions(&row, "accepted", false, Some("enabled"));
+        assert!(
+            conditions
+                .iter()
+                .any(|v| v["code"] == "waiting_device_ready")
+        );
+        assert!(
+            !conditions
+                .iter()
+                .any(|v| v["code"] == "waiting_physical_owner")
+        );
+        assert!(
+            execution_conditions(&row, "accepted", true, Some("enabled"))
+                .iter()
+                .any(|v| v["code"] == "waiting_physical_owner")
+        );
+        row["runtime_conditions"] = serde_json::json!({"interactive":false});
+        assert_eq!(runtime_state(&row), "unknown");
+        row["preparation"] = json!({"automatic_wake_enabled":true,"last_error":"wake_timeout"});
+        let partial = execution_conditions(&row, "accepted", false, Some("enabled"));
+        assert_eq!(partial.len(), 1);
+        assert_eq!(partial[0]["code"], "runtime_unknown");
+    }
     #[test]
     fn unknown_and_stale_runtime_never_imply_missing_permissions_or_consent() {
         let row = json!({"online":true,"ui_ready":false});
