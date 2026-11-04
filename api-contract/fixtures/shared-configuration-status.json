@@ -1,0 +1,13 @@
+{
+  "capability": "wecom.group_text",
+  "available": false,
+  "configuration_id": null,
+  "version": null,
+  "flow_digest": null,
+  "issue": {
+    "code": "configuration_missing",
+    "path": "flow"
+  },
+  "source": "platform_runtime_configuration",
+  "observed_at": "2026-11-04T04:10:09Z"
+}
