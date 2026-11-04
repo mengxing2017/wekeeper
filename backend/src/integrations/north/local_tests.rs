@@ -34,14 +34,11 @@ async fn capabilities_and_cache_identity_are_independent_of_agent_id() {
         app.options.insecure_local_auth = local_login;
         let broadcast = app.broadcast();
         assert!(broadcast.management_available);
-        assert_eq!(
-            broadcast.enabled,
-            std::env::var("WEKEEPER_WECOM_BROADCAST_ENABLED").is_ok_and(|v| v == "true")
-        );
+        assert!(app.broadcast_unavailable_reason().is_none());
     }
     app.integrations.secret.clear();
     assert!(!app.broadcast().management_available);
-    assert!(!app.broadcast().enabled);
+    assert!(app.broadcast_unavailable_reason().is_some());
     let mut s = service(pool);
     let key = s.cache_key("token");
     for agent in ["", " ", "0", "-1", "+1", "abc", "4294967296"] {

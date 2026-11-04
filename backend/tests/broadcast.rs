@@ -167,7 +167,6 @@ async fn broadcast_once_partial_results_and_school_boundaries() {
         sources: wekeeper_api::distribution::south::adapter::in_process::Sources(pool.clone()),
         store: Repository(pool.clone()),
         client: fake.clone(),
-        enabled: true,
         management_available: true,
         origin: "https://school.test".into(),
     };
@@ -282,7 +281,6 @@ async fn lost_response_and_crash_never_requeue_a_create() {
         sources: wekeeper_api::distribution::south::adapter::in_process::Sources(pool.clone()),
         store: Repository(pool.clone()),
         client: fake.clone(),
-        enabled: true,
         management_available: true,
         origin: "https://school.test".into(),
     };
@@ -343,7 +341,6 @@ async fn drafts_are_revisioned_and_preflight_rechecks_content() {
         sources: wekeeper_api::distribution::south::adapter::in_process::Sources(pool.clone()),
         store: Repository(pool.clone()),
         client: fake.clone(),
-        enabled: true,
         management_available: true,
         origin: "https://school.test".into(),
     };
@@ -372,14 +369,14 @@ async fn drafts_are_revisioned_and_preflight_rechecks_content() {
             .is_err()
     );
     assert_eq!(fake.calls.load(Ordering::SeqCst), 0);
-    // Disabled deployments cannot enqueue an external creation even with valid local content.
-    let disabled = Service {
-        enabled: false,
+    // Missing upstream credentials cannot enqueue an external creation even with valid local content.
+    let unconfigured = Service {
+        management_available: false,
         ..service.clone()
     };
-    let fresh = disabled.save(&a, s, None, input).await.unwrap();
+    let fresh = unconfigured.save(&a, s, None, input).await.unwrap();
     assert!(
-        disabled
+        unconfigured
             .action(
                 &a,
                 s,
@@ -420,7 +417,6 @@ async fn stopping_during_creation_covers_late_created_task() {
         sources: wekeeper_api::distribution::south::adapter::in_process::Sources(pool.clone()),
         store: Repository(pool),
         client: fake.clone(),
-        enabled: true,
         management_available: true,
         origin: "https://school.test".into(),
     };
@@ -474,7 +470,6 @@ async fn repeat_startup_preserves_current_draft_and_input() {
         sources: wekeeper_api::distribution::south::adapter::in_process::Sources(pool.clone()),
         store: Repository(pool.clone()),
         client: fake.clone(),
-        enabled: true,
         management_available: true,
         origin: "https://school.test".into(),
     };
@@ -501,7 +496,6 @@ async fn http_scope_csrf_retirement_and_real_task_contract() {
         sources: wekeeper_api::distribution::south::adapter::in_process::Sources(pool.clone()),
         store: Repository(pool.clone()),
         client: fake,
-        enabled: true,
         management_available: true,
         origin: "https://school.test".into(),
     };
@@ -606,7 +600,6 @@ async fn reminders_are_limited_and_stop_unknown_requires_evidence() {
         sources: wekeeper_api::distribution::south::adapter::in_process::Sources(pool.clone()),
         store: Repository(pool),
         client: fake,
-        enabled: true,
         management_available: true,
         origin: "https://school.test".into(),
     };
@@ -721,7 +714,6 @@ async fn direct_text_without_posts_admin_confirmation_and_revocation() {
         sources: wekeeper_api::distribution::south::adapter::in_process::Sources(pool.clone()),
         store: Repository(pool.clone()),
         client: fake.clone(),
-        enabled: true,
         management_available: true,
         origin: "https://school.test".into(),
     };
@@ -812,7 +804,6 @@ async fn content_source_switch_and_cross_source_duplicate_guard() {
         sources: wekeeper_api::distribution::south::adapter::in_process::Sources(pool.clone()),
         store: Repository(pool.clone()),
         client: fake,
-        enabled: true,
         management_available: true,
         origin: "https://school.test".into(),
     };
@@ -897,7 +888,6 @@ async fn official_broadcast_ignores_mobile_switch_and_mobile_transaction_lock() 
         sources: wekeeper_api::distribution::south::adapter::in_process::Sources(pool.clone()),
         store: Repository(pool.clone()),
         client: fake.clone(),
-        enabled: true,
         management_available: true,
         origin: "https://school.test".into(),
     };
@@ -1030,7 +1020,6 @@ async fn non_forum_source_replacement_idempotency_and_frozen_confirmation() {
         store: Repository(pool.clone()),
         sources: NoticeSource,
         client: fake.clone(),
-        enabled: true,
         management_available: true,
         origin: String::new(),
     };
@@ -1093,7 +1082,6 @@ async fn two_sources_share_official_resource_budget_and_unknown_does_not_release
         store: Repository(pool.clone()),
         sources: NoticeSource,
         client: fake.clone(),
-        enabled: true,
         management_available: true,
         origin: String::new(),
     };
@@ -1157,7 +1145,6 @@ async fn forum_withdrawal_is_transactional_and_preserves_snapshot_and_history() 
         store: Repository(pool.clone()),
         sources: wekeeper_api::distribution::south::adapter::in_process::Sources(pool.clone()),
         client: fake.clone(),
-        enabled: true,
         management_available: true,
         origin: "https://school.test".into(),
     };
@@ -1216,7 +1203,6 @@ async fn sender_qualification_is_platform_only_and_blocks_final_call() {
         store: Repository(pool.clone()),
         sources: wekeeper_api::distribution::south::adapter::in_process::Sources(pool.clone()),
         client: fake.clone(),
-        enabled: true,
         management_available: true,
         origin: "https://school.test".into(),
     };
@@ -1272,7 +1258,6 @@ async fn product_unavailable_draft_replays_without_sender_or_external_work() {
         sources: wekeeper_api::distribution::south::adapter::in_process::Sources(pool.clone()),
         store: Repository(pool.clone()),
         client: fake.clone(),
-        enabled: false,
         management_available: false,
         origin: "https://school.test".into(),
     };
@@ -1464,7 +1449,6 @@ async fn product_member_policy_reuses_existing_key_and_usage_ledger() {
         sources: wekeeper_api::distribution::south::adapter::in_process::Sources(pool.clone()),
         store: Repository(pool.clone()),
         client: fake.clone(),
-        enabled: true,
         management_available: true,
         origin: "https://school.test".into(),
     }
@@ -1533,7 +1517,7 @@ async fn product_member_policy_reuses_existing_key_and_usage_ledger() {
     assert_eq!(after["window_seconds"], 7200);
     assert!(service.options(&a, Some(Uuid::new_v4())).await.is_err());
     assert!(
-        service.channel(&a, s, true, true, "scope").await.unwrap()["broadcast_available"]
+        service.channel(&a, s, true, "scope").await.unwrap()["broadcast_available"]
             .as_bool()
             .unwrap()
     );
@@ -1541,7 +1525,7 @@ async fn product_member_policy_reuses_existing_key_and_usage_ledger() {
         .execute(&pool)
         .await
         .unwrap();
-    let unavailable = service.channel(&a, s, true, true, "scope").await.unwrap();
+    let unavailable = service.channel(&a, s, true, "scope").await.unwrap();
     assert_eq!(unavailable["broadcast_available"], false);
     assert_eq!(unavailable["health_state"], "checking");
 }
@@ -1697,10 +1681,7 @@ async fn automatic_health_never_unpauses_explicit_business_control() {
         error_code: None,
     };
     repo.record_health(observation.clone()).await.unwrap();
-    let paused = repo
-        .channel(&actor, school, true, true, "scope")
-        .await
-        .unwrap();
+    let paused = repo.channel(&actor, school, true, "scope").await.unwrap();
     assert_eq!(paused["broadcast_available"], false);
     assert_eq!(paused["health_state"], "paused");
     assert_eq!(paused["can_preview"], true);
@@ -1716,9 +1697,7 @@ async fn automatic_health_never_unpauses_explicit_business_control() {
     .await
     .unwrap();
     assert_eq!(
-        repo.channel(&actor, school, true, true, "scope")
-            .await
-            .unwrap()["broadcast_available"],
+        repo.channel(&actor, school, true, "scope").await.unwrap()["broadcast_available"],
         true
     );
     repo.record_health(ChannelHealth {
@@ -1728,10 +1707,7 @@ async fn automatic_health_never_unpauses_explicit_business_control() {
     })
     .await
     .unwrap();
-    let failed = repo
-        .channel(&actor, school, true, true, "scope")
-        .await
-        .unwrap();
+    let failed = repo.channel(&actor, school, true, "scope").await.unwrap();
     assert_eq!(failed["broadcast_available"], false);
     let history: (bool, bool, Option<String>) = sqlx::query_as("SELECT last_success_at IS NOT NULL,last_failure_at IS NOT NULL,error_code FROM official_channel_health WHERE credential_scope='scope'")
         .fetch_one(&pool).await.unwrap();
