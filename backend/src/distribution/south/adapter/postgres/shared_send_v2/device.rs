@@ -200,6 +200,17 @@ pub(super) async fn write(
         DeviceCommand::Renew(id, v) => mutate_lease(&mut tx, c, id, v, false).await?,
         DeviceCommand::Release(id, v) => mutate_lease(&mut tx, c, id, v, true).await?,
         DeviceCommand::Runtime(v) => {
+            if let Some(reason) = &v.ready_reason {
+                require(
+                    !v.ui_ready
+                        && !reason.is_empty()
+                        && reason.len() <= 100
+                        && reason
+                            .bytes()
+                            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'),
+                    "send_protocol_unsupported",
+                )?;
+            }
             if let Some(preparation) = &v.preparation {
                 preparation.validate()?;
             }
@@ -214,7 +225,7 @@ pub(super) async fn write(
                     && v.ui_context_epoch.len() <= 256,
                 "send_protocol_unsupported",
             )?;
-            sqlx::query("INSERT INTO mobile_v9_runtime_details(device_id,credential_generation,ui_context_epoch,conditions,apk_sha256,preparation) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(device_id) DO UPDATE SET credential_generation=$2,ui_context_epoch=$3,conditions=$4,apk_sha256=$5,preparation=$6,observed_at=clock_timestamp()").bind(c.device_id).bind(c.generation).bind(&v.ui_context_epoch).bind(json!(v.conditions)).bind(&v.apk_sha256).bind(json!(v.preparation)).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO mobile_v9_runtime_details(device_id,credential_generation,ui_context_epoch,conditions,apk_sha256,preparation,ready_reason) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(device_id) DO UPDATE SET credential_generation=$2,ui_context_epoch=$3,conditions=$4,apk_sha256=$5,preparation=$6,ready_reason=$7,observed_at=clock_timestamp()").bind(c.device_id).bind(c.generation).bind(&v.ui_context_epoch).bind(json!(v.conditions)).bind(&v.apk_sha256).bind(json!(v.preparation)).bind(&v.ready_reason).execute(&mut *tx).await?;
             // A vanished runtime never resumes an old UI session. Issued calls stay at risk.
             sqlx::query("UPDATE mobile_v9_attempts a SET state='unknown',revision=revision+1 FROM mobile_v9_invocations i JOIN mobile_v9_send_claims cl ON cl.id=i.claim_id WHERE a.id=i.attempt_id AND i.device_id=$1 AND i.state='risk_held' AND a.state='invocation_issued' AND (cl.runtime_epoch<>$2 OR (i.execute_before<clock_timestamp() AND $3))").bind(c.device_id).bind(v.runtime_epoch).bind(v.quiescent).execute(&mut *tx).await?;
             if v.quiescent {
