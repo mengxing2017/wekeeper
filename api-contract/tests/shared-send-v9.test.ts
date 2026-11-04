@@ -86,11 +86,13 @@ it('inspection start is an authenticated execution observation with the exact le
 
 it('screen runtime separates sleep from secure lock and includes bounded preparation diagnostics',async()=>{
  const {default:fixture}=await import('../fixtures/shared-screen-runtime.json')
- const report:import('../src/modules/mobile-execution/shared-send/v2').SharedRuntimeReport={...fixture,schema:SHARED_SEND_SCHEMA}
+ const report:import('../src/modules/mobile-execution/shared-send/v2').SharedRuntimeReport={...fixture,schema:SHARED_SEND_SCHEMA,preparation:{...fixture.preparation,wake_diagnostics:{...fixture.preparation.wake_diagnostics,source:'accessibility_service'}}}
  expect(report.conditions.interactive).toBe(false)
  expect(report.conditions.device_locked).toBe(false)
  expect(report.preparation?.automatic_wake_enabled).toBe(true)
  expect(report.preparation?.retry_after_ms).toBe(0)
+ expect(report.ready_reason).toBe('wake_timeout')
+ expect(report.preparation?.wake_diagnostics?.events.map(e=>e.stage)).toEqual(['request_created','start_requested','closed'])
 })
 
 it('configuration status includes platform source and observation separately from phone runtime',async()=>{
@@ -100,4 +102,15 @@ it('configuration status includes platform source and observation separately fro
  expect(status.issue).toEqual({code:'configuration_missing',path:'flow'})
  expect(status.observed_at).toBe('2026-11-04T04:10:09Z')
  expect(status).not.toHaveProperty('flow')
+})
+
+// Old servers omit this additive capability: clients keep the base runtime wire until advertised.
+it('delegation context negotiates diagnostic fields independently of consent',async()=>{
+ const {default:fixture}=await import('../fixtures/shared-runtime-negotiation.json')
+ const context:import('../src/modules/mobile-execution/shared-send/v2').SharedDelegationContext={...fixture,authorization_schema:'shared_mobile_device_delegation/1',runtime_report_version:2,delegation:{...fixture.delegation,scope:{...fixture.delegation.scope,schema:'shared_mobile_device_delegation/1',package_name:'com.tencent.wework',capability:'group_text',resource_policy:'platform_managed_school_targets',background_collection:true,automatic_inspection:true,text_input:true,single_use_send:true}}}
+ expect(context.runtime_report_version).toBe(2)
+ expect(context.delegation.decision?.accepted).toBe(true)
+ const {runtime_report_version,...oldContext}=context
+ expect(oldContext).not.toHaveProperty('runtime_report_version')
+ expect(oldContext.delegation).toEqual(context.delegation)
 })
