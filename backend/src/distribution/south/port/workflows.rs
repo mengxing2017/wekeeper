@@ -40,7 +40,6 @@ pub trait Store: Clone + Send + Sync + 'static {
         a: &Actor,
         s: Uuid,
         configured: bool,
-        enabled: bool,
         scope: &str,
     ) -> impl Future<Output = Result<Value>> + Send;
 }

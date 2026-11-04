@@ -130,7 +130,6 @@ async fn capability(
         &actor,
         s,
         a.integrations.server_configured(),
-        a.broadcast().enabled,
         &a.integrations.credential_scope(),
     )
     .await?;

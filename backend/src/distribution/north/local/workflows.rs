@@ -25,10 +25,9 @@ impl<R: Store> Service<R> {
         a: &Actor,
         s: Uuid,
         configured: bool,
-        enabled: bool,
         scope: &str,
     ) -> Result<Value> {
-        self.0.channel(a, s, configured, enabled, scope).await
+        self.0.channel(a, s, configured, scope).await
     }
 }
 

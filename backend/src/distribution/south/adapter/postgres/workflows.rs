@@ -555,24 +555,17 @@ impl Store for Repository {
             json!({"id":"current","generation":generation,"owners":owners,"members":members,"accounts":accounts,"groups":groups,"reason":if generation.is_none(){Some("目录尚未准备，等待平台负责人完成接入")}else{None}}),
         )
     }
-    async fn channel(
-        &self,
-        a: &Actor,
-        s: Uuid,
-        configured: bool,
-        enabled: bool,
-        scope: &str,
-    ) -> Result<Value> {
+    async fn channel(&self, a: &Actor, s: Uuid, configured: bool, scope: &str) -> Result<Value> {
         let mut tx = self.0.begin().await?;
         super::broadcast::authorize(&mut tx, a.id, s, false).await?;
         let health = channel_status(&mut tx, scope).await?;
-        let available = configured && enabled && health.0;
+        let available = configured && health.0;
         let pending:Option<Value>=sqlx::query_scalar("SELECT to_jsonb(r)||jsonb_build_object('owner_name',a.display_name) FROM product_requests r LEFT JOIN accounts a ON a.id=r.owner_id WHERE r.school_id=$1 AND kind='channel' ORDER BY r.created_at DESC,r.id DESC LIMIT 1").bind(s).fetch_optional(&mut *tx).await?;
         let control:Option<Value>=sqlx::query_scalar("SELECT jsonb_build_object('paused',paused,'revision',revision) FROM official_channel_controls WHERE credential_scope=$1").bind(scope).fetch_optional(&mut *tx).await?;
         Ok(
             json!({"id":"current","broadcast_available":available,"management_available":configured,
-            "reason":if !configured {Some("官方渠道服务端凭据未配置，可保存草稿")} else if !enabled || health.1=="paused" {Some("官方渠道已明确暂停新发送")} else if !available {Some("官方接口暂不可用，系统将自动重新检查；草稿保留")} else {None},
-            "reason_code":if available {"available"} else if !configured {"credentials_missing"} else if !enabled || health.1=="paused" {"channel_paused"} else {"channel_unavailable"},
+            "reason":if !configured {Some("官方渠道服务端凭据未配置，可保存草稿")} else if health.1=="paused" {Some("官方渠道已明确暂停新发送")} else if !available {Some("官方接口暂不可用，系统将自动重新检查；草稿保留")} else {None},
+            "reason_code":if available {"available"} else if !configured {"credentials_missing"} else if health.1=="paused" {"channel_paused"} else {"channel_unavailable"},
             "health_state":health.1,"control":control,"can_edit_draft":true,"can_preview":true,"can_confirm":available,"can_refresh":configured,"can_stop":configured,"request":pending}),
         )
     }

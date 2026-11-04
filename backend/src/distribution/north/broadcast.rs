@@ -20,7 +20,6 @@ pub struct Service<
     pub sources: S,
     pub store: R,
     pub client: C,
-    pub enabled: bool,
     pub management_available: bool,
     pub origin: String,
 }
@@ -307,7 +306,7 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
             self.store.authorize(a.id, s, true).await?;
         }
         if matches!(operation, "confirm" | "remind") {
-            require(self.enabled, "官方渠道尚未开放新发送，请查看开通申请进度")?;
+            require(self.management_available, "群发需要有效企业微信服务端凭据")?;
         }
         if operation == "stop" {
             require(
@@ -392,14 +391,11 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
         self.client.candidates(start, end).await
     }
     pub async fn run_once(&self) -> Result<()> {
-        // Credentials alone never enable writes; the explicit switch applies in every runtime.
+        // Only explicitly confirmed work is claimed; credentials are required for upstream calls.
         if !self.management_available {
             return Ok(());
         }
         for w in self.store.work(None).await? {
-            if !self.enabled && matches!(w.operation.as_str(), "create" | "remind") {
-                continue;
-            }
             if w.operation == "read" {
                 if self.store.claim(&w).await? {
                     self.store
@@ -457,33 +453,21 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
         Ok(())
     }
 }
-fn unavailable_reason(configured: bool, enabled: bool) -> Option<&'static str> {
-    if !configured {
-        Some("官方渠道服务端凭据未配置，可保存草稿。")
-    } else if !enabled {
-        Some("官方渠道暂停新发送，请查看平台处理进度。")
-    } else {
-        None
-    }
+fn unavailable_reason(configured: bool) -> Option<&'static str> {
+    (!configured).then_some("官方渠道服务端凭据未配置，可保存草稿。")
 }
 
 impl crate::bootstrap::Application {
     pub fn broadcast_unavailable_reason(&self) -> Option<&'static str> {
-        unavailable_reason(
-            self.integrations.server_configured(),
-            std::env::var("WEKEEPER_WECOM_BROADCAST_ENABLED").is_ok_and(|v| v == "true"),
-        )
+        unavailable_reason(self.integrations.server_configured())
     }
     pub fn broadcast(&self) -> Service {
         // Server-to-server operations do not depend on browser origin or OAuth login.
         let management_available = self.integrations.server_configured();
-        let enabled = management_available
-            && std::env::var("WEKEEPER_WECOM_BROADCAST_ENABLED").is_ok_and(|v| v == "true");
         Service {
             sources: crate::distribution::south::adapter::in_process::Sources(self.pool.clone()),
             store: Repository(self.pool.clone()),
             client: broadcast_http::Client(self.integrations.clone()),
-            enabled,
             management_available,
             origin: self.options.public_origin.clone(),
         }
@@ -494,17 +478,8 @@ impl crate::bootstrap::Application {
 mod availability_tests {
     use super::unavailable_reason;
     #[test]
-    fn server_credentials_and_explicit_switch_control_broadcast() {
-        assert!(
-            unavailable_reason(false, true)
-                .unwrap()
-                .contains("凭据未配置")
-        );
-        assert!(
-            unavailable_reason(true, false)
-                .unwrap()
-                .contains("暂停新发送")
-        );
-        assert!(unavailable_reason(true, true).is_none());
+    fn server_credentials_make_broadcast_available_without_a_deployment_switch() {
+        assert!(unavailable_reason(false).unwrap().contains("凭据未配置"));
+        assert!(unavailable_reason(true).is_none());
     }
 }
