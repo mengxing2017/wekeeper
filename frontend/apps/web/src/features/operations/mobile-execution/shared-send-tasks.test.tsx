@@ -101,7 +101,7 @@ it('离线已绑定手机可选且静态范围有效时可确认等待，不发�
  expect(sharedSend.confirm).not.toHaveBeenCalled()
 },120000)
 
-it('配置损坏由服务端明确拒绝，不置灰管理员动作也不清除输入',async()=>{
+it('确认时才发现配置损坏由服务端明确拒绝，并保留输入',async()=>{
  const pending=structuredClone(preview)
  const phone={target_id:'target',target_name:'家长通知',device_name:'离线测试手机',device_id:'phone',binding_id:'binding',binding_locator_revision:1,target_locator_revision:1,search_text:'实际搜索文字',search_source:'default' as const,access_revision:null,credential_generation:1,delegation_id:null,release_id:null,flow_digest:null,flow:null,confirmable:false}
  pending.plan.items[0]={...pending.plan.items[0],selected:phone,candidates:[phone],blocker:'shared_send_execution_configuration_invalid',readiness:[{binding_id:'binding',device_id:'phone',target_id:'target',device_name:'离线测试手机',target_name:'家长通知',search_text:'实际搜索文字',state:'waiting_connection',ready:false,plan_selectable:true,confirmable:false,execution_ready:false,automatic:true,blockers:[{code:'waiting_connection',message:'手机离线，连接后自动继续',owner:'system',automatic:true}],inspection:null,inspection_state:'waiting_prerequisites',retry_at:null,retry_remaining:3}]}
@@ -185,4 +185,21 @@ it('排队任务分别显示平台已创建与手机已接收，接收回执不�
  expect(screen.getByText(/等待手机执行条件更新/)).toBeTruthy()
  expect(sharedSend.confirm).not.toHaveBeenCalled()
  client.clear()
+},60000)
+
+it('配置错误只显示一次，不误导办理范围；配置变化必须重预览',async()=>{
+ const pending=structuredClone(preview)
+ const code='shared_send_execution_configuration_invalid'
+ const text='执行配置缺失或损坏，本次不能确认发送'
+ const row={binding_id:'binding',device_id:'phone',target_id:'target',device_name:'测试手机',target_name:'家长通知',search_text:'实际搜索文字',state:code,ready:false,plan_selectable:true,confirmable:false,execution_ready:false,automatic:true,blockers:[{code,message:text,owner:'system',automatic:false}],inspection:null,inspection_state:'not_scheduled' as const,retry_at:null,retry_remaining:3,configuration_id:null,configuration_digest:null,consent_state:'accepted' as const,runtime_state:'screen_off' as const,execution_conditions:[{code:'device_screen_off',message:'手机屏幕已关闭，有有效待办时自动准备亮屏',owner:'device',automatic:true}]}
+ pending.plan.items[0]={...pending.plan.items[0],blocker:text,readiness:[row]}
+ vi.mocked(sharedSend.taskPreview).mockResolvedValue(response(pending))
+ vi.mocked(sharedSend.overview).mockResolvedValue({id:'school',tasks:[],drafts:[],readiness:[{...row,configuration_id:'installed',configuration_digest:'new-digest'}],pool:[],inspections:[]})
+ await compose();fireEvent.click(screen.getByRole('button',{name:'预览逐群执行计划'}))
+ expect(await screen.findByText(`受理检查：${text}`)).toBeTruthy()
+ expect(screen.queryByText(`受理条件：${text}`)).toBeNull()
+ expect(screen.queryByRole('button',{name:'查看本校使用范围'})).toBeNull()
+ expect(screen.getByText('执行配置已变化，请重新预览后确认')).toBeTruthy()
+ expect((screen.getByRole('button',{name:'确认发送'}) as HTMLButtonElement).disabled).toBe(true)
+ expect(sharedSend.confirm).not.toHaveBeenCalled()
 },60000)
