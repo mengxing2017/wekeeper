@@ -111,13 +111,18 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
             busy,
             policy.as_ref().and_then(|p| p["mode"].as_str()),
         );
-        let rules_valid = candidate
-            .as_ref()
-            .is_some_and(|c| !tasks::missing_rules(c) && tasks::validate_embedded_rules(c).is_ok());
-        if !rules_valid {
+        let configuration_issue = candidate.as_ref().and_then(|c| {
+            crate::distribution::domain::shared_mobile::runtime_configuration::inspect_flow(
+                &c["flow"],
+                &c["flow_digest"],
+            )
+            .err()
+        });
+        let rules_valid = candidate.is_some() && configuration_issue.is_none();
+        if let Some(ref issue) = configuration_issue {
             blockers.push(condition(
                 "shared_send_execution_configuration_invalid",
-                "执行配置缺失或损坏，本次不能确认发送",
+                issue.message(),
                 "system",
                 "可报告问题，修复后重新预览",
                 false,
@@ -173,7 +178,7 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
                 _ => "not_scheduled",
             }
         };
-        result.push(json!({"binding_id":row["id"],"device_id":row["device_id"],"target_id":row["target_id"],"device_name":row["device_name"],"target_name":row["target_name"],"search_text":row["search_text"],"plan_selectable":selectable,"confirmable":confirmable && rules_valid,"execution_ready":ready,"ready":ready,"state":if ready{json!("ready_for_task")}else{blockers.first().or_else(||execution_conditions.first()).map(|b|b["code"].clone()).unwrap_or(json!("waiting"))},"consent_state":consent_state,"configuration_id":candidate.as_ref().map(|c| &c["release_id"]),"configuration_digest":candidate.as_ref().map(|c| &c["flow_digest"]),"configuration_version":candidate.as_ref().map(|c| &c["configuration_version"]),"preparation":row["preparation"],"runtime_state":runtime_state(&row),"runtime_observed_at":row["runtime_observed_at"],"execution_conditions":execution_conditions,"blockers":blockers,"inspection":inspection,"inspection_state":inspection_state,"retry_remaining":remaining,"retry_at":retry_at,"automatic":true}));
+        result.push(json!({"binding_id":row["id"],"device_id":row["device_id"],"target_id":row["target_id"],"device_name":row["device_name"],"target_name":row["target_name"],"search_text":row["search_text"],"plan_selectable":selectable,"confirmable":confirmable && rules_valid,"execution_ready":ready,"ready":ready,"state":if ready{json!("ready_for_task")}else{blockers.first().or_else(||execution_conditions.first()).map(|b|b["code"].clone()).unwrap_or(json!("waiting"))},"consent_state":consent_state,"configuration_id":candidate.as_ref().map(|c| &c["release_id"]),"configuration_digest":candidate.as_ref().map(|c| &c["flow_digest"]),"configuration_version":candidate.as_ref().map(|c| &c["configuration_version"]),"configuration_issue":configuration_issue,"configuration_observed_at":chrono::Utc::now(),"configuration_source":"platform_runtime_configuration","preparation":row["preparation"],"runtime_state":runtime_state(&row),"runtime_observed_at":row["runtime_observed_at"],"execution_conditions":execution_conditions,"blockers":blockers,"inspection":inspection,"inspection_state":inspection_state,"retry_remaining":remaining,"retry_at":retry_at,"automatic":true}));
     }
     Ok(result)
 }

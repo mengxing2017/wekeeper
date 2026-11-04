@@ -325,7 +325,8 @@ pub(super) async fn write(
                             .map(String::as_str)
                         {
                             Some("shared_send_execution_configuration_invalid") => {
-                                "执行配置缺失或损坏，本次不能确认发送"
+                                crate::distribution::domain::shared_mobile::runtime_configuration::inspect_flow(&choice["flow"], &choice["flow_digest"])
+                                    .err().map(|issue| issue.message()).unwrap_or("平台运行配置不可用，需系统修复")
                             }
                             Some("shared_send_usage_paused") => {
                                 "本校此手机与目标群的使用范围已暂停，请在使用管理恢复后再确认"
@@ -352,7 +353,7 @@ pub(super) async fn write(
             }
             let p = policy(tx).await?;
             let id = Uuid::now_v7();
-            let plan = json!({"schema":SCHEMA,"school_id":s,"intent_id":d["intent_id"],"draft_id":input.draft_id,"draft_revision":input.expected_revision,"between_targets_seconds":d["between_targets_seconds"],"message":d["message"],"content_digest":d["content_digest"],"items":items,"policy_id":p.as_ref().map(|p|&p["id"]),"sending_status":sending_status});
+            let plan = json!({"configuration":super::configuration::status_in(tx).await?,"schema":SCHEMA,"school_id":s,"intent_id":d["intent_id"],"draft_id":input.draft_id,"draft_revision":input.expected_revision,"between_targets_seconds":d["between_targets_seconds"],"message":d["message"],"content_digest":d["content_digest"],"items":items,"policy_id":p.as_ref().map(|p|&p["id"]),"sending_status":sending_status});
             let h = digest(&plan)?;
             sqlx::query("INSERT INTO mobile_v9_previews(id,school_id,draft_id,draft_revision,plan,digest,policy_id) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(id).bind(s).bind(input.draft_id).bind(input.expected_revision).bind(&plan).bind(&h).bind(p.as_ref().map(policy_id).transpose()?.flatten()).execute(&mut **tx).await?;
             Ok(
