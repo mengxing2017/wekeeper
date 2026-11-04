@@ -1,20 +1,20 @@
 use super::*;
 /// Only platform-owned resources. Effective locator dependencies omit unused default names.
 pub(super) async fn raw_candidates(tx: &mut Tx<'_>, s: Uuid, target: Uuid) -> Result<Vec<Value>> {
+    let configuration = super::configuration::current(tx).await?;
     sqlx::query_scalar(r#"SELECT jsonb_build_object(
  'target_id',t.id,'target_name',coalesce(nullif(t.alias,''),t.search_text),'device_name',d.name,'device_id',d.id,'binding_id',b.id,'binding_locator_revision',b.locator_revision,
  'target_locator_revision',CASE WHEN b.search_text_override IS NULL THEN t.locator_revision ELSE NULL END,
  'search_text',coalesce(b.search_text_override,t.search_text),'search_source',CASE WHEN b.search_text_override IS NULL THEN 'default' ELSE 'override' END,
  'access_revision',CASE WHEN b.source='school_pool' THEN (SELECT revision FROM mobile_shared_school_access WHERE school_id=b.school_id AND device_id=b.device_id) ELSE NULL END,
  'credential_generation',d.credential_generation,'delegation_id',m.id,'accepted',coalesce(c.accepted,false),'consent_state',CASE WHEN c.accepted IS NULL THEN 'unknown' WHEN c.accepted THEN 'accepted' ELSE 'revoked' END,
- 'release_id',r.id,'flow_digest',r.content_digest,'flow',r.flow)
+ 'release_id',($3::jsonb)->'id','configuration_version',($3::jsonb)->'version','flow_digest',($3::jsonb)->'flow_digest','flow',($3::jsonb)->'flow')
  FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id AND t.school_id=b.school_id
  JOIN schools s ON s.id=t.school_id AND s.active JOIN execution_devices d ON d.id=b.device_id
  LEFT JOIN mobile_shared_delegations m ON m.device_id=d.id AND m.credential_generation=d.credential_generation
  LEFT JOIN LATERAL(SELECT * FROM mobile_shared_delegation_decisions c WHERE c.delegation_id=m.id ORDER BY revision DESC LIMIT 1)c ON true
- LEFT JOIN LATERAL(SELECT r.* FROM mobile_v9_adapter_releases r WHERE NOT EXISTS(SELECT 1 FROM mobile_v9_adapter_withdrawals w WHERE w.release_id=r.id) ORDER BY r.created_at DESC,r.id DESC LIMIT 1) r ON true
  WHERE t.school_id=$1 AND t.id=$2 AND t.enabled AND t.archived_at IS NULL AND b.enabled AND d.enabled
- AND (b.source='platform' OR EXISTS(SELECT 1 FROM mobile_shared_school_access a WHERE a.school_id=b.school_id AND a.device_id=b.device_id AND a.enabled)) ORDER BY d.name,d.id"#).bind(s).bind(target).fetch_all(&mut **tx).await.map_err(Into::into)
+ AND (b.source='platform' OR EXISTS(SELECT 1 FROM mobile_shared_school_access a WHERE a.school_id=b.school_id AND a.device_id=b.device_id AND a.enabled)) ORDER BY d.name,d.id"#).bind(s).bind(target).bind(configuration).fetch_all(&mut **tx).await.map_err(Into::into)
 }
 pub(super) async fn candidates(tx: &mut Tx<'_>, s: Uuid, target: Uuid) -> Result<Vec<Value>> {
     raw_candidates(tx, s, target).await
@@ -171,15 +171,11 @@ pub(super) async fn retire_unconfigured_tasks(tx: &mut Tx<'_>, device: Uuid) -> 
 }
 
 pub(super) fn validate_embedded_rules(plan: &Value) -> Result<()> {
-    let flow: crate::distribution::domain::shared_mobile::FlowV3 =
-        serde_json::from_value(plan["flow"].clone())
-            .map_err(|_| Error::Policy("shared_send_execution_configuration_invalid"))?;
-    flow.validate()
-        .map_err(|_| Error::Policy("shared_send_execution_configuration_invalid"))?;
-    require(
-        digest(&plan["flow"])? == plan["flow_digest"],
-        "shared_send_execution_configuration_invalid",
+    crate::distribution::domain::shared_mobile::runtime_configuration::inspect_flow(
+        &plan["flow"],
+        &plan["flow_digest"],
     )
+    .map_err(|_| Error::Policy("shared_send_execution_configuration_invalid"))
 }
 pub(super) async fn validate_execution_rules(_tx: &mut Tx<'_>, plan: &Value) -> Result<()> {
     // Execution uses the frozen configuration, not a development release approval.
