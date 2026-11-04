@@ -5,7 +5,7 @@ import { api, sharedSend, type SharedDraft, type SharedPreview, type SharedTask,
 import { createIdempotencyKey } from '../../../shared/idempotency-key'
 import { PaginationControls } from '../../../shared/pagination-controls'
 import { taskError } from './task-model'
-import { previewSelections, previewConfigurationChanged, isUsageBlocker, currentReadiness, configurationIssueMessage } from './shared-preview-model'
+import { previewSelections, previewResourcesChanged, isUsageBlocker, currentReadiness } from './shared-preview-model'
 import { SharedReadinessView } from './shared-readiness-view'
 import { UsageManagement } from '../../admin/mobile-resources/usage-management'
 
@@ -63,18 +63,13 @@ function SchoolSharedSendTasks({ school, admin }: { school: string; admin: boole
   const dirty = !!draft && (message.replace(/\r\n?/g, '\n') !== draft.message || targets.join() !== draft.target_ids.join() || gap!==draft.between_targets_seconds)
   const synchronized=overview.isSuccess&&!overview.isError
   const liveOverview=synchronized ? overview.data : undefined
-  const configurationChanged=preview ? previewConfigurationChanged(preview,liveOverview) : false
-  const configurationInvalid=preview?.plan.items.some(i=>(i.readiness??[]).some(r=>r.blockers.some(b=>b.code==='shared_send_execution_configuration_invalid'))) ?? false
+  const resourcesChanged=preview ? previewResourcesChanged(preview,liveOverview) : false
   const confirmationIssues = !admin ? ['当前账号没有本校管理员发送权限；平台管理员也需在学校成员管理中获得本校管理员角色'] : preview?.plan.items.flatMap(i => !i.selected ? [`${i.target.name}：请选择已绑定手机`] : i.blocker ? [`${i.target.name}：${i.blocker}`] : []) ?? []
   return <Card title="手机共享发送">
     {errorContext}
     <Space orientation="vertical" style={{ width: '100%' }}>
       <Alert type="info" showIcon title="按目标群创建，逐群选择共享手机" description="填写文字和目标群后直接预览，系统自动保存草稿。核对预览后确认发送。管理员确认后进入队列。结果不确定时停止该设备，核对前不会自动重发。企业微信官方群发独立使用。" />
       {overview.data?.sending_status&&<Alert type={overview.data.sending_status.can_confirm?'info':'warning'} title={overview.data.sending_status.message}/>}
-      {liveOverview?.configuration&&<Alert type={liveOverview.configuration.available?'info':'warning'} title={`平台执行配置：${liveOverview.configuration.available?'可用':'不可用'}`} description={<>
-        {!liveOverview.configuration.available&&<><p>{configurationIssueMessage(liveOverview.configuration.issue?.code)}</p>{liveOverview.configuration.issue&&<p>配置问题：{liveOverview.configuration.issue.code} / {liveOverview.configuration.issue.path}</p>}</>}
-        <p>平台配置观测时间：{new Date(liveOverview.configuration.observed_at).toLocaleString()}</p>
-      </>}/>}
       {overview.isError&&<Alert type="warning" title="当前状态同步失败，预览快照不能作为实时状态" description={<Button onClick={()=>void overview.refetch()}>重试同步当前状态</Button>}/>}
       {error && <Alert type="error" title={taskError(error)} />}
       <Input.Search aria-label="搜索手机目标群" placeholder="搜索本校群名或别名" onSearch={value=>{setTargetSearch(value);setTargetPage(1)}} />
@@ -88,7 +83,7 @@ function SchoolSharedSendTasks({ school, admin }: { school: string; admin: boole
       <Button type="primary" loading={inspect.isPending} disabled={!message.trim() || !targets.length || reselect.isPending || confirm.isPending} onClick={() => inspect.mutate()}>预览逐群执行计划</Button>
       {dirty && <Alert type="warning" title="文字或目标群已修改，请重新预览" />}
       {preview && !dirty && <>
-        {configurationChanged&&<Alert type="warning" title="执行配置已变化，请重新预览后确认" description={<Button onClick={()=>inspect.mutate()}>重新预览</Button>}/>}
+        {resourcesChanged&&<Alert type="warning" title="业务资源已变化，请重新预览后确认" description={<Button onClick={()=>inspect.mutate()}>重新预览</Button>}/>}
         {preview.created_at&&<p>受理预览时间：{new Date(preview.created_at).toLocaleString()}</p>}
         {liveOverview?.readiness.some(live=>{const old=preview.plan.items.flatMap(i=>i.readiness??[]).find(r=>r.binding_id===live.binding_id);return old && (old.state!==live.state || old.ready!==live.ready)}) && <Alert type="warning" title="状态已更新；当前发送计划保持原快照" description={<Button onClick={()=>inspect.mutate()}>更新业务预览</Button>}/>}
         {preview.plan.sending_status&&!preview.plan.sending_status.can_confirm&&<Alert type="warning" title={preview.plan.sending_status.message}/>}
@@ -101,7 +96,7 @@ function SchoolSharedSendTasks({ school, admin }: { school: string; admin: boole
             {(i.readiness ?? []).filter(r=>!i.selected||r.device_id===i.selected.device_id).map(snapshot=>{
               const current=currentReadiness(snapshot,liveOverview,synchronized)
               return <div key={snapshot.binding_id}>
-                <SharedReadinessView snapshot={snapshot} current={current} configuration={liveOverview?.configuration} blocked={!!i.blocker}/>
+                <SharedReadinessView snapshot={snapshot} current={current} blocked={!!i.blocker}/>
                 {admin&&snapshot.blockers.some(b=>isUsageBlocker(b.code))&&<Button onClick={()=>setUsageOpen(true)}>查看本校使用范围</Button>}
               </div>
             })}
@@ -109,7 +104,7 @@ function SchoolSharedSendTasks({ school, admin }: { school: string; admin: boole
           </Space> },
         ]} />
         {confirmationIssues.length > 0 && <Alert type="warning" title={admin ? "提交时需要核对以下问题" : "没有本校管理员发送权限"} description={admin ? `${confirmationIssues.length} 个目标需要处理受理问题，请查看上表。` : confirmationIssues[0]}/>}
-        <Button type="primary" loading={confirm.isPending} disabled={!admin || configurationChanged || configurationInvalid || reselect.isPending || inspect.isPending} onClick={() => confirm.mutate()}>确认发送</Button>
+        <Button type="primary" loading={confirm.isPending} disabled={!admin || resourcesChanged || reselect.isPending || inspect.isPending} onClick={() => confirm.mutate()}>确认发送</Button>
       </>}
       <Table<SharedTask> rowKey="id" loading={overview.isFetching} dataSource={overview.data?.tasks ?? []} pagination={{ pageSize: 10 }} columns={[
         { title: '任务', dataIndex: 'id' }, { title: '创建时间', dataIndex: 'created_at' }, { title: '状态', render: (_, t) => t.stopped ? '已停止领取' : '查看逐群进度' },

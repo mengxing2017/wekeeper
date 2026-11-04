@@ -187,19 +187,19 @@ it('排队任务分别显示平台已创建与手机已接收，接收回执不�
  client.clear()
 },60000)
 
-it('配置错误只显示一次，不误导办理范围；配置变化必须重预览',async()=>{
+it('群名变化必须重新预览，手机配置不是受理条件',async()=>{
  const pending=structuredClone(preview)
- const code='shared_send_execution_configuration_invalid'
- const text='执行配置缺失或损坏，本次不能确认发送'
+ const code='plan_dependency_changed'
+ const text='目标群名已变化，请重新预览'
  const row={binding_id:'binding',device_id:'phone',target_id:'target',device_name:'测试手机',target_name:'家长通知',search_text:'实际搜索文字',state:code,ready:false,plan_selectable:true,confirmable:false,execution_ready:false,automatic:true,blockers:[{code,message:text,owner:'system',automatic:false}],inspection:null,inspection_state:'not_scheduled' as const,retry_at:null,retry_remaining:3,configuration_id:null,configuration_digest:null,consent_state:'accepted' as const,runtime_state:'screen_off' as const,execution_conditions:[{code:'device_screen_off',message:'手机屏幕已关闭，有有效待办时自动准备亮屏',owner:'device',automatic:true}]}
  pending.plan.items[0]={...pending.plan.items[0],blocker:text,readiness:[row]}
  vi.mocked(sharedSend.taskPreview).mockResolvedValue(response(pending))
- vi.mocked(sharedSend.overview).mockResolvedValue({id:'school',tasks:[],drafts:[],readiness:[{...row,configuration_id:'installed',configuration_digest:'new-digest'}],pool:[],inspections:[]})
+ vi.mocked(sharedSend.overview).mockResolvedValue({id:'school',tasks:[],drafts:[],readiness:[{...row,search_text:'新群名'}],pool:[],inspections:[]})
  await compose();fireEvent.click(screen.getByRole('button',{name:'预览逐群执行计划'}))
  expect(await screen.findByText(`受理检查：${text}`)).toBeTruthy()
  expect(screen.queryByText(`受理条件：${text}`)).toBeNull()
  expect(screen.queryByRole('button',{name:'查看本校使用范围'})).toBeNull()
- expect(screen.getByText('执行配置已变化，请重新预览后确认')).toBeTruthy()
+ expect(screen.getByText('业务资源已变化，请重新预览后确认')).toBeTruthy()
  expect((screen.getByRole('button',{name:'确认发送'}) as HTMLButtonElement).disabled).toBe(true)
  expect(sharedSend.confirm).not.toHaveBeenCalled()
 },60000)
