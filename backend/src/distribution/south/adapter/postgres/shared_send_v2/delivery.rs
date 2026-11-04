@@ -1,6 +1,6 @@
 //! Deployment-only product delivery. No browser session can import or publish a release.
 use super::*;
-use crate::distribution::domain::mobile_execution::FlowV3;
+use crate::distribution::domain::shared_mobile::FlowV3;
 use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

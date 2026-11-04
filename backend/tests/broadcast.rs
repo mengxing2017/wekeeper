@@ -893,8 +893,6 @@ async fn content_source_switch_and_cross_source_duplicate_guard() {
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn official_broadcast_ignores_mobile_switch_and_mobile_transaction_lock() {
     let (pool, a, s, input, fake) = setup().await;
-    sqlx::query("INSERT INTO mobile_delivery_settings(school_id,enabled,history_reviewed) VALUES($1,true,true)")
-        .bind(s).execute(&pool).await.unwrap();
     let service = Service {
         sources: wekeeper_api::distribution::south::adapter::in_process::Sources(pool.clone()),
         store: Repository(pool.clone()),
@@ -905,7 +903,7 @@ async fn official_broadcast_ignores_mobile_switch_and_mobile_transaction_lock() 
     };
     // A mobile transaction must neither block official writes nor receive their results.
     let mut mobile_tx = pool.begin().await.unwrap();
-    sqlx::query("SELECT pg_advisory_xact_lock(78234610241)")
+    sqlx::query("SELECT pg_advisory_xact_lock(78234610245)")
         .execute(&mut *mobile_tx)
         .await
         .unwrap();
@@ -929,12 +927,11 @@ async fn official_broadcast_ignores_mobile_switch_and_mobile_transaction_lock() 
         .unwrap();
     service.run_once().await.unwrap();
     assert_eq!(fake.calls.load(Ordering::SeqCst), 1);
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM delivery_usage")
+    assert!(
+        sqlx::query_scalar::<_, bool>("SELECT to_regclass('delivery_usage') IS NULL")
             .fetch_one(&pool)
             .await
-            .unwrap(),
-        0
+            .unwrap()
     );
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM broadcast_targets WHERE task_id=$1")

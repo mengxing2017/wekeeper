@@ -28,7 +28,7 @@ pub(super) async fn resolve(tx: &mut Tx<'_>, school: Uuid, body: &mut Value) -> 
             locators.push(json!({"device_id":device,"device_name":name,"target_id":target["id"],"target_index":index,"target_name":target["name"],"search_text":over.map(json_string).unwrap_or_else(||target["search_text"].clone()),"search_source":if over.is_some(){"override"}else{"default"},"binding_locator_revision":binding.as_ref().map(|b|b["locator_revision"].clone()).unwrap_or(Value::Null),"target_locator_revision":if over.is_some(){Value::Null}else{target.get("revision").cloned().unwrap_or(json!(1))}}));
         }
     }
-    let locators: Vec<crate::distribution::domain::mobile_execution::usage::UsageLocator> =
+    let locators: Vec<crate::distribution::domain::shared_mobile::usage::UsageLocator> =
         serde_json::from_value(json!(locators)).map_err(|_| Error::Conflict)?;
     body["locators"] = json!(locators);
     Ok(())

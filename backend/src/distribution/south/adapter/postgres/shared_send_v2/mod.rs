@@ -2,7 +2,7 @@
 use crate::{
     business::{Actor, Error, Result, hash},
     distribution::{
-        domain::{device_control::Credential, mobile_execution::shared_send_v2::*},
+        domain::{device_control::Credential, shared_mobile::shared_send_v2::*},
         south::port::shared_send_v2::*,
     },
 };
@@ -160,7 +160,7 @@ impl Store for Repository {
         a: &Actor,
         s: Uuid,
         key: &str,
-        command: crate::distribution::domain::mobile_execution::usage::UsageCommand,
+        command: crate::distribution::domain::shared_mobile::usage::UsageCommand,
     ) -> Result<Value> {
         Repository::usage_write(self, a, s, key, command).await
     }

@@ -176,3 +176,37 @@ async fn migrations_are_repeatable_and_readiness_checks_schema() {
     );
     pool.close().await;
 }
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn retiring_old_phone_channels_preserves_current_identity_consent_and_tasks() {
+    let url = std::env::var("WEKEEPER_TEST_DATABASE_URL").expect("isolated database required");
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&url)
+        .await
+        .unwrap();
+    let schema = format!("retire_phone_{}", uuid::Uuid::new_v4().simple());
+    sqlx::raw_sql(&format!(
+        "CREATE SCHEMA {schema}; SET search_path TO {schema},public;"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    for m in database::MIGRATOR
+        .iter()
+        .filter(|m| m.version < 202611040124)
+    {
+        sqlx::raw_sql(&m.sql).execute(&pool).await.unwrap();
+    }
+    let fixture = include_str!("sql/legacy_mobile_retirement.sql");
+    let (before, after) = fixture.split_once("-- APPLY MIGRATION 124").unwrap();
+    sqlx::raw_sql(before).execute(&pool).await.unwrap();
+    let migration = database::MIGRATOR
+        .iter()
+        .find(|m| m.version == 202611040124)
+        .unwrap();
+    sqlx::raw_sql(&migration.sql).execute(&pool).await.unwrap();
+    sqlx::raw_sql(after).execute(&pool).await.unwrap();
+    pool.close().await;
+}

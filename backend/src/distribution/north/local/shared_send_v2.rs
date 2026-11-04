@@ -13,7 +13,7 @@ impl<R: Store> Service<R> {
     pub async fn inbox_read(
         &self,
         c: &Credential,
-        q: crate::distribution::domain::mobile_execution::shared_send_v2::InboxQuery,
+        q: crate::distribution::domain::shared_mobile::shared_send_v2::InboxQuery,
     ) -> Result<Value> {
         self.0.inbox_read(c, q).await
     }
@@ -21,7 +21,7 @@ impl<R: Store> Service<R> {
         &self,
         c: &Credential,
         key: &str,
-        v: crate::distribution::domain::mobile_execution::shared_send_v2::InboxReceipt,
+        v: crate::distribution::domain::shared_mobile::shared_send_v2::InboxReceipt,
     ) -> Result<Value> {
         self.0.inbox_receipt(c, &text(key, 1, 128)?, v).await
     }
@@ -42,13 +42,13 @@ impl<R: Store> Service<R> {
         a: &Actor,
         s: Uuid,
         key: &str,
-        command: crate::distribution::domain::mobile_execution::usage::UsageCommand,
+        command: crate::distribution::domain::shared_mobile::usage::UsageCommand,
     ) -> Result<Value> {
         self.0.usage_write(a, s, &text(key, 1, 128)?, command).await
     }
     pub async fn recover_claim(
         &self,
-        event: crate::distribution::domain::mobile_execution::shared_send_v2::ClaimRecovery,
+        event: crate::distribution::domain::shared_mobile::shared_send_v2::ClaimRecovery,
     ) -> Result<Value> {
         self.0.recover_claim(event).await
     }
@@ -56,7 +56,7 @@ impl<R: Store> Service<R> {
     pub async fn recover_result(
         &self,
         key: &str,
-        event: crate::distribution::domain::mobile_execution::shared_send_v2::ResultEvent,
+        event: crate::distribution::domain::shared_mobile::shared_send_v2::ResultEvent,
     ) -> Result<Value> {
         self.0.recover_result(&text(key, 1, 128)?, event).await
     }

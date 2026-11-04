@@ -1,6 +1,6 @@
 //! Platform maintenance uses the same domain validation and immutable evidence as execution.
 use super::*;
-use crate::distribution::domain::mobile_execution::{FlowV3, validate_text};
+use crate::distribution::domain::shared_mobile::{FlowV3, validate_text};
 use sha2::{Digest, Sha256};
 
 async fn artifacts(tx: &mut Tx<'_>, ids: &[Uuid]) -> Result<()> {

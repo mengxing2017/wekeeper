@@ -162,7 +162,7 @@ pub(super) async fn finish(tx: &mut Tx<'_>, c: &Credential, v: InspectionResult)
     )?;
     let current = material(tx, &row).await.is_ok();
     let live:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_shared_device_leases l JOIN mobile_shared_runtime r ON r.device_id=l.device_id JOIN mobile_v9_runtime_details d ON d.device_id=l.device_id WHERE l.device_id=$1 AND l.holder_id=$2 AND l.fence=$3 AND l.expires_at>clock_timestamp() AND r.runtime_epoch=$4 AND r.credential_generation=$5 AND r.ui_ready AND NOT r.paused AND d.ui_context_epoch=$6 AND d.apk_sha256=$7 AND r.observed_at>clock_timestamp()-interval '30 seconds')").bind(c.device_id).bind(v.inspection_id).bind(v.lease_fence).bind(v.runtime_epoch).bind(c.generation).bind(&v.ui_context_epoch).bind(&v.apk_sha256).fetch_one(&mut **tx).await?;
-    let checks = crate::distribution::domain::mobile_execution::FLOW_CHECKS
+    let checks = crate::distribution::domain::shared_mobile::FLOW_CHECKS
         .iter()
         .all(|k| v.checks.get(*k) == Some(&true));
     let state = if !current || !live {

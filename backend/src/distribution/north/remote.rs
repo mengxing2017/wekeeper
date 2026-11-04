@@ -33,11 +33,11 @@ pub fn router() -> Router<Application> {
         .route("/api/v1/schools/{school}/templates", get(templates))
 }
 
-pub mod mobile_delivery;
+pub mod device_registry;
 
 pub mod device_control;
 
-pub mod mobile_execution;
+pub mod shared_mobile_resources;
 
 pub mod shared_send_v2;
 

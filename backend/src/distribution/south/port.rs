@@ -7,15 +7,13 @@ pub trait Store: Clone + Send + Sync + 'static {
 
 pub mod broadcast;
 
-pub mod mobile_delivery;
+pub mod device_registry;
 
 pub mod device_control;
 
-pub mod mobile_execution;
+pub mod shared_mobile_resources;
 
 pub mod content_source;
-
-pub mod shared_send;
 
 pub mod shared_send_v2;
 

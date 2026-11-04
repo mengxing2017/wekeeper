@@ -1,6 +1,6 @@
 //! Platform business settings never publish technical capability or reset execution ledgers.
 use super::*;
-use crate::distribution::domain::mobile_execution::usage::SendingStatus;
+use crate::distribution::domain::shared_mobile::usage::SendingStatus;
 pub(super) async fn status(tx: &mut Tx<'_>) -> Result<SendingStatus> {
     let p = policy(tx).await?;
     Ok(SendingStatus::project(

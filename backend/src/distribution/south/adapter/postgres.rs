@@ -17,19 +17,17 @@ impl crate::distribution::south::port::Store for Repository {
 
 pub mod broadcast;
 
-pub mod mobile_delivery;
+pub mod device_registry;
 
 pub mod device_control;
 
-pub mod mobile_execution;
+pub mod shared_mobile_resources;
 
 pub mod content;
 
 pub mod senders;
 
 pub mod resource_policy;
-
-pub mod shared_send;
 
 pub mod shared_send_v2;
 

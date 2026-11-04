@@ -120,15 +120,6 @@ async fn serve_inner(
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         }
     });
-    let mobile = application.mobile_delivery();
-    let mobile_worker = tokio::spawn(async move {
-        loop {
-            if mobile.recover().await.is_err() {
-                tracing::warn!("mobile delivery recovery failed; inspect persisted state");
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        }
-    });
     let usages = crate::distribution::south::adapter::postgres::shared_send_v2::Repository(
         application.pool.clone(),
     );
@@ -159,8 +150,6 @@ async fn serve_inner(
     let _ = artwork_worker.await;
     usage_worker.abort();
     let _ = usage_worker.await;
-    mobile_worker.abort();
-    let _ = mobile_worker.await;
     broadcast_worker.abort();
     let _ = broadcast_worker.await;
     assets_worker.abort();

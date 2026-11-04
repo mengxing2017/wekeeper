@@ -6,7 +6,7 @@ use wekeeper_api::{
     business::Actor,
     database,
     distribution::{
-        domain::mobile_execution::shared_send_v2::*,
+        domain::shared_mobile::shared_send_v2::*,
         south::{adapter::postgres::shared_send_v2::Repository, port::shared_send_v2::*},
     },
 };
@@ -449,7 +449,7 @@ async fn concurrent_activation_has_one_winner_and_immutable_audit() {
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn business_usage_is_atomic_scoped_idempotent_and_survives_delivery_changes() {
-    use wekeeper_api::distribution::domain::mobile_execution::usage::*;
+    use wekeeper_api::distribution::domain::shared_mobile::usage::*;
     let f = Fixture::new().await;
     let r = f.repo();
     let input = UsageInput {
@@ -643,7 +643,7 @@ async fn business_usage_is_atomic_scoped_idempotent_and_survives_delivery_change
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn business_scope_materializes_without_delivery_acceptance_or_activation_and_pause_blocks_plans()
  {
-    use wekeeper_api::distribution::domain::mobile_execution::usage::*;
+    use wekeeper_api::distribution::domain::shared_mobile::usage::*;
     let f = Fixture::new().await;
     let r = f.repo();
     // The actual executable rule is a synthetic fixture; no acceptance/delivery/activation
@@ -781,7 +781,7 @@ async fn business_scope_materializes_without_delivery_acceptance_or_activation_a
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn business_configuration_does_not_require_technical_delivery() {
-    use wekeeper_api::distribution::domain::mobile_execution::usage::*;
+    use wekeeper_api::distribution::domain::shared_mobile::usage::*;
     let f = Fixture::with_adapter(false).await;
     let r = f.repo();
     let options = r
@@ -881,7 +881,7 @@ async fn business_configuration_does_not_require_technical_delivery() {
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn approved_business_resources_exist_without_any_adapter_or_delivery_records() {
-    use wekeeper_api::distribution::domain::mobile_execution::usage::*;
+    use wekeeper_api::distribution::domain::shared_mobile::usage::*;
     let f = Fixture::with_adapter(false).await;
     let r = f.repo();
     // No policy row, activation, acceptance or runtime is seeded. Default business
@@ -1058,7 +1058,7 @@ async fn approved_business_resources_exist_without_any_adapter_or_delivery_recor
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn interrupted_claim_recovery_preserves_physical_owner_and_frozen_plan() {
-    use wekeeper_api::distribution::domain::mobile_execution::usage::*;
+    use wekeeper_api::distribution::domain::shared_mobile::usage::*;
     let f = Fixture::new().await;
     let r = f.repo();
     let p = r
@@ -1141,7 +1141,7 @@ async fn interrupted_claim_recovery_preserves_physical_owner_and_frozen_plan() {
         .await
         .unwrap();
     let recovery =
-        wekeeper_api::distribution::domain::mobile_execution::shared_send::ClaimRecovery {
+        wekeeper_api::distribution::domain::shared_mobile::shared_send_v2::ClaimRecovery {
             claim_id: claim,
             recovery_credential: secret,
         };
@@ -1188,7 +1188,7 @@ async fn interrupted_claim_recovery_preserves_physical_owner_and_frozen_plan() {
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn usage_overrides_reuse_and_renewal_keep_one_business_family() {
-    use wekeeper_api::distribution::domain::mobile_execution::usage::*;
+    use wekeeper_api::distribution::domain::shared_mobile::usage::*;
     let f = Fixture::with_adapter(false).await;
     let r = f.repo();
     let second = Uuid::now_v7();
@@ -1829,7 +1829,7 @@ async fn repeated_identical_pool_binding_save_does_not_advance_locator_revision(
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn device_reenable_and_projection_drift_do_not_permanently_invalidate_scope() {
-    use wekeeper_api::distribution::domain::mobile_execution::usage::*;
+    use wekeeper_api::distribution::domain::shared_mobile::usage::*;
     let f = Fixture::new().await;
     let r = f.repo();
     // Establish a real approved business usage through the normal preview/confirm flow.

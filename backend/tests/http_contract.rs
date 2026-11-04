@@ -71,71 +71,6 @@ async fn removed_compatibility_routes_are_absent() {
 }
 
 #[tokio::test]
-async fn responsible_actor_contract_matches_shared_fixture_and_requires_identity() {
-    use axum::response::IntoResponse;
-    use wekeeper_api::{
-        business::Page,
-        distribution::domain::mobile_delivery::{ResponsibleActor, ResponsibleSchool},
-    };
-    let actor = ResponsibleActor {
-        id: "00000000-0000-4000-8000-000000000001".parse().unwrap(),
-        username: "zhangsan".into(),
-        display_name: "张三".into(),
-        active: true,
-        eligible: true,
-        schools: vec![ResponsibleSchool {
-            id: "00000000-0000-4000-8000-000000000002".parse().unwrap(),
-            name: "A 学校".into(),
-        }],
-    };
-    let response = wekeeper_api::http::jsonapi::collection(
-        "sending-account-responsible-actors",
-        vec![serde_json::to_value(actor).unwrap()],
-        &Page::default(),
-    )
-    .into_response();
-    let actual: Value =
-        serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
-    let expected: Value = serde_json::from_str(include_str!(
-        "../../api-contract/fixtures/sending-account-responsible-actors.json"
-    ))
-    .unwrap();
-    assert_eq!(actual, expected);
-    let response = app()
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/platform/sending-account-responsible-actors")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-}
-
-#[test]
-fn account_profile_review_projection_has_a_shared_serialization_contract() {
-    use wekeeper_api::distribution::domain::mobile_delivery::AccountProfileReview;
-    let fixture: Value = serde_json::from_str(include_str!(
-        "../../api-contract/fixtures/sending-account-profile-review.json"
-    ))
-    .unwrap();
-    let review = AccountProfileReview {
-        actor_id: "00000000-0000-4000-8000-000000000001".parse().unwrap(),
-        actor_name: "张三".into(),
-        actor_username: "zhangsan".into(),
-        reviewed_at: "2026-10-31T02:00:00Z".parse().unwrap(),
-        profile_revision: Some(2),
-        evidence_ref: "本次现场核对企业和账号页面".into(),
-    };
-    assert_eq!(serde_json::to_value(review).unwrap(), fixture);
-    let mut historical = fixture;
-    historical["profile_revision"] = Value::Null;
-    let review: AccountProfileReview = serde_json::from_value(historical.clone()).unwrap();
-    assert_eq!(serde_json::to_value(review).unwrap(), historical);
-}
-
-#[tokio::test]
 async fn public_contract_matches_shared_fixture() {
     let response = app()
         .oneshot(
@@ -620,73 +555,6 @@ async fn broadcast_rust_serialization_matches_shared_fixtures() {
 }
 
 #[tokio::test]
-async fn mobile_permission_serialization_matches_shared_fixture() {
-    use axum::response::IntoResponse;
-    use wekeeper_api::distribution::domain::mobile_delivery::SendPermit;
-    let permit = SendPermit {
-        id: "11111111-1111-4111-8111-111111111111".parse().unwrap(),
-        claim_id: "22222222-2222-4222-8222-222222222222".parse().unwrap(),
-        invocation_id: "33333333-3333-4333-8333-333333333333".parse().unwrap(),
-        fence: 4,
-        snapshot_digest: "snapshot-sha256".into(),
-        permit_token: Some("fixture-only-secret".into()),
-        not_before: "2026-10-24T04:00:00Z".parse().unwrap(),
-        execute_before: "2026-10-24T04:01:00Z".parse().unwrap(),
-        server_time: "2026-10-24T04:00:00Z".parse().unwrap(),
-    };
-    let response =
-        wekeeper_api::http::jsonapi::resource("mobile-send-permits", permit).into_response();
-    let actual: Value =
-        serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
-    let fixture: Value = serde_json::from_str(include_str!(
-        "../../api-contract/fixtures/mobile-send-permit.json"
-    ))
-    .unwrap();
-    assert_eq!(actual, fixture);
-    let wait: Value = serde_json::from_str(include_str!(
-        "../../api-contract/fixtures/mobile-execution-wait.json"
-    ))
-    .unwrap();
-    let response = wekeeper_api::http::jsonapi::completed()
-        .meta(wait["meta"].clone())
-        .into_response();
-    assert_eq!(
-        serde_json::from_slice::<Value>(&to_bytes(response.into_body(), 4096).await.unwrap())
-            .unwrap(),
-        wait
-    );
-}
-
-#[tokio::test]
-async fn mobile_device_routes_require_dedicated_credentials() {
-    for auth in [None, Some("Bearer miniapp-token")] {
-        let mut request = Request::builder()
-            .uri("/api/v1/device-execution/session")
-            .header("Cookie", "wekeeper_session=browser-token");
-        if let Some(auth) = auth {
-            request = request.header("Authorization", auth);
-        }
-        let response = app()
-            .oneshot(request.body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-        assert_eq!(
-            response.headers()["content-type"],
-            "application/vnd.api+json"
-        );
-        assert!(response.headers().contains_key("x-request-id"));
-        let body: Value =
-            serde_json::from_slice(&to_bytes(response.into_body(), 8192).await.unwrap()).unwrap();
-        assert_eq!(body["errors"][0]["code"], "unauthorized");
-        assert_eq!(
-            body["errors"][0]["detail"],
-            "设备身份认证未通过，请管理员核对设备启用状态和凭据"
-        );
-    }
-}
-
-#[tokio::test]
 async fn revision_conflicts_explain_refresh_without_task_review_instructions() {
     use axum::response::IntoResponse;
     let response = wekeeper_api::business::Error::Policy("revision_conflict").into_response();
@@ -697,251 +565,6 @@ async fn revision_conflicts_explain_refresh_without_task_review_instructions() {
     assert_eq!(
         body["errors"][0]["detail"],
         "记录已更新，请刷新后核对并重新提交"
-    );
-}
-
-#[test]
-fn mobile_not_clicked_result_preserves_null_timestamp() {
-    use wekeeper_api::distribution::domain::mobile_delivery::Command;
-    let fixture: Value = serde_json::from_str(include_str!(
-        "../../api-contract/fixtures/mobile-execution-not-clicked.json"
-    ))
-    .unwrap();
-    let mut input = fixture["data"]["attributes"].clone();
-    input["operation"] = serde_json::json!("result");
-    let command: Command = serde_json::from_value(input.clone()).unwrap();
-    match &command {
-        Command::Result {
-            reported_clicked_at,
-            result,
-            ..
-        } => {
-            assert!(reported_clicked_at.is_none());
-            assert_eq!(result, "not_observed");
-        }
-        _ => panic!("expected result command"),
-    }
-    assert_eq!(serde_json::to_value(command).unwrap(), input);
-}
-
-#[tokio::test]
-async fn v2_device_routes_never_accept_browser_identity() {
-    let response = app()
-        .oneshot(
-            Request::builder()
-                .uri("/api/v2/device-execution/session")
-                .header("Cookie", "wekeeper_session=browser-token")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-}
-#[test]
-fn strategy_commands_are_strict_and_default_to_disabled() {
-    use wekeeper_api::distribution::domain::mobile_delivery::Command;
-    let fixture: Value = serde_json::from_str(include_str!(
-        "../../api-contract/fixtures/mobile-visible-claim-v2.json"
-    ))
-    .unwrap();
-    let a = &fixture["data"]["attributes"];
-    let mut v = serde_json::json!({"operation":"create_strategy","name":"测试策略","sender_account_id":a["sender_binding"]["id"],"group_id":a["group_snapshot"]["id"],"device_id":a["execution_target"]["device_id"],"text_content":"测试"});
-    let c: Command = serde_json::from_value(v.clone()).unwrap();
-    if let Command::CreateStrategy { input } = c {
-        assert!(!input.enabled);
-        input.validate().unwrap();
-    } else {
-        panic!("strategy expected");
-    }
-    v["resource_id"] = serde_json::json!("unavailable");
-    assert!(serde_json::from_value::<Command>(v).is_err());
-}
-
-#[test]
-fn automation_v4_shared_wire_is_typed_and_does_not_relax_v3() {
-    use wekeeper_api::distribution::domain::mobile_delivery::{
-        AutomationCommand, Command, EnvironmentReport, ValidationEvent, ValidationKind,
-    };
-    let environment: Value = serde_json::from_str(include_str!(
-        "../../api-contract/fixtures/automation-environment-v4.json"
-    ))
-    .unwrap();
-    let report: EnvironmentReport =
-        serde_json::from_value(environment["data"]["attributes"]["report"].clone()).unwrap();
-    report.validate().unwrap();
-    assert!(report.supports_execution());
-    assert_eq!(
-        serde_json::to_value(&report).unwrap(),
-        environment["data"]["attributes"]["report"]
-    );
-    let parsed: AutomationCommand =
-        serde_json::from_value(serde_json::json!({"action":"report_environment","report":report}))
-            .unwrap();
-    assert!(matches!(
-        parsed,
-        AutomationCommand::ReportEnvironment { .. }
-    ));
-    let mut old_claim =
-        serde_json::json!({"operation":"claim","binding_revision":1,"environment":report});
-    assert!(serde_json::from_value::<Command>(old_claim.clone()).is_err());
-    old_claim.as_object_mut().unwrap().remove("environment");
-    assert_eq!(
-        serde_json::to_value(serde_json::from_value::<Command>(old_claim.clone()).unwrap())
-            .unwrap(),
-        old_claim
-    );
-    let event: Value = serde_json::from_str(include_str!(
-        "../../api-contract/fixtures/automation-validation-v4.json"
-    ))
-    .unwrap();
-    let parsed: ValidationEvent =
-        serde_json::from_value(event["data"]["attributes"]["event"].clone()).unwrap();
-    parsed.validate(ValidationKind::OpenApplication).unwrap();
-    assert_eq!(
-        serde_json::to_value(parsed).unwrap(),
-        event["data"]["attributes"]["event"]
-    );
-}
-#[tokio::test]
-async fn automation_and_v4_routes_are_registered_and_require_authorization() {
-    for (path, method) in [
-        (
-            "/api/v1/schools/00000000-0000-0000-0000-000000000001/automation-apps",
-            "GET",
-        ),
-        ("/api/v1/platform/automation-adaptations/components", "GET"),
-        (
-            "/api/v4/device-execution/execution-authorization-context",
-            "GET",
-        ),
-        ("/api/v4/device-execution/execution-authorizations", "POST"),
-        (
-            "/api/v4/device-execution/validation-jobs/00000000-0000-0000-0000-000000000001/standing-acceptances",
-            "POST",
-        ),
-        (
-            "/api/v4/device-execution/validation-jobs/00000000-0000-0000-0000-000000000001/rejections",
-            "POST",
-        ),
-        ("/api/v4/device-execution/validation-jobs", "GET"),
-        ("/api/v4/device-execution/environment-snapshots", "POST"),
-        ("/api/v4/device-execution/claims", "POST"),
-    ] {
-        let response = app()
-            .oneshot(
-                Request::builder()
-                    .method(method)
-                    .uri(path)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
-    }
-}
-
-#[test]
-fn automation_manifest_canonicalization_matches_shared_utf8_bytes() {
-    use wekeeper_api::distribution::domain::mobile_delivery::automation_digest;
-    let fixture: Value = serde_json::from_str(include_str!(
-        "../../api-contract/fixtures/automation-canonical-v4.json"
-    ))
-    .unwrap();
-    assert_eq!(
-        fixture["value"].to_string(),
-        fixture["canonical"].as_str().unwrap()
-    );
-    assert_eq!(
-        automation_digest(&fixture["value"]),
-        fixture["sha256"].as_str().unwrap()
-    );
-}
-
-#[test]
-fn standing_authorization_shared_wire_preserves_receipt_and_decline_semantics() {
-    use wekeeper_api::distribution::domain::mobile_delivery::{
-        AutomationCommand, ExecutionAuthorizationReceipt,
-    };
-    let fixture: Value = serde_json::from_str(include_str!(
-        "../../api-contract/fixtures/execution-authorization-receipt-v4.json"
-    ))
-    .unwrap();
-    let wire = &fixture["data"]["attributes"]["receipt"];
-    let r: ExecutionAuthorizationReceipt = serde_json::from_value(wire.clone()).unwrap();
-    r.validate().unwrap();
-    assert_eq!(serde_json::to_value(r).unwrap(), *wire);
-    let mut decline: Value = serde_json::from_str(include_str!(
-        "../../api-contract/fixtures/execution-validation-decline-v4.json"
-    ))
-    .unwrap();
-    decline["data"]["attributes"]["action"] = serde_json::json!("reject_validation");
-    assert!(matches!(
-        serde_json::from_value::<AutomationCommand>(decline["data"]["attributes"].clone()).unwrap(),
-        AutomationCommand::RejectValidation { .. }
-    ));
-}
-
-#[tokio::test]
-async fn dispatch_v5_routes_are_registered_and_require_dedicated_authorization() {
-    for (path, method) in [
-        ("/api/v1/platform/automation-flows", "GET"),
-        ("/api/v1/platform/automation-pacing-profiles", "GET"),
-        (
-            "/api/v1/schools/00000000-0000-0000-0000-000000000001/automation-dispatch-batches",
-            "GET",
-        ),
-        ("/api/v5/device-execution/session", "GET"),
-        ("/api/v5/device-execution/task-inbox", "GET"),
-        ("/api/v5/device-execution/setup-status", "GET"),
-        (
-            "/api/v5/device-execution/execution-authorization-context",
-            "GET",
-        ),
-        ("/api/v5/device-execution/execution-authorizations", "POST"),
-        ("/api/v5/device-execution/flow-validations", "GET"),
-        (
-            "/api/v5/device-execution/task-deliveries/00000000-0000-0000-0000-000000000001/preparation-leases",
-            "POST",
-        ),
-        (
-            "/api/v5/device-execution/task-deliveries/00000000-0000-0000-0000-000000000001/failures",
-            "POST",
-        ),
-        ("/api/v5/device-execution/claims", "POST"),
-        (
-            "/api/v5/device-execution/claims/00000000-0000-0000-0000-000000000001/preparations",
-            "POST",
-        ),
-    ] {
-        let response = app()
-            .oneshot(
-                Request::builder()
-                    .method(method)
-                    .uri(path)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
-    }
-}
-
-#[test]
-fn binding_contract_accepts_missing_note_and_serializes_eligibility() {
-    use wekeeper_api::distribution::domain::mobile_delivery::{Command, DeviceBindingEligibility};
-    let fixture: Value = serde_json::from_str(include_str!(
-        "../../api-contract/fixtures/device-binding-eligibility.json"
-    ))
-    .unwrap();
-    let eligibility: DeviceBindingEligibility = serde_json::from_value(fixture.clone()).unwrap();
-    assert!(!eligibility.eligible);
-    assert_eq!(serde_json::to_value(eligibility).unwrap(), fixture);
-    let command: Command = serde_json::from_value(json!({"operation":"bind_device","expected_revision":1,"sender_account_id":"00000000-0000-4000-8000-000000000001"})).unwrap();
-    assert!(
-        matches!(command, Command::BindDevice { identity_evidence_ref, .. } if identity_evidence_ref.is_empty())
     );
 }
 
@@ -1007,21 +630,6 @@ async fn device_control_does_not_accept_browser_identity_as_a_device() {
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
-#[tokio::test]
-async fn setup_status_does_not_accept_browser_cookie_as_device_identity() {
-    let response = app()
-        .oneshot(
-            Request::builder()
-                .uri("/api/v5/device-execution/setup-status")
-                .header("Cookie", "wekeeper_session=browser-only")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-}
-
 #[test]
 fn control_presence_matches_shared_contract_and_policy() {
     use wekeeper_api::distribution::domain::device_control::Presence;
@@ -1032,125 +640,6 @@ fn control_presence_matches_shared_contract_and_policy() {
     let presence: Presence = serde_json::from_value(fixture.clone()).unwrap();
     assert!(presence.policy.valid());
     assert_eq!(serde_json::to_value(presence).unwrap(), fixture);
-}
-
-#[tokio::test]
-async fn school_execution_resources_have_a_minimal_contract_and_require_identity() {
-    use wekeeper_api::distribution::domain::mobile_delivery::SchoolExecutionResource;
-    let resource = SchoolExecutionResource {
-        id: "00000000-0000-4000-8000-000000000001".parse().unwrap(),
-        device_id: "00000000-0000-4000-8000-000000000002".parse().unwrap(),
-        device_name: "业务手机".into(),
-        sender_account_id: "00000000-0000-4000-8000-000000000003".parse().unwrap(),
-        account_name: "发送人员".into(),
-        company_name: "示例企业".into(),
-        control_state: wekeeper_api::distribution::domain::device_control::PresenceState::Offline,
-        last_control_heartbeat_at: None,
-        available: true,
-        block_reason: None,
-    };
-    let fixture: Value = serde_json::from_str(include_str!(
-        "../../api-contract/fixtures/school-execution-resource.json"
-    ))
-    .unwrap();
-    assert_eq!(serde_json::to_value(resource).unwrap(), fixture);
-    let response = app()
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/schools/00000000-0000-4000-8000-000000000001/execution-resources")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-}
-
-#[tokio::test]
-async fn v6_consent_endpoints_require_device_bearer_even_with_browser_cookie() {
-    for (method,path,body) in [
-        ("GET","/api/v6/device-execution/authorization-context",String::new()),
-        ("POST","/api/v6/device-execution/consents",json!({"data":{"type":"mobile-device-consents","attributes":{"grant_id":"00000000-0000-0000-0000-000000000001","grant_revision":1,"scope_digest":"a".repeat(64),"expected_revision":0,"accepted":true}}}).to_string()),
-    ] {
-        let response=app().oneshot(Request::builder().method(method).uri(path)
-            .header("cookie","session=browser-session")
-            .header("content-type","application/vnd.api+json")
-            .body(Body::from(body)).unwrap()).await.unwrap();
-        assert_eq!(response.status(),StatusCode::UNAUTHORIZED);
-        let doc:Value=serde_json::from_slice(&to_bytes(response.into_body(),8192).await.unwrap()).unwrap();
-        assert_eq!(doc["errors"][0]["code"],"unauthorized");
-    }
-}
-
-#[tokio::test]
-async fn v6_consent_context_matches_shared_fixture_without_account_identity() {
-    use axum::response::IntoResponse;
-    use wekeeper_api::distribution::domain::mobile_execution::consent_scope;
-    let fixture: Value = serde_json::from_str(include_str!(
-        "../../api-contract/fixtures/mobile-device-consent-context.json"
-    ))
-    .unwrap();
-    let scope = consent_scope(
-        uuid::Uuid::from_u128(1),
-        uuid::Uuid::from_u128(2),
-        uuid::Uuid::from_u128(3),
-        1,
-        "通知",
-    );
-    let value = json!({"id":scope["device_id"],"protocol_version":6,"scopes":[{"id":scope["grant_id"],"school_name":"示例学校","scope_digest":wekeeper_api::business::hash(&scope.to_string()),"scope":scope,"consent":null,"accepted":false}]});
-    let response = wekeeper_api::http::jsonapi::resource("mobile-device-consent-contexts", value)
-        .into_response();
-    let actual: Value =
-        serde_json::from_slice(&to_bytes(response.into_body(), 8192).await.unwrap()).unwrap();
-    assert_eq!(actual, fixture);
-}
-
-#[tokio::test]
-async fn v6_flow_version_wire_matches_shared_fixture() {
-    use axum::response::IntoResponse;
-    use wekeeper_api::distribution::domain::mobile_execution::FlowV2;
-    let flow: FlowV2 = serde_json::from_str(include_str!(
-        "../../api-contract/fixtures/mobile-execution-flow-v2.json"
-    ))
-    .unwrap();
-    flow.validate().unwrap();
-    let flow = serde_json::to_value(flow).unwrap();
-    let response=wekeeper_api::http::jsonapi::resource("mobile-execution-flow-versions",json!({"id":"00000000-0000-0000-0000-000000000011","school_id":"00000000-0000-0000-0000-000000000002","name":"示例流程（仅用于契约测试）","content_digest":wekeeper_api::business::hash(&flow.to_string()),"flow":flow,"created_at":"2026-11-01T00:00:00Z"})).into_response();
-    let actual: Value =
-        serde_json::from_slice(&to_bytes(response.into_body(), 65536).await.unwrap()).unwrap();
-    let expected: Value = serde_json::from_str(include_str!(
-        "../../api-contract/fixtures/mobile-execution-flow-version.json"
-    ))
-    .unwrap();
-    assert_eq!(actual, expected);
-}
-#[tokio::test]
-async fn new_flow_management_and_device_validation_do_not_accept_anonymous_access() {
-    for (method, path) in [
-        (
-            "GET",
-            "/api/v1/schools/00000000-0000-0000-0000-000000000001/mobile-execution/flow-versions",
-        ),
-        (
-            "GET",
-            "/api/v1/schools/00000000-0000-0000-0000-000000000001/mobile-execution/assignments",
-        ),
-        ("GET", "/api/v6/device-execution/flow-validations"),
-    ] {
-        let response = app()
-            .oneshot(
-                Request::builder()
-                    .method(method)
-                    .uri(path)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    }
-    let response=app().oneshot(Request::builder().method("POST").uri("/api/v6/device-execution/flow-validations/00000000-0000-0000-0000-000000000001/results").header("content-type","application/vnd.api+json").body(Body::from(json!({"data":{"type":"mobile-execution-flow-validations","attributes":{}}}).to_string())).unwrap()).await.unwrap();
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -1169,191 +658,6 @@ async fn retired_phone_task_routes_are_removed() {
             .header("content-type", "application/vnd.api+json")
             .body(Body::from("{\"data\":{\"type\":\"mobile-execution-tasks\",\"attributes\":{}}}")).unwrap()).await.unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
-    }
-}
-
-#[tokio::test]
-async fn phone_task_blockers_explain_concrete_next_steps() {
-    use axum::response::IntoResponse;
-    for (code, expected) in [
-        ("mobile_target_unresolved", "不要换设备"),
-        ("shared_send_usage_unavailable", "使用管理"),
-        ("shared_send_usage_paused", "已暂停"),
-        ("shared_send_usage_revoked", "已撤销"),
-        ("shared_send_usage_expired", "已到期"),
-        ("shared_send_scope_not_accepted", "使用管理"),
-    ] {
-        let response = wekeeper_api::business::Error::Policy(code).into_response();
-        assert_eq!(response.status(), StatusCode::CONFLICT);
-        let body: Value =
-            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
-                .unwrap();
-        assert_eq!(body["errors"][0]["code"], code);
-        assert!(
-            body["errors"][0]["detail"]
-                .as_str()
-                .unwrap()
-                .contains(expected)
-        );
-    }
-}
-
-#[tokio::test]
-async fn v7_capability_routes_require_device_credentials_and_platform_identity() {
-    for (method,path,body) in [
-        ("GET","/api/v7/device-execution/capability-context",String::new()),
-        ("POST","/api/v7/device-execution/capability-consents",json!({"data":{"type":"mobile-device-capability-consents","attributes":{"capability_id":"00000000-0000-0000-0000-000000000002","configuration_revision":1,"scope_digest":"a".repeat(64),"expected_revision":0,"accepted":true}}}).to_string()),
-        ("GET","/api/v1/platform/mobile-execution/capability-openings",String::new()),
-    ] {
-        let response=app().oneshot(Request::builder().method(method).uri(path)
-            .header("cookie","session=browser-session").header("content-type","application/vnd.api+json")
-            .body(Body::from(body)).unwrap()).await.unwrap();
-        assert_eq!(response.status(),StatusCode::UNAUTHORIZED);
-    }
-}
-#[tokio::test]
-async fn v7_capability_context_uses_the_shared_native_wire_fixture() {
-    use axum::response::IntoResponse;
-    let fixture: Value = serde_json::from_str(include_str!(
-        "../../api-contract/fixtures/shared-mobile-capability-context.json"
-    ))
-    .unwrap();
-    let mut attributes = fixture["data"]["attributes"].clone();
-    attributes["id"] = fixture["data"]["id"].clone();
-    let response =
-        wekeeper_api::http::jsonapi::resource("mobile-device-capability-contexts", attributes)
-            .into_response();
-    let body = to_bytes(response.into_body(), 1_048_576).await.unwrap();
-    assert_eq!(serde_json::from_slice::<Value>(&body).unwrap(), fixture);
-}
-
-#[tokio::test]
-async fn opening_catalog_support_and_environment_require_their_own_identity() {
-    for (method, path) in [
-        ("GET", "/api/v1/platform/mobile-execution/adapter-releases"),
-        (
-            "GET",
-            "/api/v1/platform/mobile-execution/adapter-support-requests",
-        ),
-        ("POST", "/api/v7/device-execution/environment-reports"),
-        ("GET", "/api/v7/device-execution/opening-context"),
-    ] {
-        let response = app()
-            .oneshot(
-                Request::builder()
-                    .method(method)
-                    .uri(path)
-                    .header("cookie", "session=browser-session")
-                    .header("content-type", "application/vnd.api+json")
-                    .body(Body::from(
-                        json!({"data":{"type":"mobile-device-environments","attributes":{}}})
-                            .to_string(),
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    }
-    for method in ["POST", "PATCH"] {
-        let response = app()
-            .oneshot(
-                Request::builder()
-                    .method(method)
-                    .uri("/api/v1/platform/mobile-execution/device-capabilities")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
-    }
-}
-
-#[test]
-fn shared_field_check_result_fixture_is_strict_and_complete() {
-    let fixture: Value = serde_json::from_str(include_str!(
-        "../../api-contract/fixtures/shared-mobile-field-check-result.json"
-    ))
-    .unwrap();
-    let input: wekeeper_api::distribution::domain::mobile_execution::field_check::FieldResultInput =
-        serde_json::from_value(fixture["data"]["attributes"].clone()).unwrap();
-    input.validate().unwrap();
-    assert!(input.passed());
-    assert_eq!(
-        serde_json::to_value(&input).unwrap(),
-        fixture["data"]["attributes"]
-    );
-}
-#[tokio::test]
-async fn shared_field_check_routes_require_their_own_identity() {
-    for (method, path) in [
-        ("GET", "/api/v7/device-execution/field-checks"),
-        (
-            "POST",
-            "/api/v7/device-execution/field-checks/00000000-0000-0000-0000-000000000081/claims",
-        ),
-        (
-            "POST",
-            "/api/v7/device-execution/field-checks/00000000-0000-0000-0000-000000000081/results",
-        ),
-        ("GET", "/api/v1/platform/mobile-execution/field-checks"),
-        ("POST", "/api/v1/platform/mobile-execution/field-checks"),
-        (
-            "POST",
-            "/api/v1/schools/00000000-0000-0000-0000-000000000001/mobile-execution/field-check-invitations",
-        ),
-    ] {
-        let response = app()
-            .oneshot(
-                Request::builder()
-                    .method(method)
-                    .uri(path)
-                    .header("content-type", "application/vnd.api+json")
-                    .body(Body::from(
-                        json!({"data":{"type":"mobile-field-checks","attributes":{}}}).to_string(),
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(
-            response.status(),
-            StatusCode::UNAUTHORIZED,
-            "{method} {path}"
-        );
-    }
-}
-
-#[tokio::test]
-async fn legacy_mobile_retirement_has_a_shared_error_contract() {
-    use axum::response::IntoResponse;
-    let response =
-        wekeeper_api::business::Error::Policy("legacy_mobile_maintenance_retired").into_response();
-    assert_eq!(response.status(), StatusCode::CONFLICT);
-    let actual: Value =
-        serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
-    let expected: Value = serde_json::from_str(include_str!(
-        "../../api-contract/fixtures/legacy-mobile-maintenance-retired.json"
-    ))
-    .unwrap();
-    assert_eq!(actual, expected);
-    for path in [
-        "/api/v1/schools/00000000-0000-4000-8000-000000000001/automation-flow-validations",
-        "/api/v1/platform/automation-flows",
-    ] {
-        let response = app()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri(path)
-                    .header("content-type", "application/vnd.api+json")
-                    .body(Body::from("{}"))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }
 
@@ -1384,7 +688,7 @@ async fn removed_v8_delegation_and_school_pool_writes_are_absent() {
 
 #[test]
 fn preview_without_phone_keeps_target_identity_and_binding_names() {
-    use wekeeper_api::distribution::domain::mobile_execution::shared_send::PreviewItem;
+    use wekeeper_api::distribution::domain::shared_mobile::shared_send_v2::PreviewItem;
     let fixture: Value = serde_json::from_str(include_str!(
         "../../api-contract/fixtures/shared-mobile-preview-item.json"
     ))
@@ -1396,7 +700,7 @@ fn preview_without_phone_keeps_target_identity_and_binding_names() {
 }
 #[test]
 fn inspection_projection_distinguishes_expiry_and_real_queue() {
-    use wekeeper_api::distribution::domain::mobile_execution::shared_send::inspection_state as state;
+    use wekeeper_api::distribution::domain::shared_mobile::shared_send_v2::inspection_state as state;
     assert_eq!(state(None, false, false, 0, false), "waiting_prerequisites");
     assert_eq!(state(None, false, true, 0, false), "not_scheduled");
     assert_eq!(state(Some("leased"), false, true, 0, false), "expired");
@@ -1413,7 +717,7 @@ fn inspection_projection_distinguishes_expiry_and_real_queue() {
 
 #[test]
 fn inspected_phone_requires_current_readiness_before_confirmation() {
-    use wekeeper_api::distribution::domain::mobile_execution::shared_send::preview_blocker;
+    use wekeeper_api::distribution::domain::shared_mobile::shared_send_v2::preview_blocker;
     let device = uuid::Uuid::from_u128(1);
     assert_eq!(
         preview_blocker(None, &[]).as_deref(),
@@ -1440,7 +744,7 @@ fn inspected_phone_requires_current_readiness_before_confirmation() {
 
 #[test]
 fn mobile_usage_business_contract_rejects_technical_fields() {
-    use wekeeper_api::distribution::domain::mobile_execution::usage::*;
+    use wekeeper_api::distribution::domain::shared_mobile::usage::*;
     let fixture: Value = serde_json::from_str(include_str!(
         "../../api-contract/fixtures/mobile-usage-input.json"
     ))
@@ -1581,7 +885,7 @@ async fn product_workflow_routes_require_identity_before_any_database_access() {
 
 #[test]
 fn platform_business_scheme_fixture_roundtrips_without_technical_inputs() {
-    use wekeeper_api::distribution::domain::mobile_execution::usage::BusinessSchemeInput;
+    use wekeeper_api::distribution::domain::shared_mobile::usage::BusinessSchemeInput;
     let fixture: serde_json::Value = serde_json::from_str(include_str!(
         "../../api-contract/fixtures/mobile-business-scheme.json"
     ))
@@ -1607,7 +911,7 @@ async fn platform_business_scheme_route_requires_identity() {
 
 #[test]
 fn shared_submission_status_separates_defaults_and_execution_pause() {
-    use wekeeper_api::distribution::domain::mobile_execution::usage::SendingStatus;
+    use wekeeper_api::distribution::domain::shared_mobile::usage::SendingStatus;
     let defaults = serde_json::to_value(SendingStatus::project(None, true)).unwrap();
     assert_eq!(defaults["platform"], "default");
     assert_eq!(defaults["can_confirm"], true);
@@ -1619,7 +923,7 @@ fn shared_submission_status_separates_defaults_and_execution_pause() {
 
 #[test]
 fn usage_summary_preserves_per_phone_override_and_ignores_unused_default_revision() {
-    use wekeeper_api::distribution::domain::mobile_execution::usage::UsageLocator;
+    use wekeeper_api::distribution::domain::shared_mobile::usage::UsageLocator;
     let fixture: Value = serde_json::from_str(include_str!(
         "../../api-contract/fixtures/mobile-usage-locator.json"
     ))
@@ -1628,4 +932,61 @@ fn usage_summary_preserves_per_phone_override_and_ignores_unused_default_revisio
     assert_eq!(output.search_source, "override");
     assert!(output.target_locator_revision.is_none());
     assert_eq!(serde_json::to_value(output).unwrap(), fixture);
+}
+
+#[tokio::test]
+async fn legacy_phone_send_and_maintenance_routes_are_absent() {
+    for version in 1..=8 {
+        for tail in [
+            "claims",
+            "session",
+            "flow-validations",
+            "capability-context",
+            "field-checks",
+            "enrollments",
+            "credential-rotations",
+        ] {
+            for method in ["GET", "POST"] {
+                let response = app()
+                    .oneshot(
+                        Request::builder()
+                            .method(method)
+                            .uri(format!("/api/v{version}/device-execution/{tail}"))
+                            .header("content-type", "application/vnd.api+json")
+                            .body(Body::from("{}"))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    response.status(),
+                    StatusCode::NOT_FOUND,
+                    "{method} v{version}/{tail}"
+                );
+            }
+        }
+    }
+}
+#[tokio::test]
+async fn registry_rotation_requires_device_identity_and_admin_registry_requires_account() {
+    for (method, path) in [
+        ("POST", "/api/v9/device-execution/credential-rotations"),
+        ("GET", "/api/v1/platform/execution-devices"),
+    ] {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .header("content-type", "application/vnd.api+json")
+                    .header("cookie", "session=browser-only")
+                    .body(Body::from(
+                        r#"{"data":{"type":"device-credentials","attributes":{}}}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
+    }
 }

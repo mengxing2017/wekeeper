@@ -1,6 +1,6 @@
 //! One durable business intent coordinates resource grants and immutable execution scopes.
 use super::*;
-use crate::distribution::domain::mobile_execution::usage::*;
+use crate::distribution::domain::shared_mobile::usage::*;
 use chrono::{DateTime, Utc};
 
 async fn permission(tx: &mut Tx<'_>, a: &Actor, s: Option<Uuid>, admin: bool) -> Result<bool> {

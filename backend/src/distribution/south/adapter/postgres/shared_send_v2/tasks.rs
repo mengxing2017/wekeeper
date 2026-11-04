@@ -161,7 +161,7 @@ pub(super) async fn retire_unconfigured_tasks(tx: &mut Tx<'_>, device: Uuid) -> 
     Ok(())
 }
 pub(super) fn validate_embedded_rules(plan: &Value) -> Result<()> {
-    let flow: crate::distribution::domain::mobile_execution::FlowV3 =
+    let flow: crate::distribution::domain::shared_mobile::FlowV3 =
         serde_json::from_value(plan["flow"].clone())
             .map_err(|_| Error::Policy("shared_send_execution_configuration_invalid"))?;
     flow.validate()
@@ -207,7 +207,7 @@ pub(super) async fn write(
 ) -> Result<Value> {
     match command {
         SchoolCommand::Support(v) => {
-            crate::distribution::domain::mobile_execution::validate_text(&v.reason, 1, 2000, 8000)?;
+            crate::distribution::domain::shared_mobile::validate_text(&v.reason, 1, 2000, 8000)?;
             require(v.school_id == Some(s), "shared_send_resource_invalid")?;
             let bound:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_device_target_bindings WHERE school_id=$1 AND device_id=$2)").bind(s).bind(v.device_id).fetch_one(&mut **tx).await?;
             require(bound, "shared_binding_missing")?;
@@ -218,7 +218,7 @@ pub(super) async fn write(
 
         SchoolCommand::PoolBinding(v) => {
             if let Some(ref text) = v.search_text_override {
-                crate::distribution::domain::mobile_execution::validate_text(text, 1, 256, 1024)?;
+                crate::distribution::domain::shared_mobile::validate_text(text, 1, 256, 1024)?;
             }
             let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_shared_school_access a JOIN schools s ON s.id=a.school_id JOIN execution_devices d ON d.id=a.device_id JOIN mobile_targets t ON t.school_id=a.school_id WHERE a.school_id=$1 AND a.device_id=$2 AND a.enabled AND a.revision=$3 AND s.active AND d.enabled AND t.id=$4 AND t.enabled AND t.archived_at IS NULL)").bind(s).bind(v.device_id).bind(v.expected_access_revision).bind(v.target_id).fetch_one(&mut **tx).await?;
             require(allowed, "shared_pool_access_required")?;

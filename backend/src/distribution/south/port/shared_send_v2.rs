@@ -1,6 +1,6 @@
 use crate::{
     business::{Actor, Result},
-    distribution::domain::{device_control::Credential, mobile_execution::shared_send_v2::*},
+    distribution::domain::{device_control::Credential, shared_mobile::shared_send_v2::*},
 };
 use serde_json::Value;
 use uuid::Uuid;
@@ -64,7 +64,7 @@ pub trait Store: Clone + Send + Sync {
         a: &Actor,
         s: Uuid,
         key: &str,
-        command: crate::distribution::domain::mobile_execution::usage::UsageCommand,
+        command: crate::distribution::domain::shared_mobile::usage::UsageCommand,
     ) -> impl Future<Output = Result<Value>> + Send;
     fn recover_claim(&self, event: ClaimRecovery) -> impl Future<Output = Result<Value>> + Send;
     fn recover_result(

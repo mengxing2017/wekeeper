@@ -69,7 +69,7 @@ async fn confirm(
                 &actor,
                 s,
                 key(&h),
-                crate::distribution::domain::mobile_execution::usage::UsageCommand::TaskConfirm(
+                crate::distribution::domain::shared_mobile::usage::UsageCommand::TaskConfirm(
                     input.decode("mobile-shared-tasks")?,
                 ),
             )
@@ -125,7 +125,7 @@ async fn delegation_context(State(a): State<Application>, h: HeaderMap) -> Resul
 async fn inbox(
     State(a): State<Application>,
     h: HeaderMap,
-    Query(q): Query<crate::distribution::domain::mobile_execution::shared_send_v2::InboxQuery>,
+    Query(q): Query<crate::distribution::domain::shared_mobile::shared_send_v2::InboxQuery>,
 ) -> Result<ApiResponse> {
     let c = credential(&a, &h).await?;
     Ok(resource(
@@ -216,7 +216,7 @@ async fn invoke(
     ))
 }
 async fn result(State(a): State<Application>, h: HeaderMap, input: Input) -> Result<ApiResponse> {
-    let event: crate::distribution::domain::mobile_execution::shared_send_v2::ResultEvent =
+    let event: crate::distribution::domain::shared_mobile::shared_send_v2::ResultEvent =
         input.decode("mobile-shared-results")?;
     // The credential is bound to exactly one invocation; it grants no reads, claims or UI authority.
     let value = if event.invocation_id.is_some() {
@@ -526,7 +526,7 @@ async fn usage_preview(
                 &actor,
                 s,
                 key(&h),
-                crate::distribution::domain::mobile_execution::usage::UsageCommand::Preview(
+                crate::distribution::domain::shared_mobile::usage::UsageCommand::Preview(
                     input.decode("mobile-usage-previews")?,
                 ),
             )
@@ -547,7 +547,7 @@ async fn usage_confirm(
                 &actor,
                 s,
                 key(&h),
-                crate::distribution::domain::mobile_execution::usage::UsageCommand::Confirm(
+                crate::distribution::domain::shared_mobile::usage::UsageCommand::Confirm(
                     input.decode("mobile-usages")?,
                 ),
             )
@@ -568,7 +568,7 @@ async fn usage_mutate(
                 &actor,
                 s,
                 key(&h),
-                crate::distribution::domain::mobile_execution::usage::UsageCommand::Mutate {
+                crate::distribution::domain::shared_mobile::usage::UsageCommand::Mutate {
                     id,
                     operation,
                     mutation: input.decode("mobile-usages")?,
@@ -591,7 +591,7 @@ async fn usage_task_preview(
                 &actor,
                 s,
                 key(&h),
-                crate::distribution::domain::mobile_execution::usage::UsageCommand::TaskPreview(
+                crate::distribution::domain::shared_mobile::usage::UsageCommand::TaskPreview(
                     input.decode("mobile-usage-task-previews")?,
                 ),
             )
@@ -604,7 +604,7 @@ async fn business_scheme(
     h: HeaderMap,
     input: Input,
 ) -> Result<ApiResponse> {
-    let v: crate::distribution::domain::mobile_execution::usage::BusinessSchemeInput =
+    let v: crate::distribution::domain::shared_mobile::usage::BusinessSchemeInput =
         input.decode("mobile-business-schemes")?;
     Ok(resource(
         "mobile-business-schemes",
@@ -681,7 +681,7 @@ async fn usage_issue(
                 &actor,
                 s,
                 key(&h),
-                crate::distribution::domain::mobile_execution::usage::UsageCommand::Issue {
+                crate::distribution::domain::shared_mobile::usage::UsageCommand::Issue {
                     id,
                     description: v.description,
                 },
@@ -716,7 +716,7 @@ async fn usage_issue_update(
                 &actor,
                 s,
                 key(&h),
-                crate::distribution::domain::mobile_execution::usage::UsageCommand::IssueUpdate {
+                crate::distribution::domain::shared_mobile::usage::UsageCommand::IssueUpdate {
                     id,
                     issue_id,
                     input: input.decode("mobile-usage-issues")?,
