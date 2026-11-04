@@ -97,6 +97,7 @@ impl Fixture {
         release: Uuid,
         acceptance: Uuid,
     ) {
+        Self::seed_runtime_configuration(pool, release).await;
         let flow = Uuid::new_v4();
         let artifact = Uuid::new_v4();
         let baseline = Uuid::new_v4();
@@ -109,6 +110,28 @@ impl Fixture {
         sqlx::query("INSERT INTO mobile_v9_baselines(id,flow_id,device_id,samples,evidence_ids,min_interval_ms,recorded_by) VALUES($1,$2,$3,'[]',ARRAY[$4]::uuid[],1000,$5)").bind(baseline).bind(flow).bind(device).bind(artifact).bind(actor_id).execute(pool).await.unwrap();
         sqlx::query("INSERT INTO mobile_v9_adapter_releases(id,name,version,flow_id,flow,content_digest,baseline_id,evidence_ids,created_by) VALUES($1,'Synthetic','1',$2,$3,$4,$5,ARRAY[$6]::uuid[],$7)").bind(release).bind(flow).bind(&fixture["flow"]).bind(fixture["flow_digest"].as_str()).bind(baseline).bind(artifact).bind(actor_id).execute(pool).await.unwrap();
         sqlx::query("INSERT INTO mobile_v9_acceptance_runs(id,release_id,stage,apk_id,evidence_ids,validation_ids,cases,soak_hours,soak_passed,historical_debt_closed,reviewer_id,reason) VALUES($1,$2,'test_send',$3,ARRAY[$3]::uuid[],'{}','{}',0,false,false,$4,'Synthetic test only')").bind(acceptance).bind(release).bind(artifact).bind(actor_id).execute(pool).await.unwrap();
+    }
+    async fn seed_runtime_configuration(pool: &PgPool, id: Uuid) {
+        use wekeeper_api::distribution::{
+            domain::shared_mobile::runtime_configuration::RuntimeConfiguration,
+            south::adapter::postgres::shared_send_v2::configuration,
+        };
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../api-contract/fixtures/shared-mobile-send-v9.json"
+        ))
+        .unwrap();
+        configuration::install(
+            pool,
+            &RuntimeConfiguration {
+                id,
+                version: "Synthetic test only".into(),
+                capability: "wecom.group_text".into(),
+                flow: fixture["flow"].clone(),
+                flow_digest: fixture["flow_digest"].as_str().unwrap().into(),
+            },
+        )
+        .await
+        .unwrap();
     }
     async fn close(self) {
         self.pool.close().await;
@@ -1948,6 +1971,84 @@ async fn device_reenable_and_projection_drift_do_not_permanently_invalidate_scop
     assert_eq!(
         scope_blocker(&row).as_deref(),
         Some("business_scope_paused")
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn runtime_configuration_is_independent_and_invalid_update_does_not_replace_current() {
+    use wekeeper_api::distribution::{
+        domain::{
+            shared_mobile::runtime_configuration::RuntimeConfiguration, shared_mobile::usage::*,
+        },
+        south::adapter::postgres::shared_send_v2::configuration,
+    };
+    let f = Fixture::with_adapter(false).await;
+    assert_eq!(
+        configuration::status(&f.pool).await.unwrap()["issue"]["code"],
+        "configuration_missing"
+    );
+    Fixture::seed_runtime_configuration(&f.pool, f.release).await;
+    assert_eq!(
+        configuration::status(&f.pool).await.unwrap()["available"],
+        true
+    );
+    // Reinstall is idempotent, without a service account or acceptance record.
+    Fixture::seed_runtime_configuration(&f.pool, f.release).await;
+    for table in [
+        "mobile_v9_adapter_releases",
+        "mobile_v9_acceptance_runs",
+        "mobile_v9_artifacts",
+    ] {
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(&format!("SELECT count(*) FROM {table}"))
+                .fetch_one(&f.pool)
+                .await
+                .unwrap(),
+            0
+        );
+    }
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/shared-mobile-send-v9.json"
+    ))
+    .unwrap();
+    let mut bad = RuntimeConfiguration {
+        id: Uuid::new_v4(),
+        version: "bad".into(),
+        capability: "wecom.group_text".into(),
+        flow: fixture["flow"].clone(),
+        flow_digest: "invalid".into(),
+    };
+    assert!(configuration::install(&f.pool, &bad).await.is_err());
+    bad.id = f.release;
+    bad.flow_digest = fixture["flow_digest"].as_str().unwrap().into();
+    assert!(configuration::install(&f.pool, &bad).await.is_err());
+    assert_eq!(
+        configuration::status(&f.pool).await.unwrap()["configuration_id"],
+        json!(f.release)
+    );
+    let preview = f
+        .repo()
+        .usage_write(
+            &f.actor,
+            f.school,
+            "runtime-only-preview",
+            UsageCommand::TaskPreview(UsageTaskInput {
+                draft_id: None,
+                expected_revision: None,
+                target_ids: vec![f.targets[0]],
+                message: "Synthetic no send".into(),
+                between_targets_seconds: 30,
+                selections: vec![],
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(preview["preview"]["plan"]["items"][0]["blocker"].is_null());
+    assert_eq!(
+        preview["preview"]["plan"]["items"][0]["selected"]["release_id"],
+        json!(f.release)
     );
     f.close().await;
 }
