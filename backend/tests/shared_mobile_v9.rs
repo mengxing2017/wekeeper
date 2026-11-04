@@ -835,7 +835,7 @@ async fn business_configuration_does_not_require_technical_delivery() {
     );
     assert_eq!(
         result["preview"]["plan"]["items"][0]["blocker"],
-        "执行配置缺失或损坏，本次不能确认发送"
+        "平台运行配置未安装，需系统修复"
     );
     assert!(
         result["preview"]["plan"]["items"][0]["selected"]
@@ -1042,7 +1042,7 @@ async fn approved_business_resources_exist_without_any_adapter_or_delivery_recor
         .unwrap();
     assert_eq!(
         p["preview"]["plan"]["items"][0]["blocker"],
-        "执行配置缺失或损坏，本次不能确认发送"
+        "平台运行配置未安装，需系统修复"
     );
     let result = r
         .usage_write(
@@ -2024,6 +2024,10 @@ async fn runtime_configuration_is_independent_and_invalid_update_does_not_replac
     bad.id = f.release;
     bad.flow_digest = fixture["flow_digest"].as_str().unwrap().into();
     assert!(configuration::install(&f.pool, &bad).await.is_err());
+    bad.version = "Synthetic test only".into();
+    assert!(configuration::verify(&f.pool, &bad).await.is_ok());
+    bad.id = Uuid::new_v4();
+    assert!(configuration::verify(&f.pool, &bad).await.is_err());
     assert_eq!(
         configuration::status(&f.pool).await.unwrap()["configuration_id"],
         json!(f.release)
@@ -2050,5 +2054,37 @@ async fn runtime_configuration_is_independent_and_invalid_update_does_not_replac
         preview["preview"]["plan"]["items"][0]["selected"]["release_id"],
         json!(f.release)
     );
+    assert_eq!(
+        preview["preview"]["plan"]["configuration"]["available"],
+        true
+    );
+    sqlx::query("UPDATE execution_devices SET enabled=false WHERE id=$1")
+        .bind(f.device)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let overview = f
+        .repo()
+        .school_read(&f.actor, f.school, None)
+        .await
+        .unwrap();
+    assert_eq!(overview["configuration"]["available"], true);
+    for row in overview["readiness"].as_array().unwrap() {
+        assert!(row["configuration_issue"].is_null());
+        assert!(
+            row["blockers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|b| b["code"] == "resource_unavailable")
+        );
+        assert!(
+            !row["blockers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|b| b["code"] == "shared_send_execution_configuration_invalid")
+        );
+    }
     f.close().await;
 }
