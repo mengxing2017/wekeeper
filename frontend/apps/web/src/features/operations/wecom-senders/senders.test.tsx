@@ -7,6 +7,7 @@ vi.mock('./api',()=>({officialSenders:{list:vi.fn(),qualify:vi.fn()},distributio
 vi.mock('../../../shared/use-dialogs',()=>({useDialogs:()=>({confirm:async()=>true,contextHolder:null})}))
 vi.mock('./usage-manager',()=>({OfficialUsageManager:()=>null}))
 vi.mock('./business-requests',()=>({BusinessRequests:()=>null}))
+vi.mock('./channel-control',()=>({OfficialChannelControl:()=>null}))
 vi.mock('./policies',()=>({DistributionPolicyPanel:()=>null}))
 class Resize {observe(){}unobserve(){}disconnect(){}}
 vi.stubGlobal('ResizeObserver',Resize)
