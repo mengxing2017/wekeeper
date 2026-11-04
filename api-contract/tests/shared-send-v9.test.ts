@@ -92,3 +92,12 @@ it('screen runtime separates sleep from secure lock and includes bounded prepara
  expect(report.preparation?.automatic_wake_enabled).toBe(true)
  expect(report.preparation?.retry_after_ms).toBe(0)
 })
+
+it('configuration status includes platform source and observation separately from phone runtime',async()=>{
+ const {default:fixture}=await import('../fixtures/shared-configuration-status.json')
+ const status:import('../src/modules/mobile-execution/shared-send/v2').SharedConfigurationStatus={...fixture,capability:'wecom.group_text',source:'platform_runtime_configuration'}
+ expect(status.configuration_id).toBeNull();expect(status.available).toBe(false)
+ expect(status.issue).toEqual({code:'configuration_missing',path:'flow'})
+ expect(status.observed_at).toBe('2026-11-04T04:10:09Z')
+ expect(status).not.toHaveProperty('flow')
+})
