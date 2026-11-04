@@ -19,7 +19,7 @@ pnpm --dir frontend dev
 嵌入式库每次停止后删除数据；显式设置开发密码时创建 admin，没有硬编码默认密码。
 后台及企业微信分发入口为 `/admin`，成员社区为 `/community`。
 
-需要本地调试企业通讯录时，在启动后端的同一终端先 export `WEKEEPER_WECOM_CORP_ID` 和 `WEKEEPER_WECOM_SECRET`；`WEKEEPER_WECOM_AGENT_ID` 可留空。嵌入式启动不会自动读取 `.env`，完整命令及本地文件注入方式见 [本地开发：企业微信凭据注入](../manual/local-development.md#企业微信凭据注入)。嵌入式入口强制本地登录模式，完整凭据也不会开启 OAuth；服务端群发不依赖本地 origin/登录方式，配置凭据并显式设置 `WEKEEPER_WECOM_BROADCAST_ENABLED=true` 后可调试真实任务。
+需要本地调试企业通讯录时，在启动后端的同一终端先 export `WEKEEPER_WECOM_CORP_ID` 和 `WEKEEPER_WECOM_SECRET`；`WEKEEPER_WECOM_AGENT_ID` 可留空。嵌入式启动不会自动读取 `.env`，完整命令及本地文件注入方式见 [本地开发：企业微信凭据注入](../manual/local-development.md#企业微信凭据注入)。嵌入式入口强制本地登录模式，完整凭据也不会开启 OAuth；服务端群发不依赖本地 origin/登录方式，配置凭据后可按预览、人工确认流程调试真实任务。
 
 ## Docker 与首次管理员
 
@@ -59,10 +59,10 @@ unset WK_ADMIN_PASSWORD
 企业微信配置步骤与真机验收矩阵见 [企业微信接入手册](wecom.md)。
 
 - CorpID / Secret：服务端目录、成员核验、OAuth 与群发凭据。群发应用须在客户联系“可调用应用”范围；AgentID 不再是发送前提。
-- WEKEEPER_WECOM_BROADCAST_ENABLED 默认 false，完成应用权限与 4.1.10+ 终端验收后显式启用。
+- 群发自动使用有效服务端凭据，无需额外部署开关；实际调用仍校验腾讯应用权限、群主学校授权、额度与官方接口状态。
 - OAuth 回调：`https://域名/api/v1/wecom/oauth/callback`；认证成功后进入当前后台群发页。
 - 后台普通登录可组织任务，学校授权与执行群主绑定必须有效。确认及领取时重新校验内容、群主和凭据代次。
-- token 缓存在 PostgreSQL，不再生成 JS-SDK 签名/票据或加载外部 SDK。群发由服务端凭据和显式开关控制，与 OAuth 门禁独立。
+- token 缓存在 PostgreSQL，不再生成 JS-SDK 签名/票据或加载外部 SDK。群发使用服务端凭据，与 OAuth 登录方式独立。
 - 官方创建成功只表示任务创建；结果同步、人工核对和再次发送各自保留证据。无有效配置不模拟成功。
 
 官方创建、结果、提醒和停止接口已核对；实际企业权限和真机发送仍须按 [接入手册](wecom.md) 验收。

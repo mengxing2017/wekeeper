@@ -29,7 +29,6 @@
 | `WEKEEPER_PUBLIC_ORIGIN` | 浏览器 Origin 校验与公开链接，生产使用实际 HTTPS origin |
 | `WEKEEPER_INSECURE_LOCAL_AUTH` | 仅本地 HTTP 登录；生产 false，嵌入式入口强制本地模式 |
 | `WEKEEPER_WECOM_CORP_ID` / `WEKEEPER_WECOM_SECRET` | 单企业后端凭据，不能注入前端 |
-| `WEKEEPER_WECOM_BROADCAST_ENABLED` | 默认 false，显式开启官方创建和提醒；关闭不撤回既有消息 |
 | `WEKEEPER_WECOM_AGENT_ID` | 旧配置识别兼容；当前目录、群发与 OAuth 不要求 |
 | `WEKEEPER_WECOM_DIRECTORY_INTERVAL_SECONDS` / `WEKEEPER_WECOM_ASSET_SYNC_INTERVAL_SECONDS` | 周期同步；0 关闭周期调度，不关闭手工同步 |
 | `WEKEEPER_WX_APP_ID` / `WEKEEPER_WX_SECRET` | 后端微信身份接入，Secret 不放入小程序包 |

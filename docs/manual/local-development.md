@@ -64,7 +64,7 @@ chmod 600 .env.wecom.local
 )
 ```
 
-更改变量后重启 API。嵌入式入口强制本地 insecure 登录，OAuth 始终关闭；OAuth 使用普通 API/Compose 的 HTTPS 环境验收。群发独立受 `WEKEEPER_WECOM_BROADCAST_ENABLED` 控制，配置完整并显式开启会访问真实平台，不能把本地 origin 当作模拟发送开关。
+更改变量后重启 API。嵌入式入口强制本地 insecure 登录，OAuth 始终关闭；OAuth 使用普通 API/Compose 的 HTTPS 环境验收。群发配置有效凭据后可经预览和人工确认访问真实平台，无需额外部署开关，不能把本地 origin 当作模拟发送开关。
 
 ## 外部数据库开发
 
