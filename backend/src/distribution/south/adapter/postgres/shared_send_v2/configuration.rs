@@ -1,7 +1,7 @@
 //! Deployment-owned configuration installation; never a school/browser business step.
 use super::*;
 use crate::distribution::domain::shared_mobile::runtime_configuration::{
-    RuntimeConfiguration, inspect_flow,
+    RuntimeConfiguration, RuntimeConfigurationStatus,
 };
 
 pub async fn install(pool: &PgPool, configuration: &RuntimeConfiguration) -> Result<()> {
@@ -29,12 +29,26 @@ pub async fn install(pool: &PgPool, configuration: &RuntimeConfiguration) -> Res
 /// Deliberately excludes raw rules, artifacts and credentials.
 pub async fn status(pool: &PgPool) -> Result<Value> {
     let mut tx = pool.begin().await?;
-    let result = current(&mut tx).await?;
+    let result = status_in(&mut tx).await?;
     tx.commit().await?;
-    let issue = inspect_flow(&result["flow"], &result["flow_digest"]).err();
-    Ok(
-        json!({"capability":"wecom.group_text","available":issue.is_none(),"configuration_id":result["id"],"version":result["version"],"flow_digest":result["flow_digest"],"issue":issue}),
-    )
+    Ok(json!(result))
+}
+pub(super) async fn status_in(tx: &mut Tx<'_>) -> Result<RuntimeConfigurationStatus> {
+    Ok(RuntimeConfigurationStatus::project(
+        &current(tx).await?,
+        chrono::Utc::now(),
+    ))
+}
+pub async fn verify(pool: &PgPool, expected: &RuntimeConfiguration) -> Result<Value> {
+    expected.validate()?;
+    let mut tx = pool.begin().await?;
+    let actual = status_in(&mut tx).await?;
+    tx.commit().await?;
+    require(
+        actual.matches(expected),
+        "configuration_deployment_mismatch",
+    )?;
+    Ok(json!(actual))
 }
 pub(super) async fn current(tx: &mut Tx<'_>) -> Result<Value> {
     Ok(sqlx::query_scalar("SELECT jsonb_build_object('id',c.id,'version',c.version,'flow',c.flow,'flow_digest',c.flow_digest) FROM mobile_runtime_configuration_current p JOIN mobile_runtime_configurations c ON c.id=p.configuration_id AND c.capability=p.capability WHERE p.capability='wecom.group_text'")
