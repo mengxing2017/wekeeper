@@ -1,0 +1,29 @@
+{
+  "id": "00000000-0000-0000-0000-000000000002",
+  "device_id": "00000000-0000-0000-0000-000000000002",
+  "credential_generation": 1,
+  "authorization_schema": "shared_mobile_device_delegation/1",
+  "delegation": {
+    "id": "00000000-0000-4000-8000-000000000003",
+    "scope_digest": "e29005972825f0dd7b87fd45bc8c5cbcb190b57af98dd7ef45c87858e5f71f0b",
+    "scope": {
+      "schema": "shared_mobile_device_delegation/1",
+      "platform_id": "00000000-0000-0000-0000-000000000001",
+      "device_id": "00000000-0000-0000-0000-000000000002",
+      "credential_generation": 1,
+      "package_name": "com.tencent.wework",
+      "capability": "group_text",
+      "resource_policy": "platform_managed_school_targets",
+      "background_collection": true,
+      "automatic_inspection": true,
+      "text_input": true,
+      "single_use_send": true
+    },
+    "decision": {
+      "accepted": true,
+      "revision": 1
+    }
+  },
+  "observed_at": "2026-11-04T10:00:00Z",
+  "runtime_report_version": 2
+}
