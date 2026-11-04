@@ -19,6 +19,50 @@ pub struct ConfigurationIssue {
     pub code: &'static str,
     pub path: &'static str,
 }
+impl ConfigurationIssue {
+    pub fn message(&self) -> &'static str {
+        match self.code {
+            "configuration_missing" => "平台运行配置未安装，需系统修复",
+            "configuration_structure_invalid" => "平台运行配置结构错误，需系统修复",
+            "configuration_engine_unsupported" => "平台运行配置与执行引擎不匹配，需系统修复",
+            "configuration_constraints_invalid" => "平台运行配置约束不合法，需系统修复",
+            "configuration_digest_mismatch" => "平台运行配置摘要不一致，需系统修复",
+            _ => "平台运行配置不可用，需系统修复",
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct RuntimeConfigurationStatus {
+    pub capability: &'static str,
+    pub available: bool,
+    pub configuration_id: Option<Uuid>,
+    pub version: Option<String>,
+    pub flow_digest: Option<String>,
+    pub issue: Option<ConfigurationIssue>,
+    pub source: &'static str,
+    pub observed_at: chrono::DateTime<chrono::Utc>,
+}
+impl RuntimeConfigurationStatus {
+    pub fn project(value: &Value, observed_at: chrono::DateTime<chrono::Utc>) -> Self {
+        let issue = inspect_flow(&value["flow"], &value["flow_digest"]).err();
+        Self {
+            capability: "wecom.group_text",
+            available: issue.is_none(),
+            configuration_id: value["id"].as_str().and_then(|id| id.parse().ok()),
+            version: value["version"].as_str().map(str::to_owned),
+            flow_digest: value["flow_digest"].as_str().map(str::to_owned),
+            issue,
+            source: "platform_runtime_configuration",
+            observed_at,
+        }
+    }
+    pub fn matches(&self, expected: &RuntimeConfiguration) -> bool {
+        self.available
+            && self.configuration_id == Some(expected.id)
+            && self.version.as_deref() == Some(expected.version.as_str())
+            && self.flow_digest.as_deref() == Some(expected.flow_digest.as_str())
+    }
+}
 pub fn inspect_flow(
     flow: &Value,
     expected_digest: &Value,
@@ -70,6 +114,39 @@ impl RuntimeConfiguration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn status_reports_absence_without_exposing_rules_and_verify_matches_expected_package() {
+        let fixture: Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../api-contract/fixtures/shared-configuration-status.json"
+        )))
+        .unwrap();
+        let now = serde_json::from_value(fixture["observed_at"].clone()).unwrap();
+        let status = RuntimeConfigurationStatus::project(&Value::Null, now);
+        assert_eq!(serde_json::to_value(status).unwrap(), fixture);
+        let flow: Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../api-contract/fixtures/shared-mobile-send-v9.json"
+        )))
+        .unwrap();
+        let mut package = RuntimeConfiguration {
+            id: Uuid::new_v4(),
+            version: "Synthetic test only".into(),
+            capability: "wecom.group_text".into(),
+            flow: flow["flow"].clone(),
+            flow_digest: flow["flow_digest"].as_str().unwrap().into(),
+        };
+        let mut value = serde_json::to_value(&package).unwrap();
+        let state = RuntimeConfigurationStatus::project(&value, now);
+        assert!(state.matches(&package));
+        package.id = Uuid::new_v4();
+        assert!(!state.matches(&package));
+        value["flow_digest"] = serde_json::json!("bad");
+        let broken = RuntimeConfigurationStatus::project(&value, now);
+        assert!(!broken.available);
+        assert!(!broken.matches(&package));
+        assert_eq!(broken.issue.unwrap().code, "configuration_digest_mismatch");
+    }
     #[test]
     fn screen_runtime_wire_is_shared_with_typescript() {
         let fixture: Value = serde_json::from_str(include_str!(concat!(
