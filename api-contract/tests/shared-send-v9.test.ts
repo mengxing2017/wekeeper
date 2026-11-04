@@ -123,3 +123,11 @@ it('device-owned execution preparation contains no platform UI configuration',as
  expect(preparation).not.toHaveProperty('flow_digest')
  expect(preparation.input_matches).toBe(true)
 })
+
+it('dispatch feedback exposes the authorized pool and automatic assignment history',async()=>{
+ const {default:f}=await import('../fixtures/shared-dispatch.json')
+ const snapshot:import('../src/modules/mobile-execution/shared-send/v2').SharedDispatchSnapshot={...f,state:'assigned',assignments:f.assignments.map(a=>({...a,source:'automatic'}))}
+ expect(snapshot).toEqual(f)
+ expect(snapshot.assignments[0].from_device_name).toBe('手机 A')
+ expect(snapshot.assignments[0].to_device_name).toBe('手机 B')
+})
