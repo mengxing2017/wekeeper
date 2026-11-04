@@ -22,6 +22,8 @@ sources = [
  "backend/src/distribution/south/adapter/postgres/shared_send_v2/tasks.rs",
  "backend/src/distribution/south/adapter/postgres/shared_send_v2/usage.rs",
  "backend/src/distribution/south/adapter/postgres/shared_send_v2/inspections.rs",
+ "backend/src/distribution/south/adapter/postgres/shared_send_v2/inspection_budget.rs",
+ "backend/src/distribution/south/adapter/postgres/shared_send_v2/wait_states.rs",
  "backend/src/schools/south/adapter/postgres/resources.rs",
  "backend/src/schools/south/adapter/postgres.rs",
 ]
@@ -30,14 +32,14 @@ for source in sources:
  for match in re.finditer(r'sqlx::query(?:_scalar|_as)?(?:::[^\(]*?)?\(\s*("(?:[^"\\]|\\.)*"|r#"[\s\S]*?"#)', (r/source).read_text()):
   raw=match.group(1)
   sql=raw[3:-2] if raw.startswith('r#') else json.loads(raw)
-  if sql not in queries:queries.append(sql)
+  if sql.lstrip().upper().startswith(("SELECT", "INSERT", "UPDATE", "DELETE", "WITH")) and sql not in queries:queries.append(sql)
 s='00000000-0000-4000-8000-000000000001';a='00000000-0000-4000-8000-000000000002';banner='00000000-0000-4000-8000-000000000003';default='00000000-0000-4000-8000-000000000004';expired='00000000-0000-4000-8000-000000000005';preview='00000000-0000-4000-8000-000000000006'
 files=sorted((r/'backend/migrations').glob('*.sql'))
 schema='\n'.join(p.read_text() for p in files)
 seed=f"INSERT INTO schools(id,name) VALUES('{s}','隔离学校'); INSERT INTO accounts(id,username,display_name) VALUES('{a}','isolated-test','测试');"
 checks=f"""
 DO $$ BEGIN
- IF (SELECT count(*) FROM official_channel_deliveries)<>0 THEN RAISE EXCEPTION 'migration fabricated acceptance';END IF;
+ IF to_regclass('official_channel_deliveries') IS NOT NULL OR (SELECT count(*) FROM official_channel_health)<>0 THEN RAISE EXCEPTION 'migration retained delivery gate or fabricated health';END IF;
  IF to_regclass('official_channel_legacy') IS NOT NULL OR EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='school_resources' AND column_name IN ('url','needs_review')) THEN RAISE EXCEPTION 'obsolete compatibility schema retained';END IF;
 END $$;
 INSERT INTO school_resources(id,kind,title,active) VALUES('{default}','legal','平台默认',true);
