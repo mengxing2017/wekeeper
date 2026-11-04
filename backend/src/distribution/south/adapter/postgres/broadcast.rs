@@ -526,7 +526,7 @@ impl Store for Repository {
         }
     }
 
-    async fn delivery_ready(&self) -> Result<bool> {
+    async fn channel_ready(&self) -> Result<bool> {
         let mut tx = self.0.begin().await?;
         let scope: Option<String> = sqlx::query_scalar(
             "SELECT credential_scope FROM wecom_directory_state WHERE singleton",
@@ -767,7 +767,7 @@ impl Store for Repository {
         Ok(out)
     }
     async fn claim(&self, w: &Work) -> Result<bool> {
-        if w.operation == "create" && !self.delivery_ready().await? {
+        if w.operation == "create" && !self.channel_ready().await? {
             return Ok(false);
         }
 

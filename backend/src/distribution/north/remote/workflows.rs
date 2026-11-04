@@ -188,8 +188,36 @@ async fn policy_confirm(
             .await?,
     ))
 }
+async fn channel_control_read(State(a): State<Application>, actor: Actor) -> Result<ApiResponse> {
+    let mut value = service(&a)
+        .channel_control_read(&actor, &a.integrations.credential_scope())
+        .await?;
+    value["configured"] = serde_json::json!(a.integrations.server_configured());
+    Ok(resource("official-channel-controls", value))
+}
+
+async fn channel_control(
+    State(a): State<Application>,
+    actor: Actor,
+    input: Input,
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "official-channel-controls",
+        service(&a)
+            .channel_control(
+                &actor,
+                &a.integrations.credential_scope(),
+                input.decode("official-channel-controls")?,
+            )
+            .await?,
+    ))
+}
 pub fn router() -> Router<Application> {
     Router::new()
+        .route(
+            "/api/v1/platform/official-channel-controls",
+            get(channel_control_read).post(channel_control),
+        )
         .route(
             "/api/v1/schools/{school}/official-usage-options",
             get(options),

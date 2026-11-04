@@ -14,7 +14,11 @@ fn add(
         affected_action: "claim".into(),
         scope_type: "device".into(),
         scope_id: device,
-        owner: owner.into(),
+        owner: match owner {
+            "platform" | "school" => "admin",
+            other => other,
+        }
+        .into(),
         message: message.into(),
         automatic,
         next_action: if automatic {
@@ -24,6 +28,8 @@ fn add(
         }
         .into(),
         observed_at: chrono::Utc::now(),
+        waiting_since: None,
+        reason_changed_at: None,
         valid_until: None,
         retry_at: None,
     });
@@ -284,22 +290,24 @@ pub(super) async fn assess(
                     .unwrap_or(3);
                 let pending:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_send_inspections WHERE binding_id=$1 AND dependencies=$2 AND state IN ('pending','leased') AND expires_at>clock_timestamp())").bind(uid(plan,"binding_id")?).bind(tasks::dependencies(plan)).fetch_one(&mut **tx).await?;
                 if !pending {
-                    let (failures,retry_at):(i64,Option<chrono::DateTime<chrono::Utc>>)=sqlx::query_as("SELECT count(*),max(created_at)+make_interval(secs=>$3::double precision) FROM mobile_v9_send_inspections WHERE binding_id=$1 AND dependencies=$2 AND state IN ('failed','stale','pending','leased') AND created_at>clock_timestamp()-interval '24 hours'").bind(uid(plan,"binding_id")?).bind(tasks::dependencies(plan)).bind(retry_seconds as f64).fetch_one(&mut **tx).await?;
-                    if failures >= retry_limit {
-                        conditions.pop();
-                        add(
-                            &mut conditions,
-                            "inspection_retry_exhausted",
-                            "当前群自动检查已达到重试预算，请查看检查失败原因",
-                            "engineering",
-                            false,
-                            device,
-                        );
-                    } else if retry_at.is_some_and(|at| at > chrono::Utc::now()) {
+                    let budget = inspection_budget::load(
+                        tx,
+                        uid(plan, "binding_id")?,
+                        tasks::dependencies(plan),
+                        retry_seconds,
+                    )
+                    .await?;
+                    if budget.exhausted(retry_limit) {
+                        let condition = conditions.last_mut().expect("inspection condition");
+                        condition.code = "inspection_retry_exhausted".into();
+                        condition.message =
+                            "自动检查暂未完成，预算恢复后自动继续；可查看失败原因".into();
+                        condition.retry_at = budget.next_retry(retry_limit);
+                    } else if budget.waiting(retry_limit) {
                         let condition = conditions.last_mut().expect("inspection condition");
                         condition.code = "inspection_retry_wait".into();
                         condition.message = "当前群检查失败，等待自动重试时间".into();
-                        condition.retry_at = retry_at;
+                        condition.retry_at = budget.next_retry(retry_limit);
                     }
                 }
             }
@@ -371,6 +379,25 @@ pub(super) async fn assess(
         if let Some((kind, id)) = scope {
             c.scope_type = kind.into();
             c.scope_id = id;
+        }
+    }
+    let observed = wait_states::observations(tx, uid(attempt, "id")?).await?;
+    if let Some(rows) = observed.as_ref().and_then(Value::as_array) {
+        for condition in &mut conditions {
+            if let Some(old) = rows
+                .iter()
+                .find(|v| v["code"] == condition.code && v["scope_id"] == json!(condition.scope_id))
+            {
+                condition.waiting_since = serde_json::from_value(old["waiting_since"].clone())
+                    .ok()
+                    .flatten();
+                if old["message"] == condition.message && old["owner"] == condition.owner {
+                    condition.reason_changed_at =
+                        serde_json::from_value(old["reason_changed_at"].clone())
+                            .ok()
+                            .flatten();
+                }
+            }
         }
     }
     serde_json::to_value(ExecutionStatus {

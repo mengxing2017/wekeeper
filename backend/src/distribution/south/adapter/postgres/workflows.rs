@@ -145,27 +145,60 @@ async fn request(
     Ok(row)
 }
 impl Store for Repository {
-    async fn service_identity(&self, id: Uuid) -> Result<()> {
-        sqlx::query("SELECT id FROM accounts WHERE id=$1 AND NOT active AND NOT platform_admin AND password_hash IS NULL AND wecom_member_id IS NULL AND wx_openid IS NULL").bind(id).fetch_optional(&self.0).await?.ok_or(Error::Forbidden)?;
-        Ok(())
+    async fn claim_health_probe(&self, scope: &str) -> Result<bool> {
+        Ok(sqlx::query("INSERT INTO official_channel_health(credential_scope,next_probe_at) VALUES($1,clock_timestamp()+interval '60 seconds') ON CONFLICT(credential_scope) DO UPDATE SET next_probe_at=clock_timestamp()+interval '60 seconds' WHERE official_channel_health.next_probe_at<=clock_timestamp() RETURNING credential_scope")
+            .bind(scope).fetch_optional(&self.0).await?.is_some())
     }
-    async fn record_delivery(&self, id: Uuid, v: ChannelDelivery) -> Result<Uuid> {
-        self.service_identity(id).await?;
-        require(
-            (60..=86400).contains(&v.valid_seconds)
-                && !v.source.trim().is_empty()
-                && v.source.len() <= 2000,
-            "请提供真实权限复核来源和有限检查期限",
-        )?;
+    async fn record_health(&self, v: ChannelHealth) -> Result<()> {
         let mut tx = self.0.begin().await?;
         super::broadcast::guard(&mut tx).await?;
-        sqlx::query("SELECT id FROM accounts WHERE id=$1 AND NOT active AND NOT platform_admin AND password_hash IS NULL AND wecom_member_id IS NULL AND wx_openid IS NULL FOR SHARE").bind(id).fetch_optional(&mut *tx).await?.ok_or(Error::Forbidden)?;
-        sqlx::query("SELECT singleton FROM wecom_directory_state WHERE corp_id=$1 AND credential_generation=$2 AND credential_scope=$3 FOR SHARE").bind(&v.corp).bind(v.generation).bind(&v.scope).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
-        let delivery = Uuid::now_v7();
-        sqlx::query("INSERT INTO official_channel_deliveries(id,corp_id,generation,credential_scope,state,checked_at,valid_until,source) VALUES($1,$2,$3,$4,$5,now(),now()+make_interval(secs=>$6::double precision),$7)").bind(delivery).bind(&v.corp).bind(v.generation).bind(&v.scope).bind(if v.available{"available"}else{"paused"}).bind(v.valid_seconds as f64).bind(&v.source).execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO audit_events(id,school_id,actor_id,action,object_id,detail,request_id) VALUES($1,NULL,$2,'official.channel.delivery',$3,$4,'deployment-tool')").bind(Uuid::now_v7()).bind(id).bind(delivery).bind(json!({"available":v.available,"source":v.source})).execute(&mut *tx).await?;
+        if v.available {
+            sqlx::query("SELECT singleton FROM wecom_directory_state WHERE corp_id=$1 AND credential_generation=$2 AND credential_scope=$3 FOR SHARE")
+                .bind(&v.corp).bind(v.generation).bind(&v.scope).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
+        }
+        sqlx::query("UPDATE official_channel_health SET corp_id=$2,generation=$3,available=$4,checked_at=clock_timestamp(),last_success_at=CASE WHEN $4 THEN clock_timestamp() ELSE last_success_at END,last_failure_at=CASE WHEN NOT $4 THEN clock_timestamp() ELSE last_failure_at END,error_code=$5 WHERE credential_scope=$1")
+            .bind(&v.scope).bind(v.corp).bind(v.generation).bind(v.available).bind(v.error_code).execute(&mut *tx).await?;
         tx.commit().await?;
-        Ok(delivery)
+        Ok(())
+    }
+    async fn channel_control_read(&self, a: &Actor, scope: &str) -> Result<Value> {
+        let mut tx = self.0.begin().await?;
+        sqlx::query("SELECT id FROM accounts WHERE id=$1 AND active AND platform_admin FOR SHARE")
+            .bind(a.id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(Error::Forbidden)?;
+        let control:Option<Value>=sqlx::query_scalar("SELECT jsonb_build_object('paused',paused,'revision',revision) FROM official_channel_controls WHERE credential_scope=$1").bind(scope).fetch_optional(&mut *tx).await?;
+        let health:Option<Value>=sqlx::query_scalar("SELECT jsonb_build_object('checked_at',checked_at,'last_success_at',last_success_at,'last_failure_at',last_failure_at) FROM official_channel_health WHERE credential_scope=$1").bind(scope).fetch_optional(&mut *tx).await?;
+        let status = channel_status(&mut tx, scope).await?;
+        Ok(
+            json!({"id":"current","paused":control.as_ref().map(|c|c["paused"].clone()).unwrap_or(json!(false)),"revision":control.as_ref().map(|c|c["revision"].clone()).unwrap_or(json!(0)),"health_state":status.1,"health":health}),
+        )
+    }
+    async fn channel_control(&self, a: &Actor, scope: &str, v: ChannelControl) -> Result<Value> {
+        let mut tx = self.0.begin().await?;
+        super::broadcast::guard(&mut tx).await?;
+        sqlx::query("SELECT id FROM accounts WHERE id=$1 AND active AND platform_admin FOR SHARE")
+            .bind(a.id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(Error::Forbidden)?;
+        let old: Option<i64> = sqlx::query_scalar(
+            "SELECT revision FROM official_channel_controls WHERE credential_scope=$1",
+        )
+        .bind(scope)
+        .fetch_optional(&mut *tx)
+        .await?;
+        require(
+            old.unwrap_or(0) == v.expected_revision,
+            "修订已变化，请刷新后重试",
+        )?;
+        let revision = v.expected_revision + 1;
+        sqlx::query("INSERT INTO official_channel_controls(credential_scope,paused,revision,reason,updated_by) VALUES($1,$2,$3,$4,$5) ON CONFLICT(credential_scope) DO UPDATE SET paused=$2,revision=$3,reason=$4,updated_by=$5,updated_at=clock_timestamp()")
+            .bind(scope).bind(v.paused).bind(revision).bind(&v.reason).bind(a.id).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO audit_events(id,school_id,actor_id,action,object_id,detail,request_id) VALUES($1,NULL,$2,'official.channel.control',$3,$4,'api')").bind(Uuid::now_v7()).bind(a.id).bind(a.id).bind(json!({"paused":v.paused,"reason":v.reason,"revision":revision})).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(json!({"id":"current","paused":v.paused,"revision":revision}))
     }
 
     async fn command(&self, a: &Actor, s: Option<Uuid>, command: Command) -> Result<Value> {
@@ -532,21 +565,25 @@ impl Store for Repository {
     ) -> Result<Value> {
         let mut tx = self.0.begin().await?;
         super::broadcast::authorize(&mut tx, a.id, s, false).await?;
-        let delivery = channel_status(&mut tx, scope).await?;
-        let available = configured && enabled && delivery.0;
+        let health = channel_status(&mut tx, scope).await?;
+        let available = configured && enabled && health.0;
         let pending:Option<Value>=sqlx::query_scalar("SELECT to_jsonb(r)||jsonb_build_object('owner_name',a.display_name) FROM product_requests r LEFT JOIN accounts a ON a.id=r.owner_id WHERE r.school_id=$1 AND kind='channel' ORDER BY r.created_at DESC,r.id DESC LIMIT 1").bind(s).fetch_optional(&mut *tx).await?;
+        let control:Option<Value>=sqlx::query_scalar("SELECT jsonb_build_object('paused',paused,'revision',revision) FROM official_channel_controls WHERE credential_scope=$1").bind(scope).fetch_optional(&mut *tx).await?;
         Ok(
-            json!({"id":"current","broadcast_available":available,"management_available":configured,"reason":if !configured{Some("官方渠道待平台交付，可保留草稿并提交开通申请")}else if !enabled{Some("官方渠道已暂停新发送，请查看平台处理进度")}else if !available{Some("官方渠道等待交付负责人检查，草稿不会自动发送")}else{None},"reason_code":if available{"available"}else if !configured{"delivery_missing"}else if !enabled{"channel_paused"}else{"delivery_check_required"},"delivery_state":delivery.1,"can_edit_draft":true,"can_preview":available,"can_confirm":available,"can_refresh":configured,"can_stop":configured,"request":pending}),
+            json!({"id":"current","broadcast_available":available,"management_available":configured,
+            "reason":if !configured {Some("官方渠道服务端凭据未配置，可保存草稿")} else if !enabled || health.1=="paused" {Some("官方渠道已明确暂停新发送")} else if !available {Some("官方接口暂不可用，系统将自动重新检查；草稿保留")} else {None},
+            "reason_code":if available {"available"} else if !configured {"credentials_missing"} else if !enabled || health.1=="paused" {"channel_paused"} else {"channel_unavailable"},
+            "health_state":health.1,"control":control,"can_edit_draft":true,"can_preview":true,"can_confirm":available,"can_refresh":configured,"can_stop":configured,"request":pending}),
         )
     }
 }
 pub(crate) async fn channel_status(tx: &mut Tx<'_>, scope: &str) -> Result<(bool, &'static str)> {
-    let row=sqlx::query("SELECT x.state,x.valid_until>now() AS valid FROM official_channel_deliveries x JOIN wecom_directory_state d ON d.corp_id=x.corp_id AND d.credential_generation=x.generation AND d.credential_scope=x.credential_scope WHERE x.credential_scope=$1 ORDER BY x.checked_at DESC,x.id DESC LIMIT 1").bind(scope).fetch_optional(&mut **tx).await?;
-    if let Some(row) = row {
-        let valid = row.get::<bool, _>("valid") && row.get::<String, _>("state") == "available";
-        return Ok((valid, if valid { "available" } else { "check_required" }));
+    let paused:bool=sqlx::query_scalar("SELECT coalesce((SELECT paused FROM official_channel_controls WHERE credential_scope=$1),false)").bind(scope).fetch_one(&mut **tx).await?;
+    if paused {
+        return Ok((false, "paused"));
     }
-    Ok((false, "awaiting_delivery"))
+    let ready:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM official_channel_health h JOIN wecom_directory_state d ON d.corp_id=h.corp_id AND d.credential_generation=h.generation AND d.credential_scope=h.credential_scope WHERE h.credential_scope=$1 AND h.available AND h.checked_at>clock_timestamp()-interval '180 seconds')").bind(scope).fetch_one(&mut **tx).await?;
+    Ok((ready, if ready { "available" } else { "checking" }))
 }
 
 fn sanitize_request(mut v: Value) -> Value {

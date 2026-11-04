@@ -35,6 +35,7 @@ pub enum DeviceCommand {
     Result(ResultEvent),
     Consent(ConsentInput),
     InspectionClaim(InspectionClaim),
+    InspectionStart(InspectionStart),
     InspectionResult(InspectionResult),
     Renew(Uuid, LeaseMutation),
     Release(Uuid, LeaseMutation),

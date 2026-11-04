@@ -147,7 +147,6 @@ impl BusinessSchemeInput {
         let p = super::shared_send_v2::PolicyInput {
             expected_revision: self.expected_revision,
             mode: if self.enabled { "enabled" } else { "disabled" }.into(),
-            allowed_stages: vec!["production_allowlist".into()],
             confirmation_seconds: 86400,
             inspection_seconds: 3600,
             retry_seconds: 300,
@@ -171,10 +170,9 @@ pub struct SendingStatus {
     pub message: String,
 }
 impl SendingStatus {
-    pub fn project(mode: Option<&str>, production: bool) -> Self {
+    pub fn project(mode: Option<&str>) -> Self {
         let platform = match mode {
             None => "default",
-            Some("enabled") if !production => "unsupported",
             Some("enabled") => "enabled",
             Some("preview_only") => "preview_only",
             Some("draft_only") => "draft_only",
@@ -185,7 +183,6 @@ impl SendingStatus {
             "default" => ("school", "使用系统默认发送设置，可正常提交任务"),
             "preview_only" => ("platform", "任务可以提交，实际执行等待平台恢复发送"),
             "draft_only" => ("platform", "任务可以提交，实际执行等待平台恢复发送"),
-            "unsupported" => ("platform", "任务可以提交，实际执行等待发送设置更新"),
             _ => ("platform", "平台已暂停实际执行，任务仍可提交排队"),
         };
         Self {
@@ -208,16 +205,13 @@ mod policy_tests {
             Some("draft_only"),
             Some("preview_only"),
         ] {
-            let s = SendingStatus::project(mode, true);
+            let s = SendingStatus::project(mode);
             assert!(s.can_confirm);
             assert_eq!(s.owner, if mode.is_none() { "school" } else { "platform" });
         }
-        assert_eq!(
-            SendingStatus::project(Some("enabled"), false).platform,
-            "unsupported"
-        );
-        assert!(SendingStatus::project(Some("enabled"), true).can_confirm);
-        let wire = serde_json::to_value(SendingStatus::project(Some("enabled"), true)).unwrap();
+        assert_eq!(SendingStatus::project(Some("enabled")).platform, "enabled");
+        assert!(SendingStatus::project(Some("enabled")).can_confirm);
+        let wire = serde_json::to_value(SendingStatus::project(Some("enabled"))).unwrap();
         assert!(wire.get("delivery").is_none());
         assert_eq!(wire["can_confirm"], true);
     }
@@ -229,7 +223,6 @@ mod policy_tests {
             .unwrap()
             .policy()
             .unwrap();
-        assert_eq!(p.allowed_stages, ["production_allowlist"]);
         assert_eq!(p.mode, "disabled");
         body["confirmed"] = serde_json::json!(false);
         assert!(

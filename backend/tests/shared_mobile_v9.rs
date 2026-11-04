@@ -142,7 +142,7 @@ async fn offline_binding_is_selectable_and_confirmable_without_environment_or_co
     let f = Fixture::new().await;
     f.activate("activate").await.unwrap();
     let r = f.repo();
-    let policy:PolicyInput=serde_json::from_value(json!({"expected_revision":0,"mode":"enabled","allowed_stages":["test_send"],"confirmation_seconds":600,"inspection_seconds":600,"retry_seconds":300,"retry_limit":3,"timezone":"Asia/Shanghai","allowed_windows":[{"weekdays":[1,2,3,4,5,6,7],"start_minute":0,"end_minute":1440}],"limits":ObjectLimits::value(),"reason":"Synthetic test"})).unwrap();
+    let policy:PolicyInput=serde_json::from_value(json!({"expected_revision":0,"mode":"enabled","confirmation_seconds":600,"inspection_seconds":600,"retry_seconds":300,"retry_limit":3,"timezone":"Asia/Shanghai","allowed_windows":[{"weekdays":[1,2,3,4,5,6,7],"start_minute":0,"end_minute":1440}],"limits":ObjectLimits::value(),"reason":"Synthetic test"})).unwrap();
     r.platform_write(&f.actor, "policy", PlatformCommand::Policy(policy))
         .await
         .unwrap();
@@ -172,7 +172,6 @@ async fn offline_binding_is_selectable_and_confirmable_without_environment_or_co
         message: "  测试\n🙂  ".into(),
         content_type: "text/plain".into(),
         expected_revision: None,
-        stage: "test_send".into(),
         between_targets_seconds: 30,
     };
     let draft = r
@@ -662,7 +661,7 @@ async fn business_scope_materializes_without_delivery_acceptance_or_activation_a
             .unwrap(),
         0
     );
-    let p:PolicyInput=serde_json::from_value(json!({"expected_revision":0,"mode":"enabled","allowed_stages":["production_allowlist"],"confirmation_seconds":600,"inspection_seconds":600,"retry_seconds":300,"retry_limit":3,"timezone":"Asia/Shanghai","allowed_windows":[{"weekdays":[1,2,3,4,5,6,7],"start_minute":0,"end_minute":1440}],"limits":ObjectLimits::value(),"reason":"Synthetic test"})).unwrap();
+    let p:PolicyInput=serde_json::from_value(json!({"expected_revision":0,"mode":"enabled","confirmation_seconds":600,"inspection_seconds":600,"retry_seconds":300,"retry_limit":3,"timezone":"Asia/Shanghai","allowed_windows":[{"weekdays":[1,2,3,4,5,6,7],"start_minute":0,"end_minute":1440}],"limits":ObjectLimits::value(),"reason":"Synthetic test"})).unwrap();
     r.platform_write(&f.actor, "business-policy", PlatformCommand::Policy(p))
         .await
         .unwrap();
@@ -729,7 +728,7 @@ async fn business_scope_materializes_without_delivery_acceptance_or_activation_a
         )
         .await
         .unwrap();
-    assert_eq!(preview["draft"]["stage"], "production_allowlist");
+    assert!(preview["draft"].get("stage").is_none());
     assert_eq!(preview["preview"]["plan"]["message"], "  一步预览\n🙂  ");
     assert!(preview["preview"]["plan"]["items"][0]["blocker"].is_null());
     let task = r
@@ -1565,7 +1564,6 @@ async fn pending_declined_history_does_not_implicitly_disable_a_valid_binding() 
                     message: "历史申请不影响下发".into(),
                     content_type: "text/plain".into(),
                     expected_revision: None,
-                    stage: "production_allowlist".into(),
                     between_targets_seconds: 30,
                 },
             ),

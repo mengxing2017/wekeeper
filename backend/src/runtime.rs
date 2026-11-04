@@ -111,6 +111,24 @@ async fn serve_inner(
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         }
     });
+    let health_service = crate::distribution::north::local::workflows::Service(
+        crate::distribution::south::adapter::postgres::workflows::Repository(
+            application.pool.clone(),
+        ),
+    );
+    let health_integration = application.integrations.clone();
+    let health_worker = tokio::spawn(async move {
+        loop {
+            if health_service
+                .check_health(health_integration.clone())
+                .await
+                .is_err()
+            {
+                tracing::warn!("official channel health check will retry");
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
+    });
     let broadcast = application.broadcast();
     let broadcast_worker = tokio::spawn(async move {
         loop {
@@ -123,6 +141,15 @@ async fn serve_inner(
     let usages = crate::distribution::south::adapter::postgres::shared_send_v2::Repository(
         application.pool.clone(),
     );
+    let wait_observer = usages.clone();
+    let wait_worker = tokio::spawn(async move {
+        loop {
+            if wait_observer.refresh_wait_states().await.is_err() {
+                tracing::warn!("wait observations will retry without affecting execution");
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
+    });
     let usage_worker = tokio::spawn(async move {
         loop {
             if usages.dispatch_task_wakes().await.is_err() {
@@ -146,8 +173,12 @@ async fn serve_inner(
     let result = axum::serve(listener, http::app_router(application))
         .with_graceful_shutdown(shutdown_signal())
         .await;
+    health_worker.abort();
+    let _ = health_worker.await;
     artwork_worker.abort();
     let _ = artwork_worker.await;
+    wait_worker.abort();
+    let _ = wait_worker.await;
     usage_worker.abort();
     let _ = usage_worker.await;
     broadcast_worker.abort();

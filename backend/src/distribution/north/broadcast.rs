@@ -124,7 +124,7 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
                 m.detail_url = format!("{}{}", self.origin, m.detail_url);
             }
         }
-        let ready = self.enabled && self.store.delivery_ready().await?;
+        let ready = self.management_available;
         let scope = if ready {
             self.client.generation().await.ok()
         } else {
@@ -269,10 +269,6 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
         id: Uuid,
     ) -> Result<crate::distribution::domain::content::Preview> {
         self.store.authorize(a.id, s, false).await?;
-        require(
-            self.enabled && self.store.delivery_ready().await?,
-            "官方渠道等待平台完成交付，可保留草稿",
-        )?;
         let mut task = self.store.task(s, id).await?;
         if task.total == 0 {
             let mut input = task.draft_input.clone();
@@ -321,8 +317,8 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
         }
         if operation == "confirm" {
             require(
-                self.store.delivery_ready().await?,
-                "官方渠道待交付负责人检查，尚不能创建发送任务",
+                self.store.channel_ready().await?,
+                "官方接口当前不可用或已暂停，系统将自动检查",
             )?;
         }
         if operation == "reconcile" && input.decision.as_deref() == Some("linked") {
@@ -463,7 +459,7 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
 }
 fn unavailable_reason(configured: bool, enabled: bool) -> Option<&'static str> {
     if !configured {
-        Some("官方渠道待平台交付，可保存草稿并提交开通申请。")
+        Some("官方渠道服务端凭据未配置，可保存草稿。")
     } else if !enabled {
         Some("官方渠道暂停新发送，请查看平台处理进度。")
     } else {
@@ -502,7 +498,7 @@ mod availability_tests {
         assert!(
             unavailable_reason(false, true)
                 .unwrap()
-                .contains("待平台交付")
+                .contains("凭据未配置")
         );
         assert!(
             unavailable_reason(true, false)

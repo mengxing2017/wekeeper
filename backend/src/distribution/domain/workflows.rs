@@ -130,18 +130,40 @@ impl Command {
     }
 }
 #[derive(Clone)]
-pub struct ChannelDelivery {
-    pub corp: String,
-    pub generation: i64,
+pub struct ChannelHealth {
+    pub corp: Option<String>,
+    pub generation: Option<i64>,
     pub scope: String,
     pub available: bool,
-    pub source: String,
-    pub valid_seconds: i64,
+    pub error_code: Option<String>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChannelControl {
+    pub paused: bool,
+    pub expected_revision: i64,
+    pub reason: String,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn channel_control_matches_the_business_client_fixture_without_delivery_fields() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../api-contract/fixtures/product-workflows.json"
+        ))
+        .unwrap();
+        let input: ChannelControl =
+            serde_json::from_value(fixture["channel_control"].clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(input).unwrap(),
+            fixture["channel_control"]
+        );
+        let mut obsolete = fixture["channel_control"].clone();
+        obsolete["permission_review"] = serde_json::json!("not-a-business-input");
+        assert!(serde_json::from_value::<ChannelControl>(obsolete).is_err());
+    }
     #[test]
     fn no_technical_identity_in_public_business_inputs() {
         assert!(serde_json::from_value::<MemberPolicyInput>(serde_json::json!({"member_id":Uuid::nil(),"generation":1,"revision":0,"enabled":true,"window_seconds":3600,"max_calls":1,"resource_key":"wecom:forged"})).is_err());

@@ -11,6 +11,16 @@ use std::collections::BTreeSet;
 #[derive(Clone)]
 pub struct Client(pub Service);
 impl Client {
+    /// One bounded read. Success proves this interface is readable, not send permission.
+    pub async fn probe_read_access(&self) -> std::result::Result<(), String> {
+        let end = chrono::Utc::now().timestamp();
+        let value=directory_http::Client(self.0.clone()).request("externalcontact/get_groupmsg_list_v2", &[], Some(json!({"chat_type":"group","filter_type":0,"start_time":end-3600,"end_time":end,"limit":1}))).await.map_err(|e|e.code())?;
+        if value["group_msg_list"].is_array() && value["next_cursor"].is_string() {
+            Ok(())
+        } else {
+            Err("invalid_response".into())
+        }
+    }
     // Reads may be retried. This method must NEVER be used for external writes.
     async fn pages(&self, endpoint: &str, mut body: Value, field: &str) -> Result<Vec<Value>> {
         let reader = directory_http::Client(self.0.clone());

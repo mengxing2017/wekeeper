@@ -437,23 +437,20 @@ impl Repository {
                 json!({"id":issue,"state":"submitted"})
             }
             UsageCommand::TaskConfirm(v) => {
-                let production:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_previews WHERE id=$1 AND school_id=$2 AND plan->>'stage'='production_allowlist')").bind(v.preview_id).bind(s).fetch_one(&mut *tx).await?;
-                require(production, "发送确认必须引用当前业务预览")?;
+                let exists: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM mobile_v9_previews WHERE id=$1 AND school_id=$2)",
+                )
+                .bind(v.preview_id)
+                .bind(s)
+                .fetch_one(&mut *tx)
+                .await?;
+                require(exists, "发送确认必须引用当前业务预览")?;
                 tasks::write(&mut tx, a, s, SchoolCommand::Confirm(v)).await?
             }
             UsageCommand::TaskPreview(v) => {
                 if let Some(id) = v.draft_id {
-                    let old_stage: Option<String> = sqlx::query_scalar(
-                        "SELECT stage FROM mobile_v9_task_drafts WHERE id=$1 AND school_id=$2",
-                    )
-                    .bind(id)
-                    .bind(s)
-                    .fetch_optional(&mut *tx)
-                    .await?;
-                    require(
-                        old_stage.as_deref() == Some("production_allowlist"),
-                        "请选择当前业务草稿",
-                    )?;
+                    let exists:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_task_drafts WHERE id=$1 AND school_id=$2)").bind(id).bind(s).fetch_one(&mut *tx).await?;
+                    require(exists, "请选择当前业务草稿")?;
                 }
 
                 let draft = tasks::write(
@@ -467,7 +464,6 @@ impl Repository {
                             message: v.message,
                             content_type: "text/plain".into(),
                             expected_revision: v.expected_revision,
-                            stage: "production_allowlist".into(),
                             between_targets_seconds: v.between_targets_seconds,
                         },
                     ),

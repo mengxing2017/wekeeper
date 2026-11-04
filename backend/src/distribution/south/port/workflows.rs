@@ -6,12 +6,22 @@ use serde_json::Value;
 use std::future::Future;
 use uuid::Uuid;
 pub trait Store: Clone + Send + Sync + 'static {
-    fn service_identity(&self, id: Uuid) -> impl Future<Output = Result<()>> + Send;
-    fn record_delivery(
+    fn claim_health_probe(&self, scope: &str) -> impl Future<Output = Result<bool>> + Send;
+    fn record_health(
         &self,
-        id: Uuid,
-        input: crate::distribution::domain::workflows::ChannelDelivery,
-    ) -> impl Future<Output = Result<Uuid>> + Send;
+        input: crate::distribution::domain::workflows::ChannelHealth,
+    ) -> impl Future<Output = Result<()>> + Send;
+    fn channel_control_read(
+        &self,
+        a: &Actor,
+        scope: &str,
+    ) -> impl Future<Output = Result<Value>> + Send;
+    fn channel_control(
+        &self,
+        a: &Actor,
+        scope: &str,
+        input: crate::distribution::domain::workflows::ChannelControl,
+    ) -> impl Future<Output = Result<Value>> + Send;
     fn options(&self, a: &Actor, s: Option<Uuid>) -> impl Future<Output = Result<Value>> + Send;
     fn requests(
         &self,

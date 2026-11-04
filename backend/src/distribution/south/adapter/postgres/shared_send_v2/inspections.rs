@@ -19,6 +19,20 @@ pub(super) async fn request(
 // Enabled bindings are durable desired checks, including while offline or awaiting consent.
 pub(super) async fn reconcile(tx: &mut Tx<'_>, device: Uuid) -> Result<()> {
     tasks::retire_unconfigured_tasks(tx, device).await?;
+    // Expired claims count once only while their original resources still match.
+    let expired: Vec<Value> = sqlx::query_scalar("SELECT to_jsonb(i) FROM mobile_v9_send_inspections i WHERE device_id=$1 AND state='leased' AND expires_at<=clock_timestamp() ORDER BY expires_at,id LIMIT 100")
+        .bind(device).fetch_all(&mut **tx).await?;
+    for row in expired {
+        let current = match material(tx, &row).await {
+            Ok(_) => true,
+            Err(Error::Policy(_) | Error::NotFound | Error::Invalid(_)) => false,
+            Err(error) => return Err(error),
+        };
+        sqlx::query("UPDATE mobile_v9_send_inspections SET state=$2,finished_at=expires_at,termination_reason=$3 WHERE id=$1 AND state='leased'")
+            .bind(uid(&row,"id")?).bind(if current && !row["started_at"].is_null() { "failed" } else { "stale" })
+            .bind(if row["started_at"].is_null() { "not_started" } else if current { "execution_timeout" } else { "resources_changed" })
+            .execute(&mut **tx).await?;
+    }
     // Revoke queued work immediately, including bindings excluded from the active scan.
     sqlx::query("UPDATE mobile_v9_send_inspections i SET state='stale' WHERE i.automatic AND i.state='pending' AND i.device_id=$1 AND NOT EXISTS(SELECT 1 FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id JOIN schools s ON s.id=b.school_id JOIN execution_devices d ON d.id=b.device_id JOIN mobile_shared_delegations m ON m.id=i.delegation_id WHERE b.id=i.binding_id AND b.enabled AND t.enabled AND t.archived_at IS NULL AND s.active AND d.enabled AND m.credential_generation=d.credential_generation AND (b.source='platform' OR EXISTS(SELECT 1 FROM mobile_shared_school_access a WHERE a.device_id=b.device_id AND a.school_id=b.school_id AND a.enabled)))").bind(device).execute(&mut **tx).await?;
     let bindings:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(b) FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id JOIN schools s ON s.id=b.school_id WHERE b.enabled AND t.enabled AND t.archived_at IS NULL AND s.active AND b.device_id=$1 ORDER BY b.id").bind(device).fetch_all(&mut **tx).await?;
@@ -44,7 +58,7 @@ async fn reconcile_binding(tx: &mut Tx<'_>, b: &Value) -> Result<()> {
         sqlx::query("UPDATE mobile_v9_send_inspections SET state='stale' WHERE binding_id=$1 AND automatic AND state='pending'").bind(uid(b,"id")?).execute(&mut **tx).await?;
         return Ok(());
     };
-    // A confirmed cursor keeps its original release; activation never rewrites intent.
+    // A confirmed cursor keeps its actual frozen rules; new builds never rewrite intent.
     let frozen:Option<Value>=sqlx::query_scalar("SELECT p.plan FROM mobile_v9_plans p JOIN mobile_v9_attempts a ON a.plan_id=p.id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE p.plan->>'binding_id'=$1::uuid::text AND a.current AND a.state='queued' AND i.position=t.cursor_position AND NOT t.stopped AND t.confirmed_until>clock_timestamp() ORDER BY t.created_at,t.id LIMIT 1").bind(uid(b,"id")?).fetch_optional(&mut **tx).await?;
     if let Some(plan) = frozen {
         if tasks::validate_plan(tx, uid(b, "school_id")?, &plan)
@@ -57,10 +71,10 @@ async fn reconcile_binding(tx: &mut Tx<'_>, b: &Value) -> Result<()> {
             c[key] = plan[key].clone();
         }
     }
-    if c["accepted"] != true || c["release_id"].is_null() {
+    if c["accepted"] != true || tasks::validate_embedded_rules(&c).is_err() {
         return Ok(());
     }
-    if tasks::validate_scope(tx, uid(b, "school_id")?, &c, "production_allowlist")
+    if tasks::validate_scope(tx, uid(b, "school_id")?, &c)
         .await
         .is_err()
     {
@@ -82,12 +96,12 @@ async fn reconcile_binding(tx: &mut Tx<'_>, b: &Value) -> Result<()> {
     if valid {
         return Ok(());
     }
-    let (failures,recent):(i64,bool)=sqlx::query_as("SELECT count(*),coalesce(bool_or(created_at>clock_timestamp()-make_interval(secs=>$3::double precision)),false) FROM mobile_v9_send_inspections WHERE binding_id=$1 AND dependencies=$2 AND state IN ('failed','stale','pending','leased') AND created_at>clock_timestamp()-interval '24 hours'").bind(uid(b,"id")?).bind(&deps).bind(retry_seconds as f64).fetch_one(&mut **tx).await?;
-    // A manual refresh reevaluates desired work; it never resets its retry budget.
-    if failures >= retry_limit || recent {
+    let budget = inspection_budget::load(tx, uid(b, "id")?, deps.clone(), retry_seconds).await?;
+    // Manual reevaluation cannot reset actual failures.
+    if budget.exhausted(retry_limit) || budget.waiting(retry_limit) {
         return Ok(());
     }
-    sqlx::query("INSERT INTO mobile_v9_send_inspections(id,school_id,device_id,target_id,binding_id,delegation_id,dependencies,requested_by,challenge,automatic,expires_at,purpose,release_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,true,clock_timestamp()+interval '24 hours','automatic',$10)").bind(Uuid::now_v7()).bind(uid(b,"school_id")?).bind(uid(b,"device_id")?).bind(uid(b,"target_id")?).bind(uid(b,"id")?).bind(uid(&c,"delegation_id")?).bind(deps).bind(uid(b,"updated_by")?).bind(Uuid::new_v4().simple().to_string()).bind(uid(&c,"release_id")?).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO mobile_v9_send_inspections(id,school_id,device_id,target_id,binding_id,delegation_id,dependencies,requested_by,challenge,automatic,expires_at,purpose,flow,flow_digest) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,true,clock_timestamp()+interval '24 hours','automatic',$10,$11)").bind(Uuid::now_v7()).bind(uid(b,"school_id")?).bind(uid(b,"device_id")?).bind(uid(b,"target_id")?).bind(uid(b,"id")?).bind(uid(&c,"delegation_id")?).bind(deps).bind(uid(b,"updated_by")?).bind(Uuid::new_v4().simple().to_string()).bind(&c["flow"]).bind(c["flow_digest"].as_str()).execute(&mut **tx).await?;
     Ok(())
 }
 
@@ -112,17 +126,12 @@ async fn material(tx: &mut Tx<'_>, row: &Value) -> Result<Value> {
         "shared_send_consent_required",
     )?;
     // Automatic checks use the immutable configuration already frozen by the task.
-    let release:Value=sqlx::query_scalar("SELECT jsonb_build_object('id',r.id,'flow',r.flow,'digest',r.content_digest) FROM mobile_v9_adapter_releases r WHERE r.id=$1").bind(uid(row,"release_id")?).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("plan_dependency_changed"))?;
-    candidate["release_id"] = release["id"].clone();
-    candidate["flow"] = release["flow"].clone();
-    candidate["flow_digest"] = release["digest"].clone();
-    tasks::validate_scope(
-        tx,
-        uid(row, "school_id")?,
-        &candidate,
-        "production_allowlist",
-    )
-    .await?;
+    candidate["flow"] = row["flow"].clone();
+    candidate["flow_digest"] = row["flow_digest"].clone();
+    // An archival dependency annotation is not a source of rules or an approval.
+    candidate["release_id"] = row["dependencies"]["release_id"].clone();
+    tasks::validate_embedded_rules(&candidate)?;
+    tasks::validate_scope(tx, uid(row, "school_id")?, &candidate).await?;
     require(
         tasks::dependencies(&candidate) == row["dependencies"],
         "plan_dependency_changed",
@@ -147,6 +156,21 @@ pub(super) async fn claim(tx: &mut Tx<'_>, c: &Credential, v: InspectionClaim) -
         json!({"id":v.inspection_id,"schema":SCHEMA,"state":"leased","challenge":row["challenge"],"lease_fence":fence,"runtime_epoch":v.runtime_epoch,"ui_context_epoch":epoch,"dependencies":row["dependencies"],"dependencies_digest":digest(&row["dependencies"])? ,"flow":candidate["flow"],"flow_digest":candidate["flow_digest"],"search_text":candidate["search_text"],"launch_path":row["launch_path"]}),
     )
 }
+pub(super) async fn start(tx: &mut Tx<'_>, c: &Credential, v: InspectionStart) -> Result<Value> {
+    let row:Value=sqlx::query_scalar("SELECT to_jsonb(i) FROM mobile_v9_send_inspections i WHERE id=$1 AND device_id=$2 AND dependencies->>'credential_generation'=$3 AND state='leased' AND purpose='automatic' AND expires_at>clock_timestamp()")
+        .bind(v.inspection_id).bind(c.device_id).bind(c.generation.to_string()).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("inspection_expired"))?;
+    require(
+        row["runtime_epoch"] == json!(v.runtime_epoch)
+            && row["lease_fence"] == v.lease_fence
+            && row["challenge"] == v.challenge
+            && digest(&row["dependencies"])? == v.dependencies_digest,
+        "result_identity_mismatch",
+    )?;
+    let live:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_shared_device_leases WHERE device_id=$1 AND holder_id=$2 AND fence=$3 AND expires_at>clock_timestamp())").bind(c.device_id).bind(v.inspection_id).bind(v.lease_fence).fetch_one(&mut **tx).await?;
+    require(live, "lease_superseded")?;
+    sqlx::query("UPDATE mobile_v9_send_inspections SET started_at=coalesce(started_at,clock_timestamp()) WHERE id=$1").bind(v.inspection_id).execute(&mut **tx).await?;
+    Ok(json!({"id":v.inspection_id,"state":"started","dependencies_digest":v.dependencies_digest}))
+}
 pub(super) async fn finish(tx: &mut Tx<'_>, c: &Credential, v: InspectionResult) -> Result<Value> {
     require(
         !v.evidence.trim().is_empty() && v.evidence.len() <= 2000,
@@ -165,7 +189,10 @@ pub(super) async fn finish(tx: &mut Tx<'_>, c: &Credential, v: InspectionResult)
     let checks = crate::distribution::domain::shared_mobile::FLOW_CHECKS
         .iter()
         .all(|k| v.checks.get(*k) == Some(&true));
-    let state = if !current || !live {
+    let started = !row["started_at"].is_null()
+        || v.checks.get("execution_started") == Some(&true)
+        || v.checks.get("application_opened") == Some(&true);
+    let state = if !current || !live || !started {
         "stale"
     } else if v.passed && checks {
         "passed"
@@ -176,6 +203,6 @@ pub(super) async fn finish(tx: &mut Tx<'_>, c: &Credential, v: InspectionResult)
         .await?
         .and_then(|p| p["inspection_seconds"].as_i64())
         .unwrap_or(86400);
-    sqlx::query("UPDATE mobile_v9_send_inspections SET state=$2,result=$3,expires_at=clock_timestamp()+make_interval(secs=>$4::double precision) WHERE id=$1").bind(v.inspection_id).bind(state).bind(json!(v)).bind(ttl as f64).execute(&mut **tx).await?;
+    sqlx::query("UPDATE mobile_v9_send_inspections SET state=$2,result=$3,started_at=CASE WHEN $3::jsonb->'checks'->>'execution_started'='true' OR $3::jsonb->'checks'->>'application_opened'='true' THEN coalesce(started_at,clock_timestamp()) ELSE started_at END,finished_at=clock_timestamp(),termination_reason=CASE WHEN $2='failed' THEN 'check_failed' WHEN $2='stale' AND started_at IS NULL AND coalesce($3::jsonb->'checks'->>'execution_started','false')<>'true' AND coalesce($3::jsonb->'checks'->>'application_opened','false')<>'true' THEN 'not_started' WHEN $2='stale' THEN 'resources_or_runtime_changed' ELSE NULL END,expires_at=clock_timestamp()+make_interval(secs=>$4::double precision) WHERE id=$1").bind(v.inspection_id).bind(state).bind(json!(v)).bind(ttl as f64).execute(&mut **tx).await?;
     Ok(json!({"id":v.inspection_id,"state":state,"dependencies_digest":v.dependencies_digest}))
 }

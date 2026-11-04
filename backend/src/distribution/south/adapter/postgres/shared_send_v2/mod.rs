@@ -18,6 +18,7 @@ pub mod delivery;
 mod device;
 mod execution_status;
 mod inbox;
+mod inspection_budget;
 mod inspections;
 mod platform;
 mod readiness;
@@ -27,6 +28,7 @@ mod tasks;
 mod usage;
 mod usage_budgets;
 mod usage_locators;
+mod wait_states;
 async fn expire(tx: &mut Tx<'_>) -> Result<()> {
     sqlx::query("UPDATE mobile_v9_send_claims c SET state='closed' WHERE c.state='active' AND c.expires_at<clock_timestamp() AND NOT EXISTS(SELECT 1 FROM mobile_v9_invocations i WHERE i.claim_id=c.id)").execute(&mut **tx).await?;
     sqlx::query("UPDATE mobile_v9_attempts a SET state='failed_before_call',revision=revision+1 FROM mobile_v9_send_claims c WHERE a.id=c.attempt_id AND a.state IN ('leased','prepared') AND c.expires_at<clock_timestamp() AND NOT EXISTS(SELECT 1 FROM mobile_v9_invocations i WHERE i.claim_id=c.id)").execute(&mut **tx).await?;
@@ -96,7 +98,7 @@ async fn policy(tx: &mut Tx<'_>) -> Result<Option<Value>> {
 fn default_policy() -> Value {
     let limits =
         json!({"interval_seconds":30,"window_seconds":3600,"max_calls":30,"daily_max_calls":150});
-    json!({"id":null,"revision":0,"mode":"enabled","limits":{"global":limits,"school":limits,"device":limits,"target":limits},"timezone":"Asia/Shanghai","allowed_windows":[{"weekdays":[1,2,3,4,5,6,7],"start_minute":0,"end_minute":1440}],"allowed_stages":["production_allowlist"],"confirmation_seconds":86400,"inspection_seconds":3600,"retry_seconds":300,"retry_limit":3})
+    json!({"id":null,"revision":0,"mode":"enabled","limits":{"global":limits,"school":limits,"device":limits,"target":limits},"timezone":"Asia/Shanghai","allowed_windows":[{"weekdays":[1,2,3,4,5,6,7],"start_minute":0,"end_minute":1440}],"confirmation_seconds":86400,"inspection_seconds":3600,"retry_seconds":300,"retry_limit":3})
 }
 fn policy_id(p: &Value) -> Result<Option<Uuid>> {
     p["id"]

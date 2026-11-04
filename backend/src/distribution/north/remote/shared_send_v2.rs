@@ -279,6 +279,23 @@ async fn inspection_claim(
             .await?,
     ))
 }
+async fn inspection_start(
+    State(a): State<Application>,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    let c = credential(&a, &h).await?;
+    Ok(resource(
+        "mobile-shared-inspection-starts",
+        service(&a)
+            .device_write(
+                &c,
+                key(&h),
+                DeviceCommand::InspectionStart(input.decode("mobile-shared-inspection-starts")?),
+            )
+            .await?,
+    ))
+}
 async fn inspection_result(
     State(a): State<Application>,
     h: HeaderMap,
@@ -409,6 +426,10 @@ pub fn router() -> Router<Application> {
         .route(
             "/api/v1/schools/{school}/mobile-execution/shared-v2-inspections",
             post(inspection),
+        )
+        .route(
+            "/api/v9/device-execution/send-inspection-starts",
+            post(inspection_start),
         )
         .route(
             "/api/v9/device-execution/send-inspection-claims",

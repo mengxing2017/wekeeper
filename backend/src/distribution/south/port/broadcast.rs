@@ -32,7 +32,7 @@ pub trait Store: Clone + Send + Sync + 'static {
         key: &str,
         input: &Action,
     ) -> impl Future<Output = Result<bool>> + Send;
-    fn delivery_ready(&self) -> impl Future<Output = Result<bool>> + Send;
+    fn channel_ready(&self) -> impl Future<Output = Result<bool>> + Send;
     fn preview_response(
         &self,
         actor: &Actor,

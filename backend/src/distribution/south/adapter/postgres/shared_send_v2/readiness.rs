@@ -10,16 +10,11 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
             .into_iter()
             .find(|c| c["device_id"] == row["device_id"]);
         let selectable = candidate.is_some();
-        let mut stages = Vec::new();
-        if let Some(ref c) = candidate {
-            for stage in ["production_allowlist"] {
-                let mut p = c.clone();
-                p["stage"] = json!(stage);
-                if tasks::validate_plan(tx, school, &p).await.is_ok() {
-                    stages.push(stage);
-                }
-            }
-        }
+        let confirmable = if let Some(ref c) = candidate {
+            tasks::validate_plan(tx, school, c).await.is_ok()
+        } else {
+            false
+        };
         let inspection = if let Some(ref c) = candidate {
             sqlx::query_scalar::<_,Value>("SELECT to_jsonb(i)-'challenge' FROM mobile_v9_send_inspections i WHERE binding_id=$1 AND dependencies=$2 AND purpose='automatic' ORDER BY created_at DESC,id DESC LIMIT 1").bind(uid(&row,"id")?).bind(tasks::dependencies(c)).fetch_optional(&mut **tx).await?
         } else {
@@ -34,14 +29,11 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
                     .is_some_and(|t| t > chrono::Utc::now())
         });
         let accepted = candidate.as_ref().is_some_and(|c| c["accepted"] == true);
-        let mut scope_exists = false;
-        if let Some(ref c) = candidate {
-            for stage in ["production_allowlist"] {
-                if tasks::validate_scope(tx, school, c, stage).await.is_ok() {
-                    scope_exists = true;
-                }
-            }
-        }
+        let scope_exists = if let Some(ref c) = candidate {
+            tasks::validate_scope(tx, school, c).await.is_ok()
+        } else {
+            false
+        };
         let risk:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_invocations WHERE device_id=$1 AND state='risk_held') OR EXISTS(SELECT 1 FROM mobile_v9_risk_guards WHERE school_id=$2 AND target_id=$3 AND state='active')").bind(uid(&row,"device_id")?).bind(school).bind(uid(&row,"target_id")?).fetch_one(&mut **tx).await?;
         let retry_seconds = policy
             .as_ref()
@@ -52,11 +44,16 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
             .and_then(|p| p["retry_limit"].as_i64())
             .unwrap_or(3);
         let retry = if let Some(ref c) = candidate {
-            sqlx::query_scalar::<_,Value>("SELECT jsonb_build_object('used',count(*),'retry_at',max(created_at)+make_interval(secs=>$3::double precision),'budget_at',min(created_at)+interval '24 hours') FROM mobile_v9_send_inspections WHERE binding_id=$1 AND dependencies=$2 AND state IN ('failed','stale','pending','leased') AND created_at>clock_timestamp()-interval '24 hours'").bind(uid(&row,"id")?).bind(tasks::dependencies(c)).bind(retry_seconds as f64).fetch_one(&mut **tx).await?
+            inspection_budget::load(tx, uid(&row, "id")?, tasks::dependencies(c), retry_seconds)
+                .await?
         } else {
-            json!({"used":0})
+            inspection_budget::Budget {
+                used: 0,
+                retry_at: None,
+                budget_at: None,
+            }
         };
-        let remaining = (retry_limit - retry["used"].as_i64().unwrap_or(0)).max(0);
+        let remaining = (retry_limit - retry.used).max(0);
         let active_check = inspection.as_ref().is_some_and(|i| {
             matches!(i["state"].as_str(), Some("pending" | "leased"))
                 && i["expires_at"]
@@ -68,9 +65,9 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
         let retry_at = if active_check {
             Value::Null
         } else if exhausted {
-            retry["budget_at"].clone()
+            json!(retry.budget_at)
         } else {
-            retry["retry_at"].clone()
+            json!(retry.retry_at)
         };
         let retry_wait = retry_at
             .as_str()
@@ -122,7 +119,7 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
                 "shared_send_execution_configuration_invalid",
                 "执行配置缺失或损坏，本次不能确认发送",
                 "system",
-                "核对执行配置后重新预览",
+                "可报告问题，修复后重新预览",
                 false,
             ));
         }
@@ -134,24 +131,24 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
                     "waiting_inspection"
                 },
                 if exhausted {
-                    "自动检查预算已耗尽，需审查失败原因"
+                    "自动检查暂未完成，达到重试时间后自动继续"
                 } else if retry_wait {
                     "自动检查等待配置的退避时间"
                 } else {
                     "等待当前手机上的无发送检查"
                 },
-                if exhausted { "engineering" } else { "system" },
+                "system",
                 if exhausted {
-                    "查看失败诊断并处理适配支持；重新评估不会重置预算"
+                    "查看检查失败原因；系统将在预算恢复后继续"
                 } else {
-                    "后台按预算自动检查；失败后可提交适配支持"
+                    "后台按退避时间自动检查；可查看失败原因或报告问题"
                 },
-                !exhausted,
+                true,
             ));
         }
         let ready = selectable
             && !busy
-            && !stages.is_empty()
+            && confirmable
             && accepted
             && row["online"] == true
             && row["ui_ready"] == true
@@ -176,7 +173,7 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
                 _ => "not_scheduled",
             }
         };
-        result.push(json!({"binding_id":row["id"],"device_id":row["device_id"],"target_id":row["target_id"],"device_name":row["device_name"],"target_name":row["target_name"],"search_text":row["search_text"],"plan_selectable":selectable,"confirmable":!stages.is_empty() && rules_valid,"confirmable_stages":stages,"execution_ready":ready,"ready":ready,"state":if ready{json!("ready_for_task")}else{blockers.first().or_else(||execution_conditions.first()).map(|b|b["code"].clone()).unwrap_or(json!("waiting"))},"consent_state":consent_state,"runtime_state":runtime_state(&row),"runtime_observed_at":row["runtime_observed_at"],"execution_conditions":execution_conditions,"blockers":blockers,"inspection":inspection,"inspection_state":inspection_state,"retry_remaining":remaining,"retry_at":retry_at,"automatic":true}));
+        result.push(json!({"binding_id":row["id"],"device_id":row["device_id"],"target_id":row["target_id"],"device_name":row["device_name"],"target_name":row["target_name"],"search_text":row["search_text"],"plan_selectable":selectable,"confirmable":confirmable && rules_valid,"execution_ready":ready,"ready":ready,"state":if ready{json!("ready_for_task")}else{blockers.first().or_else(||execution_conditions.first()).map(|b|b["code"].clone()).unwrap_or(json!("waiting"))},"consent_state":consent_state,"runtime_state":runtime_state(&row),"runtime_observed_at":row["runtime_observed_at"],"execution_conditions":execution_conditions,"blockers":blockers,"inspection":inspection,"inspection_state":inspection_state,"retry_remaining":remaining,"retry_at":retry_at,"automatic":true}));
     }
     Ok(result)
 }

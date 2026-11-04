@@ -57,6 +57,10 @@ pub struct ExecutionCondition {
     pub automatic: bool,
     pub next_action: String,
     pub observed_at: chrono::DateTime<chrono::Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub waiting_since: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason_changed_at: Option<chrono::DateTime<chrono::Utc>>,
     pub valid_until: Option<chrono::DateTime<chrono::Utc>>,
     pub retry_at: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -64,6 +68,30 @@ pub struct ExecutionCondition {
 #[cfg(test)]
 mod execution_status_tests {
     use super::*;
+    #[test]
+    fn inspection_start_matches_cross_language_identity_without_approval() {
+        let fixture: Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../api-contract/fixtures/shared-mobile-send-v9.json"
+        )))
+        .unwrap();
+        let input: InspectionStart =
+            serde_json::from_value(fixture["inspection_start"].clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(input).unwrap(),
+            fixture["inspection_start"]
+        );
+    }
+    #[test]
+    fn business_drafts_reject_retired_phase_inputs() {
+        let mut value = serde_json::json!({"target_ids":[Uuid::now_v7()],"message":"通知","content_type":"text/plain","expected_revision":null,"between_targets_seconds":30});
+        serde_json::from_value::<DraftInput>(value.clone())
+            .unwrap()
+            .normalized()
+            .unwrap();
+        value["stage"] = serde_json::json!("production_allowlist");
+        assert!(serde_json::from_value::<DraftInput>(value).is_err());
+    }
     #[test]
     fn serialization_matches_the_shared_wire_fixture() {
         let fixture: Value = serde_json::from_str(include_str!(concat!(
@@ -120,14 +148,12 @@ pub struct DraftInput {
     pub message: String,
     pub content_type: String,
     pub expected_revision: Option<i64>,
-    pub stage: String,
     pub between_targets_seconds: i64,
 }
 impl DraftInput {
     pub fn normalized(mut self) -> Result<Self> {
         require(
-            matches!(self.stage.as_str(), "test_send" | "production_allowlist")
-                && (1..=86400).contains(&self.between_targets_seconds),
+            (1..=86400).contains(&self.between_targets_seconds),
             "shared_send_policy_invalid",
         )?;
         require(
@@ -371,7 +397,6 @@ pub struct AllowedWindow {
 pub struct PolicyInput {
     pub expected_revision: i64,
     pub mode: String,
-    pub allowed_stages: Vec<String>,
     pub confirmation_seconds: i64,
     pub inspection_seconds: i64,
     pub retry_seconds: i64,
@@ -388,12 +413,7 @@ impl PolicyInput {
             (60..=604800).contains(&self.confirmation_seconds)
                 && (60..=86400).contains(&self.inspection_seconds)
                 && (1..=86400).contains(&self.retry_seconds)
-                && (1..=32).contains(&self.retry_limit)
-                && self.allowed_stages.len() <= 2
-                && self
-                    .allowed_stages
-                    .iter()
-                    .all(|s| matches!(s.as_str(), "test_send" | "production_allowlist")),
+                && (1..=32).contains(&self.retry_limit),
             "shared_send_policy_invalid",
         )?;
         require(
@@ -441,6 +461,15 @@ pub struct InspectionInput {
 pub struct InspectionClaim {
     pub runtime_epoch: Uuid,
     pub inspection_id: Uuid,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct InspectionStart {
+    pub inspection_id: Uuid,
+    pub runtime_epoch: Uuid,
+    pub lease_fence: i64,
+    pub challenge: String,
+    pub dependencies_digest: String,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

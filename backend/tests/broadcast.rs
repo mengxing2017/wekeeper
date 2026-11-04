@@ -113,7 +113,7 @@ async fn setup_with_forum(with_forum: bool) -> (PgPool, Actor, Uuid, DraftInput,
     if with_forum {
         sqlx::query("INSERT INTO posts(id,school_id,author_id,title,content,audit_status) VALUES($1,$2,$3,'Notice','Body','approved')").bind(post).bind(s).bind(actor).execute(&pool).await.unwrap();
     }
-    sqlx::query("INSERT INTO official_channel_deliveries(id,corp_id,generation,credential_scope,state,checked_at,valid_until,source) VALUES($1,$2,1,'scope','available',now(),now()+interval '1 hour','isolated-test-fixture')").bind(Uuid::new_v4()).bind(&corp).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO official_channel_health(corp_id,generation,credential_scope,available,checked_at,last_success_at) VALUES($1,1,'scope',true,now(),now())").bind(&corp).execute(&pool).await.unwrap();
     let mut groups = Vec::new();
     for i in 0..2 {
         let group = Uuid::new_v4();
@@ -1537,13 +1537,13 @@ async fn product_member_policy_reuses_existing_key_and_usage_ledger() {
             .as_bool()
             .unwrap()
     );
-    sqlx::query("DELETE FROM official_channel_deliveries")
+    sqlx::query("DELETE FROM official_channel_health")
         .execute(&pool)
         .await
         .unwrap();
     let unavailable = service.channel(&a, s, true, true, "scope").await.unwrap();
     assert_eq!(unavailable["broadcast_available"], false);
-    assert_eq!(unavailable["delivery_state"], "awaiting_delivery");
+    assert_eq!(unavailable["health_state"], "checking");
 }
 
 #[tokio::test]
@@ -1661,4 +1661,79 @@ async fn product_usage_request_has_no_early_grant_and_approval_revalidates_direc
         !enabled,
         "failed approval cannot leave partial authorization"
     );
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn automatic_health_never_unpauses_explicit_business_control() {
+    use wekeeper_api::distribution::{
+        domain::workflows::{ChannelControl, ChannelHealth},
+        south::{adapter::postgres::workflows::Repository, port::workflows::Store},
+    };
+    let (pool, actor, school, _, _) = setup().await;
+    let repo = Repository(pool.clone());
+    let corp: String =
+        sqlx::query_scalar("SELECT corp_id FROM wecom_directory_state WHERE singleton")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let control = repo
+        .channel_control(
+            &actor,
+            "scope",
+            ChannelControl {
+                paused: true,
+                expected_revision: 0,
+                reason: "人工暂停".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let observation = ChannelHealth {
+        scope: "scope".into(),
+        corp: Some(corp),
+        generation: Some(1),
+        available: true,
+        error_code: None,
+    };
+    repo.record_health(observation.clone()).await.unwrap();
+    let paused = repo
+        .channel(&actor, school, true, true, "scope")
+        .await
+        .unwrap();
+    assert_eq!(paused["broadcast_available"], false);
+    assert_eq!(paused["health_state"], "paused");
+    assert_eq!(paused["can_preview"], true);
+    repo.channel_control(
+        &actor,
+        "scope",
+        ChannelControl {
+            paused: false,
+            expected_revision: control["revision"].as_i64().unwrap(),
+            reason: "恢复新发送".into(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        repo.channel(&actor, school, true, true, "scope")
+            .await
+            .unwrap()["broadcast_available"],
+        true
+    );
+    repo.record_health(ChannelHealth {
+        available: false,
+        error_code: Some("wecom_48002".into()),
+        ..observation
+    })
+    .await
+    .unwrap();
+    let failed = repo
+        .channel(&actor, school, true, true, "scope")
+        .await
+        .unwrap();
+    assert_eq!(failed["broadcast_available"], false);
+    let history: (bool, bool, Option<String>) = sqlx::query_as("SELECT last_success_at IS NOT NULL,last_failure_at IS NOT NULL,error_code FROM official_channel_health WHERE credential_scope='scope'")
+        .fetch_one(&pool).await.unwrap();
+    assert_eq!(history, (true, true, Some("wecom_48002".into())));
 }
