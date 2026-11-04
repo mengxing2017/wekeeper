@@ -377,13 +377,21 @@ impl Store for Repository {
         let mut tx = self.0.begin().await?;
         authenticate(&mut tx, c, false).await?;
         let delegation = delegation::context(&mut tx, c).await?;
-        let value = json!({"id":c.device_id,"device_id":c.device_id,"credential_generation":c.generation,"authorization_schema":SCOPE,"delegation":delegation,"observed_at":chrono::Utc::now()});
+        let value = delegation_context_view(c, delegation, chrono::Utc::now());
         tx.commit().await?;
         Ok(value)
     }
     async fn device_read(&self, c: &Credential) -> Result<Value> {
         device::read(self, c).await
     }
+}
+
+fn delegation_context_view(
+    c: &Credential,
+    delegation: Value,
+    observed_at: chrono::DateTime<chrono::Utc>,
+) -> Value {
+    json!({"id":c.device_id,"device_id":c.device_id,"credential_generation":c.generation,"authorization_schema":SCOPE,"delegation":delegation,"observed_at":observed_at,"runtime_report_version":2})
 }
 
 fn hash_bytes(bytes: &[u8]) -> String {
@@ -394,6 +402,26 @@ fn hash_bytes(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod default_policy_tests {
     use super::*;
+    #[test]
+    fn delegation_context_advertises_additive_runtime_diagnostics_without_changing_consent() {
+        let fixture: Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../api-contract/fixtures/shared-runtime-negotiation.json"
+        )))
+        .unwrap();
+        let credential = Credential {
+            device_id: serde_json::from_value(fixture["device_id"].clone()).unwrap(),
+            generation: 1,
+            token_hash: "not-exposed".into(),
+        };
+        let value = delegation_context_view(
+            &credential,
+            fixture["delegation"].clone(),
+            serde_json::from_value(fixture["observed_at"].clone()).unwrap(),
+        );
+        assert_eq!(value, fixture);
+        assert!(value.get("token_hash").is_none());
+    }
     #[test]
     fn no_configuration_has_valid_bounded_defaults_without_a_fabricated_database_id() {
         let p = default_policy();
