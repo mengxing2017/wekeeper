@@ -217,6 +217,19 @@ pub struct Review {
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct WakeMilestone {
+    pub stage: String,
+    pub elapsed_ms: u32,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WakeDiagnostics {
+    pub request_id: Uuid,
+    pub source: String,
+    pub events: Vec<WakeMilestone>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct DevicePreparationReport {
     pub automatic_wake_enabled: bool,
     pub screen_awake_active: bool,
@@ -224,6 +237,8 @@ pub struct DevicePreparationReport {
     pub stage: String,
     pub last_error: Option<String>,
     pub retry_after_ms: u32,
+    pub observed_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub wake_diagnostics: Option<WakeDiagnostics>,
 }
 impl DevicePreparationReport {
     pub fn validate(&self) -> Result<()> {
@@ -233,6 +248,22 @@ impl DevicePreparationReport {
                 && s.bytes()
                     .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
         };
+        if let Some(trace) = &self.wake_diagnostics {
+            require(
+                !trace.request_id.is_nil()
+                    && trace.source == "accessibility_service"
+                    && trace.events.len() <= 24
+                    && trace
+                        .events
+                        .iter()
+                        .all(|e| code(&e.stage) && e.elapsed_ms <= 120_000)
+                    && trace
+                        .events
+                        .windows(2)
+                        .all(|w| w[0].elapsed_ms <= w[1].elapsed_ms),
+                "send_protocol_unsupported",
+            )?;
+        }
         require(
             code(&self.stage)
                 && self.screen_awake_reason.as_deref().is_none_or(code)
@@ -248,6 +279,7 @@ pub struct RuntimeReport {
     pub runtime_epoch: Uuid,
     pub schema: String,
     pub ui_ready: bool,
+    pub ready_reason: Option<String>,
     pub paused: bool,
     pub quiescent: bool,
     pub ui_context_epoch: String,

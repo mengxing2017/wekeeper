@@ -19,8 +19,28 @@
     "automatic_wake_enabled": true,
     "screen_awake_active": false,
     "screen_awake_reason": "screen_awake_waiting_work",
-    "stage": "not_started",
-    "last_error": null,
-    "retry_after_ms": 0
-  }
+    "stage": "wake_timeout",
+    "last_error": "wake_timeout",
+    "retry_after_ms": 0,
+    "observed_at": "2026-11-04T07:00:00Z",
+    "wake_diagnostics": {
+      "request_id": "00000000-0000-4000-8000-000000000002",
+      "source": "accessibility_service",
+      "events": [
+        {
+          "stage": "request_created",
+          "elapsed_ms": 0
+        },
+        {
+          "stage": "start_requested",
+          "elapsed_ms": 1
+        },
+        {
+          "stage": "closed",
+          "elapsed_ms": 20000
+        }
+      ]
+    }
+  },
+  "ready_reason": "wake_timeout"
 }
