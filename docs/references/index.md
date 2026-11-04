@@ -22,6 +22,7 @@ Web 使用 Cookie/Origin/CSRF，小程序和设备使用各自独立 Bearer；�
 | [ADR 0002](../adr/0002-business-migration.md) | 社区、学校、身份、媒体、官方任务与迁移边界 |
 | [ADR 0005](../adr/0005-mobile-delivery.md) | 旧手机执行历史决策（当前实现见开发文档） |
 | [ADR 0006](../adr/0006-frontend-clients.md) | React Web 与 uni-app Vue 3 客户端分离 |
+| [ADR 0008](../adr/0008-mobile-candidate-dispatch.md) | 移动端任务、目标、尝试分层及授权候选自动换机 |
 
 历史 ADR 用于解释阶段决策，不把早期“尚未实现”或协议示意当作当前事实。正式操作以站内当前运行手册和代码为准，验收记录按日期说明适用范围。
 
