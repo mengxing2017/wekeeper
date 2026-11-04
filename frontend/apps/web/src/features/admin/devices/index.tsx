@@ -2,7 +2,7 @@ import { ControlStatus, useControlFreshness } from './control-status'
 import { DeviceControlPanel } from './device-control'
 import { createIdempotencyKey as key } from '../../../shared/idempotency-key'
 import { DeviceStateEditor } from './device-state'
-import { UsageManagement } from '../../admin/mobile-resources/usage-management'
+import { UsageManagement } from '../mobile-resources/usage-management'
 import { ActionDrawer } from '../../../shared/action-drawer'
 import { useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -17,7 +17,7 @@ import {
   Tag,
   Typography,
 } from 'antd'
-import { Editor } from '../../admin/workspace/editor'
+import { Editor } from '../workspace/editor'
 import { PaginationControls } from '../../../shared/pagination-controls'
 import { api } from './api'
 

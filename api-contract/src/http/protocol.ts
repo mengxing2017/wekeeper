@@ -123,22 +123,11 @@ export function resourceType(path: string): string {
       case "shared-task-previews": return "mobile-shared-previews";
       case "shared-tasks": return parts[7] === "stops" ? "mobile-shared-stops" : "mobile-shared-tasks";
       case "shared-items": return parts[7] === "reassignments" ? "mobile-shared-reassignments" : "mobile-shared-reviews";
-      case "shared-bindings": return "mobile-shared-bindings";
-      case "shared-device-access": return "mobile-shared-access";
       case "shared-inspections": return "mobile-shared-inspections";
       case "shared-send-policies": return "mobile-shared-policies";
-      case "flow-versions": return "mobile-execution-flow-versions";
-      case "flow-validations": return "mobile-execution-flow-validations";
-      case "flow-releases": return "mobile-execution-flow-releases";
-      case "assignments": return "mobile-execution-assignments";
       case "targets": return "mobile-targets";
       case "target-bindings": return "mobile-target-bindings";
       case "devices": return "mobile-devices";
-      case "capability-openings": return "mobile-capability-openings";
-      case "field-checks": return "mobile-field-checks";
-      case "field-check-invitations": return "mobile-field-check-invitations";
-      case "adapter-releases": return "mobile-adapter-releases";
-      case "adapter-support-requests": return "mobile-adapter-support-requests";
       default: throw new Error("Unknown mobile execution resource path");
     }
   }
@@ -164,81 +153,9 @@ export function resourceType(path: string): string {
     return "wecom-group-bindings";
   if (parts[2] === "platform" && parts[3] === "execution-devices") {
     if (parts[5] === "enrollments") return "device-enrollments";
-    if (parts[5] === "account-bindings") return "device-account-bindings";
     if (parts[5] === "control") return "device-control-commands";
     return "execution-devices";
   }
-  if (parts[2] === "platform" && parts[3] === "automation-pacing-profiles")
-    return "automation-pacing-profiles";
-  if (
-    parts[2] === "schools" &&
-    [
-      "automation-flow-releases",
-      "automation-device-groups",
-      "automation-execution-assignments",
-      "automation-dispatch-settings",
-    ].includes(parts[4])
-  )
-    return parts[4];
-  if (parts[2] === "platform" && parts[3] === "automation-flows")
-    return parts[5] === "releases"
-      ? "automation-flow-releases"
-      : "automation-flows";
-  if (parts[2] === "platform" && parts[3] === "automation-flow-releases")
-    return "automation-flow-releases";
-  if (parts[2] === "schools" && parts[4] === "automation-dispatch-previews")
-    return parts[6] === "confirmations"
-      ? "automation-dispatch-batches"
-      : "automation-dispatch-previews";
-  if (parts[2] === "schools" && parts[4] === "automation-dispatch-batches")
-    return "automation-dispatch-batches";
-  if (parts[2] === "schools" && parts[4] === "automation-flow-validations")
-    return "automation-flow-validations";
-  if (parts[2] === "platform" && parts[3] === "automation-adaptations")
-    return parts[4] === "components" && parts[6] !== "releases"
-      ? "automation-components"
-      : "automation-releases";
-  if (parts[2] === "schools") {
-    if (parts[4] === "device-app-bindings") return "device-app-bindings";
-    if (parts[4] === "automation-validations") return "automation-validations";
-    if (parts[4] === "automation-business-previews")
-      return parts[6] === "confirmations"
-        ? "automation-business-confirmations"
-        : "automation-business-previews";
-  }
-  if (parts[2] === "platform" && parts[3] === "execution-configurations")
-    return parts[5] === "releases"
-      ? "configuration-releases"
-      : "execution-configurations";
-  if (
-    (parts[2] === "platform" && parts[3] === "configuration-releases") ||
-    (parts[2] === "schools" && parts[4] === "configuration-releases")
-  )
-    return "configuration-releases";
-  if (parts[2] === "schools" && parts[4] === "mobile-delivery-runs")
-    return "mobile-delivery-run-progress";
-  if (parts[2] === "platform" && parts[3] === "sending-accounts")
-    return "sending-accounts";
-  if (parts[2] === "schools" && parts[4] === "mobile-delivery-targets")
-    return "mobile-delivery-targets";
-  if (parts[2] === "schools" && parts[4] === "mobile-delivery-strategies")
-    return parts[6] === "runs"
-      ? "mobile-delivery-strategy-runs"
-      : "mobile-delivery-strategies";
-  if (parts[2] === "schools" && parts[4] === "delivery-groups")
-    return "delivery-groups";
-  if (parts[2] === "schools" && parts[4] === "mobile-delivery-settings")
-    return "mobile-delivery-settings";
-  if (parts[2] === "schools" && parts[4] === "mobile-delivery-tasks") {
-    if (parts[6] === "previews") return "mobile-delivery-previews";
-    if (parts[6] === "items") return "mobile-delivery-items";
-    if (parts[6] === "events") return "mobile-delivery-events";
-    return "mobile-delivery-tasks";
-  }
-  if (parts[2] === "schools" && parts[4] === "mobile-delivery-items")
-    return parts[6] === "resend-drafts"
-      ? "mobile-delivery-tasks"
-      : "mobile-delivery-items";
   if (parts[2] === "platform" && parts[3] === "schools" && parts[5] === "wecom-senders") return "wecom-senders";
   if (parts[2] === "platform" && ["distribution-source-policies", "distribution-resource-policies"].includes(parts[3])) return parts[3];
   if (parts[2] === "schools" && parts[4] === "broadcast-tasks" && parts[6] === "preview") return "broadcast-previews";

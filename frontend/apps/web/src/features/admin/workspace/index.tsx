@@ -28,7 +28,7 @@ import {
   Tag,
   Empty,
 } from 'antd'
-import { ExecutionDevices } from '../../operations/mobile-delivery'
+import { ExecutionDevices } from '../../admin/devices'
 import BroadcastTasks from '../../operations/broadcast-tasks'
 import { Directory } from './directory'
 import { Assets, GroupPicker } from './assets'

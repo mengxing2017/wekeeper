@@ -1,8 +1,3 @@
-import type { FieldCheckInvitation, FieldCheckRequest, FieldCheck } from './capabilities'
-import type { CapabilityOpening, CapabilityOpeningInput, CapabilityOpeningApplication, AdapterRelease, AdapterSupportRequest } from './capabilities'
-export * from './capabilities'
-import type { FlowV2, FlowVersion, FlowValidation, FlowRelease, ExecutionAssignment, AssignmentInput } from './flows'
-export * from './flows'
 import { requestCollection, requestResource, type Collection } from '../../http'
 export interface MobileTarget {
   id: string; school_id: string; search_text: string; alias: string; remark: string;
@@ -48,30 +43,6 @@ function list<T>(path: string, page = 1, search = '', deviceId?: string): Promis
   return requestCollection<T>(`${path}?page[number]=${page}&page[size]=30&search=${encodeURIComponent(search)}${deviceId ? `&device_id=${encodeURIComponent(deviceId)}` : ''}`)
 }
 export const mobileExecutionApi = {
-  fieldInvitations: (school: string, page?: number, deviceId?: string) => list<FieldCheckInvitation>(`${base(school)}/field-check-invitations`, page, '', deviceId),
-  inviteFieldCheck: (school: string, input: {binding_id: string; expected_binding_revision: number; expected_target_locator_revision: number}, key: string) => write<FieldCheckInvitation>(`${base(school)}/field-check-invitations`, 'POST', input, key),
-  revokeFieldInvitation: (school: string, id: string, expected_revision: number, key: string) => write<FieldCheckInvitation>(`${base(school)}/field-check-invitations/${encodeURIComponent(id)}/revocations`, 'POST', {expected_revision}, key),
-  schoolFieldChecks: (school: string, page?: number, deviceId?: string) => list<FieldCheck>(`${base(school)}/field-checks`, page, '', deviceId),
-  platformFieldInvitations: (page?: number, deviceId?: string) => list<FieldCheckInvitation>('/api/v1/platform/mobile-execution/field-check-invitations', page, '', deviceId),
-  fieldChecks: (page?: number, deviceId?: string) => list<FieldCheck>('/api/v1/platform/mobile-execution/field-checks', page, '', deviceId),
-  requestFieldCheck: (input: FieldCheckRequest, key: string) => write<FieldCheck>('/api/v1/platform/mobile-execution/field-checks', 'POST', input, key),
-  capabilityOpenings: (page?: number, deviceId?: string) => list<CapabilityOpening>('/api/v1/platform/mobile-execution/capability-openings', page, '', deviceId),
-  adapterReleases: (page?: number) => list<AdapterRelease>('/api/v1/platform/mobile-execution/adapter-releases', page),
-  openCapability: (input: CapabilityOpeningInput, key: string) => write<CapabilityOpeningApplication>('/api/v1/platform/mobile-execution/capability-openings', 'POST', input, key),
-  cancelOpening: (id: string, expected_revision: number, key: string) => write<CapabilityOpeningApplication>(`/api/v1/platform/mobile-execution/capability-openings/${encodeURIComponent(id)}/cancellations`, 'POST', { expected_revision }, key),
-  adapterSupportRequests: (page?: number, deviceId?: string) => list<AdapterSupportRequest>('/api/v1/platform/mobile-execution/adapter-support-requests', page, '', deviceId),
-  updateAdapterSupport: (id: string, input: {expected_revision: number; state: 'investigating' | 'resolved' | 'declined'; response: string}, key: string) => write<AdapterSupportRequest>(`/api/v1/platform/mobile-execution/adapter-support-requests/${encodeURIComponent(id)}`, 'PATCH', input, key),
-  requestAdapterSupport: (input: {device_id: string; note: string}, key: string) => write<AdapterSupportRequest>('/api/v1/platform/mobile-execution/adapter-support-requests', 'POST', input, key),
-  flows: (school: string, page?: number) => list<FlowVersion>(`${base(school)}/flow-versions`, page),
-  createFlow: (school: string, input: { name: string; flow: FlowV2 }, key: string) => write<FlowVersion>(`${base(school)}/flow-versions`, 'POST', input, key),
-  validations: (school: string, page?: number, deviceId?: string) => list<FlowValidation>(`${base(school)}/flow-validations`, page, '', deviceId),
-  validateFlow: (school: string, input: { flow_version_id: string; device_id: string; search_text: string }, key: string) => write<FlowValidation>(`${base(school)}/flow-validations`, 'POST', input, key),
-  releases: (school: string, page?: number) => list<FlowRelease>(`${base(school)}/flow-releases`, page),
-  releaseFlow: (school: string, input: { flow_version_id: string; validation_id: string; name: string }, key: string) => write<FlowRelease>(`${base(school)}/flow-releases`, 'POST', input, key),
-  revokeRelease: (school: string, id: string, expected_revision: number, reason: string, key: string) => write<FlowRelease>(`${base(school)}/flow-releases/${encodeURIComponent(id)}/revocations`, 'POST', { expected_revision, reason }, key),
-  assignments: (school: string, page?: number, deviceId?: string) => list<ExecutionAssignment>(`${base(school)}/assignments`, page, '', deviceId),
-  assign: (school: string, input: AssignmentInput, key: string) => write<ExecutionAssignment>(`${base(school)}/assignments`, 'POST', input, key),
-  updateAssignment: (school: string, id: string, input: AssignmentInput, key: string) => write<ExecutionAssignment>(`${base(school)}/assignments/${encodeURIComponent(id)}`, 'PATCH', input, key),
   target: (school: string, id: string) => requestResource<MobileTarget>(`${base(school)}/targets/${encodeURIComponent(id)}`),
   platformDevices: (page?: number) => list<PlatformDevice>('/api/v1/platform/mobile-execution/devices', page),
   targets: (school: string, page?: number, search?: string, deviceId?: string) => list<MobileTarget>(`${base(school)}/targets`, page, search, deviceId),

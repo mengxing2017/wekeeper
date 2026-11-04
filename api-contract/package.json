@@ -9,21 +9,18 @@
     "./system": "./src/modules/system/index.ts",
     "./health": "./src/modules/health/index.ts",
     "./business": "./src/modules/business/index.ts",
-    "./mobile-delivery": "./src/modules/mobile-delivery/index.ts",
-    "./device-execution": "./src/modules/device-execution/index.ts",
     "./client": "./src/http/client.ts",
     "./identity": "./src/modules/identity/index.ts",
     "./schools": "./src/modules/schools/index.ts",
     "./community": "./src/modules/community/index.ts",
     "./media": "./src/modules/media/index.ts",
     "./mobile-execution": "./src/modules/mobile-execution/index.ts",
-    "./mobile-execution/device": "./src/modules/mobile-execution/device.ts",
     "./wecom-distribution": "./src/modules/wecom-distribution/index.ts",
     "./distribution-content": "./src/modules/distribution-content/index.ts",
     "./wecom-distribution/client": "./src/modules/wecom-distribution/client.ts",
     "./mobile-execution/shared-send": "./src/modules/mobile-execution/shared-send/index.ts",
-    "./mobile-execution/shared-send/client": "./src/modules/mobile-execution/shared-send/client.ts",
-    "./mobile-execution/shared-send/v2": "./src/modules/mobile-execution/shared-send/v2.ts"
+    "./mobile-execution/shared-send/v2": "./src/modules/mobile-execution/shared-send/v2.ts",
+    "./device-registry": "./src/modules/device-registry/index.ts"
   },
   "scripts": {
     "build": "tsc --noEmit && tsc -p tsconfig.platform.json",

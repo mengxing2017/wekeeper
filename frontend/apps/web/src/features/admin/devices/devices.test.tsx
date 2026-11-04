@@ -6,17 +6,8 @@ import { api } from './api'
 vi.mock('./api', () => ({
   api: {
     devices: vi.fn(),
-    accounts: vi.fn(),
     createDevice: vi.fn(),
     enrollment: vi.fn(),
-    capabilities: vi.fn(),
-    tasks: vi.fn(),
-    groups: vi.fn(),
-    task: vi.fn(),
-    items: vi.fn(),
-    events: vi.fn(),
-    preview: vi.fn(),
-    confirm: vi.fn(),
   },
 }))
 class Resize {
@@ -43,7 +34,6 @@ afterEach(() => {
 it.each([undefined, {}])('registers a phone without Web Crypto (%s)', async (crypto) => {
   vi.stubGlobal('crypto', crypto)
   vi.mocked(api.devices).mockResolvedValue({ items: [] })
-  vi.mocked(api.accounts).mockResolvedValue({ items: [] })
   vi.mocked(api.createDevice).mockResolvedValue({
     id: 'device', revision: 1, name: '测试手机', enabled: true,
     credential_generation: 0, client_instance_id: null, last_seen_at: null,
@@ -69,7 +59,6 @@ it('shows a grouped short code and explains that device ID entry is unnecessary'
     credential_generation: 0, client_instance_id: null, last_seen_at: null,
     created_at: '2026-10-30T00:00:00Z',
   }] })
-  vi.mocked(api.accounts).mockResolvedValue({ items: [] })
   vi.mocked(api.enrollment).mockResolvedValue({ id: 'pairing', device_id: 'device', code: '00123456', expires_at: '2026-10-30T00:10:00Z' })
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><ExecutionDevices /></QueryClientProvider>)
   const deviceRow = (await screen.findByText('测试手机')).closest('tr')!
