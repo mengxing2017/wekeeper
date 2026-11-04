@@ -1,0 +1,26 @@
+{
+  "runtime_epoch": "00000000-0000-4000-8000-000000000001",
+  "schema": "shared_mobile_send/2",
+  "ui_ready": false,
+  "paused": false,
+  "quiescent": true,
+  "ui_context_epoch": "screen-test",
+  "apk_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "conditions": {
+    "interactive": false,
+    "keyguard_locked": true,
+    "device_locked": false,
+    "keyguard_secure": false,
+    "unlocked": false,
+    "accessibility": true,
+    "notification": true
+  },
+  "preparation": {
+    "automatic_wake_enabled": true,
+    "screen_awake_active": false,
+    "screen_awake_reason": "screen_awake_waiting_work",
+    "stage": "not_started",
+    "last_error": null,
+    "retry_after_ms": 0
+  }
+}
