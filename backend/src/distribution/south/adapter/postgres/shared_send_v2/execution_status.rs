@@ -68,6 +68,75 @@ pub(super) async fn assess(
     let state = attempt["state"].as_str().unwrap_or("unknown");
     let runtime:Value=sqlx::query_scalar("SELECT jsonb_build_object('observed_at',r.observed_at,'fresh',coalesce(r.credential_generation=$2 AND r.observed_at>clock_timestamp()-interval '30 seconds' AND d.credential_generation=$2 AND d.observed_at>clock_timestamp()-interval '30 seconds',false),'ready',r.ui_ready,'paused',r.paused,'conditions',d.conditions,'preparation',d.preparation,'ready_reason',d.ready_reason,'online',coalesce(cp.state='online' AND NOT cp.desired_paused AND cp.last_control_heartbeat_at>clock_timestamp()-interval '30 seconds',false)) FROM mobile_shared_runtime r LEFT JOIN mobile_v9_runtime_details d ON d.device_id=r.device_id AND d.credential_generation=r.credential_generation LEFT JOIN device_control_presence cp ON cp.id=r.device_id WHERE r.device_id=$1").bind(device).bind(plan["credential_generation"].as_i64().unwrap_or(0)).fetch_optional(&mut **tx).await?.unwrap_or(Value::Null);
     let consent_observed_at:Option<chrono::DateTime<chrono::Utc>>=sqlx::query_scalar("SELECT c.created_at FROM mobile_shared_delegations d JOIN LATERAL(SELECT created_at FROM mobile_shared_delegation_decisions WHERE delegation_id=d.id ORDER BY revision DESC LIMIT 1)c ON true WHERE d.device_id=$1 AND d.credential_generation=$2").bind(device).bind(plan["credential_generation"].as_i64().unwrap_or(0)).fetch_optional(&mut **tx).await?;
+    if task["dispatch_mode"] == "candidate_pool" && state == "queued" && attempt["current"] == true
+    {
+        let dispatch: Option<Value> = sqlx::query_scalar(
+            "SELECT to_jsonb(ds) FROM mobile_v9_dispatch_state ds WHERE item_id=$1",
+        )
+        .bind(uid(attempt, "item_id")?)
+        .fetch_optional(&mut **tx)
+        .await?;
+        if let Some(dispatch) = dispatch {
+            let (code, message, automatic) = if task["stopped"] == true {
+                ("task_stopped", "任务已停止新领取", false)
+            } else if !pending_time(&task["confirmed_until"]) {
+                (
+                    "confirmation_expired",
+                    "任务确认已到期，请重新确认业务意图",
+                    false,
+                )
+            } else if dispatch["state"] == "needs_review" {
+                (
+                    "target_result_pending",
+                    "此目标存在发送结果冲突，请核对原尝试",
+                    false,
+                )
+            } else if dispatch["reason"] == "confirmation_permission_changed" {
+                (
+                    "confirmation_permission_changed",
+                    "确认人的业务授权已变化，请核对学校权限",
+                    false,
+                )
+            } else if pending_time(&task["next_eligible_at"]) {
+                ("waiting_interval", "等待已确认的业务间隔", true)
+            } else if dispatch["state"] == "assigned" {
+                ("", "", true)
+            } else {
+                (
+                    "waiting_resources",
+                    "平台已受理，正在已授权候选范围内自动调度手机",
+                    true,
+                )
+            };
+            if !code.is_empty() {
+                add(&mut conditions, code, message, "system", automatic, device);
+                let c = conditions.last_mut().ok_or(Error::Conflict)?;
+                c.scope_type = "item".into();
+                c.scope_id = uid(attempt, "item_id")?;
+                c.affected_action = "dispatch".into();
+                c.owner = if automatic { "system" } else { "admin" }.into();
+                c.next_action = if automatic {
+                    "系统自动选择可用候选手机，无需重复提交"
+                } else {
+                    "核对对应目标结果或业务授权"
+                }
+                .into();
+                if automatic {
+                    c.retry_at = serde_json::from_value(dispatch["next_retry_at"].clone()).ok();
+                }
+            }
+            return serde_json::to_value(ExecutionStatus {
+                phase: ExecutionPhase::project(state, true, !conditions.is_empty()),
+                observed_at: chrono::Utc::now(),
+                device_state_observed_at: serde_json::from_value(runtime["observed_at"].clone())
+                    .ok()
+                    .flatten(),
+                consent_observed_at,
+                conditions,
+            })
+            .map_err(|_| Error::Conflict);
+        }
+    }
     if state == "queued" && attempt["current"] == true {
         if task["stopped"] == true {
             add(

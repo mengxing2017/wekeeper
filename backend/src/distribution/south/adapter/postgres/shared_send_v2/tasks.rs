@@ -146,7 +146,7 @@ pub(super) async fn validate_plan(tx: &mut Tx<'_>, s: Uuid, plan: &Value) -> Res
     Ok(())
 }
 pub(super) async fn validate_risk(tx: &mut Tx<'_>, s: Uuid, plan: &Value) -> Result<()> {
-    let risk:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_invocations WHERE device_id=$1 AND state='risk_held') OR EXISTS(SELECT 1 FROM mobile_v9_risk_guards WHERE school_id=$2 AND target_id=$3 AND state='active')").bind(uid(plan,"device_id")?).bind(s).bind(uid(plan,"target_id")?).fetch_one(&mut **tx).await?;
+    let risk:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_invocations v JOIN mobile_v9_attempts a ON a.id=v.attempt_id JOIN mobile_v9_task_items i ON i.id=a.item_id WHERE i.school_id=$1 AND i.target_id=$2 AND v.state='risk_held') OR EXISTS(SELECT 1 FROM mobile_v9_risk_guards WHERE school_id=$1 AND target_id=$2 AND state='active') OR EXISTS(SELECT 1 FROM mobile_v9_attempts a JOIN mobile_v9_task_items i ON i.id=a.item_id WHERE i.school_id=$1 AND i.target_id=$2 AND i.intent_id=$3 AND a.state IN ('observed_sent','manually_confirmed_sent'))").bind(s).bind(uid(plan,"target_id")?).bind(plan["intent_id"].as_str().and_then(|v|Uuid::parse_str(v).ok())).fetch_one(&mut **tx).await?;
     require(!risk, "shared_send_review_required")
 }
 pub(super) async fn write(
@@ -291,7 +291,7 @@ pub(super) async fn write(
             }
             let p = policy(tx).await?;
             let id = Uuid::now_v7();
-            let plan = json!({"schema":SCHEMA,"school_id":s,"intent_id":d["intent_id"],"draft_id":input.draft_id,"draft_revision":input.expected_revision,"between_targets_seconds":d["between_targets_seconds"],"message":d["message"],"content_digest":d["content_digest"],"items":items,"policy_id":p.as_ref().map(|p|&p["id"]),"sending_status":sending_status});
+            let plan = json!({"dispatch_mode":"candidate_pool","schema":SCHEMA,"school_id":s,"intent_id":d["intent_id"],"draft_id":input.draft_id,"draft_revision":input.expected_revision,"between_targets_seconds":d["between_targets_seconds"],"message":d["message"],"content_digest":d["content_digest"],"items":items,"policy_id":p.as_ref().map(|p|&p["id"]),"sending_status":sending_status});
             let h = digest(&plan)?;
             sqlx::query("INSERT INTO mobile_v9_previews(id,school_id,draft_id,draft_revision,plan,digest,policy_id) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(id).bind(s).bind(input.draft_id).bind(input.expected_revision).bind(&plan).bind(&h).bind(p.as_ref().map(policy_id).transpose()?.flatten()).execute(&mut **tx).await?;
             Ok(
@@ -319,6 +319,7 @@ pub(super) async fn write(
             let current = policy(tx)
                 .await?
                 .ok_or(Error::Policy("shared_send_not_released"))?;
+            require(plan["dispatch_mode"] == "candidate_pool", "preview_expired")?;
             let items = plan["items"].as_array().ok_or(Error::Conflict)?;
             for item in items {
                 require(
@@ -326,13 +327,21 @@ pub(super) async fn write(
                     "preview_expired",
                 )?;
                 validate_plan(tx, s, &item["selected"]).await?;
+                for candidate in item["candidates"]
+                    .as_array()
+                    .ok_or(Error::Conflict)?
+                    .iter()
+                    .filter(|c| c["confirmable"] == true)
+                {
+                    validate_plan(tx, s, candidate).await?;
+                }
                 require(items.len() <= 100, "shared_send_targets_invalid")?;
             }
             let id = Uuid::now_v7();
             let snap = Uuid::now_v7();
             let message = plan["message"].as_str().ok_or(Error::Conflict)?;
             sqlx::query("INSERT INTO distribution_message_snapshots(id,school_id,channel,content,content_hash) VALUES($1,$2,'mobile',$3,$4)").bind(snap).bind(s).bind(message).bind(hash(message)).execute(&mut **tx).await?;
-            sqlx::query("INSERT INTO mobile_v9_tasks(id,school_id,draft_id,intent_id,preview_id,confirmed_by,confirmed_until) VALUES($1,$2,$3,$4,$5,$6,clock_timestamp()+make_interval(secs=>$7::double precision))").bind(id).bind(s).bind(uid(plan,"draft_id")?).bind(uid(plan,"intent_id")?).bind(input.preview_id).bind(a.id).bind(current["confirmation_seconds"].as_i64().ok_or(Error::Conflict)? as f64).execute(&mut **tx).await?;
+            sqlx::query("INSERT INTO mobile_v9_tasks(id,school_id,draft_id,intent_id,preview_id,confirmed_by,confirmed_until,dispatch_mode) VALUES($1,$2,$3,$4,$5,$6,clock_timestamp()+make_interval(secs=>$7::double precision),'candidate_pool')").bind(id).bind(s).bind(uid(plan,"draft_id")?).bind(uid(plan,"intent_id")?).bind(input.preview_id).bind(a.id).bind(current["confirmation_seconds"].as_i64().ok_or(Error::Conflict)? as f64).execute(&mut **tx).await?;
             for item in items {
                 let iid = Uuid::now_v7();
                 let pid = Uuid::now_v7();
@@ -361,6 +370,27 @@ pub(super) async fn write(
                 sqlx::query("INSERT INTO mobile_v9_task_items(id,school_id,task_id,intent_id,target_id,position) VALUES($1,$2,$3,$4,$5,$6)").bind(iid).bind(s).bind(id).bind(uid(plan,"intent_id")?).bind(uid(item,"target_id")?).bind(item["position"].as_i64().ok_or(Error::Conflict)? as i32).execute(&mut **tx).await?;
                 sqlx::query("INSERT INTO mobile_v9_plans(id,school_id,item_id,target_id,device_id,snapshot_id,plan,digest,content_digest) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)").bind(pid).bind(s).bind(iid).bind(uid(item,"target_id")?).bind(uid(&frozen,"device_id")?).bind(snap).bind(&frozen).bind(digest(&frozen)?).bind(plan["content_digest"].as_str()).execute(&mut **tx).await?;
                 sqlx::query("INSERT INTO mobile_v9_attempts(id,school_id,item_id,plan_id,attempt_no,confirmed_by) VALUES($1,$2,$3,$4,1,$5)").bind(aid).bind(s).bind(iid).bind(pid).bind(a.id).execute(&mut **tx).await?;
+                let mut pool: Vec<Value> = item["candidates"]
+                    .as_array()
+                    .ok_or(Error::Conflict)?
+                    .iter()
+                    .filter(|c| c["confirmable"] == true)
+                    .cloned()
+                    .collect();
+                pool.sort_by_key(|c| c["device_id"] != item["selected"]["device_id"]);
+                require(!pool.is_empty(), "shared_send_selection_invalid")?;
+                sqlx::query(
+                    "INSERT INTO mobile_v9_dispatch_scopes(item_id,candidates) VALUES($1,$2)",
+                )
+                .bind(iid)
+                .bind(json!(pool))
+                .execute(&mut **tx)
+                .await?;
+                sqlx::query("INSERT INTO mobile_v9_dispatch_state(item_id) VALUES($1)")
+                    .bind(iid)
+                    .execute(&mut **tx)
+                    .await?;
+                dispatch::reconcile(tx, iid).await?;
             }
             task(tx, s, id).await
         }
@@ -378,9 +408,13 @@ pub(super) async fn write(
                     ),
                 "shared_send_review_required",
             )?;
-            let old_device = uid(&old["plan"], "device_id")?;
-            // Even a manual not-sent decision cannot override a still-running physical owner.
-            require(!inspections::busy(tx, old_device).await?, "device_busy")?;
+
+            if old["state"] == "verified_not_sent" {
+                let unsafe_permit:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_invocations WHERE attempt_id=$1 AND (state<>'released' OR execute_before>clock_timestamp()))")
+                    .bind(id).fetch_one(&mut **tx).await?;
+                require(!unsafe_permit, "shared_send_review_required")?;
+            }
+            validate_risk(tx, s, &old["plan"]).await?;
             let target = uid(&old, "target_id")?;
             let mut plan = candidates(tx, s, target)
                 .await?
@@ -391,6 +425,20 @@ pub(super) async fn write(
                 plan["scope_id"] = scope["id"].clone();
             }
             validate_plan(tx, s, &plan).await?;
+            let allowed: Option<Value> = sqlx::query_scalar(
+                "SELECT candidates FROM mobile_v9_dispatch_scopes WHERE item_id=$1",
+            )
+            .bind(uid(&old, "item_id")?)
+            .fetch_optional(&mut **tx)
+            .await?;
+            if let Some(allowed) = allowed {
+                require(
+                    allowed.as_array().is_some_and(|cs| {
+                        cs.iter().any(|c| dependencies(c) == dependencies(&plan))
+                    }),
+                    "plan_dependency_changed",
+                )?;
+            }
             let aid = Uuid::now_v7();
             let pid = Uuid::now_v7();
             for k in [
@@ -443,6 +491,10 @@ pub(super) async fn write(
                     && row.get::<String, _>("state") == "unknown",
                 "revision_conflict",
             )?;
+            if input.decision == "verified_not_sent" {
+                let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_invocations WHERE attempt_id=$1 AND execute_before>clock_timestamp())").bind(id).fetch_one(&mut **tx).await?;
+                require(!active, "shared_send_review_required")?;
+            }
             let rid = Uuid::now_v7();
             sqlx::query("INSERT INTO mobile_v9_reviews(id,school_id,attempt_id,reviewer,decision,evidence) VALUES($1,$2,$3,$4,$5,$6)").bind(rid).bind(s).bind(id).bind(a.id).bind(&input.decision).bind(&input.evidence).execute(&mut **tx).await?;
             if input.decision == "still_unknown" {

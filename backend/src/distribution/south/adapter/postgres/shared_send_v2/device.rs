@@ -6,13 +6,13 @@ pub(super) async fn read(repo: &Repository, c: &Credential) -> Result<Value> {
 
     let work:Vec<Value>=sqlx::query_scalar("SELECT (to_jsonb(c)-'recovery_credential_hash'-'encrypted_response')||jsonb_build_object('attempt_state',a.state,'invocation_id',i.id,'execute_before',i.execute_before) FROM mobile_v9_send_claims c JOIN mobile_v9_attempts a ON a.id=c.attempt_id LEFT JOIN mobile_v9_invocations i ON i.claim_id=c.id WHERE c.device_id=$1 AND (c.state='active' OR a.state='unknown') ORDER BY c.created_at LIMIT 100").bind(c.device_id).fetch_all(&mut *tx).await?;
     let inspections: Vec<Value> = Vec::new();
-    let turns:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',a.id,'task_id',t.id,'position',i.position,'next_eligible_at',t.next_eligible_at,'interval_ms',CASE WHEN i.position=0 THEN 0 ELSE greatest((p.plan->>'between_targets_seconds')::bigint*1000,coalesce((SELECT max((lim.value->>'interval_seconds')::bigint)*1000 FROM mobile_v9_send_policy_versions policy,jsonb_each(policy.limits) lim WHERE policy.revision=(SELECT max(revision) FROM mobile_v9_send_policy_versions)),1000)) END) FROM mobile_v9_tasks t JOIN mobile_v9_task_items i ON i.task_id=t.id AND i.position=t.cursor_position JOIN mobile_v9_attempts a ON a.item_id=i.id AND a.current JOIN mobile_v9_plans p ON p.id=a.plan_id WHERE p.device_id=$1 AND a.state='queued' AND NOT t.stopped AND t.confirmed_until>clock_timestamp() ORDER BY t.created_at,t.id LIMIT 100").bind(c.device_id).fetch_all(&mut *tx).await?;
+    let turns:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',a.id,'task_id',t.id,'position',i.position,'next_eligible_at',t.next_eligible_at,'interval_ms',CASE WHEN i.position=0 THEN 0 ELSE greatest((p.plan->>'between_targets_seconds')::bigint*1000,coalesce((SELECT max((lim.value->>'interval_seconds')::bigint)*1000 FROM mobile_v9_send_policy_versions policy,jsonb_each(policy.limits) lim WHERE policy.revision=(SELECT max(revision) FROM mobile_v9_send_policy_versions)),1000)) END) FROM mobile_v9_tasks t JOIN mobile_v9_task_items i ON i.task_id=t.id AND (t.dispatch_mode='candidate_pool' OR i.position=t.cursor_position) JOIN mobile_v9_attempts a ON a.item_id=i.id AND a.current JOIN mobile_v9_plans p ON p.id=a.plan_id WHERE p.device_id=$1 AND a.state='queued' AND NOT t.stopped AND t.confirmed_until>clock_timestamp() ORDER BY t.created_at,t.id LIMIT 100").bind(c.device_id).fetch_all(&mut *tx).await?;
     let v = json!({"turns":turns,"inspections":inspections,"id":c.device_id,"schema":SCHEMA,"authorization_schema":SCOPE,"protocol_version":9,"single_use_supported":true,"result_recovery_supported":true,"delegation":delegation,"recovery":work});
     tx.commit().await?;
     Ok(v)
 }
 async fn live_claim(tx: &mut Tx<'_>, c: &Credential, id: Uuid) -> Result<Value> {
-    let v:Value=sqlx::query_scalar("SELECT to_jsonb(c)||jsonb_build_object('plan',p.plan,'plan_digest',p.digest,'content_digest',p.content_digest,'task_id',i.task_id) FROM mobile_v9_send_claims c JOIN mobile_v9_attempts a ON a.id=c.attempt_id JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id JOIN mobile_shared_runtime r ON r.device_id=c.device_id JOIN mobile_shared_device_leases l ON l.device_id=c.device_id WHERE c.id=$1 AND c.device_id=$2 AND c.credential_generation=$3 AND c.state='active' AND c.expires_at>clock_timestamp() AND NOT t.stopped AND t.confirmed_until>clock_timestamp() AND t.cursor_position=i.position AND t.next_eligible_at<=clock_timestamp() AND r.runtime_epoch=c.runtime_epoch AND r.ui_ready AND NOT r.paused AND r.observed_at>clock_timestamp()-interval '30 seconds' AND l.holder_id=c.id AND l.fence=c.lease_fence AND l.expires_at>clock_timestamp() AND EXISTS(SELECT 1 FROM device_control_presence cp WHERE cp.id=c.device_id AND cp.state='online' AND NOT cp.desired_paused AND cp.last_control_heartbeat_at>clock_timestamp()-interval '30 seconds')").bind(id).bind(c.device_id).bind(c.generation).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("lease_superseded"))?;
+    let v:Value=sqlx::query_scalar("SELECT to_jsonb(c)||jsonb_build_object('plan',p.plan,'plan_digest',p.digest,'content_digest',p.content_digest,'task_id',i.task_id) FROM mobile_v9_send_claims c JOIN mobile_v9_attempts a ON a.id=c.attempt_id JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id JOIN mobile_shared_runtime r ON r.device_id=c.device_id JOIN mobile_shared_device_leases l ON l.device_id=c.device_id WHERE c.id=$1 AND c.device_id=$2 AND c.credential_generation=$3 AND a.current AND a.state IN ('leased','prepared','invocation_issued') AND c.state='active' AND c.expires_at>clock_timestamp() AND NOT t.stopped AND t.confirmed_until>clock_timestamp() AND (t.dispatch_mode='candidate_pool' OR t.cursor_position=i.position) AND (t.dispatch_mode='candidate_pool' OR t.next_eligible_at<=clock_timestamp()) AND r.runtime_epoch=c.runtime_epoch AND r.ui_ready AND NOT r.paused AND r.observed_at>clock_timestamp()-interval '30 seconds' AND l.holder_id=c.id AND l.fence=c.lease_fence AND l.expires_at>clock_timestamp() AND EXISTS(SELECT 1 FROM device_control_presence cp WHERE cp.id=c.device_id AND cp.state='online' AND NOT cp.desired_paused AND cp.last_control_heartbeat_at>clock_timestamp()-interval '30 seconds')").bind(id).bind(c.device_id).bind(c.generation).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("lease_superseded"))?;
     let school = uid(&v, "school_id")?;
     let confirmed: Uuid =
         sqlx::query_scalar("SELECT confirmed_by FROM mobile_v9_attempts WHERE id=$1")
@@ -83,8 +83,8 @@ async fn quota_policy(
         (format!("target:{s}:{target}"), limits.target),
     ];
     for (key, l) in &keys {
-        let row=sqlx::query("SELECT count(*) FILTER (WHERE state='risk_held' OR recorded_at>clock_timestamp()-make_interval(secs=>$2::double precision)) AS used,coalesce(bool_or(recorded_at>clock_timestamp()-make_interval(secs=>$3::double precision)),false) AS cooling FROM mobile_v9_quota_reservations WHERE dimension_key=$1 AND state<>'released' AND attempt_id<>$4 AND (state='risk_held' OR recorded_at>clock_timestamp()-make_interval(secs=>greatest($2::double precision,$3::double precision)))").bind(key).bind(l.window_seconds as f64).bind(l.interval_seconds as f64).bind(attempt).fetch_one(&mut **tx).await?;
-        let daily:i64=sqlx::query_scalar("SELECT count(*) FROM mobile_v9_quota_reservations WHERE dimension_key=$1 AND state<>'released' AND attempt_id<>$2 AND (state='risk_held' OR recorded_at>=(date_trunc('day',clock_timestamp() AT TIME ZONE $3) AT TIME ZONE $3))").bind(key).bind(attempt).bind(timezone).fetch_one(&mut **tx).await?;
+        let row=sqlx::query("SELECT count(*) FILTER (WHERE recorded_at>clock_timestamp()-make_interval(secs=>$2::double precision)) AS used,coalesce(bool_or(recorded_at>clock_timestamp()-make_interval(secs=>$3::double precision)),false) AS cooling FROM mobile_v9_quota_reservations WHERE dimension_key=$1 AND state<>'released' AND attempt_id<>$4 AND (recorded_at>clock_timestamp()-make_interval(secs=>greatest($2::double precision,$3::double precision)))").bind(key).bind(l.window_seconds as f64).bind(l.interval_seconds as f64).bind(attempt).fetch_one(&mut **tx).await?;
+        let daily:i64=sqlx::query_scalar("SELECT count(*) FROM mobile_v9_quota_reservations WHERE dimension_key=$1 AND state<>'released' AND attempt_id<>$2 AND (recorded_at>=(date_trunc('day',clock_timestamp() AT TIME ZONE $3) AT TIME ZONE $3))").bind(key).bind(attempt).bind(timezone).fetch_one(&mut **tx).await?;
         if daily >= l.daily_max_calls
             || row.get::<i64, _>("used") >= l.max_calls
             || row.get::<bool, _>("cooling")
@@ -334,7 +334,7 @@ async fn claim(tx: &mut Tx<'_>, c: &Credential, v: ClaimRequest) -> Result<Value
             json!({"id":c.device_id,"state":"waiting","reason":"device_busy","retry_after":20}),
         );
     }
-    let rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(a)||jsonb_build_object('plan',p.plan,'plan_digest',p.digest,'content_digest',p.content_digest,'confirmed_by',a.confirmed_by) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id LEFT JOIN mobile_v9_scheduler_turns turn ON turn.device_id=p.device_id AND turn.school_id=a.school_id WHERE p.device_id=$1 AND a.id=ANY($2) AND a.current AND a.state='queued' AND a.not_before<=clock_timestamp() AND NOT t.stopped AND t.confirmed_until>clock_timestamp() AND i.position=t.cursor_position AND t.next_eligible_at<=clock_timestamp() AND (i.position<>0 OR NOT EXISTS(SELECT 1 FROM mobile_v9_task_items other JOIN mobile_v9_attempts oa ON oa.item_id=other.id AND oa.current JOIN mobile_v9_plans op ON op.id=oa.plan_id LEFT JOIN mobile_shared_runtime rt ON rt.device_id=op.device_id LEFT JOIN mobile_shared_device_leases l ON l.device_id=op.device_id WHERE other.task_id=t.id AND ((l.expires_at>clock_timestamp()) OR NOT coalesce(rt.quiescent,true)))) ORDER BY coalesce(turn.sequence,0),t.created_at,i.position,a.id").bind(c.device_id).bind(&v.eligible_attempt_ids).fetch_all(&mut **tx).await?;
+    let rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(a)||jsonb_build_object('plan',p.plan,'plan_digest',p.digest,'content_digest',p.content_digest,'confirmed_by',a.confirmed_by) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id LEFT JOIN mobile_v9_scheduler_turns turn ON turn.device_id=p.device_id AND turn.school_id=a.school_id WHERE p.device_id=$1 AND a.id=ANY($2) AND a.current AND a.state='queued' AND a.not_before<=clock_timestamp() AND NOT t.stopped AND t.confirmed_until>clock_timestamp() AND (t.dispatch_mode='candidate_pool' OR i.position=t.cursor_position) AND t.next_eligible_at<=clock_timestamp() AND (t.dispatch_mode='candidate_pool' OR i.position<>0 OR NOT EXISTS(SELECT 1 FROM mobile_v9_task_items other JOIN mobile_v9_attempts oa ON oa.item_id=other.id AND oa.current JOIN mobile_v9_plans op ON op.id=oa.plan_id LEFT JOIN mobile_shared_runtime rt ON rt.device_id=op.device_id LEFT JOIN mobile_shared_device_leases l ON l.device_id=op.device_id WHERE other.task_id=t.id AND ((l.expires_at>clock_timestamp()) OR NOT coalesce(rt.quiescent,true)))) ORDER BY coalesce(turn.sequence,0),t.created_at,i.position,a.id").bind(c.device_id).bind(&v.eligible_attempt_ids).fetch_all(&mut **tx).await?;
     let mut reason = "task_cursor_wait";
     for row in rows {
         let s = uid(&row, "school_id")?;
@@ -376,6 +376,7 @@ async fn claim(tx: &mut Tx<'_>, c: &Credential, v: ClaimRequest) -> Result<Value
             reason = "quota_wait";
             continue;
         }
+        sqlx::query("UPDATE mobile_v9_tasks t SET next_eligible_at=clock_timestamp()+make_interval(secs=>greatest(1,(p.plan->>'between_targets_seconds')::integer)),revision=t.revision+1 FROM mobile_v9_task_items i JOIN mobile_v9_plans p ON p.item_id=i.id JOIN mobile_v9_attempts a ON a.plan_id=p.id WHERE t.id=i.task_id AND a.id=$1 AND t.dispatch_mode='candidate_pool'").bind(aid).execute(&mut **tx).await?;
         let id = Uuid::now_v7();
         let recovery_credential = secrets::token();
         let fence:i64=sqlx::query_scalar("INSERT INTO mobile_shared_device_leases(device_id,fence,holder_id,purpose,expires_at) VALUES($1,1,$2,'send',clock_timestamp()+interval '60 seconds') ON CONFLICT(device_id) DO UPDATE SET fence=mobile_shared_device_leases.fence+1,holder_id=$2,purpose='send',expires_at=clock_timestamp()+interval '60 seconds' RETURNING fence").bind(c.device_id).bind(id).fetch_one(&mut **tx).await?;
@@ -503,6 +504,36 @@ pub(super) async fn result(tx: &mut Tx<'_>, c: &Credential, v: ResultEvent) -> R
                 .execute(&mut **tx)
                 .await?;
         }
+    }
+    // A verified-not-sent review can be contradicted by authenticated delayed
+    // evidence. Keep both audit facts and quarantine only this target; never
+    // rewrite the replacement attempt or silently resume the old permit.
+    if cl["attempt_state"] == "verified_not_sent"
+        && invocation.is_some()
+        && matches!(v.outcome.as_str(), "observed_sent" | "unknown")
+    {
+        sqlx::query(
+            "UPDATE mobile_v9_attempts SET state='unknown',revision=revision+1 WHERE id=$1",
+        )
+        .bind(v.attempt_id)
+        .execute(&mut **tx)
+        .await?;
+        sqlx::query("UPDATE mobile_v9_invocations SET state='risk_held' WHERE attempt_id=$1")
+            .bind(v.attempt_id)
+            .execute(&mut **tx)
+            .await?;
+        sqlx::query(
+            "UPDATE mobile_v9_quota_reservations SET state='risk_held' WHERE attempt_id=$1",
+        )
+        .bind(v.attempt_id)
+        .execute(&mut **tx)
+        .await?;
+        sqlx::query("UPDATE mobile_v9_risk_guards SET state='active' WHERE attempt_id=$1")
+            .bind(v.attempt_id)
+            .execute(&mut **tx)
+            .await?;
+        sqlx::query("UPDATE mobile_v9_dispatch_state ds SET state='needs_review',reason='target_result_pending',revision=ds.revision+1,next_retry_at=clock_timestamp() FROM mobile_v9_attempts a WHERE a.id=$1 AND ds.item_id=a.item_id")
+            .bind(v.attempt_id).execute(&mut **tx).await?;
     }
     // Closing a claim does not shorten its physical lease or declare the UI thread stopped.
     sqlx::query("UPDATE mobile_v9_send_claims SET state='closed' WHERE id=$1")

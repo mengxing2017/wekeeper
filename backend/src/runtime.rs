@@ -141,6 +141,15 @@ async fn serve_inner(
     let usages = crate::distribution::south::adapter::postgres::shared_send_v2::Repository(
         application.pool.clone(),
     );
+    let dispatcher = usages.clone();
+    let dispatch_worker = tokio::spawn(async move {
+        loop {
+            if let Err(error) = dispatcher.reconcile_dispatch().await {
+                tracing::warn!(%error,"mobile task dispatch will retry");
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
+    });
     let wait_observer = usages.clone();
     let wait_worker = tokio::spawn(async move {
         loop {
@@ -179,6 +188,8 @@ async fn serve_inner(
     let _ = artwork_worker.await;
     wait_worker.abort();
     let _ = wait_worker.await;
+    dispatch_worker.abort();
+    let _ = dispatch_worker.await;
     usage_worker.abort();
     let _ = usage_worker.await;
     broadcast_worker.abort();

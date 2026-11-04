@@ -17,6 +17,7 @@ pub mod configuration;
 mod delegation;
 pub mod delivery;
 mod device;
+mod dispatch;
 mod execution_status;
 mod inbox;
 mod inspections;
@@ -123,6 +124,18 @@ async fn task(tx: &mut Tx<'_>, s: Uuid, id: Uuid) -> Result<Value> {
                         .map(|r| r["received_at"].clone())
                         .unwrap_or(Value::Null);
                 }
+            }
+        }
+    }
+    let dispatches:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(ds)||jsonb_build_object('candidates',sc.candidates,'assignments',coalesce((SELECT jsonb_agg(to_jsonb(r)||jsonb_build_object('from_device_name',op.plan->>'device_name','to_device_name',np.plan->>'device_name') ORDER BY r.created_at,r.id) FROM mobile_v9_reassignments r JOIN mobile_v9_attempts a ON a.id=r.new_attempt_id JOIN mobile_v9_plans np ON np.id=a.plan_id JOIN mobile_v9_attempts oa ON oa.id=r.old_attempt_id JOIN mobile_v9_plans op ON op.id=oa.plan_id WHERE a.item_id=ds.item_id),'[]'::jsonb)) FROM mobile_v9_dispatch_state ds JOIN mobile_v9_dispatch_scopes sc ON sc.item_id=ds.item_id JOIN mobile_v9_task_items i ON i.id=ds.item_id WHERE i.task_id=$1").bind(id).fetch_all(&mut **tx).await?;
+    if let Some(items) = value["items"].as_array_mut() {
+        for item in items {
+            if let Some(dispatch) = dispatches.iter().find(|d| d["item_id"] == item["id"]) {
+                item["dispatch"] = serde_json::to_value(
+                    serde_json::from_value::<DispatchSnapshot>(dispatch.clone())
+                        .map_err(|_| Error::Conflict)?,
+                )
+                .map_err(|_| Error::Conflict)?;
             }
         }
     }

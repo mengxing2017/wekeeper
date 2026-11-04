@@ -877,3 +877,46 @@ mod inbox_contract_tests {
         assert!(item.get("message").is_none());
     }
 }
+
+/// Delivery scheduling is independent of phone execution conditions.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DispatchSnapshot {
+    pub item_id: Uuid,
+    pub state: String,
+    pub reason: String,
+    pub revision: i64,
+    pub next_retry_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub last_failed_attempt_id: Option<Uuid>,
+    pub candidates: Vec<Value>,
+    pub assignments: Vec<DispatchAssignment>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DispatchAssignment {
+    pub id: Uuid,
+    pub school_id: Uuid,
+    pub old_attempt_id: Uuid,
+    pub new_attempt_id: Uuid,
+    pub actor_id: Uuid,
+    pub reason: String,
+    pub source: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub from_device_name: Option<String>,
+    pub to_device_name: Option<String>,
+}
+#[cfg(test)]
+mod dispatch_contract_tests {
+    use super::*;
+    #[test]
+    fn scheduling_matches_the_cross_language_fixture() {
+        let value: Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../api-contract/fixtures/shared-dispatch.json"
+        )))
+        .unwrap();
+        let snapshot: DispatchSnapshot = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(snapshot).unwrap(), value);
+    }
+}
