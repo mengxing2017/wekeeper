@@ -69,6 +69,21 @@ pub struct ExecutionCondition {
 mod execution_status_tests {
     use super::*;
     #[test]
+    fn device_owned_preparation_requires_no_platform_flow() {
+        let fixture: Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../api-contract/fixtures/device-owned-execution.json"
+        )))
+        .unwrap();
+        let input: Preparation = serde_json::from_value(fixture["preparation"].clone()).unwrap();
+        assert!(input.flow_digest.is_none());
+        assert_eq!(serde_json::to_value(input).unwrap(), fixture["preparation"]);
+        let mut legacy = fixture["preparation"].clone();
+        legacy["flow_digest"] = serde_json::json!("a".repeat(64));
+        let input: Preparation = serde_json::from_value(legacy.clone()).unwrap();
+        assert_eq!(serde_json::to_value(input).unwrap(), legacy);
+    }
+    #[test]
     fn inspection_start_matches_cross_language_identity_without_approval() {
         let fixture: Value = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -302,7 +317,8 @@ pub struct Preparation {
     pub content_digest: String,
     pub input_matches: bool,
     pub page_digest: String,
-    pub flow_digest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flow_digest: Option<String>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

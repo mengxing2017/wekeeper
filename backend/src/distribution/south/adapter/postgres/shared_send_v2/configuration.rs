@@ -1,4 +1,4 @@
-//! Deployment-owned configuration installation; never a school/browser business step.
+//! Historical configuration archive. Never read by task admission or execution.
 use super::*;
 use crate::distribution::domain::shared_mobile::runtime_configuration::{
     RuntimeConfiguration, RuntimeConfigurationStatus,
@@ -53,25 +53,4 @@ pub async fn verify(pool: &PgPool, expected: &RuntimeConfiguration) -> Result<Va
 pub(super) async fn current(tx: &mut Tx<'_>) -> Result<Value> {
     Ok(sqlx::query_scalar("SELECT jsonb_build_object('id',c.id,'version',c.version,'flow',c.flow,'flow_digest',c.flow_digest) FROM mobile_runtime_configuration_current p JOIN mobile_runtime_configurations c ON c.id=p.configuration_id AND c.capability=p.capability WHERE p.capability='wecom.group_text'")
         .fetch_optional(&mut **tx).await?.unwrap_or(Value::Null))
-}
-/// Installation happens before HTTP starts. Missing package keeps unrelated services usable.
-pub async fn install_from_environment(pool: &PgPool) -> Result<()> {
-    let packaged = std::path::Path::new("/opt/wekeeper/runtime-resources/wecom-group-text.json");
-    let source = std::env::var_os("WEKEEPER_SHARED_SEND_CONFIGURATION")
-        .filter(|p| !p.is_empty())
-        .or_else(|| packaged.is_file().then(|| packaged.as_os_str().to_owned()));
-    if let Some(path) = source {
-        let raw =
-            std::fs::read(path).map_err(|_| Error::Policy("configuration_package_unreadable"))?;
-        let configuration = RuntimeConfiguration::parse(&raw)?;
-        install(pool, &configuration).await?;
-    }
-    let state = status(pool).await?;
-    if state["available"] != true {
-        tracing::error!(
-            issue_code = state["issue"]["code"].as_str(),
-            "shared mobile execution configuration unavailable; other services remain running"
-        );
-    }
-    Ok(())
 }

@@ -15,19 +15,7 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
         } else {
             false
         };
-        let inspection = if let Some(ref c) = candidate {
-            sqlx::query_scalar::<_,Value>("SELECT to_jsonb(i)-'challenge' FROM mobile_v9_send_inspections i WHERE binding_id=$1 AND dependencies=$2 AND purpose='automatic' ORDER BY created_at DESC,id DESC LIMIT 1").bind(uid(&row,"id")?).bind(tasks::dependencies(c)).fetch_optional(&mut **tx).await?
-        } else {
-            None
-        };
-        let passed = inspection.as_ref().is_some_and(|i| {
-            i["state"] == "passed"
-                && i["result"]["ui_context_epoch"] == row["context_epoch"]
-                && i["expires_at"]
-                    .as_str()
-                    .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok())
-                    .is_some_and(|t| t > chrono::Utc::now())
-        });
+        let inspection: Option<Value> = None;
         let accepted = candidate.as_ref().is_some_and(|c| c["accepted"] == true);
         let scope_exists = if let Some(ref c) = candidate {
             tasks::validate_scope(tx, school, c).await.is_ok()
@@ -35,44 +23,8 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
             false
         };
         let risk:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_invocations WHERE device_id=$1 AND state='risk_held') OR EXISTS(SELECT 1 FROM mobile_v9_risk_guards WHERE school_id=$2 AND target_id=$3 AND state='active')").bind(uid(&row,"device_id")?).bind(school).bind(uid(&row,"target_id")?).fetch_one(&mut **tx).await?;
-        let retry_seconds = policy
-            .as_ref()
-            .and_then(|p| p["retry_seconds"].as_i64())
-            .unwrap_or(300);
-        let retry_limit = policy
-            .as_ref()
-            .and_then(|p| p["retry_limit"].as_i64())
-            .unwrap_or(3);
-        let retry = if let Some(ref c) = candidate {
-            inspection_budget::load(tx, uid(&row, "id")?, tasks::dependencies(c), retry_seconds)
-                .await?
-        } else {
-            inspection_budget::Budget {
-                used: 0,
-                retry_at: None,
-                budget_at: None,
-            }
-        };
-        let remaining = (retry_limit - retry.used).max(0);
-        let active_check = inspection.as_ref().is_some_and(|i| {
-            matches!(i["state"].as_str(), Some("pending" | "leased"))
-                && i["expires_at"]
-                    .as_str()
-                    .and_then(|v| v.parse::<chrono::DateTime<chrono::Utc>>().ok())
-                    .is_some_and(|t| t > chrono::Utc::now())
-        });
-        let exhausted = remaining == 0 && !active_check;
-        let retry_at = if active_check {
-            Value::Null
-        } else if exhausted {
-            json!(retry.budget_at)
-        } else {
-            json!(retry.retry_at)
-        };
-        let retry_wait = retry_at
-            .as_str()
-            .and_then(|v| v.parse::<chrono::DateTime<chrono::Utc>>().ok())
-            .is_some_and(|t| t > chrono::Utc::now());
+        let remaining = 0;
+        let retry_at = Value::Null;
         let busy = inspections::busy(tx, uid(&row, "device_id")?).await?;
         let mut blockers = Vec::new();
         let mut add = |code: &str, message: &str, owner: &str, action: &str, automatic: bool| {
@@ -105,80 +57,20 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
             .as_ref()
             .and_then(|c| c["consent_state"].as_str())
             .unwrap_or("unknown");
-        let mut execution_conditions = execution_conditions(
+        let execution_conditions = execution_conditions(
             &row,
             consent_state,
             busy,
             policy.as_ref().and_then(|p| p["mode"].as_str()),
         );
-        let configuration_issue = candidate.as_ref().and_then(|c| {
-            crate::distribution::domain::shared_mobile::runtime_configuration::inspect_flow(
-                &c["flow"],
-                &c["flow_digest"],
-            )
-            .err()
-        });
-        let rules_valid = candidate.is_some() && configuration_issue.is_none();
-        if let Some(ref issue) = configuration_issue {
-            blockers.push(condition(
-                "shared_send_execution_configuration_invalid",
-                issue.message(),
-                "system",
-                "可报告问题，修复后重新预览",
-                false,
-            ));
-        }
-        if !passed && rules_valid {
-            execution_conditions.push(condition(
-                if exhausted {
-                    "inspection_budget_exhausted"
-                } else {
-                    "waiting_inspection"
-                },
-                if exhausted {
-                    "自动检查暂未完成，达到重试时间后自动继续"
-                } else if retry_wait {
-                    "自动检查等待配置的退避时间"
-                } else {
-                    "等待当前手机上的无发送检查"
-                },
-                "system",
-                if exhausted {
-                    "查看检查失败原因；系统将在预算恢复后继续"
-                } else {
-                    "后台按退避时间自动检查；可查看失败原因或报告问题"
-                },
-                true,
-            ));
-        }
         let ready = selectable
             && !busy
             && confirmable
             && accepted
             && row["online"] == true
-            && runtime_state(&row) == "ready"
-            && passed
-            && rules_valid;
-        let inspection_state = if !rules_valid {
-            "not_scheduled"
-        } else if passed {
-            "passed"
-        } else if exhausted {
-            "retry_exhausted"
-        } else if !accepted || row["online"] != true || runtime_state(&row) != "ready" {
-            "waiting_prerequisites"
-        } else {
-            match inspection.as_ref().and_then(|i| i["state"].as_str()) {
-                Some("pending") => "queued",
-                Some("leased") => "running",
-                Some("passed") => "expired",
-                Some("failed" | "stale") if retry_wait => "retry_wait",
-                Some("failed") => "failed",
-                Some("stale") => "stale",
-                _ => "not_scheduled",
-            }
-        };
-        result.push(json!({"binding_id":row["id"],"device_id":row["device_id"],"target_id":row["target_id"],"device_name":row["device_name"],"target_name":row["target_name"],"search_text":row["search_text"],"plan_selectable":selectable,"confirmable":confirmable && rules_valid,"execution_ready":ready,"ready":ready,"state":if ready{json!("ready_for_task")}else{blockers.first().or_else(||execution_conditions.first()).map(|b|b["code"].clone()).unwrap_or(json!("waiting"))},"consent_state":consent_state,"configuration_id":candidate.as_ref().map(|c| &c["release_id"]),"configuration_digest":candidate.as_ref().map(|c| &c["flow_digest"]),"configuration_version":candidate.as_ref().map(|c| &c["configuration_version"]),"configuration_issue":configuration_issue,"configuration_observed_at":chrono::Utc::now(),"configuration_source":"platform_runtime_configuration","preparation":row["preparation"],"runtime_state":runtime_state(&row),"runtime_reason":row["runtime_reason"],"runtime_observed_at":row["runtime_observed_at"],"execution_conditions":execution_conditions,"blockers":blockers,"inspection":inspection,"inspection_state":inspection_state,"retry_remaining":remaining,"retry_at":retry_at,"automatic":true}));
+            && runtime_state(&row) == "ready";
+        let inspection_state = "not_scheduled";
+        result.push(json!({"binding_id":row["id"],"device_id":row["device_id"],"target_id":row["target_id"],"device_name":row["device_name"],"target_name":row["target_name"],"search_text":row["search_text"],"plan_selectable":selectable,"confirmable":confirmable,"execution_ready":ready,"ready":ready,"state":if ready{json!("ready_for_task")}else{blockers.first().or_else(||execution_conditions.first()).map(|b|b["code"].clone()).unwrap_or(json!("waiting"))},"consent_state":consent_state,"preparation":row["preparation"],"runtime_state":runtime_state(&row),"runtime_reason":row["runtime_reason"],"runtime_observed_at":row["runtime_observed_at"],"execution_conditions":execution_conditions,"blockers":blockers,"inspection":inspection,"inspection_state":inspection_state,"retry_remaining":remaining,"retry_at":retry_at,"automatic":true}));
     }
     Ok(result)
 }

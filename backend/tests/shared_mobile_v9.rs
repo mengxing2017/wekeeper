@@ -835,7 +835,7 @@ async fn business_configuration_does_not_require_technical_delivery() {
     );
     assert_eq!(
         result["preview"]["plan"]["items"][0]["blocker"],
-        "平台运行配置未安装，需系统修复"
+        Value::Null
     );
     assert!(
         result["preview"]["plan"]["items"][0]["selected"]
@@ -855,12 +855,8 @@ async fn business_configuration_does_not_require_technical_delivery() {
             }),
         )
         .await;
-    assert!(matches!(
-        task,
-        Err(wekeeper_api::business::Error::Policy(
-            "shared_send_execution_configuration_invalid"
-        ))
-    ));
+    let task = task.unwrap();
+    assert_eq!(task["items"][0]["attempts"][0]["state"], "queued");
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_v9_scope_grants")
             .fetch_one(&f.pool)
@@ -890,6 +886,10 @@ async fn business_configuration_does_not_require_technical_delivery() {
     );
     input.expected_revision = 1;
     input.enabled = true;
+    input.allowed_windows = serde_json::from_value(
+        json!([{"weekdays":[1,2,3,4,5,6,7],"start_minute":0,"end_minute":1440}]),
+    )
+    .unwrap();
     r.platform_write(
         &f.actor,
         "open-no-delivery",
@@ -897,6 +897,121 @@ async fn business_configuration_does_not_require_technical_delivery() {
     )
     .await
     .unwrap();
+    let token = "wk_device_device-owned-regression";
+    sqlx::query("INSERT INTO device_credentials(token_hash,device_id,generation,expires_at) VALUES($1,$2,1,clock_timestamp()+interval '1 hour')").bind(wekeeper_api::business::hash(token)).bind(f.device).execute(&f.pool).await.unwrap();
+    let c = r.credential(token).await.unwrap();
+    let context = r.delegation_read(&c).await.unwrap();
+    r.device_write(
+        &c,
+        "device-owned-consent",
+        DeviceCommand::Consent(ConsentInput {
+            delegation_id: serde_json::from_value(context["delegation"]["id"].clone()).unwrap(),
+            scope_digest: context["delegation"]["scope_digest"]
+                .as_str()
+                .unwrap()
+                .into(),
+            expected_revision: 0,
+            accepted: true,
+        }),
+    )
+    .await
+    .unwrap();
+    let epoch = Uuid::new_v4();
+    sqlx::query("INSERT INTO device_control_sessions(device_id,connection_id,transport,credential_generation,last_heartbeat_at) VALUES($1,$2,'https',1,clock_timestamp())").bind(f.device).bind(Uuid::new_v4()).execute(&f.pool).await.unwrap();
+    sqlx::query("INSERT INTO mobile_shared_runtime(device_id,credential_generation,runtime_epoch,ui_ready,paused,quiescent,observed_at) VALUES($1,1,$2,true,false,true,clock_timestamp())").bind(f.device).bind(epoch).execute(&f.pool).await.unwrap();
+    sqlx::query("INSERT INTO mobile_v9_runtime_details(device_id,credential_generation,ui_context_epoch,conditions,apk_sha256) VALUES($1,1,'local','{}',repeat('a',64))").bind(f.device).execute(&f.pool).await.unwrap();
+    let aid: Uuid = serde_json::from_value(task["items"][0]["attempts"][0]["id"].clone()).unwrap();
+    let claim = r
+        .device_write(
+            &c,
+            "device-owned-claim",
+            DeviceCommand::Claim(ClaimRequest {
+                eligible_attempt_ids: vec![aid],
+                runtime_epoch: epoch,
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(claim["state"], "leased", "{claim}");
+    assert_eq!(claim["plan"]["execution"]["contract"], "device_owned/1");
+    assert!(claim["plan"].get("flow").is_none());
+    let id: Uuid = serde_json::from_value(claim["id"].clone()).unwrap();
+    let fence = claim["lease_fence"].as_i64().unwrap();
+    let prep = Preparation {
+        attempt_id: aid,
+        lease_fence: fence,
+        plan_digest: claim["plan_digest"].as_str().unwrap().into(),
+        content_digest: claim["content_digest"].as_str().unwrap().into(),
+        input_matches: true,
+        page_digest: "a".repeat(64),
+        flow_digest: None,
+    };
+    let mut bad = prep.clone();
+    bad.input_matches = false;
+    assert!(
+        r.device_write(
+            &c,
+            "device-owned-bad-preparation",
+            DeviceCommand::Prepare(id, bad)
+        )
+        .await
+        .is_err()
+    );
+    let prepared = r
+        .device_write(
+            &c,
+            "device-owned-preparation",
+            DeviceCommand::Prepare(id, prep.clone()),
+        )
+        .await
+        .unwrap();
+    let input = InvocationInput {
+        preparation_id: serde_json::from_value(prepared["id"].clone()).unwrap(),
+        lease_fence: fence,
+        plan_digest: prep.plan_digest,
+        content_digest: prep.content_digest,
+    };
+    let permit = r
+        .device_write(
+            &c,
+            "device-owned-permit",
+            DeviceCommand::Invoke(id, input.clone()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        permit,
+        r.device_write(
+            &c,
+            "device-owned-permit",
+            DeviceCommand::Invoke(id, input.clone())
+        )
+        .await
+        .unwrap()
+    );
+    assert!(
+        r.device_write(
+            &c,
+            "device-owned-new-permit",
+            DeviceCommand::Invoke(id, input)
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_v9_invocations")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_v9_send_inspections")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        0
+    );
     f.close().await;
 }
 
@@ -1022,8 +1137,7 @@ async fn approved_business_resources_exist_without_any_adapter_or_delivery_recor
         .find(|v| v["target_id"] == json!(target))
         .unwrap();
     assert_eq!(row["plan_selectable"], true);
-    // Resource approval is independent of technical delivery. Invalid execution
-    // configuration is reported before accepting work, never as a delivery queue.
+    // Platform accepts business intent without any downstream UI configuration.
     let p = r
         .usage_write(
             &f.actor,
@@ -1040,11 +1154,8 @@ async fn approved_business_resources_exist_without_any_adapter_or_delivery_recor
         )
         .await
         .unwrap();
-    assert_eq!(
-        p["preview"]["plan"]["items"][0]["blocker"],
-        "平台运行配置未安装，需系统修复"
-    );
-    let result = r
+    assert!(p["preview"]["plan"]["items"][0]["blocker"].is_null());
+    let task = r
         .usage_write(
             &f.actor,
             f.school,
@@ -1055,25 +1166,13 @@ async fn approved_business_resources_exist_without_any_adapter_or_delivery_recor
                 confirmed: true,
             }),
         )
-        .await;
-    assert!(matches!(
-        result,
-        Err(wekeeper_api::business::Error::Policy(
-            "shared_send_execution_configuration_invalid"
-        ))
-    ));
-    for table in [
-        "mobile_v9_tasks",
-        "mobile_v9_send_claims",
-        "mobile_shared_device_leases",
-        "mobile_v9_quota_reservations",
-    ] {
-        let count: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
-            .fetch_one(&f.pool)
-            .await
-            .unwrap();
-        assert_eq!(count, 0, "no unsupported work accepted in {table}");
-    }
+        .await
+        .unwrap();
+    let plan = &task["items"][0]["attempts"][0]["plan"];
+    assert_eq!(plan["execution"]["contract"], "device_owned/1");
+    assert!(plan.get("flow").is_none());
+    assert!(plan.get("flow_digest").is_none());
+    assert_eq!(task["items"][0]["attempts"][0]["state"], "queued");
     f.close().await;
 }
 
@@ -1119,32 +1218,6 @@ async fn interrupted_claim_recovery_preserves_physical_owner_and_frozen_plan() {
         .fetch_one(&f.pool)
         .await
         .unwrap();
-    // A legacy task with no configuration terminates instead of awaiting delivery.
-    let legacy_plan = Uuid::new_v4();
-    sqlx::query("INSERT INTO mobile_v9_plans(id,school_id,item_id,target_id,device_id,snapshot_id,plan,digest,content_digest) SELECT $2,school_id,item_id,target_id,device_id,snapshot_id,plan||'{\"release_id\":null,\"flow\":null,\"flow_digest\":null}'::jsonb,digest,content_digest FROM mobile_v9_plans WHERE id=$1")
-        .bind(old_plan).bind(legacy_plan).execute(&f.pool).await.unwrap();
-    sqlx::query("UPDATE mobile_v9_attempts SET plan_id=$2 WHERE id=$1")
-        .bind(attempt)
-        .bind(legacy_plan)
-        .execute(&f.pool)
-        .await
-        .unwrap();
-    r.reconcile_usages().await.unwrap();
-    let legacy = r
-        .school_read(
-            &f.actor,
-            f.school,
-            Some(serde_json::from_value(task["id"].clone()).unwrap()),
-        )
-        .await
-        .unwrap();
-    assert_eq!(legacy["items"][0]["attempts"][0]["state"], "invalidated");
-    assert_eq!(
-        legacy["items"][0]["attempts"][0]["invalidation_reason"],
-        "shared_send_execution_configuration_invalid"
-    );
-    // Restore a valid fixture to exercise claim recovery independently.
-    sqlx::query("UPDATE mobile_v9_attempts SET state='queued',invalidation_reason=NULL,plan_id=$2 WHERE id=$1").bind(attempt).bind(old_plan).execute(&f.pool).await.unwrap();
     let epoch = Uuid::new_v4();
     sqlx::query("INSERT INTO mobile_shared_runtime(device_id,credential_generation,runtime_epoch,ui_ready,paused,quiescent,observed_at) VALUES($1,1,$2,true,false,true,clock_timestamp())").bind(f.device).bind(epoch).execute(&f.pool).await.unwrap();
     // Simulate a pre-permit interrupted owner. Recovery requires fresh idle and releases only its own fence.
@@ -1415,7 +1488,7 @@ async fn delegation_discovery_and_consent_ignore_the_global_housekeeping_lock() 
 
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn one_check_insert_failure_does_not_roll_back_another_target_and_is_retried() {
+async fn reconciliation_never_schedules_downstream_ui_checks() {
     let f = Fixture::new().await;
     let r = f.repo();
     let token = "wk_device_synthetic-check-isolation";
@@ -1457,8 +1530,8 @@ async fn one_check_insert_failure_does_not_roll_back_another_target_and_is_retri
     .await
     .unwrap();
     assert_eq!(
-        count, 1,
-        "a database exception on a neighbouring binding must not roll back this check"
+        count, 0,
+        "platform must never schedule downstream UI checks"
     );
     sqlx::query("DROP TRIGGER reject_one_check ON mobile_v9_send_inspections")
         .execute(&f.pool)
@@ -1473,8 +1546,8 @@ async fn one_check_insert_failure_does_not_roll_back_another_target_and_is_retri
     .await
     .unwrap();
     assert_eq!(
-        count, 1,
-        "durable binding must automatically retry after the injected fault is removed"
+        count, 0,
+        "reconciliation must not create downstream UI checks"
     );
     f.close().await;
 }
@@ -2051,13 +2124,10 @@ async fn runtime_configuration_is_independent_and_invalid_update_does_not_replac
         .unwrap();
     assert!(preview["preview"]["plan"]["items"][0]["blocker"].is_null());
     assert_eq!(
-        preview["preview"]["plan"]["items"][0]["selected"]["release_id"],
-        json!(f.release)
+        preview["preview"]["plan"]["items"][0]["selected"]["execution"]["contract"],
+        "device_owned/1"
     );
-    assert_eq!(
-        preview["preview"]["plan"]["configuration"]["available"],
-        true
-    );
+    assert_eq!(preview["preview"]["plan"]["configuration"], Value::Null);
     sqlx::query("UPDATE execution_devices SET enabled=false WHERE id=$1")
         .bind(f.device)
         .execute(&f.pool)
@@ -2068,7 +2138,7 @@ async fn runtime_configuration_is_independent_and_invalid_update_does_not_replac
         .school_read(&f.actor, f.school, None)
         .await
         .unwrap();
-    assert_eq!(overview["configuration"]["available"], true);
+    assert!(overview.get("configuration").is_none());
     for row in overview["readiness"].as_array().unwrap() {
         assert!(row["configuration_issue"].is_null());
         assert!(

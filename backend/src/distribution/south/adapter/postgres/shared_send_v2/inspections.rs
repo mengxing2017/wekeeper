@@ -18,7 +18,6 @@ pub(super) async fn request(
 }
 // Enabled bindings are durable desired checks, including while offline or awaiting consent.
 pub(super) async fn reconcile(tx: &mut Tx<'_>, device: Uuid) -> Result<()> {
-    tasks::retire_unconfigured_tasks(tx, device).await?;
     // Expired claims count once only while their original resources still match.
     let expired: Vec<Value> = sqlx::query_scalar("SELECT to_jsonb(i) FROM mobile_v9_send_inspections i WHERE device_id=$1 AND state='leased' AND expires_at<=clock_timestamp() ORDER BY expires_at,id LIMIT 100")
         .bind(device).fetch_all(&mut **tx).await?;
@@ -35,76 +34,12 @@ pub(super) async fn reconcile(tx: &mut Tx<'_>, device: Uuid) -> Result<()> {
     }
     // Revoke queued work immediately, including bindings excluded from the active scan.
     sqlx::query("UPDATE mobile_v9_send_inspections i SET state='stale' WHERE i.automatic AND i.state='pending' AND i.device_id=$1 AND NOT EXISTS(SELECT 1 FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id JOIN schools s ON s.id=b.school_id JOIN execution_devices d ON d.id=b.device_id JOIN mobile_shared_delegations m ON m.id=i.delegation_id WHERE b.id=i.binding_id AND b.enabled AND t.enabled AND t.archived_at IS NULL AND s.active AND d.enabled AND m.credential_generation=d.credential_generation AND (b.source='platform' OR EXISTS(SELECT 1 FROM mobile_shared_school_access a WHERE a.device_id=b.device_id AND a.school_id=b.school_id AND a.enabled)))").bind(device).execute(&mut **tx).await?;
-    let bindings:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(b) FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id JOIN schools s ON s.id=b.school_id WHERE b.enabled AND t.enabled AND t.archived_at IS NULL AND s.active AND b.device_id=$1 ORDER BY b.id").bind(device).fetch_all(&mut **tx).await?;
-    for b in bindings {
-        use sqlx::Acquire;
-        let mut item = tx.begin().await?;
-        match reconcile_binding(&mut item, &b).await {
-            Ok(()) => item.commit().await?,
-            Err(_) => {
-                item.rollback().await?;
-                tracing::warn!("automatic check reconciliation failed for one binding");
-            }
-        }
-    }
+    // UI recognition and local checks belong to the device's preparation step.
+    // Only settle legacy leases; never create platform UI inspection jobs.
+    sqlx::query("UPDATE mobile_v9_send_inspections SET state='stale',termination_reason='device_owned_execution',finished_at=clock_timestamp() WHERE device_id=$1 AND purpose='automatic' AND state='pending'")
+        .bind(device).execute(&mut **tx).await?;
     Ok(())
 }
-async fn reconcile_binding(tx: &mut Tx<'_>, b: &Value) -> Result<()> {
-    let candidate = tasks::raw_candidates(tx, uid(b, "school_id")?, uid(b, "target_id")?)
-        .await?
-        .into_iter()
-        .find(|c| c["device_id"] == b["device_id"]);
-    let Some(mut c) = candidate else {
-        sqlx::query("UPDATE mobile_v9_send_inspections SET state='stale' WHERE binding_id=$1 AND automatic AND state='pending'").bind(uid(b,"id")?).execute(&mut **tx).await?;
-        return Ok(());
-    };
-    // A confirmed cursor keeps its actual frozen rules; new builds never rewrite intent.
-    let frozen:Option<Value>=sqlx::query_scalar("SELECT p.plan FROM mobile_v9_plans p JOIN mobile_v9_attempts a ON a.plan_id=p.id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE p.plan->>'binding_id'=$1::uuid::text AND a.current AND a.state='queued' AND i.position=t.cursor_position AND NOT t.stopped AND t.confirmed_until>clock_timestamp() ORDER BY t.created_at,t.id LIMIT 1").bind(uid(b,"id")?).fetch_optional(&mut **tx).await?;
-    if let Some(plan) = frozen {
-        if tasks::validate_plan(tx, uid(b, "school_id")?, &plan)
-            .await
-            .is_err()
-        {
-            return Ok(());
-        }
-        for key in ["release_id", "flow_digest", "flow"] {
-            c[key] = plan[key].clone();
-        }
-    }
-    if c["accepted"] != true || tasks::validate_embedded_rules(&c).is_err() {
-        return Ok(());
-    }
-    if tasks::validate_scope(tx, uid(b, "school_id")?, &c)
-        .await
-        .is_err()
-    {
-        sqlx::query("UPDATE mobile_v9_send_inspections SET state='stale' WHERE binding_id=$1 AND automatic AND state='pending'").bind(uid(b,"id")?).execute(&mut **tx).await?;
-        return Ok(());
-    }
-    let p = policy(tx).await?;
-    let retry_seconds = p
-        .as_ref()
-        .and_then(|v| v["retry_seconds"].as_i64())
-        .unwrap_or(300);
-    let retry_limit = p
-        .as_ref()
-        .and_then(|v| v["retry_limit"].as_i64())
-        .unwrap_or(3);
-    let deps = tasks::dependencies(&c);
-    sqlx::query("UPDATE mobile_v9_send_inspections SET state='stale' WHERE binding_id=$1 AND state='pending' AND dependencies<>$2").bind(uid(b,"id")?).bind(&deps).execute(&mut **tx).await?;
-    let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_send_inspections WHERE binding_id=$1 AND dependencies=$2 AND ((state='passed' AND expires_at>clock_timestamp()+interval '5 minutes') OR (state IN ('pending','leased') AND expires_at>clock_timestamp())))").bind(uid(b,"id")?).bind(&deps).fetch_one(&mut **tx).await?;
-    if valid {
-        return Ok(());
-    }
-    let budget = inspection_budget::load(tx, uid(b, "id")?, deps.clone(), retry_seconds).await?;
-    // Manual reevaluation cannot reset actual failures.
-    if budget.exhausted(retry_limit) || budget.waiting(retry_limit) {
-        return Ok(());
-    }
-    sqlx::query("INSERT INTO mobile_v9_send_inspections(id,school_id,device_id,target_id,binding_id,delegation_id,dependencies,requested_by,challenge,automatic,expires_at,purpose,flow,flow_digest) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,true,clock_timestamp()+interval '24 hours','automatic',$10,$11)").bind(Uuid::now_v7()).bind(uid(b,"school_id")?).bind(uid(b,"device_id")?).bind(uid(b,"target_id")?).bind(uid(b,"id")?).bind(uid(&c,"delegation_id")?).bind(deps).bind(uid(b,"updated_by")?).bind(Uuid::new_v4().simple().to_string()).bind(&c["flow"]).bind(c["flow_digest"].as_str()).execute(&mut **tx).await?;
-    Ok(())
-}
-
 pub(super) async fn busy(tx: &mut Tx<'_>, device: Uuid) -> Result<bool> {
     Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_send_claims WHERE device_id=$1 AND state='active' AND expires_at>clock_timestamp()) OR EXISTS(SELECT 1 FROM mobile_v9_invocations WHERE device_id=$1 AND state='risk_held') OR EXISTS(SELECT 1 FROM mobile_shared_device_leases WHERE device_id=$1 AND expires_at>clock_timestamp()) OR EXISTS(SELECT 1 FROM mobile_shared_runtime WHERE device_id=$1 AND NOT quiescent)").bind(device).fetch_one(&mut **tx).await?)
 }
@@ -130,7 +65,7 @@ async fn material(tx: &mut Tx<'_>, row: &Value) -> Result<Value> {
     candidate["flow_digest"] = row["flow_digest"].clone();
     // An archival dependency annotation is not a source of rules or an approval.
     candidate["release_id"] = row["dependencies"]["release_id"].clone();
-    tasks::validate_embedded_rules(&candidate)?;
+
     tasks::validate_scope(tx, uid(row, "school_id")?, &candidate).await?;
     require(
         tasks::dependencies(&candidate) == row["dependencies"],

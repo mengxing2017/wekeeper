@@ -266,64 +266,6 @@ pub(super) async fn assess(
                 device,
             );
         }
-        let rules_valid = match tasks::validate_execution_rules(tx, plan).await {
-            Ok(()) => true,
-            Err(Error::Policy(_)) => false,
-            Err(e) => return Err(e),
-        };
-        if !rules_valid {
-            add(
-                &mut conditions,
-                "shared_send_execution_configuration_invalid",
-                "执行配置缺失或损坏，本次未执行",
-                "system",
-                false,
-                device,
-            );
-        } else {
-            let inspection:Option<Value>=sqlx::query_scalar("SELECT to_jsonb(i)-'challenge' FROM mobile_v9_send_inspections i JOIN mobile_v9_runtime_details r ON r.device_id=i.device_id WHERE i.device_id=$1 AND i.binding_id=$2 AND i.dependencies=$3 AND i.purpose='automatic' AND i.state='passed' AND i.expires_at>clock_timestamp() AND i.result->>'ui_context_epoch'=r.ui_context_epoch LIMIT 1").bind(device).bind(uid(plan,"binding_id")?).bind(tasks::dependencies(plan)).fetch_optional(&mut **tx).await?;
-            if inspection.is_none() {
-                add(
-                    &mut conditions,
-                    "waiting_inspection",
-                    "等待当前群自动无发送检查通过",
-                    "system",
-                    true,
-                    device,
-                );
-                let p = policy(tx).await?;
-                let retry_seconds = p
-                    .as_ref()
-                    .and_then(|v| v["retry_seconds"].as_i64())
-                    .unwrap_or(300);
-                let retry_limit = p
-                    .as_ref()
-                    .and_then(|v| v["retry_limit"].as_i64())
-                    .unwrap_or(3);
-                let pending:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_send_inspections WHERE binding_id=$1 AND dependencies=$2 AND state IN ('pending','leased') AND expires_at>clock_timestamp())").bind(uid(plan,"binding_id")?).bind(tasks::dependencies(plan)).fetch_one(&mut **tx).await?;
-                if !pending {
-                    let budget = inspection_budget::load(
-                        tx,
-                        uid(plan, "binding_id")?,
-                        tasks::dependencies(plan),
-                        retry_seconds,
-                    )
-                    .await?;
-                    if budget.exhausted(retry_limit) {
-                        let condition = conditions.last_mut().expect("inspection condition");
-                        condition.code = "inspection_retry_exhausted".into();
-                        condition.message =
-                            "自动检查暂未完成，预算恢复后自动继续；可查看失败原因".into();
-                        condition.retry_at = budget.next_retry(retry_limit);
-                    } else if budget.waiting(retry_limit) {
-                        let condition = conditions.last_mut().expect("inspection condition");
-                        condition.code = "inspection_retry_wait".into();
-                        condition.message = "当前群检查失败，等待自动重试时间".into();
-                        condition.retry_at = budget.next_retry(retry_limit);
-                    }
-                }
-            }
-        }
         let quota_available = match device::quota(
             tx,
             school,

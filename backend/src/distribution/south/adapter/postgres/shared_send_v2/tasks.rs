@@ -1,20 +1,19 @@
 use super::*;
 /// Only platform-owned resources. Effective locator dependencies omit unused default names.
 pub(super) async fn raw_candidates(tx: &mut Tx<'_>, s: Uuid, target: Uuid) -> Result<Vec<Value>> {
-    let configuration = super::configuration::current(tx).await?;
     sqlx::query_scalar(r#"SELECT jsonb_build_object(
  'target_id',t.id,'target_name',coalesce(nullif(t.alias,''),t.search_text),'device_name',d.name,'device_id',d.id,'binding_id',b.id,'binding_locator_revision',b.locator_revision,
  'target_locator_revision',CASE WHEN b.search_text_override IS NULL THEN t.locator_revision ELSE NULL END,
  'search_text',coalesce(b.search_text_override,t.search_text),'search_source',CASE WHEN b.search_text_override IS NULL THEN 'default' ELSE 'override' END,
  'access_revision',CASE WHEN b.source='school_pool' THEN (SELECT revision FROM mobile_shared_school_access WHERE school_id=b.school_id AND device_id=b.device_id) ELSE NULL END,
  'credential_generation',d.credential_generation,'delegation_id',m.id,'accepted',coalesce(c.accepted,false),'consent_state',CASE WHEN c.accepted IS NULL THEN 'unknown' WHEN c.accepted THEN 'accepted' ELSE 'revoked' END,
- 'release_id',($3::jsonb)->'id','configuration_version',($3::jsonb)->'version','flow_digest',($3::jsonb)->'flow_digest','flow',($3::jsonb)->'flow')
+ 'execution',jsonb_build_object('contract','device_owned/1','capability','wecom.group_text'))
  FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id AND t.school_id=b.school_id
  JOIN schools s ON s.id=t.school_id AND s.active JOIN execution_devices d ON d.id=b.device_id
  LEFT JOIN mobile_shared_delegations m ON m.device_id=d.id AND m.credential_generation=d.credential_generation
  LEFT JOIN LATERAL(SELECT * FROM mobile_shared_delegation_decisions c WHERE c.delegation_id=m.id ORDER BY revision DESC LIMIT 1)c ON true
  WHERE t.school_id=$1 AND t.id=$2 AND t.enabled AND t.archived_at IS NULL AND b.enabled AND d.enabled
- AND (b.source='platform' OR EXISTS(SELECT 1 FROM mobile_shared_school_access a WHERE a.school_id=b.school_id AND a.device_id=b.device_id AND a.enabled)) ORDER BY d.name,d.id"#).bind(s).bind(target).bind(configuration).fetch_all(&mut **tx).await.map_err(Into::into)
+ AND (b.source='platform' OR EXISTS(SELECT 1 FROM mobile_shared_school_access a WHERE a.school_id=b.school_id AND a.device_id=b.device_id AND a.enabled)) ORDER BY d.name,d.id"#).bind(s).bind(target).fetch_all(&mut **tx).await.map_err(Into::into)
 }
 pub(super) async fn candidates(tx: &mut Tx<'_>, s: Uuid, target: Uuid) -> Result<Vec<Value>> {
     raw_candidates(tx, s, target).await
@@ -31,8 +30,6 @@ pub(super) fn dependencies(row: &Value) -> Value {
         "search_text",
         "search_source",
         "credential_generation",
-        "release_id",
-        "flow_digest",
     ] {
         deps.insert(k.into(), row[k].clone());
     }
@@ -137,62 +134,12 @@ pub(super) async fn validate_scope(tx: &mut Tx<'_>, s: Uuid, plan: &Value) -> Re
     }
 }
 
-/// Configuration absence is an error, never a development waiting state.
-pub(super) fn missing_rules(plan: &Value) -> bool {
-    ["release_id", "flow", "flow_digest"]
-        .iter()
-        .all(|k| plan.get(*k).is_some_and(Value::is_null))
-}
-// Retire unsupported legacy queued intent; never wait for a development delivery.
-// Claimed work and its recovery identity remain untouched.
-pub(super) async fn retire_unconfigured_tasks(tx: &mut Tx<'_>, device: Uuid) -> Result<()> {
-    // Keyset pagination reaches bad plans behind healthy ones without loading every plan.
-    let mut after = Uuid::nil();
-    loop {
-        let rows: Vec<(Uuid,Value)> = sqlx::query_as("SELECT a.id,p.plan FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON a.plan_id=p.id WHERE p.device_id=$1 AND a.current AND a.state='queued' AND a.id>$2 AND NOT EXISTS(SELECT 1 FROM mobile_v9_send_claims c WHERE c.attempt_id=a.id) AND NOT EXISTS(SELECT 1 FROM mobile_v9_invocations i WHERE i.attempt_id=a.id) ORDER BY a.id LIMIT 100")
-            .bind(device).bind(after).fetch_all(&mut **tx).await?;
-        if rows.is_empty() {
-            break;
-        }
-        for (id, plan) in rows {
-            after = id;
-            if validate_embedded_rules(&plan).is_ok() {
-                continue;
-            }
-            use sqlx::Acquire;
-            let mut item = tx.begin().await?;
-            match sqlx::query("UPDATE mobile_v9_attempts a SET state='invalidated',invalidation_reason='shared_send_execution_configuration_invalid',invalidated_at=clock_timestamp(),revision=revision+1 WHERE id=$1 AND a.current AND a.state='queued' AND NOT EXISTS(SELECT 1 FROM mobile_v9_send_claims c WHERE c.attempt_id=a.id) AND NOT EXISTS(SELECT 1 FROM mobile_v9_invocations i WHERE i.attempt_id=a.id)").bind(id).execute(&mut *item).await {
-                Ok(_) => item.commit().await?,
-                Err(error) => { item.rollback().await?; tracing::warn!(attempt_id=%id,%error,"could not retire malformed queued plan"); }
-            }
-        }
-    }
-    Ok(())
-}
-
-pub(super) fn validate_embedded_rules(plan: &Value) -> Result<()> {
-    crate::distribution::domain::shared_mobile::runtime_configuration::inspect_flow(
-        &plan["flow"],
-        &plan["flow_digest"],
-    )
-    .map_err(|_| Error::Policy("shared_send_execution_configuration_invalid"))
-}
-pub(super) async fn validate_execution_rules(_tx: &mut Tx<'_>, plan: &Value) -> Result<()> {
-    // Execution uses the frozen configuration, not a development release approval.
-    validate_embedded_rules(plan)
-}
 pub(super) async fn validate_plan(tx: &mut Tx<'_>, s: Uuid, plan: &Value) -> Result<()> {
     let choices = raw_candidates(tx, s, uid(plan, "target_id")?).await?;
-    let frozen = plan.get("attempt_id").is_some();
     require(
-        choices.iter().any(|c| {
-            let mut current = c.clone();
-            if frozen {
-                current["release_id"] = plan["release_id"].clone();
-                current["flow_digest"] = plan["flow_digest"].clone();
-            }
-            dependencies(&current) == dependencies(plan)
-        }),
+        choices
+            .iter()
+            .any(|c| dependencies(c) == dependencies(plan)),
         "plan_dependency_changed",
     )?;
     validate_scope(tx, s, plan).await?;
@@ -291,12 +238,7 @@ pub(super) async fn write(
                     if let Some(g) = grant(tx, s, choice).await? {
                         choice["scope_id"] = g["id"].clone();
                     }
-                    let issue = match async {
-                        validate_plan(tx, s, choice).await?;
-                        validate_execution_rules(tx, choice).await
-                    }
-                    .await
-                    {
+                    let issue = match validate_plan(tx, s, choice).await {
                         Ok(()) => None,
                         Err(Error::Policy(code)) => Some(code.to_owned()),
                         Err(Error::Invalid(message)) => Some(message),
@@ -324,10 +266,6 @@ pub(super) async fn write(
                             .get(&uid(choice, "device_id")?)
                             .map(String::as_str)
                         {
-                            Some("shared_send_execution_configuration_invalid") => {
-                                crate::distribution::domain::shared_mobile::runtime_configuration::inspect_flow(&choice["flow"], &choice["flow_digest"])
-                                    .err().map(|issue| issue.message()).unwrap_or("平台运行配置不可用，需系统修复")
-                            }
                             Some("shared_send_usage_paused") => {
                                 "本校此手机与目标群的使用范围已暂停，请在使用管理恢复后再确认"
                             }
@@ -353,7 +291,7 @@ pub(super) async fn write(
             }
             let p = policy(tx).await?;
             let id = Uuid::now_v7();
-            let plan = json!({"configuration":super::configuration::status_in(tx).await?,"schema":SCHEMA,"school_id":s,"intent_id":d["intent_id"],"draft_id":input.draft_id,"draft_revision":input.expected_revision,"between_targets_seconds":d["between_targets_seconds"],"message":d["message"],"content_digest":d["content_digest"],"items":items,"policy_id":p.as_ref().map(|p|&p["id"]),"sending_status":sending_status});
+            let plan = json!({"schema":SCHEMA,"school_id":s,"intent_id":d["intent_id"],"draft_id":input.draft_id,"draft_revision":input.expected_revision,"between_targets_seconds":d["between_targets_seconds"],"message":d["message"],"content_digest":d["content_digest"],"items":items,"policy_id":p.as_ref().map(|p|&p["id"]),"sending_status":sending_status});
             let h = digest(&plan)?;
             sqlx::query("INSERT INTO mobile_v9_previews(id,school_id,draft_id,draft_revision,plan,digest,policy_id) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(id).bind(s).bind(input.draft_id).bind(input.expected_revision).bind(&plan).bind(&h).bind(p.as_ref().map(policy_id).transpose()?.flatten()).execute(&mut **tx).await?;
             Ok(
@@ -383,15 +321,12 @@ pub(super) async fn write(
                 .ok_or(Error::Policy("shared_send_not_released"))?;
             let items = plan["items"].as_array().ok_or(Error::Conflict)?;
             for item in items {
-                validate_plan(tx, s, &item["selected"]).await?;
-                validate_execution_rules(tx, &item["selected"]).await?;
                 require(
-                    items.len() as u64
-                        <= item["selected"]["flow"]["max_targets"]
-                            .as_u64()
-                            .unwrap_or(100),
-                    "shared_send_targets_invalid",
+                    item["selected"]["execution"]["contract"] == "device_owned/1",
+                    "preview_expired",
                 )?;
+                validate_plan(tx, s, &item["selected"]).await?;
+                require(items.len() <= 100, "shared_send_targets_invalid")?;
             }
             let id = Uuid::now_v7();
             let snap = Uuid::now_v7();
@@ -456,7 +391,6 @@ pub(super) async fn write(
                 plan["scope_id"] = scope["id"].clone();
             }
             validate_plan(tx, s, &plan).await?;
-            validate_execution_rules(tx, &plan).await?;
             let aid = Uuid::now_v7();
             let pid = Uuid::now_v7();
             for k in [
@@ -569,64 +503,6 @@ fn choose_candidate<'a>(
         })
         .or_else(|| choices.iter().find(|c| c["confirmable"] == true))
         .or_else(|| choices.first())
-}
-
-#[cfg(test)]
-mod rule_availability_tests {
-    use super::*;
-    #[test]
-    fn embedded_rules_do_not_require_development_release_identity() {
-        let fixture: Value = serde_json::from_str(include_str!(
-            "../../../../../../../api-contract/fixtures/shared-mobile-send-v9.json"
-        ))
-        .unwrap();
-        let mut plan =
-            json!({"flow":fixture["flow"],"flow_digest":fixture["flow_digest"],"release_id":null});
-        validate_embedded_rules(&plan).unwrap();
-        plan["flow_digest"] = json!("corrupt");
-        assert!(validate_embedded_rules(&plan).is_err());
-        plan["flow"] = Value::Null;
-        assert!(validate_embedded_rules(&plan).is_err());
-    }
-    #[test]
-    fn malformed_non_null_rules_are_configuration_errors() {
-        let fixture: Value = serde_json::from_str(include_str!(
-            "../../../../../../../api-contract/fixtures/shared-mobile-send-v9.json"
-        ))
-        .unwrap();
-        let valid = json!({"flow":fixture["flow"],"flow_digest":fixture["flow_digest"]});
-        for broken in [
-            json!({}),
-            json!({"flow":null}),
-            json!({"flow":{},"flow_digest":"bad"}),
-            json!({"flow":[],"flow_digest":"bad"}),
-        ] {
-            assert!(matches!(
-                validate_embedded_rules(&broken),
-                Err(Error::Policy("shared_send_execution_configuration_invalid"))
-            ));
-        }
-        let mut over_budget = valid.clone();
-        over_budget["flow"]["max_total_steps"] = json!(4097);
-        over_budget["flow_digest"] = json!(digest(&over_budget["flow"]).unwrap());
-        assert!(validate_embedded_rules(&over_budget).is_err());
-        let mut invisible = valid;
-        invisible["flow"]["controls"]["send"]["predicate"]["visible"] = json!(false);
-        invisible["flow_digest"] = json!(digest(&invisible["flow"]).unwrap());
-        assert!(validate_embedded_rules(&invisible).is_err());
-    }
-    #[test]
-    fn absent_rules_are_distinct_from_corrupt_or_partial_rules() {
-        let missing = json!({"release_id":null,"flow":null,"flow_digest":null});
-        assert!(missing_rules(&missing));
-        assert!(!missing_rules(&json!({})));
-        let mut partial = missing.clone();
-        partial["flow_digest"] = json!("invalid");
-        assert!(!missing_rules(&partial));
-        partial = missing;
-        partial["flow"] = json!({"invalid":true});
-        assert!(!missing_rules(&partial));
-    }
 }
 
 #[cfg(test)]

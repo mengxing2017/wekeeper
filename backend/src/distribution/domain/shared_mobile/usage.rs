@@ -179,7 +179,7 @@ impl SendingStatus {
             _ => "disabled",
         };
         let (owner, message) = match platform {
-            "enabled" => ("school", "平台已开放发送；手机就绪和自动群检查通过后执行"),
+            "enabled" => ("school", "平台已开放发送；手机领取任务并完成本地准备后执行"),
             "default" => ("school", "使用系统默认发送设置，可正常提交任务"),
             "preview_only" => ("platform", "任务可以提交，实际执行等待平台恢复发送"),
             "draft_only" => ("platform", "任务可以提交，实际执行等待平台恢复发送"),

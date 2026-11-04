@@ -28,10 +28,6 @@ async fn serve_inner(
     embedded: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     database::migrate(&pool).await?;
-    if let Err(error) = crate::distribution::south::adapter::postgres::shared_send_v2::configuration::install_from_environment(&pool).await {
-        // Failed updates are atomic and leave the last valid installed configuration intact.
-        tracing::error!(%error, "shared execution configuration installation failed; run mobile-runtime-config status");
-    }
     let mut application = bootstrap::build_application(pool.clone());
     let configured_password = std::env::var("WEKEEPER_DEV_ADMIN_PASSWORD").ok();
     let generated_password = (embedded && configured_password.is_none())
