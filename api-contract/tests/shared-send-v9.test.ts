@@ -83,3 +83,12 @@ it('inspection start is an authenticated execution observation with the exact le
  await client.inspectionStarted(f.inspection_start,'start-observation')
  expect(calls[0]).toEqual({path:'/api/v9/device-execution/send-inspection-starts',body:{data:{type:'mobile-shared-inspection-starts',attributes:f.inspection_start}}})
 })
+
+it('screen runtime separates sleep from secure lock and includes bounded preparation diagnostics',async()=>{
+ const {default:fixture}=await import('../fixtures/shared-screen-runtime.json')
+ const report:import('../src/modules/mobile-execution/shared-send/v2').SharedRuntimeReport={...fixture,schema:SHARED_SEND_SCHEMA}
+ expect(report.conditions.interactive).toBe(false)
+ expect(report.conditions.device_locked).toBe(false)
+ expect(report.preparation?.automatic_wake_enabled).toBe(true)
+ expect(report.preparation?.retry_after_ms).toBe(0)
+})
