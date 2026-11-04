@@ -13,6 +13,7 @@ type Tx<'a> = Transaction<'a, Postgres>;
 #[derive(Clone)]
 pub struct Repository(pub PgPool);
 mod business_scheme;
+pub mod configuration;
 mod delegation;
 pub mod delivery;
 mod device;
@@ -22,6 +23,7 @@ mod inspection_budget;
 mod inspections;
 mod platform;
 mod readiness;
+mod screen;
 mod secrets;
 mod settlement;
 mod tasks;
