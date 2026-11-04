@@ -66,7 +66,7 @@ pub(super) async fn assess(
     let plan = &attempt["plan"];
     let device = uid(plan, "device_id")?;
     let state = attempt["state"].as_str().unwrap_or("unknown");
-    let runtime:Value=sqlx::query_scalar("SELECT jsonb_build_object('observed_at',r.observed_at,'fresh',r.credential_generation=$2 AND r.observed_at>clock_timestamp()-interval '30 seconds','ready',r.ui_ready,'paused',r.paused,'conditions',d.conditions,'online',coalesce(cp.state='online' AND NOT cp.desired_paused AND cp.last_control_heartbeat_at>clock_timestamp()-interval '30 seconds',false)) FROM mobile_shared_runtime r LEFT JOIN mobile_v9_runtime_details d ON d.device_id=r.device_id AND d.credential_generation=r.credential_generation LEFT JOIN device_control_presence cp ON cp.id=r.device_id WHERE r.device_id=$1").bind(device).bind(plan["credential_generation"].as_i64().unwrap_or(0)).fetch_optional(&mut **tx).await?.unwrap_or(Value::Null);
+    let runtime:Value=sqlx::query_scalar("SELECT jsonb_build_object('observed_at',r.observed_at,'fresh',r.credential_generation=$2 AND r.observed_at>clock_timestamp()-interval '30 seconds','ready',r.ui_ready,'paused',r.paused,'conditions',d.conditions,'preparation',d.preparation,'online',coalesce(cp.state='online' AND NOT cp.desired_paused AND cp.last_control_heartbeat_at>clock_timestamp()-interval '30 seconds',false)) FROM mobile_shared_runtime r LEFT JOIN mobile_v9_runtime_details d ON d.device_id=r.device_id AND d.credential_generation=r.credential_generation LEFT JOIN device_control_presence cp ON cp.id=r.device_id WHERE r.device_id=$1").bind(device).bind(plan["credential_generation"].as_i64().unwrap_or(0)).fetch_optional(&mut **tx).await?.unwrap_or(Value::Null);
     let consent_observed_at:Option<chrono::DateTime<chrono::Utc>>=sqlx::query_scalar("SELECT c.created_at FROM mobile_shared_delegations d JOIN LATERAL(SELECT created_at FROM mobile_shared_delegation_decisions WHERE delegation_id=d.id ORDER BY revision DESC LIMIT 1)c ON true WHERE d.device_id=$1 AND d.credential_generation=$2").bind(device).bind(plan["credential_generation"].as_i64().unwrap_or(0)).fetch_optional(&mut **tx).await?;
     if state == "queued" && attempt["current"] == true {
         if task["stopped"] == true {
@@ -184,8 +184,10 @@ pub(super) async fn assess(
             );
         }
         if runtime["fresh"] == true && runtime["ready"] != true {
-            let (code, message) = if runtime["conditions"]["unlocked"] == false {
-                ("device_locked", "等待手机解锁")
+            let (code, message) = if let Some((code, message, _, _)) =
+                super::screen::issue(&runtime["conditions"], &runtime["preparation"])
+            {
+                (code, message)
             } else if runtime["conditions"]["accessibility"] == false {
                 ("accessibility_required", "等待手机无障碍服务恢复")
             } else if runtime["conditions"]["notification"] == false {
@@ -193,7 +195,10 @@ pub(super) async fn assess(
             } else {
                 ("runtime_not_ready", "等待手机界面执行条件恢复")
             };
-            add(&mut conditions, code, message, "device", true, device);
+            let automatic = super::screen::issue(&runtime["conditions"], &runtime["preparation"])
+                .map(|v| v.3)
+                .unwrap_or(true);
+            add(&mut conditions, code, message, "device", automatic, device);
         }
         let risk = match tasks::validate_risk(tx, school, plan).await {
             Ok(()) => false,
