@@ -9,7 +9,7 @@ use wekeeper_api::{
 };
 #[derive(Parser)]
 struct Args {
-    #[arg(value_parser=["validate","install","status"])]
+    #[arg(value_parser=["validate","install","status","verify"])]
     action: String,
     #[arg(long)]
     package: Option<std::path::PathBuf>,
@@ -32,6 +32,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pool = config.connect().await?;
     let result = async {
         if let Some(configuration) = configuration {
+            if args.action == "verify" {
+                return configuration::verify(&pool, &configuration).await;
+            }
             configuration::install(&pool, &configuration).await?;
         }
         configuration::status(&pool).await
