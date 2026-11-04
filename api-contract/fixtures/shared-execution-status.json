@@ -16,7 +16,9 @@
       "next_action": "等待系统自动处理",
       "observed_at": "2026-11-03T08:00:00Z",
       "valid_until": null,
-      "retry_at": null
+      "retry_at": null,
+      "waiting_since": "2026-11-03T07:59:00Z",
+      "reason_changed_at": "2026-11-03T07:59:30Z"
     }
   ]
 }

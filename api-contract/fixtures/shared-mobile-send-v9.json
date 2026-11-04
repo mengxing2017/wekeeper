@@ -403,5 +403,12 @@
       }
     ]
   },
-  "flow_digest": "1612cf877023e2ef23ee56c967451400ac5c9c88dd2cc1c1a6f83fab02b31740"
+  "flow_digest": "1612cf877023e2ef23ee56c967451400ac5c9c88dd2cc1c1a6f83fab02b31740",
+  "inspection_start": {
+    "inspection_id": "00000000-0000-4000-8000-000000000010",
+    "runtime_epoch": "00000000-0000-4000-8000-000000000011",
+    "lease_fence": 9,
+    "challenge": "native-inspection-challenge",
+    "dependencies_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
 }

@@ -76,3 +76,10 @@ it('device inbox encodes cursors and receipt resources without creating send cla
  expect(calls.some(c=>c.path.includes('send-claims'))).toBe(false)
  expect(fixture.items[0]).not.toHaveProperty('message')
 })
+
+it('inspection start is an authenticated execution observation with the exact lease identity',async()=>{
+ const calls:Array<{path:string;body:unknown}>=[]
+ const client=createSharedSendV2Client(createClient(async r=>{calls.push({path:r.path,body:r.body?JSON.parse(r.body as string):null});return {status:200,headers:{'content-type':'application/vnd.api+json'},body:{data:{type:'mobile-shared-inspection-starts',id:f.inspection_start.inspection_id,attributes:{state:'started',dependencies_digest:f.inspection_start.dependencies_digest}}}}}))
+ await client.inspectionStarted(f.inspection_start,'start-observation')
+ expect(calls[0]).toEqual({path:'/api/v9/device-execution/send-inspection-starts',body:{data:{type:'mobile-shared-inspection-starts',attributes:f.inspection_start}}})
+})
