@@ -2496,7 +2496,8 @@ async fn issued_unknown_is_local_to_target_and_does_not_wait_for_settlement_of_o
 
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn all_offline_still_accepts_and_failed_before_call_feedback_moves_to_another_candidate() {
+async fn all_offline_accepts_and_ui_failure_with_any_version_diagnostics_moves_to_another_candidate()
+ {
     let f = Fixture::with_adapter(false).await;
     let b = pool_phone(&f, "B").await;
     let task = pool_confirm(&f, vec![f.targets[0]]).await;
@@ -2517,7 +2518,7 @@ async fn all_offline_still_accepts_and_failed_before_call_feedback_moves_to_anot
         plan_digest: claim["plan_digest"].as_str().unwrap().into(),
         content_digest: claim["content_digest"].as_str().unwrap().into(),
         outcome: "failed_before_call".into(),
-        reason: "local_adapter_unavailable".into(),
+        reason: "page_unrecognized".into(),
         consumed: false,
         calling_marked: false,
         evidence: String::new(),
@@ -2534,6 +2535,34 @@ async fn all_offline_still_accepts_and_failed_before_call_feedback_moves_to_anot
             .await
             .unwrap()
     );
+    // Product versions are diagnostic observations, never acceptance or candidate gates.
+    // No UI flow or product-version matching data is sent in the business intent.
+    assert_eq!(
+        claim["plan"]["execution"],
+        json!({"contract":"device_owned/1","capability":"wecom.group_text"})
+    );
+    assert!(claim["plan"].get("flow").is_none());
+    assert!(claim["plan"].get("version_code").is_none());
+    for (i, version) in ["unknown", "1", "5.0.13 / 84802", "999999"]
+        .iter()
+        .enumerate()
+    {
+        f.repo()
+            .device_write(
+                &ca,
+                &format!("ui-diagnostic-{i}"),
+                DeviceCommand::Diagnostic(Diagnostic {
+                    event_id: Uuid::new_v4(),
+                    inspection_id: None,
+                    claim_id: Some(serde_json::from_value(claim["id"].clone()).unwrap()),
+                    code: "page_unrecognized".into(),
+                    stage: "send".into(),
+                    details: [("app_version".into(), (*version).into())].into(),
+                }),
+            )
+            .await
+            .unwrap();
+    }
     pool_tick(&f).await;
     let detail = pool_detail(&f, &task).await;
     assert_eq!(
