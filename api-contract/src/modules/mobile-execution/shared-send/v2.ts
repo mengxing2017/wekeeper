@@ -85,6 +85,8 @@ export function createSharedTaskInboxClient(client:Pick<Client,'requestResource'
  receipt:(input:SharedTaskReceiptInput,key:string)=>client.requestResource<SharedTaskReceipt>('/api/v10/device-execution/display-receipts','POST',input,undefined,{'Idempotency-Key':key})
 }}
 
+export interface TaskDeliveryRequest {runtime_epoch:string;inspection_id:string|null}
+export interface TaskDelivery {id:string;schema:'task_delivery/1';state:'granted'|'idle'|'waiting'|'superseded';reason:string|null;verification_key:string;execution:ExecutionGrant|null}
 export interface ExecutionGrantRequest {runtime_epoch:string;eligible_attempt_ids:string[];inspection_id:string|null}
 interface ExecutionGrantBase {
  id:string;execution_id:string;capability_id:string;schema:'durable_execution/1';protocol_version:10;
@@ -103,6 +105,8 @@ export interface ExecutionCompletionReceipt {id:string;result_id:string;executio
 export function durableExecutionApi(client:Client){
  const post=<T>(path:string,body:unknown,key:string)=>client.requestResource<T>(`/api/v10/device-execution/${path}`,'POST',body,undefined,{'Idempotency-Key':key});
  return {
+  deliver:(body:TaskDeliveryRequest,key:string)=>post<TaskDelivery>('task-deliveries',body,key),
+  /** @deprecated Current devices receive executable tasks through deliver; no follow-up grant. */
   grant:(body:ExecutionGrantRequest,key:string)=>post<ExecutionGrant|{id:string;state:'idle'|'waiting'|'superseded'}>('execution-grants',body,key),
   receipt:(execution_id:string,key:string)=>post<{id:string;recorded:true}>('execution-receipts',{execution_id},key),
   complete:(body:ExecutionCompletion)=>post<ExecutionCompletionReceipt>('execution-completions',body,body.result_id),
