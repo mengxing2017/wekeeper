@@ -1,10 +1,10 @@
 import { requestCollection, requestResource, type Collection } from '../../http'
 export interface MobileTarget {
-  id: string; school_id: string; search_text: string; alias: string; remark: string;
+  id: string; school_id: string; search_text: string; exact_name?: string | null; alias: string; remark: string;
   enabled: boolean; metadata_revision: number; locator_revision: number; archived_at: string | null;
 }
 export interface TargetInput {
-  search_text: string; alias?: string; remark?: string;
+  search_text: string; exact_name: string; alias?: string; remark?: string;
   duplicate_confirmation?: string;
 }
 export interface DuplicateConfirmation {
@@ -20,7 +20,7 @@ export interface PlatformDevice {
   remark: string; custodian_actor_id: string | null; metadata_revision: number;
 }
 export interface PlatformTarget {
-  id: string; school_id: string; school_name: string; search_text: string; alias: string; enabled: boolean;
+  id: string; school_id: string; school_name: string; search_text: string; exact_name?: string | null; alias: string; enabled: boolean;
 }
 export interface SharedBindingInput {
   target_id: string; device_ids: string[]; search_text_override: string | null;
@@ -28,7 +28,7 @@ export interface SharedBindingInput {
 export interface TargetBinding {
  source?: 'platform' | 'school_pool';
   id: string; school_id: string; device_id: string; target_id: string;
-  search_text_override: string | null; locator_revision: number;
+  search_text_override: string | null; exact_name?: string | null; locator_revision: number;
   target_locator_revision?: number;
   search_source?: 'target_default' | 'binding_override'; source_locator_revision?: number;
   enabled: boolean; revision: number;
@@ -49,7 +49,7 @@ export const mobileExecutionApi = {
   devices: (school: string, page?: number) => list<MobileDevice>(`${base(school)}/devices`, page),
   bindings: (school: string, page?: number, deviceId?: string) => list<TargetBinding>(`${base(school)}/target-bindings`, page, '', deviceId),
   createTarget: (school: string, input: TargetInput, key: string) => write<MobileTarget | DuplicateConfirmation>(`${base(school)}/targets`, 'POST', input, key),
-  updateTarget: (school: string, id: string, input: Pick<MobileTarget, 'search_text' | 'alias' | 'remark' | 'enabled'> & { expected_revision: number }, key: string) => write<MobileTarget>(`${base(school)}/targets/${encodeURIComponent(id)}`, 'PATCH', input, key),
+  updateTarget: (school: string, id: string, input: Pick<MobileTarget, 'search_text' | 'exact_name' | 'alias' | 'remark' | 'enabled'> & { expected_revision: number }, key: string) => write<MobileTarget>(`${base(school)}/targets/${encodeURIComponent(id)}`, 'PATCH', input, key),
   archiveTarget: (school: string, id: string, expected_revision: number, reason: string, key: string) => write<MobileTarget>(`${base(school)}/targets/${encodeURIComponent(id)}`, 'DELETE', { expected_revision, reason }, key),
   platformTargets: (page?: number, search?: string) => list<PlatformTarget>('/api/v1/platform/mobile-execution/targets', page, search),
   platformBindings: (page?: number, search?: string, deviceId?: string) => list<TargetBinding>('/api/v1/platform/mobile-execution/target-bindings', page, search, deviceId),

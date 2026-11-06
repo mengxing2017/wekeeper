@@ -1,5 +1,5 @@
 {
-  "verification_key": "0471c7b20a28f657d8c8f364994a5caa2b955e4192bd1e24dce1fb54552481257a61e7db2dab711aa710d05211677e9eb27e90de26aa27564a8b8d4fc8f6c0fefa",
+  "verification_key": "04a0c56ab2a99b4d901c69d0e2036a53b3e4db5d130fdd596166f61a939626b507e74faba28e3a2e7d483bde9be9b6efbd50e7e93c03541a66f196ddbd7be65f53",
   "grant": {
     "id": "00000000-0000-4000-8000-000000000001",
     "execution_id": "00000000-0000-4000-8000-000000000001",
@@ -24,11 +24,17 @@
         "capability": "wecom.group_text"
       },
       "message": "合成正文🙂",
-      "search_text": "合成测试群",
       "device_id": "00000000-0000-4000-8000-000000000002",
-      "attempt_id": "00000000-0000-4000-8000-000000000003"
+      "attempt_id": "00000000-0000-4000-8000-000000000003",
+      "target": {
+        "kind": "group",
+        "search_query": "合成测试",
+        "exact_name": "合成测试群🙂",
+        "match_policy": "exact_unique",
+        "identity_constraints": []
+      }
     },
-    "plan_digest": "94d3644c0cff4f729250fec370bd4d83d639ea7f5fd3a8f0303da430aef8a669",
+    "plan_digest": "b05e71f81328423178dbe34f440e6211d2bd080c37edf59b1cade12ccdf19028",
     "content_digest": "4cd4bedec47f46f7dc41b2fc6df520a0bdc173703f0d160cc6355ed8e0ffd9c3",
     "timing": {
       "server_time": "2026-11-06T00:00:00Z",
@@ -36,8 +42,8 @@
       "execute_before": "2026-11-06T00:03:30Z"
     },
     "result_credential": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-    "signature": "3045022100c92e9805561d709b5ada6fe3049a1556c8b8423e4b6a825485cb5d13c7401c2d02207fee90e141c5e91c61d8686da9b8952b581b2b2973ad17edda94a605d19805c5",
-    "key_id": "cf15ac33607c5a5dcc35308bebe27c6898943d9084406320cb09ce7343896f51"
+    "signature": "304402204a2a5af53fc21251b99ac9d0ffcec4b6637fb702b320ce1d0a4a68475bf8d786022006d7e4d8fce6b024e794380ae3dc8ac64eadc4799c61f744969c27eecc6fdd8d",
+    "key_id": "848d726d38f8bc0e20ef408dc23bb5e95c78f84e23f6d5fadc09954d06d47470"
   },
   "completion": {
     "result_id": "00000000-0000-4000-8000-000000000008",

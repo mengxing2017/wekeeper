@@ -1,0 +1,245 @@
+{
+  "schema": "otter-upstream-handoff-vectors/1",
+  "synthetic": true,
+  "purpose": "SharedUiIdentity.dependenciesDigest for device_owned/1; not real tasks, grants, signatures or evidence of executed cross-language tests",
+  "dependency_fields": [
+    "target_id",
+    "device_id",
+    "binding_id",
+    "binding_locator_revision",
+    "access_revision",
+    "target_locator_revision",
+    "target",
+    "search_source",
+    "credential_generation"
+  ],
+  "cases": [
+    {
+      "name": "baseline",
+      "plan": {
+        "execution": {
+          "contract": "device_owned/1",
+          "capability": "wecom.group_text"
+        },
+        "target_id": "00000000-0000-4000-8000-000000000001",
+        "device_id": "00000000-0000-4000-8000-000000000002",
+        "binding_id": "00000000-0000-4000-8000-000000000003",
+        "binding_locator_revision": 3,
+        "access_revision": null,
+        "target_locator_revision": 7,
+        "target": {
+          "kind": "group",
+          "search_query": "项目",
+          "exact_name": "项目通知群🙂",
+          "match_policy": "exact_unique",
+          "identity_constraints": []
+        },
+        "search_source": "default",
+        "credential_generation": 1,
+        "message": "合成消息，不用于发送",
+        "target_name": "业务展示别名"
+      },
+      "expected_dependencies": {
+        "target_id": "00000000-0000-4000-8000-000000000001",
+        "device_id": "00000000-0000-4000-8000-000000000002",
+        "binding_id": "00000000-0000-4000-8000-000000000003",
+        "binding_locator_revision": 3,
+        "access_revision": null,
+        "target_locator_revision": 7,
+        "target": {
+          "kind": "group",
+          "search_query": "项目",
+          "exact_name": "项目通知群🙂",
+          "match_policy": "exact_unique",
+          "identity_constraints": []
+        },
+        "search_source": "default",
+        "credential_generation": 1
+      },
+      "expected_canonical_utf8": "{\"access_revision\":null,\"binding_id\":\"00000000-0000-4000-8000-000000000003\",\"binding_locator_revision\":3,\"credential_generation\":1,\"device_id\":\"00000000-0000-4000-8000-000000000002\",\"search_source\":\"default\",\"target\":{\"exact_name\":\"项目通知群🙂\",\"identity_constraints\":[],\"kind\":\"group\",\"match_policy\":\"exact_unique\",\"search_query\":\"项目\"},\"target_id\":\"00000000-0000-4000-8000-000000000001\",\"target_locator_revision\":7}",
+      "expected_sha256": "ee7225fde786fbbf7bf650b5d461f4c7d32556435ca25d9ad2a4ecd8d0438867"
+    },
+    {
+      "name": "display_and_diagnostic_change",
+      "plan": {
+        "execution": {
+          "contract": "device_owned/1",
+          "capability": "wecom.group_text"
+        },
+        "target_id": "00000000-0000-4000-8000-000000000001",
+        "device_id": "00000000-0000-4000-8000-000000000002",
+        "binding_id": "00000000-0000-4000-8000-000000000003",
+        "binding_locator_revision": 3,
+        "access_revision": null,
+        "target_locator_revision": 7,
+        "target": {
+          "kind": "group",
+          "search_query": "项目",
+          "exact_name": "项目通知群🙂",
+          "match_policy": "exact_unique",
+          "identity_constraints": []
+        },
+        "search_source": "default",
+        "credential_generation": 1,
+        "message": "合成消息，不用于发送",
+        "target_name": "修改后的业务展示名",
+        "version_code": 999999,
+        "release_id": "synthetic-release",
+        "flow_digest": "not-a-business-dependency"
+      },
+      "expected_dependencies": {
+        "target_id": "00000000-0000-4000-8000-000000000001",
+        "device_id": "00000000-0000-4000-8000-000000000002",
+        "binding_id": "00000000-0000-4000-8000-000000000003",
+        "binding_locator_revision": 3,
+        "access_revision": null,
+        "target_locator_revision": 7,
+        "target": {
+          "kind": "group",
+          "search_query": "项目",
+          "exact_name": "项目通知群🙂",
+          "match_policy": "exact_unique",
+          "identity_constraints": []
+        },
+        "search_source": "default",
+        "credential_generation": 1
+      },
+      "expected_canonical_utf8": "{\"access_revision\":null,\"binding_id\":\"00000000-0000-4000-8000-000000000003\",\"binding_locator_revision\":3,\"credential_generation\":1,\"device_id\":\"00000000-0000-4000-8000-000000000002\",\"search_source\":\"default\",\"target\":{\"exact_name\":\"项目通知群🙂\",\"identity_constraints\":[],\"kind\":\"group\",\"match_policy\":\"exact_unique\",\"search_query\":\"项目\"},\"target_id\":\"00000000-0000-4000-8000-000000000001\",\"target_locator_revision\":7}",
+      "expected_sha256": "ee7225fde786fbbf7bf650b5d461f4c7d32556435ca25d9ad2a4ecd8d0438867"
+    },
+    {
+      "name": "exact_name_change",
+      "plan": {
+        "execution": {
+          "contract": "device_owned/1",
+          "capability": "wecom.group_text"
+        },
+        "target_id": "00000000-0000-4000-8000-000000000001",
+        "device_id": "00000000-0000-4000-8000-000000000002",
+        "binding_id": "00000000-0000-4000-8000-000000000003",
+        "binding_locator_revision": 3,
+        "access_revision": null,
+        "target_locator_revision": 7,
+        "target": {
+          "kind": "group",
+          "search_query": "项目",
+          "exact_name": "另一个完整群名",
+          "match_policy": "exact_unique",
+          "identity_constraints": []
+        },
+        "search_source": "default",
+        "credential_generation": 1,
+        "message": "合成消息，不用于发送",
+        "target_name": "业务展示别名"
+      },
+      "expected_dependencies": {
+        "target_id": "00000000-0000-4000-8000-000000000001",
+        "device_id": "00000000-0000-4000-8000-000000000002",
+        "binding_id": "00000000-0000-4000-8000-000000000003",
+        "binding_locator_revision": 3,
+        "access_revision": null,
+        "target_locator_revision": 7,
+        "target": {
+          "kind": "group",
+          "search_query": "项目",
+          "exact_name": "另一个完整群名",
+          "match_policy": "exact_unique",
+          "identity_constraints": []
+        },
+        "search_source": "default",
+        "credential_generation": 1
+      },
+      "expected_canonical_utf8": "{\"access_revision\":null,\"binding_id\":\"00000000-0000-4000-8000-000000000003\",\"binding_locator_revision\":3,\"credential_generation\":1,\"device_id\":\"00000000-0000-4000-8000-000000000002\",\"search_source\":\"default\",\"target\":{\"exact_name\":\"另一个完整群名\",\"identity_constraints\":[],\"kind\":\"group\",\"match_policy\":\"exact_unique\",\"search_query\":\"项目\"},\"target_id\":\"00000000-0000-4000-8000-000000000001\",\"target_locator_revision\":7}",
+      "expected_sha256": "41d080028ae1d82dddfea1c99096652d2d79b788acc03aa7b255c6146e9caf59"
+    },
+    {
+      "name": "search_query_change",
+      "plan": {
+        "execution": {
+          "contract": "device_owned/1",
+          "capability": "wecom.group_text"
+        },
+        "target_id": "00000000-0000-4000-8000-000000000001",
+        "device_id": "00000000-0000-4000-8000-000000000002",
+        "binding_id": "00000000-0000-4000-8000-000000000003",
+        "binding_locator_revision": 3,
+        "access_revision": null,
+        "target_locator_revision": 7,
+        "target": {
+          "kind": "group",
+          "search_query": "通知",
+          "exact_name": "项目通知群🙂",
+          "match_policy": "exact_unique",
+          "identity_constraints": []
+        },
+        "search_source": "default",
+        "credential_generation": 1,
+        "message": "合成消息，不用于发送",
+        "target_name": "业务展示别名"
+      },
+      "expected_dependencies": {
+        "target_id": "00000000-0000-4000-8000-000000000001",
+        "device_id": "00000000-0000-4000-8000-000000000002",
+        "binding_id": "00000000-0000-4000-8000-000000000003",
+        "binding_locator_revision": 3,
+        "access_revision": null,
+        "target_locator_revision": 7,
+        "target": {
+          "kind": "group",
+          "search_query": "通知",
+          "exact_name": "项目通知群🙂",
+          "match_policy": "exact_unique",
+          "identity_constraints": []
+        },
+        "search_source": "default",
+        "credential_generation": 1
+      },
+      "expected_canonical_utf8": "{\"access_revision\":null,\"binding_id\":\"00000000-0000-4000-8000-000000000003\",\"binding_locator_revision\":3,\"credential_generation\":1,\"device_id\":\"00000000-0000-4000-8000-000000000002\",\"search_source\":\"default\",\"target\":{\"exact_name\":\"项目通知群🙂\",\"identity_constraints\":[],\"kind\":\"group\",\"match_policy\":\"exact_unique\",\"search_query\":\"通知\"},\"target_id\":\"00000000-0000-4000-8000-000000000001\",\"target_locator_revision\":7}",
+      "expected_sha256": "703c1db43690973b653dd93286a33bb87ad62b9b58ace765783217e20a433768"
+    },
+    {
+      "name": "missing_nullable_revision",
+      "plan": {
+        "execution": {
+          "contract": "device_owned/1",
+          "capability": "wecom.group_text"
+        },
+        "target_id": "00000000-0000-4000-8000-000000000001",
+        "device_id": "00000000-0000-4000-8000-000000000002",
+        "binding_id": "00000000-0000-4000-8000-000000000003",
+        "binding_locator_revision": 3,
+        "access_revision": null,
+        "target": {
+          "kind": "group",
+          "search_query": "项目",
+          "exact_name": "项目通知群🙂",
+          "match_policy": "exact_unique",
+          "identity_constraints": []
+        },
+        "search_source": "default",
+        "credential_generation": 1,
+        "message": "合成消息，不用于发送",
+        "target_name": "业务展示别名"
+      },
+      "expected_dependencies": {
+        "target_id": "00000000-0000-4000-8000-000000000001",
+        "device_id": "00000000-0000-4000-8000-000000000002",
+        "binding_id": "00000000-0000-4000-8000-000000000003",
+        "binding_locator_revision": 3,
+        "access_revision": null,
+        "target_locator_revision": null,
+        "target": {
+          "kind": "group",
+          "search_query": "项目",
+          "exact_name": "项目通知群🙂",
+          "match_policy": "exact_unique",
+          "identity_constraints": []
+        },
+        "search_source": "default",
+        "credential_generation": 1
+      },
+      "expected_canonical_utf8": "{\"access_revision\":null,\"binding_id\":\"00000000-0000-4000-8000-000000000003\",\"binding_locator_revision\":3,\"credential_generation\":1,\"device_id\":\"00000000-0000-4000-8000-000000000002\",\"search_source\":\"default\",\"target\":{\"exact_name\":\"项目通知群🙂\",\"identity_constraints\":[],\"kind\":\"group\",\"match_policy\":\"exact_unique\",\"search_query\":\"项目\"},\"target_id\":\"00000000-0000-4000-8000-000000000001\",\"target_locator_revision\":null}",
+      "expected_sha256": "62f203c7c22300e8f372e4c869b280deaea630d970cbf2a27b0a23a08449e29e"
+    }
+  ]
+}

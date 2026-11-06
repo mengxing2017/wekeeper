@@ -39,11 +39,12 @@ it('business scheme has its own authenticated platform endpoint, without technic
  expect(input).not.toHaveProperty('allowed_stages');expect(input).not.toHaveProperty('release_id')
 })
 
-it('opening summary exposes the actual phone locator without requiring default locator revision',async()=>{
+it('opening summary binds the complete group name even with a per-phone query override',async()=>{
  const {default:fixture}=await import('../fixtures/mobile-usage-locator.json')
- const locator:import('../src/modules/mobile-execution/shared-send/v2').UsageLocator={...fixture,search_source:'override'}
+ const locator:import('../src/modules/mobile-execution/shared-send/v2').UsageLocator={...fixture,search_source:'override',target:{...fixture.target,kind:'group',match_policy:'exact_unique',identity_constraints:[]}}
  expect(locator.search_text).toBe('手机专用家长群')
- expect(locator.target_locator_revision).toBeNull()
+ expect(locator.target_locator_revision).toBe(1)
+ expect(locator.target?.exact_name).toBe('企业微信完整家长群')
  expect(locator.binding_locator_revision).toBe(2)
 })
 
