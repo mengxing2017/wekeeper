@@ -5,20 +5,20 @@ import { api, sharedSend, type SharedPreview } from './api'
 import { SharedSendTasks } from './shared-send-tasks'
 vi.mock('./api', () => ({ api: { targets: vi.fn(), bindings: vi.fn() }, sharedSend: { overview: vi.fn(), taskPreview: vi.fn(), confirm: vi.fn(), task: vi.fn() } }))
 afterEach(() => {cleanup();vi.useRealTimers()})
-const response=(p:SharedPreview)=>({id:p.id,draft:{id:'draft',targets:[{id:'target',name:'家长通知'}],school_id:'school',intent_id:'intent',target_ids:['target'],message,content_type:'text/plain' as const,between_targets_seconds:30,revision:1,content_digest:'hash'},preview:p})
+const response=(p:SharedPreview)=>({id:p.id,draft:{id:'draft',targets:[{id:'target',name:'实际搜索文字'}],school_id:'school',intent_id:'intent',target_ids:['target'],message,content_type:'text/plain' as const,between_targets_seconds:30,revision:1,content_digest:'hash'},preview:p})
 const message = '  第一行\n第二行🙂  '
-const preview: SharedPreview = { id: 'preview', digest: 'digest', expires_at: '2099-01-01T00:00:00Z', plan: { schema: 'shared_mobile_send/2', school_id: 'school', draft_id: 'draft', draft_revision: 1, intent_id: 'intent', message, content_digest: 'hash', policy_id: null, items: [{ position: 0, target_id: 'target', target:{id:'target',name:'家长通知',search_text:'实际搜索文字',locator_revision:1},selected: null, candidates: [], blocker: 'inspection_required' }] } }
+const preview: SharedPreview = { id: 'preview', digest: 'digest', expires_at: '2099-01-01T00:00:00Z', plan: { schema: 'shared_mobile_send/2', school_id: 'school', draft_id: 'draft', draft_revision: 1, intent_id: 'intent', message, content_digest: 'hash', policy_id: null, items: [{ position: 0, target_id: 'target', target:{id:'target',name:'实际搜索文字',search_text:'实际搜索文字',locator_revision:1},selected: null, candidates: [], blocker: 'inspection_required' }] } }
 beforeEach(() => {
   vi.resetAllMocks()
   vi.mocked(sharedSend.task).mockResolvedValue({id:'task',school_id:'school',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-03'})
-  vi.mocked(api.targets).mockResolvedValue({ items: [{ id: 'target', school_id: 'school', alias: '家长通知', search_text: '实际搜索文字', remark: '', enabled: true, archived_at: null, metadata_revision: 1, locator_revision: 1 }] })
+  vi.mocked(api.targets).mockResolvedValue({ items: [{ id: 'target', school_id: 'school', search_text: '实际搜索文字', remark: '', enabled: true, archived_at: null, metadata_revision: 1, locator_revision: 1 }] })
   vi.mocked(sharedSend.overview).mockResolvedValue({ id: 'school', tasks: [], drafts: [], readiness: [], pool: [], inspections: [] })
-  vi.mocked(sharedSend.taskPreview).mockImplementation(async()=>({id:preview.id,draft:{id:'draft',targets:[{id:'target',name:'家长通知'}],school_id:'school',intent_id:'intent',target_ids:['target'],message,content_type:'text/plain',between_targets_seconds:30,revision:1,content_digest:'hash'},preview}))
+  vi.mocked(sharedSend.taskPreview).mockImplementation(async()=>({id:preview.id,draft:{id:'draft',targets:[{id:'target',name:'实际搜索文字'}],school_id:'school',intent_id:'intent',target_ids:['target'],message,content_type:'text/plain',between_targets_seconds:30,revision:1,content_digest:'hash'},preview}))
 })
 async function compose(admin = true) {
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SharedSendTasks school="school" admin={admin} /></QueryClientProvider>)
   fireEvent.mouseDown(screen.getByLabelText('手机目标群'))
-  fireEvent.click(await screen.findByText('家长通知'))
+  fireEvent.click(await screen.findByText('实际搜索文字'))
   fireEvent.change(screen.getByLabelText('发送文字'), { target: { value: message } })
 }
 it('本校管理员可点击确认，预览检查问题由提交接口明确反馈', async () => {
@@ -41,8 +41,8 @@ it('本校管理员可点击确认，预览检查问题由提交接口明确反�
 
 it('手机授权状态未知与状态过期不阻止确认，也不要求重新授权',async()=>{
  const pending=structuredClone(preview)
- const phone={target_id:'target',target_name:'家长通知',device_name:'测试手机',device_id:'phone',binding_id:'binding',binding_locator_revision:1,target_locator_revision:1,search_text:'实际搜索文字',search_source:'default' as const,access_revision:null,credential_generation:1,delegation_id:null,release_id:null,flow_digest:null,flow:null,confirmable:true}
- pending.plan.items[0]={...pending.plan.items[0],selected:phone,candidates:[phone],blocker:null,readiness:[{binding_id:'binding',device_id:'phone',target_id:'target',device_name:'测试手机',target_name:'家长通知',search_text:'实际搜索文字',state:'runtime_stale',ready:false,plan_selectable:true,confirmable:true,execution_ready:false,automatic:true,blockers:[],inspection:null,inspection_state:'waiting_prerequisites',retry_at:null,retry_remaining:3,consent_state:'unknown',runtime_state:'stale',execution_conditions:[{code:'runtime_stale',message:'手机执行状态已过期，不要求重新授权',owner:'system',automatic:true}]}]}
+ const phone={target_id:'target',target_name:'实际搜索文字',device_name:'测试手机',device_id:'phone',binding_id:'binding',binding_locator_revision:1,target_locator_revision:1,search_text:'实际搜索文字',search_source:'default' as const,access_revision:null,credential_generation:1,delegation_id:null,release_id:null,flow_digest:null,flow:null,confirmable:true}
+ pending.plan.items[0]={...pending.plan.items[0],selected:phone,candidates:[phone],blocker:null,readiness:[{binding_id:'binding',device_id:'phone',target_id:'target',device_name:'测试手机',target_name:'实际搜索文字',search_text:'实际搜索文字',state:'runtime_stale',ready:false,plan_selectable:true,confirmable:true,execution_ready:false,automatic:true,blockers:[],inspection:null,inspection_state:'waiting_prerequisites',retry_at:null,retry_remaining:3,consent_state:'unknown',runtime_state:'stale',execution_conditions:[{code:'runtime_stale',message:'手机执行状态已过期，不要求重新授权',owner:'system',automatic:true}]}]}
  vi.mocked(sharedSend.taskPreview).mockResolvedValue(response(pending))
  vi.mocked(sharedSend.confirm).mockResolvedValue({id:'task',school_id:'school',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-03'})
  await compose();fireEvent.click(screen.getByRole('button',{name:'预览逐群执行计划'}))
@@ -58,12 +58,12 @@ it('无手机候选仍显示群名和搜索文字，重新预览生成新操作�
  await compose()
  fireEvent.click(screen.getByRole('button',{name:'预览逐群执行计划'}))
  await screen.findByText('没有可选绑定，请核对本校目标群与手机的关联')
- expect(screen.getAllByText('家长通知').length).toBeGreaterThanOrEqual(2)
+ expect(screen.getAllByText('实际搜索文字').length).toBeGreaterThanOrEqual(2)
  expect(screen.getByRole('cell',{name:'实际搜索文字'})).toBeTruthy()
  expect(screen.queryByRole('cell',{name:'target'})).toBeNull()
- const phone:NonNullable<SharedPreview['plan']['items'][number]['selected']>={target_id:'target',target_name:'家长通知',device_name:'新就绪手机',device_id:'phone',binding_id:'binding',binding_locator_revision:1,target_locator_revision:1,search_text:'实际搜索文字',search_source:'default',access_revision:null,credential_generation:1,delegation_id:'delegation',release_id:'release',flow_digest:'digest',flow:{}}
+ const phone:NonNullable<SharedPreview['plan']['items'][number]['selected']>={target_id:'target',target_name:'实际搜索文字',device_name:'新就绪手机',device_id:'phone',binding_id:'binding',binding_locator_revision:1,target_locator_revision:1,search_text:'实际搜索文字',search_source:'default',access_revision:null,credential_generation:1,delegation_id:'delegation',release_id:'release',flow_digest:'digest',flow:{}}
  const next=structuredClone(preview);next.id='new-preview';next.expires_at='2099-02-01T00:00:00Z'
- next.plan.items[0]={...next.plan.items[0],selected:phone,candidates:[phone],blocker:null,readiness:[{binding_id:'binding',device_id:'phone',target_id:'target',device_name:'新就绪手机',target_name:'家长通知',search_text:'实际搜索文字',state:'ready_for_task',ready:true,plan_selectable:true,confirmable:true,execution_ready:true,automatic:true,blockers:[],inspection:null,inspection_state:'passed',retry_at:null,retry_remaining:3}]}
+ next.plan.items[0]={...next.plan.items[0],selected:phone,candidates:[phone],blocker:null,readiness:[{binding_id:'binding',device_id:'phone',target_id:'target',device_name:'新就绪手机',target_name:'实际搜索文字',search_text:'实际搜索文字',state:'ready_for_task',ready:true,plan_selectable:true,confirmable:true,execution_ready:true,automatic:true,blockers:[],inspection:null,inspection_state:'passed',retry_at:null,retry_remaining:3}]}
  vi.mocked(sharedSend.taskPreview).mockResolvedValue(response(next))
  fireEvent.click(screen.getByRole('button',{name:'预览逐群执行计划'}))
  await screen.findByText(/2099-02-01T00:00:00Z/)
@@ -89,8 +89,8 @@ it('预览响应不明保持原键，成功后的主动预览使用新键',async
 
 it('离线已绑定手机可选且静态范围有效时可确认等待，不发起手机检查',async()=>{
  const pending=structuredClone(preview)
- const phone={target_id:'target',target_name:'家长通知',device_name:'离线测试手机',device_id:'phone',binding_id:'binding',binding_locator_revision:1,target_locator_revision:1,search_text:'实际搜索文字',search_source:'default' as const,access_revision:null,credential_generation:1,delegation_id:null,release_id:'release',flow_digest:'digest',flow:{},confirmable:true}
- pending.plan.items[0]={...pending.plan.items[0],selected:phone,candidates:[phone],blocker:null,readiness:[{binding_id:'binding',device_id:'phone',target_id:'target',device_name:'离线测试手机',target_name:'家长通知',search_text:'实际搜索文字',state:'waiting_connection',ready:false,plan_selectable:true,confirmable:true,execution_ready:false,automatic:true,blockers:[{code:'waiting_connection',message:'手机离线，连接后自动继续',owner:'system',automatic:true}],inspection:null,inspection_state:'waiting_prerequisites',retry_at:null,retry_remaining:3}]}
+ const phone={target_id:'target',target_name:'实际搜索文字',device_name:'离线测试手机',device_id:'phone',binding_id:'binding',binding_locator_revision:1,target_locator_revision:1,search_text:'实际搜索文字',search_source:'default' as const,access_revision:null,credential_generation:1,delegation_id:null,release_id:'release',flow_digest:'digest',flow:{},confirmable:true}
+ pending.plan.items[0]={...pending.plan.items[0],selected:phone,candidates:[phone],blocker:null,readiness:[{binding_id:'binding',device_id:'phone',target_id:'target',device_name:'离线测试手机',target_name:'实际搜索文字',search_text:'实际搜索文字',state:'waiting_connection',ready:false,plan_selectable:true,confirmable:true,execution_ready:false,automatic:true,blockers:[{code:'waiting_connection',message:'手机离线，连接后自动继续',owner:'system',automatic:true}],inspection:null,inspection_state:'waiting_prerequisites',retry_at:null,retry_remaining:3}]}
  vi.mocked(sharedSend.taskPreview).mockResolvedValue(response(pending))
  await compose()
  fireEvent.click(screen.getByRole('button',{name:'预览逐群执行计划'}))
@@ -103,8 +103,8 @@ it('离线已绑定手机可选且静态范围有效时可确认等待，不发�
 
 it('确认时才发现配置损坏由服务端明确拒绝，并保留输入',async()=>{
  const pending=structuredClone(preview)
- const phone={target_id:'target',target_name:'家长通知',device_name:'离线测试手机',device_id:'phone',binding_id:'binding',binding_locator_revision:1,target_locator_revision:1,search_text:'实际搜索文字',search_source:'default' as const,access_revision:null,credential_generation:1,delegation_id:null,release_id:null,flow_digest:null,flow:null,confirmable:false}
- pending.plan.items[0]={...pending.plan.items[0],selected:phone,candidates:[phone],blocker:'shared_send_execution_configuration_invalid',readiness:[{binding_id:'binding',device_id:'phone',target_id:'target',device_name:'离线测试手机',target_name:'家长通知',search_text:'实际搜索文字',state:'waiting_connection',ready:false,plan_selectable:true,confirmable:false,execution_ready:false,automatic:true,blockers:[{code:'waiting_connection',message:'手机离线，连接后自动继续',owner:'system',automatic:true}],inspection:null,inspection_state:'waiting_prerequisites',retry_at:null,retry_remaining:3}]}
+ const phone={target_id:'target',target_name:'实际搜索文字',device_name:'离线测试手机',device_id:'phone',binding_id:'binding',binding_locator_revision:1,target_locator_revision:1,search_text:'实际搜索文字',search_source:'default' as const,access_revision:null,credential_generation:1,delegation_id:null,release_id:null,flow_digest:null,flow:null,confirmable:false}
+ pending.plan.items[0]={...pending.plan.items[0],selected:phone,candidates:[phone],blocker:'shared_send_execution_configuration_invalid',readiness:[{binding_id:'binding',device_id:'phone',target_id:'target',device_name:'离线测试手机',target_name:'实际搜索文字',search_text:'实际搜索文字',state:'waiting_connection',ready:false,plan_selectable:true,confirmable:false,execution_ready:false,automatic:true,blockers:[{code:'waiting_connection',message:'手机离线，连接后自动继续',owner:'system',automatic:true}],inspection:null,inspection_state:'waiting_prerequisites',retry_at:null,retry_remaining:3}]}
  vi.mocked(sharedSend.taskPreview).mockResolvedValue(response(pending))
  vi.mocked(sharedSend.confirm).mockRejectedValue(Object.assign(new Error('配置异常'),{code:'shared_send_execution_configuration_invalid'}))
  await compose()
@@ -129,7 +129,7 @@ it('缺少本校管理员角色时明确说明权限原因，而不是无说明�
 
 
 it('打开详情持续轮询，失败保留快照与输入，关闭和切校停止旧任务查询',async()=>{
- const task={id:'task',school_id:'school',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-03',items:[{id:'item',target_id:'target',position:0,attempts:[{id:'attempt',state:'queued',revision:1,current:true,attempt_no:1,plan_digest:'hash',plan:{search_text:'家长通知',device_id:'phone',device_name:'测试手机'},execution_status:{conditions:[{code:'runtime_stale',message:'等待手机上报当前执行条件',owner:'system'}]}}]}]} as unknown as Awaited<ReturnType<typeof sharedSend.task>>
+ const task={id:'task',school_id:'school',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-03',items:[{id:'item',target_id:'target',position:0,attempts:[{id:'attempt',state:'queued',revision:1,current:true,attempt_no:1,plan_digest:'hash',plan:{search_text:'实际搜索文字',device_id:'phone',device_name:'测试手机'},execution_status:{conditions:[{code:'runtime_stale',message:'等待手机上报当前执行条件',owner:'system'}]}}]}]} as unknown as Awaited<ReturnType<typeof sharedSend.task>>
  vi.mocked(sharedSend.overview).mockResolvedValue({id:'school',tasks:[task],drafts:[],readiness:[],pool:[],inspections:[]})
  vi.mocked(sharedSend.task).mockResolvedValue(task)
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}})
@@ -191,7 +191,7 @@ it('群名变化必须重新预览，手机配置不是受理条件',async()=>{
  const pending=structuredClone(preview)
  const code='plan_dependency_changed'
  const text='目标群名已变化，请重新预览'
- const row={binding_id:'binding',device_id:'phone',target_id:'target',device_name:'测试手机',target_name:'家长通知',search_text:'实际搜索文字',state:code,ready:false,plan_selectable:true,confirmable:false,execution_ready:false,automatic:true,blockers:[{code,message:text,owner:'system',automatic:false}],inspection:null,inspection_state:'not_scheduled' as const,retry_at:null,retry_remaining:3,configuration_id:null,configuration_digest:null,consent_state:'accepted' as const,runtime_state:'screen_off' as const,execution_conditions:[{code:'device_screen_off',message:'手机屏幕已关闭，有有效待办时自动准备亮屏',owner:'device',automatic:true}]}
+ const row={binding_id:'binding',device_id:'phone',target_id:'target',device_name:'测试手机',target_name:'实际搜索文字',search_text:'实际搜索文字',state:code,ready:false,plan_selectable:true,confirmable:false,execution_ready:false,automatic:true,blockers:[{code,message:text,owner:'system',automatic:false}],inspection:null,inspection_state:'not_scheduled' as const,retry_at:null,retry_remaining:3,configuration_id:null,configuration_digest:null,consent_state:'accepted' as const,runtime_state:'screen_off' as const,execution_conditions:[{code:'device_screen_off',message:'手机屏幕已关闭，有有效待办时自动准备亮屏',owner:'device',automatic:true}]}
  pending.plan.items[0]={...pending.plan.items[0],blocker:text,readiness:[row]}
  vi.mocked(sharedSend.taskPreview).mockResolvedValue(response(pending))
  vi.mocked(sharedSend.overview).mockResolvedValue({id:'school',tasks:[],drafts:[],readiness:[{...row,search_text:'新群名'}],pool:[],inspections:[]})
