@@ -10,6 +10,10 @@ export function taskError(error: unknown): string {
 
 export function attemptFailureReason(reason:string):string {
   const messages:Record<string,string>={
+    plan_dependency_changed:'该尝试的有效目标或授权已变化，其他合法任务继续调度',
+    target_identity_required:'目标缺少企业微信实际完整群名，请补充目标资料',
+    retired_target_contract:'该尝试采用已停用的目标格式，未发放执行许可',
+    execution_contract_replaced:'该尝试采用已停用的执行契约，未发放执行许可',
     page_unrecognized:'手机无法识别当前企业微信页面',
     page_transition_timeout:'企业微信页面未在时限内完成切换',
     ambiguous_page:'当前页面存在多种可能解释',
