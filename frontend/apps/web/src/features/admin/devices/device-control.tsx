@@ -4,7 +4,7 @@ import { Alert, Button, Space } from 'antd'
 import { createIdempotencyKey } from '../../../shared/idempotency-key'
 import { api, type DeviceControlKind } from './api'
 import { ControlStatus, useControlFreshness } from './control-status'
-const commands = { pause_execution: '暂停执行', resume_execution: '解除平台暂停', request_status: '查询状态', task_available: '任务通知', configuration_changed: '配置通知' }
+const commands: Record<DeviceControlKind, string> = { pause_execution: '暂停执行', resume_execution: '解除平台暂停', request_status: '查询状态', task_available: '任务通知', configuration_changed: '配置通知', cancel_execution: '取消执行' }
 const receipts: Record<string, string> = { queued: '等待投递', delivered: '等待接收确认', accepted: '设备已落盘', completed: '控制动作已完成', rejected: '设备已拒绝', expired: '已过期' }
 const reasons: Record<string, string> = { platform_pause: '平台已暂停执行', execution_authorization_required: '等待业务执行授权', automatic_execution_paused: '手机端已暂停执行', device_locked: '等待手机解锁', accessibility_required: '等待开启无障碍服务', notification_required: '等待开启通知权限', unknown_requires_review: '存在未知结果，等待人工核对' }
 export function DeviceControlPanel({ deviceId }: { deviceId: string }) {
