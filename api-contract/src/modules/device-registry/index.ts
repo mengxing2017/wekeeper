@@ -4,7 +4,7 @@ export interface Row {
   id: UUID;
   revision: number;
 }
-export type DeviceControlKind = "task_available" | "configuration_changed" | "pause_execution" | "resume_execution" | "request_status";
+export type DeviceControlKind = "task_available" | "configuration_changed" | "pause_execution" | "resume_execution" | "request_status" | "cancel_execution";
 export interface DeviceControlCommand {
   id: UUID; sequence: number; kind: DeviceControlKind;
   state: "queued" | "delivered" | "accepted" | "completed" | "rejected" | "expired";
@@ -35,7 +35,7 @@ export interface DeviceControlFrame {
 }
 export interface Device extends Row {
   control?: DeviceControlSnapshot;
-  execution_protocol_version?: 9;
+  execution_protocol_version?: 10;
   supported_protocol_versions?: number[];
   name: string;
   enabled: boolean;

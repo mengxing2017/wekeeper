@@ -1,13 +1,12 @@
 import {expect,it} from 'vitest'
 import {createHash} from 'node:crypto'
-import f from '../fixtures/shared-mobile-send-v9.json'
+import f from '../fixtures/local-group-text-flow.json'
 import {createSharedSendV2Client,SHARED_SEND_SCHEMA} from '../src/modules/mobile-execution/shared-send/v2'
 import {createClient} from '../src/http/client'
 function canonicalJson(v:unknown):string {if(v===null||typeof v!=='object')return JSON.stringify(v);if(Array.isArray(v))return '['+v.map(canonicalJson).join(',')+']';const r=v as Record<string,unknown>;return '{'+Object.keys(r).sort().map(k=>JSON.stringify(k)+':'+canonicalJson(r[k])).join(',')+'}'}
-it('v9 preserves immutable wire digests while business requests contain no technical delivery fields',async()=>{
+it('local UI fixtures preserve immutable digests while business requests contain no technical delivery fields',async()=>{
  const hash=(v:unknown)=>createHash('sha256').update(canonicalJson(v)).digest('hex')
- expect(hash(f.flow)).toBe(f.flow_digest);expect(hash(f.event)).toBe(f.receipt.body_hash)
- expect(f.event.schema).toBe(SHARED_SEND_SCHEMA)
+ expect(hash(f.flow)).toBe(f.flow_digest)
  const calls:Array<{url:string;body:unknown;key:string|undefined}>=[]
  const client=createClient(async r=>{calls.push({url:r.path,body:r.body?JSON.parse(r.body as string):undefined,key:r.headers['Idempotency-Key']});return {status:200,headers:{'content-type':'application/vnd.api+json'},body:{data:{type:'mobile-usages',id:'new',attributes:{items:[]}}}}})
  const business=createSharedSendV2Client(client)
@@ -57,7 +56,7 @@ it('Rust and TS share the execution observation contract and lightweight delegat
  const calls:unknown[]=[]
  const client=createSharedSendV2Client({requestResource:async(...args)=>{calls.push(args);return {} as never}})
  await client.delegationContext()
- expect(calls).toEqual([['/api/v9/device-execution/send-delegation-context']])
+ expect(calls).toEqual([['/api/v10/device-execution/authority-context']])
 })
 
 it('device inbox encodes cursors and receipt resources without creating send claims',async()=>{
@@ -75,13 +74,6 @@ it('device inbox encodes cursors and receipt resources without creating send cla
  expect(calls[1].key).toBe('fixed-receipt')
  expect(calls.some(c=>c.path.includes('send-claims'))).toBe(false)
  expect(fixture.items[0]).not.toHaveProperty('message')
-})
-
-it('inspection start is an authenticated execution observation with the exact lease identity',async()=>{
- const calls:Array<{path:string;body:unknown}>=[]
- const client=createSharedSendV2Client(createClient(async r=>{calls.push({path:r.path,body:r.body?JSON.parse(r.body as string):null});return {status:200,headers:{'content-type':'application/vnd.api+json'},body:{data:{type:'mobile-shared-inspection-starts',id:f.inspection_start.inspection_id,attributes:{state:'started',dependencies_digest:f.inspection_start.dependencies_digest}}}}}))
- await client.inspectionStarted(f.inspection_start,'start-observation')
- expect(calls[0]).toEqual({path:'/api/v9/device-execution/send-inspection-starts',body:{data:{type:'mobile-shared-inspection-starts',attributes:f.inspection_start}}})
 })
 
 it('screen runtime separates sleep from secure lock and includes bounded preparation diagnostics',async()=>{
@@ -102,26 +94,6 @@ it('configuration status includes platform source and observation separately fro
  expect(status.issue).toEqual({code:'configuration_missing',path:'flow'})
  expect(status.observed_at).toBe('2026-11-04T04:10:09Z')
  expect(status).not.toHaveProperty('flow')
-})
-
-// Old servers omit this additive capability: clients keep the base runtime wire until advertised.
-it('delegation context negotiates diagnostic fields independently of consent',async()=>{
- const {default:fixture}=await import('../fixtures/shared-runtime-negotiation.json')
- const context:import('../src/modules/mobile-execution/shared-send/v2').SharedDelegationContext={...fixture,authorization_schema:'shared_mobile_device_delegation/1',runtime_report_version:2,delegation:{...fixture.delegation,scope:{...fixture.delegation.scope,schema:'shared_mobile_device_delegation/1',package_name:'com.tencent.wework',capability:'group_text',resource_policy:'platform_managed_school_targets',background_collection:true,automatic_inspection:true,text_input:true,single_use_send:true}}}
- expect(context.runtime_report_version).toBe(2)
- expect(context.delegation.decision?.accepted).toBe(true)
- const {runtime_report_version,...oldContext}=context
- expect(oldContext).not.toHaveProperty('runtime_report_version')
- expect(oldContext.delegation).toEqual(context.delegation)
-})
-
-it('device-owned execution preparation contains no platform UI configuration',async()=>{
- const {default:f}=await import('../fixtures/device-owned-execution.json')
- const intent:import('../src/modules/mobile-execution/shared-send/v2').DeviceExecutionIntent={contract:'device_owned/1',capability:'wecom.group_text'}
- const preparation:import('../src/modules/mobile-execution/shared-send/v2').SharedPreparationInput=f.preparation
- expect(f.execution).toEqual(intent)
- expect(preparation).not.toHaveProperty('flow_digest')
- expect(preparation.input_matches).toBe(true)
 })
 
 it('dispatch feedback exposes the authorized pool and automatic assignment history',async()=>{

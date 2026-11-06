@@ -1,0 +1,52 @@
+{
+  "verification_key": "0471c7b20a28f657d8c8f364994a5caa2b955e4192bd1e24dce1fb54552481257a61e7db2dab711aa710d05211677e9eb27e90de26aa27564a8b8d4fc8f6c0fefa",
+  "grant": {
+    "id": "00000000-0000-4000-8000-000000000001",
+    "execution_id": "00000000-0000-4000-8000-000000000001",
+    "capability_id": "00000000-0000-4000-8000-000000000001",
+    "schema": "durable_execution/1",
+    "protocol_version": 10,
+    "kind": "send",
+    "state": "granted",
+    "max_calls": 1,
+    "local_budget_ms": 210000,
+    "attempt_id": "00000000-0000-4000-8000-000000000003",
+    "task_id": "00000000-0000-4000-8000-000000000004",
+    "target_id": "00000000-0000-4000-8000-000000000005",
+    "school_id": "00000000-0000-4000-8000-000000000006",
+    "device_id": "00000000-0000-4000-8000-000000000002",
+    "credential_generation": 1,
+    "assignment_revision": 1,
+    "runtime_epoch": "00000000-0000-4000-8000-000000000007",
+    "plan": {
+      "execution": {
+        "contract": "device_owned/1",
+        "capability": "wecom.group_text"
+      },
+      "message": "合成正文🙂",
+      "search_text": "合成测试群",
+      "device_id": "00000000-0000-4000-8000-000000000002",
+      "attempt_id": "00000000-0000-4000-8000-000000000003"
+    },
+    "plan_digest": "94d3644c0cff4f729250fec370bd4d83d639ea7f5fd3a8f0303da430aef8a669",
+    "content_digest": "4cd4bedec47f46f7dc41b2fc6df520a0bdc173703f0d160cc6355ed8e0ffd9c3",
+    "timing": {
+      "server_time": "2026-11-06T00:00:00Z",
+      "not_before": "2026-11-06T00:00:00Z",
+      "execute_before": "2026-11-06T00:03:30Z"
+    },
+    "result_credential": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "signature": "3045022100c92e9805561d709b5ada6fe3049a1556c8b8423e4b6a825485cb5d13c7401c2d02207fee90e141c5e91c61d8686da9b8952b581b2b2973ad17edda94a605d19805c5",
+    "key_id": "cf15ac33607c5a5dcc35308bebe27c6898943d9084406320cb09ce7343896f51"
+  },
+  "completion": {
+    "result_id": "00000000-0000-4000-8000-000000000008",
+    "execution_id": "00000000-0000-4000-8000-000000000001",
+    "result_credential": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "outcome": "observed_sent",
+    "reason": "new_outgoing_observed",
+    "evidence": "synthetic_evidence",
+    "consumed": true,
+    "calling_marked": true
+  }
+}

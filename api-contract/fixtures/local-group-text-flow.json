@@ -1,36 +1,5 @@
 {
   "message": "  第一行\n第二行🙂  ",
-  "event": {
-    "schema": "shared_mobile_send/2",
-    "event_id": "00000000-0000-4000-8000-000000000001",
-    "claim_id": "00000000-0000-4000-8000-000000000002",
-    "attempt_id": "00000000-0000-4000-8000-000000000003",
-    "invocation_id": "00000000-0000-4000-8000-000000000004",
-    "credential_generation": 1,
-    "lease_fence": 9,
-    "plan_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "content_digest": "6a6d2976ec38e2ecd8c70d5d5585f21bc9d6b70ac517f4ddc1b1e1491b491aa8",
-    "outcome": "observed_sent",
-    "reason": "new_outgoing_observed",
-    "consumed": true,
-    "calling_marked": true,
-    "evidence": "native-observation-digest",
-    "result_credential": "1111111111111111111111111111111111111111111111111111111111111111"
-  },
-  "receipt": {
-    "event_id": "00000000-0000-4000-8000-000000000001",
-    "claim_id": "00000000-0000-4000-8000-000000000002",
-    "attempt_id": "00000000-0000-4000-8000-000000000003",
-    "invocation_id": "00000000-0000-4000-8000-000000000004",
-    "credential_generation": 1,
-    "lease_fence": 9,
-    "plan_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "content_digest": "6a6d2976ec38e2ecd8c70d5d5585f21bc9d6b70ac517f4ddc1b1e1491b491aa8",
-    "id": "00000000-0000-4000-8000-000000000005",
-    "device_id": "00000000-0000-4000-8000-000000000006",
-    "body_hash": "57b1b297658f6ba29834743661e2c821047696653652fd4834b058022e65afcc",
-    "disposition": "observed_sent"
-  },
   "flow": {
     "schema_version": 3,
     "engine_version": "otter-ui/3",
@@ -403,12 +372,5 @@
       }
     ]
   },
-  "flow_digest": "1612cf877023e2ef23ee56c967451400ac5c9c88dd2cc1c1a6f83fab02b31740",
-  "inspection_start": {
-    "inspection_id": "00000000-0000-4000-8000-000000000010",
-    "runtime_epoch": "00000000-0000-4000-8000-000000000011",
-    "lease_fence": 9,
-    "challenge": "native-inspection-challenge",
-    "dependencies_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-  }
+  "flow_digest": "1612cf877023e2ef23ee56c967451400ac5c9c88dd2cc1c1a6f83fab02b31740"
 }
