@@ -25,7 +25,7 @@ pub(super) async fn resolve(tx: &mut Tx<'_>, school: Uuid, body: &mut Value) -> 
             let over = binding
                 .as_ref()
                 .and_then(|b| b["search_text_override"].as_str());
-            locators.push(json!({"device_id":device,"device_name":name,"target_id":target["id"],"target_index":index,"target_name":target["name"],"search_text":over.map(json_string).unwrap_or_else(||target["search_text"].clone()),"search_source":if over.is_some(){"override"}else{"default"},"binding_locator_revision":binding.as_ref().map(|b|b["locator_revision"].clone()).unwrap_or(Value::Null),"target_locator_revision":if over.is_some(){Value::Null}else{target.get("revision").cloned().unwrap_or(json!(1))}}));
+            locators.push(json!({"device_id":device,"device_name":name,"target_id":target["id"],"target_index":index,"target_name":target["name"],"search_text":over.map(json_string).unwrap_or_else(||target["search_text"].clone()),"target":{"kind":"group","search_query":over.map(json_string).unwrap_or_else(||target["search_text"].clone()),"exact_name":target["exact_name"],"match_policy":"exact_unique","identity_constraints":[]},"search_source":if over.is_some(){"override"}else{"default"},"binding_locator_revision":binding.as_ref().map(|b|b["locator_revision"].clone()).unwrap_or(Value::Null),"target_locator_revision":if over.is_some(){target.get("identity_revision").cloned().unwrap_or(json!(1))}else{target.get("revision").cloned().unwrap_or(json!(1))}}));
         }
     }
     let locators: Vec<crate::distribution::domain::shared_mobile::usage::UsageLocator> =
@@ -55,6 +55,8 @@ pub(super) fn comparison_body(value: &Value) -> Value {
                 if resolved {
                     o.remove("search_text");
                     o.remove("revision");
+                    o.remove("identity_revision");
+                    o.remove("exact_name");
                 }
             }
         }
@@ -94,6 +96,7 @@ pub(super) fn same_locator(a: &Value, b: &Value) -> bool {
     [
         "device_id",
         "target_id",
+        "target",
         "search_text",
         "search_source",
         "target_locator_revision",

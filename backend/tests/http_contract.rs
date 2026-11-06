@@ -930,7 +930,7 @@ fn usage_summary_preserves_per_phone_override_and_ignores_unused_default_revisio
     .unwrap();
     let output: UsageLocator = serde_json::from_value(fixture.clone()).unwrap();
     assert_eq!(output.search_source, "override");
-    assert!(output.target_locator_revision.is_none());
+    assert_eq!(output.target_locator_revision, Some(1));
     assert_eq!(serde_json::to_value(output).unwrap(), fixture);
 }
 

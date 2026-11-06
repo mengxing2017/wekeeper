@@ -63,7 +63,7 @@ impl Store for Repository {
         let (limit, offset) = page.fetch_bounds()?;
         let sql = match resource {
             Resource::Targets => {
-                "SELECT to_jsonb(t) FROM mobile_targets t WHERE school_id=$1 AND archived_at IS NULL AND (strpos(lower(search_text),lower($2))>0 OR strpos(lower(alias),lower($2))>0) AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id AND d.enabled WHERE t.enabled AND b.target_id=t.id AND b.school_id=t.school_id AND b.device_id=$3 AND b.enabled)) ORDER BY created_at,id LIMIT $4 OFFSET $5"
+                "SELECT to_jsonb(t) FROM mobile_targets t WHERE school_id=$1 AND archived_at IS NULL AND (strpos(lower(exact_name),lower($2))>0 OR strpos(lower(search_text),lower($2))>0 OR strpos(lower(alias),lower($2))>0) AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id AND d.enabled WHERE t.enabled AND b.target_id=t.id AND b.school_id=t.school_id AND b.device_id=$3 AND b.enabled)) ORDER BY created_at,id LIMIT $4 OFFSET $5"
             }
             Resource::PlatformDevices => {
                 "SELECT to_jsonb(d)-'client_instance_id' FROM execution_devices d WHERE $1::uuid IS NULL AND strpos(lower(d.name),lower($2))>0 AND ($3::uuid IS NULL OR d.id=$3) ORDER BY d.created_at,d.id LIMIT $4 OFFSET $5"
@@ -72,10 +72,10 @@ impl Store for Repository {
                 "SELECT jsonb_build_object('id',d.id,'name',d.name,'enabled',d.enabled,'last_seen_at',d.last_seen_at,'control_state',p.state,'last_control_heartbeat_at',p.last_control_heartbeat_at) FROM execution_devices d LEFT JOIN device_control_presence p ON p.id=d.id WHERE EXISTS(SELECT 1 FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id AND t.school_id=b.school_id WHERE b.device_id=d.id AND b.school_id=$1 AND b.enabled AND t.enabled AND t.archived_at IS NULL) AND strpos(lower(d.name),lower($2))>0 AND ($3::uuid IS NULL OR d.id=$3) ORDER BY d.created_at,d.id LIMIT $4 OFFSET $5"
             }
             Resource::Bindings | Resource::PlatformBindings => {
-                "SELECT to_jsonb(b)||jsonb_build_object('school_name',s.name,'device_name',d.name,'search_text',COALESCE(b.search_text_override,t.search_text),'search_source',CASE WHEN b.search_text_override IS NULL THEN 'target_default' ELSE 'binding_override' END,'target_locator_revision',t.locator_revision,'source_locator_revision',CASE WHEN b.search_text_override IS NULL THEN t.locator_revision ELSE b.locator_revision END,'target_alias',t.alias,'available',b.enabled AND d.enabled AND t.enabled AND t.archived_at IS NULL) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id AND t.school_id=b.school_id JOIN schools s ON s.id=t.school_id WHERE ($1::uuid IS NULL OR b.school_id=$1) AND (strpos(lower(t.search_text),lower($2))>0 OR strpos(lower(d.name),lower($2))>0 OR strpos(lower(t.alias),lower($2))>0 OR strpos(lower(COALESCE(b.search_text_override,'')),lower($2))>0) AND ($3::uuid IS NULL OR b.device_id=$3) ORDER BY b.created_at,b.id LIMIT $4 OFFSET $5"
+                "SELECT to_jsonb(b)||jsonb_build_object('school_name',s.name,'device_name',d.name,'search_text',COALESCE(b.search_text_override,t.search_text),'search_source',CASE WHEN b.search_text_override IS NULL THEN 'target_default' ELSE 'binding_override' END,'target_locator_revision',t.locator_revision,'source_locator_revision',CASE WHEN b.search_text_override IS NULL THEN t.locator_revision ELSE b.locator_revision END,'exact_name',t.exact_name,'target_alias',t.alias,'available',b.enabled AND d.enabled AND t.enabled AND t.archived_at IS NULL) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id AND t.school_id=b.school_id JOIN schools s ON s.id=t.school_id WHERE ($1::uuid IS NULL OR b.school_id=$1) AND (strpos(lower(t.exact_name),lower($2))>0 OR strpos(lower(t.search_text),lower($2))>0 OR strpos(lower(d.name),lower($2))>0 OR strpos(lower(t.alias),lower($2))>0 OR strpos(lower(COALESCE(b.search_text_override,'')),lower($2))>0) AND ($3::uuid IS NULL OR b.device_id=$3) ORDER BY b.created_at,b.id LIMIT $4 OFFSET $5"
             }
             Resource::PlatformTargets => {
-                "SELECT jsonb_build_object('id',t.id,'school_id',t.school_id,'school_name',s.name,'search_text',t.search_text,'alias',t.alias,'enabled',t.enabled) FROM mobile_targets t JOIN schools s ON s.id=t.school_id WHERE $1::uuid IS NULL AND s.active AND t.archived_at IS NULL AND (strpos(lower(t.search_text),lower($2))>0 OR strpos(lower(t.alias),lower($2))>0 OR strpos(lower(s.name),lower($2))>0) AND $3::uuid IS NULL ORDER BY t.created_at,t.id LIMIT $4 OFFSET $5"
+                "SELECT jsonb_build_object('id',t.id,'school_id',t.school_id,'school_name',s.name,'search_text',t.search_text,'exact_name',t.exact_name,'alias',t.alias,'enabled',t.enabled) FROM mobile_targets t JOIN schools s ON s.id=t.school_id WHERE $1::uuid IS NULL AND s.active AND t.archived_at IS NULL AND (strpos(lower(t.exact_name),lower($2))>0 OR strpos(lower(t.search_text),lower($2))>0 OR strpos(lower(t.alias),lower($2))>0 OR strpos(lower(s.name),lower($2))>0) AND $3::uuid IS NULL ORDER BY t.created_at,t.id LIMIT $4 OFFSET $5"
             }
         };
         let rows = sqlx::query_scalar(sql)
@@ -134,7 +134,15 @@ impl Store for Repository {
                 if !candidates.is_empty() {
                     // Confirmation binds exact input and duplicate candidates, never inferred identity.
                     let confirmation = hash(
-                        &json!([school, v.search_text, v.alias, v.remark, candidates]).to_string(),
+                        &json!([
+                            school,
+                            v.search_text,
+                            v.exact_name,
+                            v.alias,
+                            v.remark,
+                            candidates
+                        ])
+                        .to_string(),
                     );
                     if v.duplicate_confirmation.as_deref() != Some(&confirmation) {
                         let response = json!({"id":resource,"confirmation_required":true,"duplicate_confirmation":confirmation,"candidate_ids":candidates.iter().map(|v|v.0).collect::<Vec<_>>()});
@@ -144,8 +152,8 @@ impl Store for Repository {
                         return Ok(response);
                     }
                 }
-                sqlx::query("INSERT INTO mobile_targets(id,school_id,search_text,alias,remark,created_by,updated_by) VALUES($1,$2,$3,$4,$5,$6,$6)")
-                    .bind(resource).bind(school).bind(&v.search_text).bind(&v.alias).bind(&v.remark).bind(actor.id).execute(&mut *tx).await?;
+                sqlx::query("INSERT INTO mobile_targets(id,school_id,search_text,alias,remark,created_by,updated_by,exact_name) VALUES($1,$2,$3,$4,$5,$6,$6,$7)")
+                    .bind(resource).bind(school).bind(&v.search_text).bind(&v.alias).bind(&v.remark).bind(actor.id).bind(&v.exact_name).execute(&mut *tx).await?;
                 object(&mut tx, "mobile_targets", resource).await?
             }
             "update-target" => {
@@ -153,10 +161,11 @@ impl Store for Repository {
                 let v: TargetUpdate = serde_json::from_value(input.clone())
                     .map_err(|_| Error::Invalid("目标字段无效".into()))?;
                 validate_text(&v.search_text, 1, 256, 1024)?;
+                validate_text(&v.exact_name, 1, 256, 1024)?;
                 validate_text(&v.alias, 0, 128, 512)?;
                 validate_text(&v.remark, 0, 2000, 8000)?;
-                let n=sqlx::query("UPDATE mobile_targets SET search_text=$4,alias=$5,remark=$6,enabled=$7,metadata_revision=metadata_revision+1,locator_revision=locator_revision+CASE WHEN search_text<>$4 OR enabled<>$7 THEN 1 ELSE 0 END,updated_by=$8,updated_at=clock_timestamp() WHERE school_id=$1 AND id=$2 AND metadata_revision=$3 AND archived_at IS NULL")
-                    .bind(school).bind(resource).bind(v.expected_revision).bind(v.search_text).bind(v.alias).bind(v.remark).bind(v.enabled).bind(actor.id).execute(&mut *tx).await?.rows_affected();
+                let n=sqlx::query("UPDATE mobile_targets SET exact_name=$9,identity_revision=identity_revision+CASE WHEN exact_name IS DISTINCT FROM $9 THEN 1 ELSE 0 END,search_text=$4,alias=$5,remark=$6,enabled=$7,metadata_revision=metadata_revision+1,locator_revision=locator_revision+CASE WHEN search_text<>$4 OR exact_name IS DISTINCT FROM $9 THEN 1 ELSE 0 END,updated_by=$8,updated_at=clock_timestamp() WHERE school_id=$1 AND id=$2 AND metadata_revision=$3 AND archived_at IS NULL")
+                    .bind(school).bind(resource).bind(v.expected_revision).bind(v.search_text).bind(v.alias).bind(v.remark).bind(v.enabled).bind(actor.id).bind(v.exact_name).execute(&mut *tx).await?.rows_affected();
                 if n != 1 {
                     return Err(Error::Policy("revision_conflict"));
                 }

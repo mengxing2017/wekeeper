@@ -7,6 +7,8 @@ use uuid::Uuid;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UsageLocator {
+    #[serde(default)]
+    pub target: serde_json::Value,
     pub device_id: Uuid,
     pub device_name: String,
     pub target_id: Option<Uuid>,
@@ -20,6 +22,8 @@ pub struct UsageLocator {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UsageTarget {
+    #[serde(default)]
+    pub exact_name: Option<String>,
     pub id: Option<Uuid>,
     pub name: String,
     pub search_text: String,
@@ -67,7 +71,14 @@ impl UsageInput {
         )?;
         for t in &self.targets {
             text(&t.name, 1, 256)?;
-            text(&t.search_text, 1, 256)?;
+            super::validate_text(&t.search_text, 1, 256, 1024)?;
+            if let Some(name) = &t.exact_name {
+                super::validate_text(name, 1, 256, 1024)?;
+            }
+            require(
+                t.id.is_some() || t.exact_name.is_some(),
+                "target_identity_required",
+            )?;
         }
         Ok(())
     }

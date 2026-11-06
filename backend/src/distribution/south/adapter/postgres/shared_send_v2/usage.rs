@@ -36,14 +36,14 @@ async fn options(tx: &mut Tx<'_>, a: &Actor, s: Option<Uuid>) -> Result<Value> {
     let platform = permission(tx, a, s, false).await?;
     let devices:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',d.id,'name',d.name,'revision',d.revision,'online',coalesce(cp.state='online' AND cp.last_control_heartbeat_at>clock_timestamp()-interval '30 seconds',false)) FROM execution_devices d LEFT JOIN device_control_presence cp ON cp.id=d.id WHERE d.enabled AND ($1 OR EXISTS(SELECT 1 FROM mobile_shared_school_access x WHERE x.device_id=d.id AND x.school_id=$2 AND x.enabled)) ORDER BY d.name,d.id").bind(platform).bind(s).fetch_all(&mut **tx).await?;
     let schools:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',id,'name',name) FROM schools WHERE active AND ($1 OR id=$2) ORDER BY name,id").bind(platform).bind(s).fetch_all(&mut **tx).await?;
-    let targets:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',id,'name',coalesce(nullif(alias,''),search_text),'search_text',search_text,'revision',locator_revision) FROM mobile_targets WHERE school_id=$1 AND enabled AND archived_at IS NULL ORDER BY alias,search_text,id").bind(s).fetch_all(&mut **tx).await?;
+    let targets:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',id,'name',coalesce(nullif(alias,''),search_text),'search_text',search_text,'exact_name',exact_name,'identity_revision',identity_revision,'revision',locator_revision) FROM mobile_targets WHERE school_id=$1 AND enabled AND archived_at IS NULL ORDER BY alias,search_text,id").bind(s).fetch_all(&mut **tx).await?;
     let p = policy(tx).await?;
     Ok(
         json!({"id":"usage-options","schools":schools,"devices":devices,"targets":targets,"scheme":p.as_ref().map(scheme),"sending_status":business_scheme::status(tx).await?,"business_scheme":if platform {p.clone()} else {None}}),
     )
 }
 fn selection_input(b: &Value) -> Result<UsageInput> {
-    serde_json::from_value(json!({"device_ids":b["device_ids"],"targets":b["targets"].as_array().unwrap().iter().map(|t|json!({"id":t["id"],"name":t["name"],"search_text":t["search_text"]})).collect::<Vec<_>>(),"max_calls":b["max_calls"],"expires_at":b["expires_at"],"auto_targets":b["auto_targets"],"renewal_of":b.get("renewal_of"),"expected_revision":b.get("expected_revision")})).map_err(|_|Error::Conflict)
+    serde_json::from_value(json!({"device_ids":b["device_ids"],"targets":b["targets"].as_array().unwrap().iter().map(|t|json!({"id":t["id"],"name":t["name"],"search_text":t["search_text"],"exact_name":t["exact_name"]})).collect::<Vec<_>>(),"max_calls":b["max_calls"],"expires_at":b["expires_at"],"auto_targets":b["auto_targets"],"renewal_of":b.get("renewal_of"),"expected_revision":b.get("expected_revision")})).map_err(|_|Error::Conflict)
 }
 fn date(v: &Value, k: &str) -> Result<DateTime<Utc>> {
     serde_json::from_value(v[k].clone()).map_err(|_| Error::Conflict)
@@ -126,7 +126,11 @@ async fn valid_selection(tx: &mut Tx<'_>, a: &Actor, s: Uuid, v: &UsageInput) ->
                 .as_array()
                 .unwrap()
                 .iter()
-                .filter(|x| x["search_text"] == t["search_text"] && x["name"] == t["name"])
+                .filter(|x| {
+                    x["search_text"] == t["search_text"]
+                        && x["exact_name"] == t["exact_name"]
+                        && x["name"] == t["name"]
+                })
                 .collect();
             require(matching.len() <= 1, "存在多个同名目标群，请选择已有群")?;
             if let Some(found) = matching.first() {
@@ -141,6 +145,8 @@ async fn valid_selection(tx: &mut Tx<'_>, a: &Actor, s: Uuid, v: &UsageInput) ->
             t["name"] = found["name"].clone();
             t["search_text"] = found["search_text"].clone();
             t["revision"] = found["revision"].clone();
+            t["exact_name"] = found["exact_name"].clone();
+            t["identity_revision"] = found["identity_revision"].clone();
         }
     }
     usage_locators::resolve(tx, s, &mut body).await?;
@@ -251,9 +257,10 @@ impl Repository {
                 for t in b["targets"].as_array_mut().unwrap() {
                     if t["id"].is_null() {
                         let id = Uuid::now_v7();
-                        sqlx::query("INSERT INTO mobile_targets(id,school_id,alias,search_text,created_by,updated_by) VALUES($1,$2,$3,$4,$5,$5)").bind(id).bind(s).bind(t["name"].as_str()).bind(t["search_text"].as_str()).bind(a.id).execute(&mut *tx).await?;
+                        sqlx::query("INSERT INTO mobile_targets(id,school_id,alias,search_text,created_by,updated_by,exact_name) VALUES($1,$2,$3,$4,$5,$5,$6)").bind(id).bind(s).bind(t["name"].as_str()).bind(t["search_text"].as_str()).bind(a.id).bind(t["exact_name"].as_str()).execute(&mut *tx).await?;
                         t["id"] = json!(id);
                         t["revision"] = json!(1);
+                        t["identity_revision"] = json!(1);
                     }
                 }
                 // New target IDs are now known; preserve each phone's resolved locator.
@@ -505,7 +512,7 @@ async fn reconcile_usage(tx: &mut Tx<'_>, u: &Value) -> Result<()> {
         serde_json::from_value(body["device_ids"].clone()).map_err(|_| Error::Conflict)?;
     let mut targets = body["targets"].as_array().cloned().unwrap_or_default();
     if body["auto_targets"] == true {
-        targets=sqlx::query_scalar("SELECT jsonb_build_object('id',id,'name',coalesce(nullif(alias,''),search_text),'search_text',search_text,'revision',locator_revision) FROM mobile_targets WHERE school_id=$1 AND enabled AND archived_at IS NULL ORDER BY id").bind(school).fetch_all(&mut **tx).await?;
+        targets=sqlx::query_scalar("SELECT jsonb_build_object('id',id,'name',coalesce(nullif(alias,''),search_text),'search_text',search_text,'exact_name',exact_name,'identity_revision',identity_revision,'revision',locator_revision) FROM mobile_targets WHERE school_id=$1 AND enabled AND archived_at IS NULL ORDER BY id").bind(school).fetch_all(&mut **tx).await?;
     }
     let total = devices.len() * targets.len();
     let mut ready = 0;
@@ -544,7 +551,7 @@ async fn reconcile_usage(tx: &mut Tx<'_>, u: &Value) -> Result<()> {
                 failures.push(format!("{label}：目标绑定已停用"));
                 continue;
             }
-            let snapshot:Option<Value>=sqlx::query_scalar("SELECT jsonb_build_object('binding_locator_revision',b.locator_revision,'target_locator_revision',CASE WHEN b.search_text_override IS NULL THEN t.locator_revision ELSE NULL END,'search_text',coalesce(b.search_text_override,t.search_text)) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id WHERE b.school_id=$1 AND b.device_id=$2 AND b.target_id=$3").bind(school).bind(device).bind(target_id).fetch_optional(&mut **tx).await?;
+            let snapshot:Option<Value>=sqlx::query_scalar("SELECT jsonb_build_object('binding_locator_revision',b.locator_revision,'target_locator_revision',CASE WHEN b.search_text_override IS NULL THEN t.locator_revision ELSE t.identity_revision END,'target',jsonb_build_object('kind','group','search_query',coalesce(b.search_text_override,t.search_text),'exact_name',t.exact_name,'match_policy','exact_unique','identity_constraints','[]'::jsonb)) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id WHERE b.school_id=$1 AND b.device_id=$2 AND b.target_id=$3").bind(school).bind(device).bind(target_id).fetch_optional(&mut **tx).await?;
             let existing:Option<Value>=sqlx::query_scalar("SELECT jsonb_build_object('scope_id',m.scope_id,'snapshot',m.resource_snapshot,'revoked',EXISTS(SELECT 1 FROM mobile_v9_scope_revocations r WHERE r.grant_id=m.scope_id),'active',EXISTS(SELECT 1 FROM mobile_v9_scope_grants g WHERE g.id=m.scope_id AND g.expires_at>clock_timestamp() AND NOT EXISTS(SELECT 1 FROM mobile_v9_scope_revocations r2 WHERE r2.grant_id=g.id))) FROM mobile_usage_scopes m WHERE m.usage_id=$1 AND m.release_id IS NULL AND m.target_id=$2 AND m.device_id=$3").bind(id).bind(target_id).bind(device).fetch_optional(&mut **tx).await?;
             if let Some(existing) = existing {
                 // An explicit platform revocation of this projection is a real disable.
@@ -583,7 +590,7 @@ async fn reconcile_usage(tx: &mut Tx<'_>, u: &Value) -> Result<()> {
             let revision:i64=sqlx::query_scalar("SELECT revision FROM mobile_shared_school_access WHERE device_id=$1 AND school_id=$2").bind(device).bind(school).fetch_one(&mut **tx).await?;
             let scope = Uuid::now_v7();
             sqlx::query("INSERT INTO mobile_v9_scope_grants(id,school_id,release_id,acceptance_id,stage,device_ids,target_ids,auto_targets,max_calls,expires_at,reason,created_by,resource_revisions) VALUES($1,$2,NULL,NULL,'production_allowlist',ARRAY[$3]::uuid[],ARRAY[$4]::uuid[],false,$5,$6,'使用授权自动关联',$7,$8)").bind(scope).bind(school).bind(device).bind(target_id).bind(body["max_calls"].as_i64().unwrap_or(1)).bind(date(u,"expires_at")?).bind(actor).bind(json!({device.to_string():revision})).execute(&mut **tx).await?;
-            let snapshot:Value=sqlx::query_scalar("SELECT jsonb_build_object('binding_locator_revision',b.locator_revision,'target_locator_revision',CASE WHEN b.search_text_override IS NULL THEN t.locator_revision ELSE NULL END,'search_text',coalesce(b.search_text_override,t.search_text)) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id WHERE b.device_id=$1 AND b.target_id=$2").bind(device).bind(target_id).fetch_one(&mut **tx).await?;
+            let snapshot:Value=sqlx::query_scalar("SELECT jsonb_build_object('binding_locator_revision',b.locator_revision,'target_locator_revision',CASE WHEN b.search_text_override IS NULL THEN t.locator_revision ELSE t.identity_revision END,'target',jsonb_build_object('kind','group','search_query',coalesce(b.search_text_override,t.search_text),'exact_name',t.exact_name,'match_policy','exact_unique','identity_constraints','[]'::jsonb)) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id WHERE b.device_id=$1 AND b.target_id=$2").bind(device).bind(target_id).fetch_one(&mut **tx).await?;
             sqlx::query("INSERT INTO mobile_usage_scopes(scope_id,usage_id,release_id,target_id,device_id,resource_snapshot) VALUES($1,$2,NULL,$3,$4,$5)").bind(scope).bind(id).bind(target_id).bind(device).bind(snapshot).execute(&mut **tx).await?;
             ready += 1;
         }

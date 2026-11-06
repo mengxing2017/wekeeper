@@ -38,6 +38,18 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
                 false,
             );
         }
+        if candidate
+            .as_ref()
+            .is_some_and(|c| c["target"]["exact_name"].is_null())
+        {
+            blockers.push(condition(
+                "target_identity_required",
+                "请补充企业微信实际完整群名",
+                "school_admin",
+                "编辑目标群资料",
+                false,
+            ));
+        }
         if !scope_exists && selectable {
             blockers.push(
                 scope_issue(tx, school, uid(&row, "device_id")?, uid(&row, "target_id")?).await?,
@@ -60,7 +72,7 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
             && row["online"] == true
             && runtime_state(&row) == "ready";
         let inspection_state = "not_scheduled";
-        result.push(json!({"binding_id":row["id"],"device_id":row["device_id"],"target_id":row["target_id"],"device_name":row["device_name"],"target_name":row["target_name"],"search_text":row["search_text"],"plan_selectable":selectable,"confirmable":confirmable,"execution_ready":ready,"ready":ready,"state":if ready{json!("ready_for_task")}else{blockers.first().or_else(||execution_conditions.first()).map(|b|b["code"].clone()).unwrap_or(json!("waiting"))},"consent_state":consent_state,"preparation":row["preparation"],"runtime_state":runtime_state(&row),"runtime_reason":row["runtime_reason"],"runtime_observed_at":row["runtime_observed_at"],"execution_conditions":execution_conditions,"blockers":blockers,"inspection":inspection,"inspection_state":inspection_state,"retry_remaining":remaining,"retry_at":retry_at,"automatic":true}));
+        result.push(json!({"binding_id":row["id"],"device_id":row["device_id"],"target_id":row["target_id"],"device_name":row["device_name"],"target_name":row["target_name"],"search_text":row["search_text"],"target":candidate.as_ref().map(|c|c["target"].clone()),"plan_selectable":selectable,"confirmable":confirmable,"execution_ready":ready,"ready":ready,"state":if ready{json!("ready_for_task")}else{blockers.first().or_else(||execution_conditions.first()).map(|b|b["code"].clone()).unwrap_or(json!("waiting"))},"consent_state":consent_state,"preparation":row["preparation"],"runtime_state":runtime_state(&row),"runtime_reason":row["runtime_reason"],"runtime_observed_at":row["runtime_observed_at"],"execution_conditions":execution_conditions,"blockers":blockers,"inspection":inspection,"inspection_state":inspection_state,"retry_remaining":remaining,"retry_at":retry_at,"automatic":true}));
     }
     Ok(result)
 }

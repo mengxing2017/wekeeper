@@ -69,7 +69,7 @@ impl Fixture {
         sqlx::query("INSERT INTO execution_devices(id,name,enabled,credential_generation) VALUES($1,'Offline phone',true,1)").bind(device).execute(&pool).await.unwrap();
         let targets = vec![Uuid::new_v4(), Uuid::new_v4()];
         for target in &targets {
-            sqlx::query("INSERT INTO mobile_targets(id,school_id,search_text,created_by,updated_by) VALUES($1,$2,'测试群',$3,$3)").bind(target).bind(school).bind(actor_id).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO mobile_targets(id,school_id,search_text,exact_name,created_by,updated_by) VALUES($1,$2,'测试群','实际完整群名',$3,$3)").bind(target).bind(school).bind(actor_id).execute(&pool).await.unwrap();
             sqlx::query("INSERT INTO mobile_device_target_bindings(id,school_id,device_id,target_id,created_by,updated_by) VALUES($1,$2,$3,$4,$5,$5)").bind(Uuid::new_v4()).bind(school).bind(device).bind(target).bind(actor_id).execute(&pool).await.unwrap();
         }
         let release = Uuid::new_v4();
@@ -466,6 +466,7 @@ async fn business_usage_is_atomic_scoped_idempotent_and_survives_delivery_change
     let input = UsageInput {
         device_ids: vec![f.device],
         targets: vec![UsageTarget {
+            exact_name: Some("实际完整群名".into()),
             id: Some(f.targets[0]),
             name: "测试群".into(),
             search_text: "测试群".into(),
@@ -680,9 +681,10 @@ async fn business_scope_materializes_without_delivery_acceptance_or_activation_a
     let input = UsageInput {
         device_ids: vec![f.device],
         targets: vec![UsageTarget {
+            exact_name: Some("实际完整群名".into()),
             id: None,
             name: "同页新增群".into(),
-            search_text: "  同页新增群  ".into(),
+            search_text: "同页  新增群".into(),
         }],
         max_calls: 5,
         expires_at: chrono::Utc::now() + chrono::Duration::hours(2),
@@ -955,6 +957,7 @@ async fn approved_business_resources_exist_without_any_adapter_or_delivery_recor
     let input = UsageInput {
         device_ids: vec![f.device],
         targets: vec![UsageTarget {
+            exact_name: Some("实际完整群名".into()),
             id: None,
             name: "新增目标".into(),
             search_text: "新增目标".into(),
@@ -1165,6 +1168,7 @@ async fn usage_overrides_reuse_and_renewal_keep_one_business_family() {
     let input = UsageInput {
         device_ids: vec![f.device, second],
         targets: vec![UsageTarget {
+            exact_name: Some("实际完整群名".into()),
             id: Some(f.targets[0]),
             name: "测试群".into(),
             search_text: "测试群".into(),
@@ -1186,7 +1190,7 @@ async fn usage_overrides_reuse_and_renewal_keep_one_business_family() {
         .unwrap();
     assert_eq!(p["body"]["locators"][0]["search_text"], "手机专用群");
     assert_eq!(p["body"]["locators"][1]["search_text"], "第二台专用群");
-    assert!(p["body"]["locators"][0]["target_locator_revision"].is_null());
+    assert_eq!(p["body"]["locators"][0]["target_locator_revision"], 1);
     // Display aliases and unused default names are not the phone's location.
     sqlx::query("UPDATE mobile_targets SET alias='显示名已更新',search_text='无关默认搜索名',locator_revision=locator_revision+1 WHERE id=$1").bind(f.targets[0]).execute(&f.pool).await.unwrap();
     let opened = r
@@ -1802,6 +1806,7 @@ async fn device_reenable_and_projection_drift_do_not_permanently_invalidate_scop
     let input = UsageInput {
         device_ids: vec![f.device],
         targets: vec![UsageTarget {
+            exact_name: Some("实际完整群名".into()),
             id: None,
             name: "漂移测试群".into(),
             search_text: "漂移测试群".into(),
@@ -2206,7 +2211,7 @@ async fn offline_preference_dispatches_authorized_phone_and_never_expands_scope(
         json!(b)
     );
     assert_eq!(
-        pool_current(&task["items"][0])["plan"]["search_text"],
+        pool_current(&task["items"][0])["plan"]["target"]["search_query"],
         "B专用群名"
     );
     assert_eq!(

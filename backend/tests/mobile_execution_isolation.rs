@@ -70,7 +70,7 @@ async fn shared_bindings_require_platform_authority_and_preserve_effective_locat
             "target",
             None,
             "target",
-            json!({"search_text":"默认  群🦦"}),
+            json!({"search_text":"默认  群🦦","exact_name":"完整群名🦦"}),
         )
         .await
         .unwrap();
@@ -116,7 +116,7 @@ async fn shared_bindings_require_platform_authority_and_preserve_effective_locat
     assert_eq!(rows[0]["search_text"], "手机  备注🦦");
     assert_eq!(rows[0]["search_source"], "binding_override");
     let source_revision = rows[0]["source_locator_revision"].clone();
-    service.write(&a,Some(school),"update-target",Some(target_id),"rename",json!({"expected_revision":1,"search_text":"新默认名","alias":"别名","remark":"备注","enabled":true})).await.unwrap();
+    service.write(&a,Some(school),"update-target",Some(target_id),"rename",json!({"expected_revision":1,"exact_name":"完整群名🦦","search_text":"新默认名","alias":"别名","remark":"备注","enabled":true})).await.unwrap();
     let rows = service
         .list(
             &a,
@@ -191,7 +191,7 @@ async fn one_shared_device_serves_two_schools_without_leaking_global_notes() {
                 "target",
                 None,
                 &format!("target-{index}"),
-                json!({"search_text":format!("群{index}")}),
+                json!({"search_text":format!("群{index}"),"exact_name":format!("完整群{index}")}),
             )
             .await
             .unwrap();
@@ -294,7 +294,7 @@ async fn batch_bind_is_atomic_and_never_infers_school_from_client() {
             "target",
             None,
             "target",
-            json!({"search_text":"群"}),
+            json!({"search_text":"群","exact_name":"完整群名"}),
         )
         .await
         .unwrap();
