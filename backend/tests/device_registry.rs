@@ -29,7 +29,7 @@ fn registry_contract_has_no_task_or_account_commands() {
     ] {
         assert!(serde_json::from_value::<Command>(json!({"operation":operation})).is_err());
     }
-    let value = json!({"operation":"enroll","code":"01234567","client_instance_id":"instance","protocol_version":9});
+    let value = json!({"operation":"enroll","code":"01234567","client_instance_id":"instance","protocol_version":10});
     let input: Command = serde_json::from_value(value.clone()).unwrap();
     assert_eq!(serde_json::to_value(input).unwrap(), value);
     assert!(
@@ -123,14 +123,14 @@ async fn pairing_rotation_revocation_and_idempotency_use_only_registry() {
         device_id: None,
         code: code.into(),
         client_instance_id: "instance".into(),
-        protocol_version: 9,
+        protocol_version: 10,
     };
     let credential = service
         .execute(Principal::Enrollment, scope(None), "pair", enroll.clone())
         .await
         .unwrap();
     assert_eq!(uid(&credential), device);
-    assert_eq!(credential["protocol_version"], 9);
+    assert_eq!(credential["protocol_version"], 10);
     let replay = service
         .execute(Principal::Enrollment, scope(None), "pair", enroll)
         .await
@@ -147,7 +147,7 @@ async fn pairing_rotation_revocation_and_idempotency_use_only_registry() {
                     device_id: None,
                     code: code.into(),
                     client_instance_id: "instance".into(),
-                    protocol_version: 9
+                    protocol_version: 10
                 }
             )
             .await

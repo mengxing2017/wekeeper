@@ -936,8 +936,32 @@ fn usage_summary_preserves_per_phone_override_and_ignores_unused_default_revisio
 
 #[tokio::test]
 async fn legacy_phone_send_and_maintenance_routes_are_absent() {
-    for version in 1..=8 {
+    for version in 1..=9 {
         for tail in [
+            "protocol-capabilities",
+            "send-capability-context",
+            "send-recovery-context",
+            "send-delegation-context",
+            "shared-task-inbox",
+            "shared-task-receipts",
+            "runtime-reports",
+            "send-delegation-decisions",
+            "failure-diagnostics",
+            "send-claims/00000000-0000-4000-8000-000000000001/renewals",
+            "send-claims/00000000-0000-4000-8000-000000000001/releases",
+            "send-claims/00000000-0000-4000-8000-000000000001/preparations",
+            "send-claims/00000000-0000-4000-8000-000000000001/invocations",
+            "send-claims",
+            "send-preparations",
+            "send-invocations",
+            "send-results",
+            "send-recoveries",
+            "send-settlements",
+            "send-inspection-claims",
+            "send-inspection-starts",
+            "send-inspection-results",
+            "send-task-inbox",
+            "send-task-receipts",
             "claims",
             "session",
             "flow-validations",
@@ -970,7 +994,7 @@ async fn legacy_phone_send_and_maintenance_routes_are_absent() {
 #[tokio::test]
 async fn registry_rotation_requires_device_identity_and_admin_registry_requires_account() {
     for (method, path) in [
-        ("POST", "/api/v9/device-execution/credential-rotations"),
+        ("POST", "/api/v10/device-execution/credential-rotations"),
         ("GET", "/api/v1/platform/execution-devices"),
     ] {
         let response = app()

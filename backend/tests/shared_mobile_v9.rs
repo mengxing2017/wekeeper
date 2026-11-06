@@ -102,7 +102,7 @@ impl Fixture {
         let artifact = Uuid::new_v4();
         let baseline = Uuid::new_v4();
         let fixture: Value = serde_json::from_str(include_str!(
-            "../../api-contract/fixtures/shared-mobile-send-v9.json"
+            "../../api-contract/fixtures/local-group-text-flow.json"
         ))
         .unwrap();
         sqlx::query("INSERT INTO mobile_v9_flows(id,name,flow,digest,created_by) VALUES($1,'Synthetic',$2,$3,$4)").bind(flow).bind(&fixture["flow"]).bind(fixture["flow_digest"].as_str()).bind(actor_id).execute(pool).await.unwrap();
@@ -117,7 +117,7 @@ impl Fixture {
             south::adapter::postgres::shared_send_v2::configuration,
         };
         let fixture: Value = serde_json::from_str(include_str!(
-            "../../api-contract/fixtures/shared-mobile-send-v9.json"
+            "../../api-contract/fixtures/local-group-text-flow.json"
         ))
         .unwrap();
         configuration::install(
@@ -910,92 +910,25 @@ async fn business_configuration_does_not_require_technical_delivery() {
     sqlx::query("INSERT INTO mobile_shared_runtime(device_id,credential_generation,runtime_epoch,ui_ready,paused,quiescent,observed_at) VALUES($1,1,$2,true,false,true,clock_timestamp())").bind(f.device).bind(epoch).execute(&f.pool).await.unwrap();
     sqlx::query("INSERT INTO mobile_v9_runtime_details(device_id,credential_generation,ui_context_epoch,conditions,apk_sha256) VALUES($1,1,'local','{}',repeat('a',64))").bind(f.device).execute(&f.pool).await.unwrap();
     let aid: Uuid = serde_json::from_value(task["items"][0]["attempts"][0]["id"].clone()).unwrap();
-    let claim = r
+    let grant = r
         .device_write(
             &c,
-            "device-owned-claim",
-            DeviceCommand::Claim(ClaimRequest {
-                eligible_attempt_ids: vec![aid],
-                runtime_epoch: epoch,
-            }),
+            "device-owned-grant",
+            DeviceCommand::Grant(
+                wekeeper_api::distribution::domain::shared_mobile::execution::GrantRequest {
+                    runtime_epoch: epoch,
+                    eligible_attempt_ids: vec![aid],
+                    inspection_id: None,
+                },
+            ),
         )
         .await
         .unwrap();
-    assert_eq!(claim["state"], "leased", "{claim}");
-    assert_eq!(claim["plan"]["execution"]["contract"], "device_owned/1");
-    assert!(claim["plan"].get("flow").is_none());
-    let id: Uuid = serde_json::from_value(claim["id"].clone()).unwrap();
-    let fence = claim["lease_fence"].as_i64().unwrap();
-    let prep = Preparation {
-        attempt_id: aid,
-        lease_fence: fence,
-        plan_digest: claim["plan_digest"].as_str().unwrap().into(),
-        content_digest: claim["content_digest"].as_str().unwrap().into(),
-        input_matches: true,
-        page_digest: "a".repeat(64),
-        flow_digest: None,
-    };
-    let mut bad = prep.clone();
-    bad.input_matches = false;
-    assert!(
-        r.device_write(
-            &c,
-            "device-owned-bad-preparation",
-            DeviceCommand::Prepare(id, bad)
-        )
-        .await
-        .is_err()
-    );
-    let prepared = r
-        .device_write(
-            &c,
-            "device-owned-preparation",
-            DeviceCommand::Prepare(id, prep.clone()),
-        )
-        .await
-        .unwrap();
-    let input = InvocationInput {
-        preparation_id: serde_json::from_value(prepared["id"].clone()).unwrap(),
-        lease_fence: fence,
-        plan_digest: prep.plan_digest,
-        content_digest: prep.content_digest,
-    };
-    let permit = r
-        .device_write(
-            &c,
-            "device-owned-permit",
-            DeviceCommand::Invoke(id, input.clone()),
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        permit,
-        r.device_write(
-            &c,
-            "device-owned-permit",
-            DeviceCommand::Invoke(id, input.clone())
-        )
-        .await
-        .unwrap()
-    );
-    assert!(
-        r.device_write(
-            &c,
-            "device-owned-new-permit",
-            DeviceCommand::Invoke(id, input)
-        )
-        .await
-        .is_err()
-    );
+    assert_eq!(grant["state"], "granted", "{grant}");
+    assert_eq!(grant["plan"]["execution"]["contract"], "device_owned/1");
+    assert!(grant["plan"].get("flow").is_none());
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_v9_invocations")
-            .fetch_one(&f.pool)
-            .await
-            .unwrap(),
-        1
-    );
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_v9_send_inspections")
             .fetch_one(&f.pool)
             .await
             .unwrap(),
@@ -1167,105 +1100,55 @@ async fn approved_business_resources_exist_without_any_adapter_or_delivery_recor
 
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn interrupted_claim_recovery_preserves_physical_owner_and_frozen_plan() {
-    use wekeeper_api::distribution::domain::shared_mobile::usage::*;
-    let f = Fixture::new().await;
-    let r = f.repo();
-    let p = r
-        .usage_write(
-            &f.actor,
-            f.school,
-            "recovery-preview",
-            UsageCommand::TaskPreview(UsageTaskInput {
-                draft_id: None,
-                expected_revision: None,
-                target_ids: f.targets.clone(),
-                message: "恢复测试".into(),
-                between_targets_seconds: 30,
-                selections: vec![],
-            }),
-        )
-        .await
-        .unwrap();
-    let task = r
-        .usage_write(
-            &f.actor,
-            f.school,
-            "recovery-confirm",
-            UsageCommand::TaskConfirm(Confirmation {
-                preview_id: serde_json::from_value(p["preview"]["id"].clone()).unwrap(),
-                preview_digest: p["preview"]["digest"].as_str().unwrap().into(),
-                confirmed: true,
-            }),
-        )
-        .await
-        .unwrap();
-    let attempt: Uuid =
-        serde_json::from_value(task["items"][0]["attempts"][0]["id"].clone()).unwrap();
-    let old_plan: Uuid = sqlx::query_scalar("SELECT plan_id FROM mobile_v9_attempts WHERE id=$1")
-        .bind(attempt)
-        .fetch_one(&f.pool)
-        .await
-        .unwrap();
-    let epoch = Uuid::new_v4();
-    sqlx::query("INSERT INTO mobile_shared_runtime(device_id,credential_generation,runtime_epoch,ui_ready,paused,quiescent,observed_at) VALUES($1,1,$2,true,false,true,clock_timestamp())").bind(f.device).bind(epoch).execute(&f.pool).await.unwrap();
-    // Simulate a pre-permit interrupted owner. Recovery requires fresh idle and releases only its own fence.
-    let claim = Uuid::new_v4();
-    let secret = "b".repeat(64);
-    sqlx::query("INSERT INTO mobile_v9_send_claims(id,school_id,attempt_id,device_id,credential_generation,runtime_epoch,lease_fence,recovery_credential_hash,state,expires_at) VALUES($1,$2,$3,$4,1,$5,7,$6,'active',clock_timestamp()+interval '60 seconds')").bind(claim).bind(f.school).bind(attempt).bind(f.device).bind(epoch).bind(wekeeper_api::business::hash(&secret)).execute(&f.pool).await.unwrap();
-    sqlx::query("UPDATE mobile_v9_attempts SET state='leased' WHERE id=$1")
-        .bind(attempt)
-        .execute(&f.pool)
-        .await
-        .unwrap();
-    sqlx::query("INSERT INTO mobile_shared_device_leases(device_id,holder_id,purpose,fence,expires_at) VALUES($1,$2,'send',7,clock_timestamp()+interval '60 seconds')").bind(f.device).bind(claim).execute(&f.pool).await.unwrap();
-    sqlx::query("UPDATE mobile_shared_runtime SET quiescent=false WHERE device_id=$1")
-        .bind(f.device)
-        .execute(&f.pool)
-        .await
-        .unwrap();
-    let recovery =
-        wekeeper_api::distribution::domain::shared_mobile::shared_send_v2::ClaimRecovery {
-            claim_id: claim,
-            recovery_credential: secret,
-        };
-    assert!(r.recover_claim(recovery.clone()).await.is_err());
-    assert_eq!(
-        sqlx::query_scalar::<_, String>("SELECT state FROM mobile_v9_send_claims WHERE id=$1")
-            .bind(claim)
-            .fetch_one(&f.pool)
-            .await
-            .unwrap(),
-        "active"
-    );
-    sqlx::query("UPDATE mobile_shared_runtime SET quiescent=true,observed_at=clock_timestamp() WHERE device_id=$1").bind(f.device).execute(&f.pool).await.unwrap();
-    assert_eq!(
-        r.recover_claim(recovery.clone()).await.unwrap()["state"],
-        "failed_before_call"
-    );
-    assert!(!sqlx::query_scalar::<_,bool>("SELECT expires_at>clock_timestamp() FROM mobile_shared_device_leases WHERE device_id=$1").bind(f.device).fetch_one(&f.pool).await.unwrap());
-    let other = Uuid::new_v4();
-    sqlx::query("UPDATE mobile_shared_device_leases SET holder_id=$2,fence=8,expires_at=clock_timestamp()+interval '60 seconds' WHERE device_id=$1").bind(f.device).bind(other).execute(&f.pool).await.unwrap();
-    r.recover_claim(recovery).await.unwrap();
-    assert!(sqlx::query_scalar::<_,bool>("SELECT expires_at>clock_timestamp() FROM mobile_shared_device_leases WHERE device_id=$1 AND holder_id=$2 AND fence=8").bind(f.device).bind(other).fetch_one(&f.pool).await.unwrap());
+async fn durable_grant_replay_and_duplicate_receipt_do_not_extend_deadline() {
+    let f = Fixture::with_adapter(false).await;
+    let b = pool_phone(&f, "B").await;
+    let (ca, ea) = pool_ready(&f, f.device).await;
+    let (_cb, _eb) = pool_ready(&f, b).await;
+    let task = pool_confirm(&f, vec![f.targets[0]]).await;
+    pool_tick(&f).await;
+    let detail = pool_detail(&f, &task).await;
+    let aid = serde_json::from_value(pool_current(&detail["items"][0])["id"].clone()).unwrap();
+    let grant = pool_claim(&f, &ca, ea, aid).await;
+    assert_eq!(grant["state"], "granted", "{grant}");
 
-    // Even if an operator requeues a previously claimed item, its rules are not rewritten.
-    sqlx::query("UPDATE mobile_v9_attempts SET state='queued',plan_id=$2 WHERE id=$1")
-        .bind(attempt)
-        .bind(old_plan)
-        .execute(&f.pool)
+    let request = wekeeper_api::distribution::domain::shared_mobile::execution::GrantRequest {
+        runtime_epoch: ea,
+        eligible_attempt_ids: vec![aid],
+        inspection_id: None,
+    };
+    let replay = f
+        .repo()
+        .device_write(&ca, "pool-grant", DeviceCommand::Grant(request))
         .await
         .unwrap();
-    r.reconcile_usages().await.unwrap();
-    assert_eq!(
-        sqlx::query_scalar::<_, Uuid>("SELECT plan_id FROM mobile_v9_attempts WHERE id=$1")
-            .bind(attempt)
-            .fetch_one(&f.pool)
-            .await
-            .unwrap(),
-        old_plan
-    );
-
+    assert_eq!(grant, replay);
+    let receipt = wekeeper_api::distribution::domain::shared_mobile::execution::ExecutionReceipt {
+        execution_id: serde_json::from_value(grant["id"].clone()).unwrap(),
+    };
+    f.repo()
+        .device_write(&ca, "received", DeviceCommand::Receipt(receipt.clone()))
+        .await
+        .unwrap();
+    let first: chrono::DateTime<chrono::Utc> = sqlx::query_scalar(
+        "SELECT result_deadline_at FROM mobile_execution_grants WHERE attempt_id=$1",
+    )
+    .bind(aid)
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    f.repo()
+        .device_write(&ca, "received-again", DeviceCommand::Receipt(receipt))
+        .await
+        .unwrap();
+    let second: chrono::DateTime<chrono::Utc> = sqlx::query_scalar(
+        "SELECT result_deadline_at FROM mobile_execution_grants WHERE attempt_id=$1",
+    )
+    .bind(aid)
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(first, second);
     f.close().await;
 }
 
@@ -2072,7 +1955,7 @@ async fn runtime_configuration_is_independent_and_invalid_update_does_not_replac
         );
     }
     let fixture: Value = serde_json::from_str(include_str!(
-        "../../api-contract/fixtures/shared-mobile-send-v9.json"
+        "../../api-contract/fixtures/local-group-text-flow.json"
     ))
     .unwrap();
     let mut bad = RuntimeConfiguration {
@@ -2265,56 +2148,22 @@ async fn pool_claim(
     f: &Fixture,
     c: &wekeeper_api::distribution::domain::device_control::Credential,
     epoch: Uuid,
-    attempt: &Value,
-    key: &str,
+    aid: Uuid,
 ) -> Value {
     f.repo()
         .device_write(
             c,
-            key,
-            DeviceCommand::Claim(ClaimRequest {
-                eligible_attempt_ids: vec![serde_json::from_value(attempt["id"].clone()).unwrap()],
-                runtime_epoch: epoch,
-            }),
-        )
-        .await
-        .unwrap()
-}
-async fn pool_prepare(
-    f: &Fixture,
-    c: &wekeeper_api::distribution::domain::device_control::Credential,
-    claim: &Value,
-) -> (Uuid, InvocationInput) {
-    let id = serde_json::from_value(claim["id"].clone()).unwrap();
-    let prepared = f
-        .repo()
-        .device_write(
-            c,
-            "pool-prepare",
-            DeviceCommand::Prepare(
-                id,
-                Preparation {
-                    attempt_id: serde_json::from_value(claim["attempt_id"].clone()).unwrap(),
-                    lease_fence: claim["lease_fence"].as_i64().unwrap(),
-                    plan_digest: claim["plan_digest"].as_str().unwrap().into(),
-                    content_digest: claim["content_digest"].as_str().unwrap().into(),
-                    input_matches: true,
-                    page_digest: "a".repeat(64),
-                    flow_digest: None,
+            "pool-grant",
+            DeviceCommand::Grant(
+                wekeeper_api::distribution::domain::shared_mobile::execution::GrantRequest {
+                    runtime_epoch: epoch,
+                    eligible_attempt_ids: vec![aid],
+                    inspection_id: None,
                 },
             ),
         )
         .await
-        .unwrap();
-    (
-        id,
-        InvocationInput {
-            preparation_id: serde_json::from_value(prepared["id"].clone()).unwrap(),
-            lease_fence: claim["lease_fence"].as_i64().unwrap(),
-            plan_digest: claim["plan_digest"].as_str().unwrap().into(),
-            content_digest: claim["content_digest"].as_str().unwrap().into(),
-        },
-    )
+        .unwrap()
 }
 
 #[tokio::test]
@@ -2375,394 +2224,166 @@ async fn offline_preference_dispatches_authorized_phone_and_never_expands_scope(
 
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn unissued_offline_claim_is_closed_without_idle_proof_and_cannot_invoke_late() {
+async fn offline_granted_phone_moves_to_next_without_receipt_or_idle_proof() {
     let f = Fixture::with_adapter(false).await;
     let b = pool_phone(&f, "B").await;
     let (ca, ea) = pool_ready(&f, f.device).await;
-    let (cb, eb) = pool_ready(&f, b).await;
+    let (_cb, _eb) = pool_ready(&f, b).await;
     let task = pool_confirm(&f, vec![f.targets[0]]).await;
-    let claim = pool_claim(&f, &ca, ea, pool_current(&task["items"][0]), "claim-a").await;
-    assert_eq!(claim["state"], "leased");
-    let (id, input) = pool_prepare(&f, &ca, &claim).await;
+    pool_tick(&f).await;
+    let detail = pool_detail(&f, &task).await;
+    let aid = serde_json::from_value(pool_current(&detail["items"][0])["id"].clone()).unwrap();
+    let grant = pool_claim(&f, &ca, ea, aid).await;
+    assert_eq!(grant["state"], "granted", "{grant}");
+
     sqlx::query("UPDATE device_control_sessions SET connected=false WHERE device_id=$1")
         .bind(f.device)
         .execute(&f.pool)
         .await
         .unwrap();
-    sqlx::query("UPDATE mobile_shared_runtime SET quiescent=false WHERE device_id=$1")
-        .bind(f.device)
-        .execute(&f.pool)
-        .await
-        .unwrap();
     pool_tick(&f).await;
-    assert!(
-        f.repo()
-            .device_write(&ca, "late-invoke", DeviceCommand::Invoke(id, input))
-            .await
-            .is_err()
-    );
     let detail = pool_detail(&f, &task).await;
     assert_eq!(
         pool_current(&detail["items"][0])["plan"]["device_id"],
         json!(b)
     );
-    assert_eq!(
-        sqlx::query_scalar::<_, String>("SELECT state FROM mobile_v9_send_claims WHERE id=$1")
-            .bind(id)
-            .fetch_one(&f.pool)
-            .await
-            .unwrap(),
-        "closed"
-    );
-    assert_eq!(
-        sqlx::query_scalar::<_, Uuid>(
-            "SELECT holder_id FROM mobile_shared_device_leases WHERE device_id=$1"
-        )
-        .bind(f.device)
-        .fetch_one(&f.pool)
-        .await
-        .unwrap(),
-        id
-    );
-    assert!(
-        !sqlx::query_scalar::<_, bool>(
-            "SELECT quiescent FROM mobile_shared_runtime WHERE device_id=$1"
-        )
-        .bind(f.device)
-        .fetch_one(&f.pool)
-        .await
-        .unwrap()
-    );
-    sqlx::query(
-        "UPDATE mobile_v9_tasks SET next_eligible_at=clock_timestamp()-interval '1 second'",
-    )
-    .execute(&f.pool)
-    .await
-    .unwrap();
-    let bclaim = pool_claim(&f, &cb, eb, pool_current(&detail["items"][0]), "claim-b").await;
-    assert_eq!(bclaim["state"], "leased");
-    f.close().await;
-}
-
-#[tokio::test]
-#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn issued_unknown_is_local_to_target_and_does_not_wait_for_settlement_of_other_phone() {
-    let f = Fixture::with_adapter(false).await;
-    let b = pool_phone(&f, "B").await;
-    let (ca, ea) = pool_ready(&f, f.device).await;
-    let (cb, eb) = pool_ready(&f, b).await;
-    let task = pool_confirm(&f, f.targets.clone()).await;
-    let claim = pool_claim(&f, &ca, ea, pool_current(&task["items"][0]), "claim-a").await;
-    let (id, input) = pool_prepare(&f, &ca, &claim).await;
-    let permit = f
-        .repo()
-        .device_write(&ca, "permit-a", DeviceCommand::Invoke(id, input))
-        .await
-        .unwrap();
-    assert!(permit["invocation_id"].is_string());
-    sqlx::query("UPDATE device_control_sessions SET connected=false WHERE device_id=$1")
-        .bind(f.device)
-        .execute(&f.pool)
-        .await
-        .unwrap();
-    sqlx::query(
-        "UPDATE mobile_v9_invocations SET execute_before=clock_timestamp()-interval '1 second'",
-    )
-    .execute(&f.pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "UPDATE mobile_v9_tasks SET next_eligible_at=clock_timestamp()-interval '1 second'",
-    )
-    .execute(&f.pool)
-    .await
-    .unwrap();
-    sqlx::query("UPDATE mobile_v9_quota_reservations SET recorded_at=clock_timestamp()-interval '2 minutes'").execute(&f.pool).await.unwrap();
-    pool_tick(&f).await;
-    let detail = pool_detail(&f, &task).await;
-    assert_eq!(detail["items"][0]["dispatch"]["state"], "needs_review");
-    assert_eq!(pool_current(&detail["items"][0])["id"], claim["attempt_id"]);
-    assert_eq!(pool_current(&detail["items"][0])["state"], "unknown");
-    assert_eq!(
-        pool_current(&detail["items"][1])["plan"]["device_id"],
-        json!(b)
-    );
-    assert_eq!(
-        pool_claim(&f, &cb, eb, pool_current(&detail["items"][1]), "claim-b").await["state"],
-        "leased"
-    );
-    f.close().await;
-}
-
-#[tokio::test]
-#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn all_offline_accepts_and_ui_failure_with_any_version_diagnostics_moves_to_another_candidate()
- {
-    let f = Fixture::with_adapter(false).await;
-    let b = pool_phone(&f, "B").await;
-    let task = pool_confirm(&f, vec![f.targets[0]]).await;
-    assert_eq!(task["items"][0]["dispatch"]["state"], "waiting_resources");
-    let (ca, ea) = pool_ready(&f, f.device).await;
-    pool_ready(&f, b).await;
-    pool_tick(&f).await;
-    let claim = pool_claim(&f, &ca, ea, pool_current(&task["items"][0]), "claim-a").await;
-    let event = ResultEvent {
-        result_credential: None,
-        schema: SCHEMA.into(),
-        event_id: Uuid::new_v4(),
-        claim_id: serde_json::from_value(claim["id"].clone()).unwrap(),
-        attempt_id: serde_json::from_value(claim["attempt_id"].clone()).unwrap(),
-        invocation_id: None,
-        credential_generation: 1,
-        lease_fence: claim["lease_fence"].as_i64().unwrap(),
-        plan_digest: claim["plan_digest"].as_str().unwrap().into(),
-        content_digest: claim["content_digest"].as_str().unwrap().into(),
-        outcome: "failed_before_call".into(),
-        reason: "page_unrecognized".into(),
-        consumed: false,
-        calling_marked: false,
-        evidence: String::new(),
+    let request = wekeeper_api::distribution::domain::shared_mobile::execution::GrantRequest {
+        runtime_epoch: ea,
+        eligible_attempt_ids: vec![aid],
+        inspection_id: None,
     };
-    let first = f
+    let replay = f
         .repo()
-        .device_write(&ca, "failed", DeviceCommand::Result(event.clone()))
+        .device_write(&ca, "pool-grant", DeviceCommand::Grant(request))
         .await
         .unwrap();
-    assert_eq!(
-        first,
-        f.repo()
-            .device_write(&ca, "failed-again", DeviceCommand::Result(event))
-            .await
-            .unwrap()
-    );
-    // Product versions are diagnostic observations, never acceptance or candidate gates.
-    // No UI flow or product-version matching data is sent in the business intent.
-    assert_eq!(
-        claim["plan"]["execution"],
-        json!({"contract":"device_owned/1","capability":"wecom.group_text"})
-    );
-    assert!(claim["plan"].get("flow").is_none());
-    assert!(claim["plan"].get("version_code").is_none());
-    for (i, version) in ["unknown", "1", "5.0.13 / 84802", "999999"]
-        .iter()
-        .enumerate()
-    {
-        f.repo()
-            .device_write(
-                &ca,
-                &format!("ui-diagnostic-{i}"),
-                DeviceCommand::Diagnostic(Diagnostic {
-                    event_id: Uuid::new_v4(),
-                    inspection_id: None,
-                    claim_id: Some(serde_json::from_value(claim["id"].clone()).unwrap()),
-                    code: "page_unrecognized".into(),
-                    stage: "send".into(),
-                    details: [("app_version".into(), (*version).into())].into(),
-                }),
-            )
-            .await
-            .unwrap();
-    }
+    assert_eq!(replay["state"], "superseded");
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn unknown_waits_only_until_result_deadline_then_switches_phone() {
+    let f = Fixture::with_adapter(false).await;
+    let b = pool_phone(&f, "B").await;
+    let (ca, ea) = pool_ready(&f, f.device).await;
+    let (_cb, _eb) = pool_ready(&f, b).await;
+    let task = pool_confirm(&f, vec![f.targets[0]]).await;
     pool_tick(&f).await;
     let detail = pool_detail(&f, &task).await;
+    let aid = serde_json::from_value(pool_current(&detail["items"][0])["id"].clone()).unwrap();
+    let grant = pool_claim(&f, &ca, ea, aid).await;
+    assert_eq!(grant["state"], "granted", "{grant}");
+
+    let completion = completion(&grant, "unknown");
+    f.repo().complete_execution(completion).await.unwrap();
+    pool_tick(&f).await;
+    let before = pool_detail(&f, &task).await;
+    assert_eq!(pool_current(&before["items"][0])["id"], json!(aid));
+    sqlx::query("UPDATE mobile_execution_grants SET result_deadline_at=clock_timestamp()-interval '1 second' WHERE attempt_id=$1").bind(aid).execute(&f.pool).await.unwrap();
+    pool_tick(&f).await;
+    let after = pool_detail(&f, &task).await;
     assert_eq!(
-        pool_current(&detail["items"][0])["plan"]["device_id"],
+        pool_current(&after["items"][0])["plan"]["device_id"],
         json!(b)
     );
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn explicit_failure_switches_on_next_scan_without_five_minute_wait() {
+    let f = Fixture::with_adapter(false).await;
+    let b = pool_phone(&f, "B").await;
+    let (ca, ea) = pool_ready(&f, f.device).await;
+    let (_cb, _eb) = pool_ready(&f, b).await;
+    let task = pool_confirm(&f, vec![f.targets[0]]).await;
+    pool_tick(&f).await;
+    let detail = pool_detail(&f, &task).await;
+    let aid = serde_json::from_value(pool_current(&detail["items"][0])["id"].clone()).unwrap();
+    let grant = pool_claim(&f, &ca, ea, aid).await;
+    assert_eq!(grant["state"], "granted", "{grant}");
+
+    let failed = completion(&grant, "not_called");
+    let first = f.repo().complete_execution(failed.clone()).await.unwrap();
+    assert_eq!(first, f.repo().complete_execution(failed).await.unwrap());
+    pool_tick(&f).await;
+    let after = pool_detail(&f, &task).await;
     assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_v9_invocations")
-            .fetch_one(&f.pool)
-            .await
-            .unwrap(),
-        0
-    );
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>(
-            "SELECT count(*) FROM mobile_v9_dispatch_failures WHERE failures=1"
-        )
-        .fetch_one(&f.pool)
-        .await
-        .unwrap(),
-        1
+        pool_current(&after["items"][0])["plan"]["device_id"],
+        json!(b)
     );
     f.close().await;
 }
 
 #[tokio::test]
 #[ignore = "requires explicit isolated database"]
-async fn delayed_authenticated_result_reopens_only_its_target_after_reassignment() {
-    let f = Fixture::new().await;
+async fn late_success_keeps_successor_identity_and_completes_target() {
+    let f = Fixture::with_adapter(false).await;
     let b = pool_phone(&f, "B").await;
     let (ca, ea) = pool_ready(&f, f.device).await;
     let (cb, eb) = pool_ready(&f, b).await;
-    let task = pool_confirm(&f, f.targets.clone()).await;
-    let claim = pool_claim(&f, &ca, ea, pool_current(&task["items"][0]), "claim-a").await;
-    let (id, input) = pool_prepare(&f, &ca, &claim).await;
-    let permit = f
-        .repo()
-        .device_write(&ca, "permit-a", DeviceCommand::Invoke(id, input))
-        .await
-        .unwrap();
-    // Permit has expired; expiry alone does not establish that nothing was sent.
-    sqlx::query(
-        "UPDATE mobile_v9_invocations SET execute_before=clock_timestamp()-interval '1 second'",
-    )
-    .execute(&f.pool)
-    .await
-    .unwrap();
+    let task = pool_confirm(&f, vec![f.targets[0]]).await;
     pool_tick(&f).await;
     let detail = pool_detail(&f, &task).await;
-    let old = pool_current(&detail["items"][0]);
+    let aid = serde_json::from_value(pool_current(&detail["items"][0])["id"].clone()).unwrap();
+    let grant = pool_claim(&f, &ca, ea, aid).await;
+    assert_eq!(grant["state"], "granted", "{grant}");
+
+    sqlx::query("UPDATE mobile_execution_grants SET result_deadline_at=clock_timestamp()-interval '1 second' WHERE attempt_id=$1").bind(aid).execute(&f.pool).await.unwrap();
+    pool_tick(&f).await;
+    let before = pool_detail(&f, &task).await;
+    let next = pool_current(&before["items"][0])["id"].clone();
+    assert_ne!(next, json!(aid));
     f.repo()
-        .school_write(
-            &f.actor,
-            f.school,
-            "review-a",
-            SchoolCommand::Review(
-                serde_json::from_value(old["id"].clone()).unwrap(),
-                Review {
-                    expected_revision: old["revision"].as_i64().unwrap(),
-                    decision: "verified_not_sent".into(),
-                    evidence: "模拟核对依据，后续将收到冲突证据".into(),
-                },
-            ),
-        )
+        .complete_execution(completion(&grant, "observed_sent"))
         .await
         .unwrap();
-    sqlx::query("UPDATE device_control_sessions SET connected=false WHERE device_id=$1")
-        .bind(f.device)
-        .execute(&f.pool)
-        .await
-        .unwrap();
-    sqlx::query("UPDATE mobile_v9_quota_reservations SET recorded_at=clock_timestamp()-interval '2 minutes'").execute(&f.pool).await.unwrap();
-    sqlx::query(
-        "UPDATE mobile_v9_tasks SET next_eligible_at=clock_timestamp()-interval '1 second'",
-    )
-    .execute(&f.pool)
-    .await
-    .unwrap();
+    // A persisted success fences grants before its asynchronous projection is refreshed.
+    let denied = pool_claim(&f, &cb, eb, serde_json::from_value(next.clone()).unwrap()).await;
+    assert_eq!(denied["state"], "idle");
     pool_tick(&f).await;
-    let replacement = pool_detail(&f, &task).await;
-    let new_id = pool_current(&replacement["items"][0])["id"].clone();
-    assert_ne!(new_id, claim["attempt_id"]);
-    assert_eq!(
-        pool_current(&replacement["items"][0])["plan"]["device_id"],
-        json!(b)
-    );
-    let event = ResultEvent {
-        schema: SCHEMA.into(),
-        event_id: Uuid::new_v4(),
-        claim_id: id,
-        attempt_id: serde_json::from_value(claim["attempt_id"].clone()).unwrap(),
-        invocation_id: Some(serde_json::from_value(permit["invocation_id"].clone()).unwrap()),
-        result_credential: Some(permit["result_credential"].as_str().unwrap().into()),
-        credential_generation: 1,
-        lease_fence: claim["lease_fence"].as_i64().unwrap(),
-        plan_digest: claim["plan_digest"].as_str().unwrap().into(),
-        content_digest: claim["content_digest"].as_str().unwrap().into(),
-        outcome: "observed_sent".into(),
-        reason: "delayed_evidence".into(),
-        consumed: true,
-        calling_marked: true,
-        evidence: "延迟补报".into(),
-    };
-    let receipt = f
-        .repo()
-        .device_write(&ca, "delayed", DeviceCommand::Result(event.clone()))
-        .await
-        .unwrap();
-    assert_eq!(receipt["disposition"], "archived");
-    assert_eq!(
-        receipt,
-        f.repo()
-            .device_write(&ca, "delayed-again", DeviceCommand::Result(event))
-            .await
-            .unwrap()
-    );
-    pool_tick(&f).await;
-    let conflict = pool_detail(&f, &task).await;
-    assert_eq!(pool_current(&conflict["items"][0])["id"], new_id);
-    assert_eq!(conflict["items"][0]["dispatch"]["state"], "needs_review");
-    assert_eq!(
-        conflict["items"][0]["attempts"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|a| a["id"] == claim["attempt_id"])
-            .unwrap()["state"],
-        "unknown"
-    );
-    // B cannot repeat the disputed target, but can claim an unrelated target.
-    assert_ne!(
-        pool_claim(
-            &f,
-            &cb,
-            eb,
-            pool_current(&conflict["items"][0]),
-            "blocked-b"
-        )
-        .await["state"],
-        "leased"
-    );
-    assert_eq!(
-        pool_claim(&f, &cb, eb, pool_current(&conflict["items"][1]), "other-b").await["state"],
-        "leased"
-    );
+    let after = pool_detail(&f, &task).await;
+    assert_eq!(after["items"][0]["dispatch"]["state"], "completed");
+    assert_eq!(pool_current(&after["items"][0])["id"], next);
     f.close().await;
 }
 
 #[tokio::test]
 #[ignore = "requires explicit isolated database"]
-async fn invocation_and_offline_dispatch_share_one_authoritative_guard() {
-    let f = Fixture::new().await;
+async fn concurrent_scanners_create_one_current_successor() {
+    let f = Fixture::with_adapter(false).await;
     let b = pool_phone(&f, "B").await;
     let (ca, ea) = pool_ready(&f, f.device).await;
-    pool_ready(&f, b).await;
+    let (_cb, _eb) = pool_ready(&f, b).await;
     let task = pool_confirm(&f, vec![f.targets[0]]).await;
-    let claim = pool_claim(&f, &ca, ea, pool_current(&task["items"][0]), "claim-a").await;
-    let (id, input) = pool_prepare(&f, &ca, &claim).await;
-    sqlx::query(
-        "UPDATE mobile_v9_dispatch_state SET next_retry_at=clock_timestamp()-interval '1 second'",
-    )
-    .execute(&f.pool)
-    .await
-    .unwrap();
-    let r = f.repo();
-    // Race the last possible invocation against the observed disconnection and
-    // dispatch. Either winner must leave exactly one valid sending identity.
-    let (invoke, ()) = tokio::join!(
-        r.device_write(&ca, "racing-permit", DeviceCommand::Invoke(id, input)),
-        async {
-            sqlx::query("UPDATE device_control_sessions SET connected=false WHERE device_id=$1")
-                .bind(f.device)
-                .execute(&f.pool)
-                .await
-                .unwrap();
-            r.reconcile_dispatch().await.unwrap();
-        }
-    );
     pool_tick(&f).await;
     let detail = pool_detail(&f, &task).await;
-    let current = pool_current(&detail["items"][0]);
-    let issued: i64 = sqlx::query_scalar("SELECT count(*) FROM mobile_v9_invocations")
-        .fetch_one(&f.pool)
-        .await
-        .unwrap();
-    if invoke.is_ok() {
-        assert_eq!(issued, 1);
-        assert_eq!(current["id"], claim["attempt_id"]);
-        assert_eq!(current["plan"]["device_id"], json!(f.device));
-    } else {
-        assert_eq!(issued, 0);
-        assert_ne!(current["id"], claim["attempt_id"]);
-        assert_eq!(current["plan"]["device_id"], json!(b));
-    }
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_v9_attempts WHERE current")
-            .fetch_one(&f.pool)
-            .await
-            .unwrap(),
-        1
-    );
+    let aid = serde_json::from_value(pool_current(&detail["items"][0])["id"].clone()).unwrap();
+    let grant = pool_claim(&f, &ca, ea, aid).await;
+    assert_eq!(grant["state"], "granted", "{grant}");
+
+    sqlx::query("UPDATE mobile_execution_grants SET result_deadline_at=clock_timestamp()-interval '1 second' WHERE attempt_id=$1").bind(aid).execute(&f.pool).await.unwrap();
+    let r = f.repo();
+    let (a, b_result) = tokio::join!(r.reconcile_dispatch(), r.reconcile_dispatch());
+    a.unwrap();
+    b_result.unwrap();
+    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM mobile_v9_attempts WHERE item_id=(SELECT item_id FROM mobile_v9_attempts WHERE id=$1) AND current").bind(aid).fetch_one(&f.pool).await.unwrap(),1);
     f.close().await;
+}
+
+fn completion(
+    grant: &Value,
+    outcome: &str,
+) -> wekeeper_api::distribution::domain::shared_mobile::execution::Completion {
+    wekeeper_api::distribution::domain::shared_mobile::execution::Completion {
+        result_id: Uuid::new_v4(),
+        execution_id: serde_json::from_value(grant["execution_id"].clone()).unwrap(),
+        result_credential: grant["result_credential"].as_str().unwrap().into(),
+        outcome: outcome.into(),
+        reason: "synthetic".into(),
+        evidence: "synthetic evidence".into(),
+        consumed: matches!(outcome, "observed_sent" | "unknown"),
+        calling_marked: matches!(outcome, "observed_sent" | "unknown"),
+    }
 }
