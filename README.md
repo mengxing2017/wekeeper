@@ -268,7 +268,7 @@ chmod 600 .env
 
 已有 `.env` 时直接编辑。至少配置发布的 `API_IMAGE`、`WEB_IMAGE`、强 `POSTGRES_PASSWORD`、公开 origin 和 TLS 入口。
 
-使用共享手机发送时，另执行一次 `openssl rand -hex 32`，将生成的 64 个十六进制字符保存为 `.env` 的 `WEKEEPER_SHARED_SEND_KEY`。跨实例、重启和数据库恢复保持原值，并配套备份；不要每次启动重新生成。已有部署新增此配置后须重新创建 API 容器，不能仅 restart。Compose 与独立 Docker/1Panel 的完整步骤见[共享发送密钥配置](docs/runbooks/docker.md#共享手机发送密钥-首次配置与已有部署更新)。
+使用共享手机发送时，另执行一次 `openssl rand -hex 32`，将生成的 64 个十六进制字符保存为 `.env` 的 `WEKEEPER_SHARED_SEND_KEY`。执行签名密钥由该配置通过 HKDF 自动派生，无需额外密钥配置。跨实例、重启和数据库恢复保持原值，并配套备份；不要每次启动重新生成。已有部署新增此配置后须重新创建 API 容器，不能仅 restart。Compose 与独立 Docker/1Panel 的完整步骤见[共享发送密钥配置](docs/runbooks/docker.md#共享手机发送密钥-首次配置与已有部署更新)。
 
 | 部署方式 | 关键配置 |
 | --- | --- |
