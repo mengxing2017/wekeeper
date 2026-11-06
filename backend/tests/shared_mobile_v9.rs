@@ -2166,6 +2166,33 @@ async fn pool_claim(
         .unwrap()
 }
 
+// Internal scheduler columns must not enter the strict public DispatchSnapshot.
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn task_confirmation_and_read_exclude_internal_dispatch_cursor() {
+    let f = Fixture::with_adapter(false).await;
+    // An offline phone must not prevent task acceptance or require an extra opening step.
+    let task = pool_confirm(&f, vec![f.targets[0]]).await;
+    let dispatch = &task["items"][0]["dispatch"];
+    assert_eq!(dispatch["state"], "waiting_resources");
+    assert!(dispatch.get("candidate_cursor").is_none());
+    serde_json::from_value::<DispatchSnapshot>(dispatch.clone()).unwrap();
+    let item: Uuid = serde_json::from_value(task["items"][0]["id"].clone()).unwrap();
+    sqlx::query("UPDATE mobile_v9_dispatch_state SET candidate_cursor=7 WHERE item_id=$1")
+        .bind(item)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let detail = pool_detail(&f, &task).await;
+    assert_eq!(detail["items"][0]["dispatch"], *dispatch);
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM mobile_v9_tasks")
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1, "confirmation must commit the accepted task");
+    f.close().await;
+}
+
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn offline_preference_dispatches_authorized_phone_and_never_expands_scope() {
