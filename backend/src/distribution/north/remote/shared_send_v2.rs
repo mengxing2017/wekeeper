@@ -235,6 +235,23 @@ async fn diagnostic(
             .await?,
     ))
 }
+async fn task_delivery(
+    State(a): State<Application>,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    let c = credential(&a, &h).await?;
+    Ok(resource(
+        "task-deliveries",
+        service(&a)
+            .device_write(
+                &c,
+                key(&h),
+                DeviceCommand::Deliver(input.decode("task-deliveries")?),
+            )
+            .await?,
+    ))
+}
 async fn execution_grant(
     State(a): State<Application>,
     h: HeaderMap,
@@ -280,6 +297,10 @@ async fn execution_completion(State(a): State<Application>, input: Input) -> Res
 pub fn router() -> Router<Application> {
     Router::new()
         .merge(usage_router())
+        .route(
+            "/api/v10/device-execution/task-deliveries",
+            post(task_delivery),
+        )
         .route(
             "/api/v10/device-execution/execution-grants",
             post(execution_grant),

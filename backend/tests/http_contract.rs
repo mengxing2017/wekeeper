@@ -1014,3 +1014,28 @@ async fn registry_rotation_requires_device_identity_and_admin_registry_requires_
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
     }
 }
+
+#[test]
+fn definitive_dependency_rejection_uses_conflict_status() {
+    use axum::response::IntoResponse;
+    let response = wekeeper_api::business::Error::Policy("plan_dependency_changed").into_response();
+    assert_eq!(response.status(), axum::http::StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn task_delivery_is_a_device_authenticated_jsonapi_endpoint() {
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v10/device-execution/task-deliveries")
+                .header("content-type", "application/vnd.api+json")
+                .body(Body::from(
+                    json!({"data":{"type":"task-deliveries","attributes":{"runtime_epoch":"00000000-0000-4000-8000-000000000001","inspection_id":null}}}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}

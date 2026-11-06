@@ -12,6 +12,23 @@ pub struct GrantRequest {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct TaskDelivery {
+    pub id: Uuid,
+    pub schema: String,
+    pub state: String,
+    pub reason: Option<String>,
+    pub verification_key: String,
+    pub execution: Option<serde_json::Value>,
+}
+/// Task delivery carries the executable authorization; clients never select send attempts.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeliveryRequest {
+    pub runtime_epoch: Uuid,
+    pub inspection_id: Option<Uuid>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ExecutionReceipt {
     pub execution_id: Uuid,
 }
@@ -85,6 +102,16 @@ pub fn replacement_reason(
 mod tests {
     use super::*;
     #[test]
+    fn delivery_request_does_not_accept_downstream_candidate_selection() {
+        let runtime = Uuid::new_v4();
+        let request = serde_json::json!({"runtime_epoch":runtime,"inspection_id":null});
+        let parsed: DeliveryRequest = serde_json::from_value(request.clone()).unwrap();
+        assert_eq!(serde_json::to_value(parsed).unwrap(), request);
+        let mut legacy = request;
+        legacy["eligible_attempt_ids"] = serde_json::json!([]);
+        assert!(serde_json::from_value::<DeliveryRequest>(legacy).is_err());
+    }
+    #[test]
     fn dispatch_does_not_wait_for_old_device_or_unknown_review() {
         assert_eq!(
             replacement_reason(false, None, false),
@@ -115,6 +142,11 @@ mod wire_tests {
             "/../api-contract/fixtures/durable-execution.json"
         )))
         .unwrap();
+        let delivery: TaskDelivery = serde_json::from_value(f["delivery"].clone()).unwrap();
+        assert_eq!(delivery.schema, "task_delivery/1");
+        assert_eq!(delivery.execution.as_ref().unwrap(), &f["grant"]);
+        assert_eq!(delivery.verification_key, f["verification_key"]);
+        assert_eq!(serde_json::to_value(delivery).unwrap(), f["delivery"]);
         let event: Completion = serde_json::from_value(f["completion"].clone()).unwrap();
         event.validate().unwrap();
         assert_eq!(serde_json::to_value(event).unwrap(), f["completion"]);

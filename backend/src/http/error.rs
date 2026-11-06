@@ -106,6 +106,7 @@ impl IntoResponse for Error {
             Self::Policy("field_check_already_pending") => (StatusCode::CONFLICT,"field_check_already_pending","该手机已有待处理检查，请先核对已有检查或等待其过期".into()),
             Self::Policy("physical_device_busy") => (StatusCode::CONFLICT,"physical_device_busy","该手机正在执行其他操作或存在待核对结果，请先处理原任务，不能强制解锁".into()),
             Self::Policy("field_check_permit_mismatch") => (StatusCode::CONFLICT,"field_check_permit_mismatch","检查结果与原领取许可不一致，请保留本机记录并联系维护人员核对".into()),
+            Self::Policy("plan_dependency_changed") => (StatusCode::CONFLICT,"plan_dependency_changed","该尝试的有效目标或授权已变化，已结束该未发放许可的尝试；其他合法任务继续调度".into()),
             Self::Policy("revision_conflict") => (
                 StatusCode::CONFLICT,
                 "revision_conflict",

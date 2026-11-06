@@ -90,6 +90,7 @@ pub(super) async fn write(
     )
     .await?;
     let (scope, body) = match &command {
+        DeviceCommand::Deliver(v) => ("task-delivery", json!(v)),
         DeviceCommand::Grant(v) => ("execution-grant", json!(v)),
         DeviceCommand::Receipt(v) => ("execution-receipt", json!(v)),
         DeviceCommand::Runtime(v) => ("runtime", json!(v)),
@@ -105,15 +106,16 @@ pub(super) async fn write(
                     .await?;
             old = secrets::open(&encrypted)?;
         }
-        if scope == "execution-grant" && old["state"] == "granted" {
+        if matches!(scope, "execution-grant" | "task-delivery") && old["state"] == "granted" {
             let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_execution_grants g LEFT JOIN mobile_v9_attempts a ON a.id=g.attempt_id LEFT JOIN mobile_v9_task_items i ON i.id=a.item_id LEFT JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE g.id=$1 AND g.state='active' AND g.execute_before>clock_timestamp() AND (g.kind='inspection' OR (a.current AND NOT t.stopped)))").bind(uid(&old,"id")?).fetch_one(&mut *tx).await?;
             if !active {
-                return Ok(json!({"id":old["id"],"state":"superseded"}));
+                return command_response(scope, json!({"id":old["id"],"state":"superseded"}));
             }
         }
-        return Ok(old);
+        return command_response(scope, old);
     }
     let result = match command {
+        DeviceCommand::Deliver(v) => execution::deliver(&mut tx, c, v).await?,
         DeviceCommand::Grant(v) => execution::grant(&mut tx, c, v).await?,
         DeviceCommand::Receipt(v) => execution::receipt(&mut tx, c, v).await?,
         DeviceCommand::Consent(v) => delegation::decide(&mut tx, c, v).await?,
@@ -148,12 +150,18 @@ pub(super) async fn write(
             json!({"id":c.device_id,"runtime_epoch":v.runtime_epoch,"recorded":true})
         }
     };
+    if matches!(scope, "execution-grant" | "task-delivery") {
+        tracing::info!(device=%c.device_id, idempotency_key_digest=%hash(key),
+            state=%result["state"], stage="grant_decision", protocol=10,
+            "execution grant decision");
+    }
     // Grant responses contain secrets and must not enter the plaintext idempotency table.
-    let stored = if scope == "execution-grant" && result["state"] == "granted" {
-        json!({"grant_ref":result["id"]})
-    } else {
-        result.clone()
-    };
+    let stored =
+        if matches!(scope, "execution-grant" | "task-delivery") && result["state"] == "granted" {
+            json!({"grant_ref":result["id"]})
+        } else {
+            result.clone()
+        };
     remember(
         &mut tx,
         c.device_id,
@@ -165,5 +173,22 @@ pub(super) async fn write(
     )
     .await?;
     tx.commit().await?;
-    Ok(result)
+    command_response(scope, result)
+}
+
+fn command_response(scope: &str, value: Value) -> Result<Value> {
+    if scope == "task-delivery" {
+        execution::delivery_response(value)
+    } else {
+        grant_response(value)
+    }
+}
+
+// Rejections are committed together with attempt state and idempotency before returning 409.
+fn grant_response(value: Value) -> Result<Value> {
+    if value["state"] == "rejected" && value["reason"] == "plan_dependency_changed" {
+        Err(Error::Policy("plan_dependency_changed"))
+    } else {
+        Ok(value)
+    }
 }

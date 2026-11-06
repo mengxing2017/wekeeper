@@ -29,6 +29,7 @@ pub enum DeviceCommand {
     Runtime(RuntimeReport),
     Diagnostic(Diagnostic),
     Consent(ConsentInput),
+    Deliver(crate::distribution::domain::shared_mobile::execution::DeliveryRequest),
     Grant(crate::distribution::domain::shared_mobile::execution::GrantRequest),
     Receipt(crate::distribution::domain::shared_mobile::execution::ExecutionReceipt),
 }
