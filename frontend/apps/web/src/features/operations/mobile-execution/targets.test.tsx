@@ -22,7 +22,7 @@ it('school admins create targets without a device grant or binding form', async 
   vi.mocked(api.bindings).mockResolvedValue({ items: [] })
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MobileTargets school="school" admin /></QueryClientProvider>)
   fireEvent.click(await screen.findByRole('button', { name: '新增目标群' }))
-  expect(await screen.findByLabelText('下发群名')).toBeTruthy()
+  expect(await screen.findByLabelText('企业微信完整群名')).toBeTruthy()
   expect(screen.queryByText('同时绑定本校授权设备')).toBeNull()
   expect(screen.queryByRole('button', { name: '绑定设备' })).toBeNull()
   expect(api.devices).not.toHaveBeenCalled()

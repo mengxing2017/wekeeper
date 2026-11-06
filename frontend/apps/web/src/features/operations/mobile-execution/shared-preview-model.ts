@@ -7,7 +7,7 @@ export function previewSelections(items: SharedPreview['plan']['items'], target:
 export function previewResourcesChanged(preview:SharedPreview, overview:SharedOverview|undefined) {
   return preview.plan.items.some(item=>(item.readiness??[]).some(snapshot=>{
     const current=overview?.readiness.find(r=>r.binding_id===snapshot.binding_id)
-    return current && (current.search_text!==snapshot.search_text || current.plan_selectable!==snapshot.plan_selectable)
+    return current && (current.search_text!==snapshot.search_text || current.target?.exact_name!==snapshot.target?.exact_name || current.plan_selectable!==snapshot.plan_selectable)
   }))
 }
 export function isUsageBlocker(code:string) {

@@ -15,6 +15,7 @@ export function UsageManagement({school,admin=true}:{school?:string;admin?:boole
  const [devices,setDevices]=useState<string[]>([])
  const [targets,setTargets]=useState<string[]>([])
  const [newGroup,setNewGroup]=useState('')
+ const [newExactName,setNewExactName]=useState('')
  const [limit,setLimit]=useState(100)
  const [expiry,setExpiry]=useState('')
  const [auto,setAuto]=useState(false)
@@ -29,12 +30,12 @@ export function UsageManagement({school,admin=true}:{school?:string;admin?:boole
  const options=useQuery({queryKey:['mobile-execution',selectedSchool,'usage-options'],queryFn:()=>sharedSend.usageOptions(selectedSchool!),enabled:!!selectedSchool})
  const refresh=()=>cache.invalidateQueries({queryKey:['mobile-execution']})
  const inspect=useMutation({mutationFn:()=>{
-  const input:UsageInput={device_ids:devices,targets:[...(options.data?.targets.filter(t=>targets.includes(t.id)).map(t=>({id:t.id,name:t.name,search_text:t.search_text}))??[]),...(newGroup.trim()?[{id:null,name:newGroup,search_text:newGroup}]:[])],max_calls:limit,expires_at:new Date(expiry).toISOString(),auto_targets:auto,...(renewal?{renewal_of:renewal.id,expected_revision:renewal.revision}:{})}
+  const input:UsageInput={device_ids:devices,targets:[...(options.data?.targets.filter(t=>targets.includes(t.id)).map(t=>({id:t.id,name:t.name,search_text:t.search_text}))??[]),...(newGroup.trim()?[{id:null,name:newGroup,search_text:newGroup,exact_name:newExactName}]:[])],max_calls:limit,expires_at:new Date(expiry).toISOString(),auto_targets:auto,...(renewal?{renewal_of:renewal.id,expected_revision:renewal.revision}:{})}
   return sharedSend.usagePreview(selectedSchool!,input,key('preview',[selectedSchool,input]))
  },onSuccess:setPreview})
  const confirm=useMutation({mutationFn:()=>sharedSend.usageConfirm(selectedSchool!,{preview_id:preview!.id,digest:preview!.digest},key('confirm',preview!.id)),onSuccess:()=>{setOpen(false);setPreview(undefined);void refresh()}})
  const mutate=useMutation<unknown,Error>({mutationFn:()=>action!.operation==='handle_issue'?sharedSend.usageIssueUpdate(action!.row.school_id,action!.row.id,action!.issue!.id,{expected_revision:action!.issue!.revision,state:issueState,response:reason},key('issue-response',[action,issueState,reason])):action!.operation==='issue'?sharedSend.usageIssue(action!.row.school_id,action!.row.id,reason,key('issue',[action!.row.id,reason])):sharedSend.usageAction(action!.row.school_id,action!.row.id,action!.operation,{expected_revision:action!.row.revision,reason},key('action',[action,reason])),onSuccess:()=>{setAction(undefined);setReason('');void refresh()}})
- function begin(row?:MobileUsage,kind:typeof editKind='open'){setEditKind(kind);setRenewal(row);setSchool(row?.school_id??school);setDevices(row?.body.device_ids??[]);setTargets(row?.body.targets?.map(t=>t.id!).filter(Boolean)??[]);setNewGroup('');setLimit(row?.body.max_calls??100);setExpiry(row&&kind!=='renew'&&Date.parse(row.expires_at)>Date.now()?localExpiry(row.expires_at):openingExpiry(row?.expires_at));setAuto(row?.body.auto_targets??false);setPreview(undefined);inspect.reset();confirm.reset();setOpen(true)}
+ function begin(row?:MobileUsage,kind:typeof editKind='open'){setEditKind(kind);setRenewal(row);setSchool(row?.school_id??school);setDevices(row?.body.device_ids??[]);setTargets(row?.body.targets?.map(t=>t.id!).filter(Boolean)??[]);setNewGroup('');setNewExactName('');setLimit(row?.body.max_calls??100);setExpiry(row&&kind!=='renew'&&Date.parse(row.expires_at)>Date.now()?localExpiry(row.expires_at):openingExpiry(row?.expires_at));setAuto(row?.body.auto_targets??false);setPreview(undefined);inspect.reset();confirm.reset();setOpen(true)}
  function operate(row:MobileUsage,operation:UsageOperation|'issue'){setAction({row,operation});setReason('');mutate.reset()}
  const error=list.error||globalOptions.error||options.error
  return <Card title="手机群消息使用管理" extra={admin&&<Button type="primary" onClick={()=>begin()}>开通使用</Button>}>
@@ -59,6 +60,7 @@ export function UsageManagement({school,admin=true}:{school?:string;admin?:boole
     {!school&&<Select aria-label="使用学校" placeholder="选择学校" style={{width:'100%'}} value={selectedSchool} onChange={s=>{setSchool(s);setTargets([]);setDevices([])}} options={globalOptions.data?.schools.map(s=>({value:s.id,label:s.name}))}/>}
     <Select disabled={editKind==='renew'} aria-label="候选手机" mode="multiple" placeholder="选择手机（可离线）" style={{width:'100%'}} value={devices} onChange={setDevices} options={options.data?.devices.map(d=>({value:d.id,label:`${d.name}（${d.online?'在线':'离线，恢复后执行'}）`}))}/>
     <Select disabled={editKind==='renew'} aria-label="目标群" mode="multiple" placeholder="选择已有群" style={{width:'100%'}} value={targets} onChange={setTargets} options={options.data?.targets.map(t=>({value:t.id,label:t.name}))}/>
+    <Input aria-label="新增群完整群名" placeholder="新增目标的企业微信完整群名" value={newExactName} maxLength={256} onChange={e=>setNewExactName(e.target.value)}/>
     <Input disabled={editKind==='renew'} aria-label="同页新增群" placeholder="或直接填写新增群的实际搜索名" value={newGroup} maxLength={256} onChange={e=>setNewGroup(e.target.value)}/>
     <label>累计调用额度 <InputNumber disabled={editKind==='renew'} aria-label="累计调用额度" value={limit} min={1} max={100000} precision={0} onChange={v=>setLimit(v??1)}/></label>
     <label>有效期 <Input aria-label="使用有效期" type="datetime-local" step="any" value={expiry} onChange={e=>setExpiry(e.target.value)}/></label>
