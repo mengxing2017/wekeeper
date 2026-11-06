@@ -17,6 +17,7 @@ argon2 = "0.5"
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
 sha2 = "0.10"
 ring = "0.17.14"
+aws-lc-rs = { version = "1.18.2", default-features = false }
 chrono = { version = "0.4", features = ["serde"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls"] }
 clap = { version = "4.5", features = ["derive", "env"] }

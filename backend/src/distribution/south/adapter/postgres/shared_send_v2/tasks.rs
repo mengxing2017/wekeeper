@@ -146,7 +146,7 @@ pub(super) async fn validate_plan(tx: &mut Tx<'_>, s: Uuid, plan: &Value) -> Res
     Ok(())
 }
 pub(super) async fn validate_risk(tx: &mut Tx<'_>, s: Uuid, plan: &Value) -> Result<()> {
-    let risk:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_invocations v JOIN mobile_v9_attempts a ON a.id=v.attempt_id JOIN mobile_v9_task_items i ON i.id=a.item_id WHERE i.school_id=$1 AND i.target_id=$2 AND v.state='risk_held') OR EXISTS(SELECT 1 FROM mobile_v9_risk_guards WHERE school_id=$1 AND target_id=$2 AND state='active') OR EXISTS(SELECT 1 FROM mobile_v9_attempts a JOIN mobile_v9_task_items i ON i.id=a.item_id WHERE i.school_id=$1 AND i.target_id=$2 AND i.intent_id=$3 AND a.state IN ('observed_sent','manually_confirmed_sent'))").bind(s).bind(uid(plan,"target_id")?).bind(plan["intent_id"].as_str().and_then(|v|Uuid::parse_str(v).ok())).fetch_one(&mut **tx).await?;
+    let risk:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_attempts a JOIN mobile_v9_task_items i ON i.id=a.item_id WHERE i.school_id=$1 AND i.target_id=$2 AND i.intent_id=$3 AND a.state IN ('observed_sent','manually_confirmed_sent'))").bind(s).bind(uid(plan,"target_id")?).bind(plan["intent_id"].as_str().and_then(|v|Uuid::parse_str(v).ok())).fetch_one(&mut **tx).await?;
     require(!risk, "shared_send_review_required")
 }
 pub(super) async fn write(
@@ -404,16 +404,13 @@ pub(super) async fn write(
                 old["revision"] == input.expected_revision
                     && matches!(
                         old["state"].as_str(),
-                        Some("failed_before_call" | "verified_not_sent" | "invalidated")
+                        Some(
+                            "failed_before_call" | "verified_not_sent" | "invalidated" | "unknown"
+                        )
                     ),
                 "shared_send_review_required",
             )?;
 
-            if old["state"] == "verified_not_sent" {
-                let unsafe_permit:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_invocations WHERE attempt_id=$1 AND (state<>'released' OR execute_before>clock_timestamp()))")
-                    .bind(id).fetch_one(&mut **tx).await?;
-                require(!unsafe_permit, "shared_send_review_required")?;
-            }
             validate_risk(tx, s, &old["plan"]).await?;
             let target = uid(&old, "target_id")?;
             let mut plan = candidates(tx, s, target)
@@ -439,6 +436,7 @@ pub(super) async fn write(
                     "plan_dependency_changed",
                 )?;
             }
+            sqlx::query("UPDATE mobile_execution_grants SET state='superseded' WHERE attempt_id=$1 AND state='active'").bind(id).execute(&mut **tx).await?;
             let aid = Uuid::now_v7();
             let pid = Uuid::now_v7();
             for k in [
@@ -474,6 +472,7 @@ pub(super) async fn write(
             let n=sqlx::query("UPDATE mobile_v9_tasks SET stopped=true,revision=revision+1 WHERE school_id=$1 AND id=$2 AND revision=$3").bind(s).bind(id).bind(input.expected_revision).execute(&mut **tx).await?.rows_affected();
             require(n == 1, "revision_conflict")?;
             sqlx::query("UPDATE mobile_v9_attempts a SET state='cancelled',revision=revision+1 FROM mobile_v9_task_items i WHERE i.id=a.item_id AND i.task_id=$1 AND a.state='queued'").bind(id).execute(&mut **tx).await?;
+            sqlx::query("UPDATE mobile_execution_grants g SET state='superseded' FROM mobile_v9_attempts a JOIN mobile_v9_task_items i ON i.id=a.item_id WHERE i.task_id=$1 AND g.attempt_id=a.id AND g.state='active'").bind(id).execute(&mut **tx).await?;
             task(tx, s, id).await
         }
         SchoolCommand::Review(id, input) => {

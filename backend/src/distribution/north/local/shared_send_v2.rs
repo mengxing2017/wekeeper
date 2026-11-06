@@ -10,6 +10,14 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct Service<R = Repository>(pub R);
 impl<R: Store> Service<R> {
+    pub async fn complete_execution(
+        &self,
+        v: crate::distribution::domain::shared_mobile::execution::Completion,
+    ) -> Result<Value> {
+        v.validate()?;
+        self.0.complete_execution(v).await
+    }
+
     pub async fn inbox_read(
         &self,
         c: &Credential,
@@ -46,21 +54,6 @@ impl<R: Store> Service<R> {
     ) -> Result<Value> {
         self.0.usage_write(a, s, &text(key, 1, 128)?, command).await
     }
-    pub async fn recover_claim(
-        &self,
-        event: crate::distribution::domain::shared_mobile::shared_send_v2::ClaimRecovery,
-    ) -> Result<Value> {
-        self.0.recover_claim(event).await
-    }
-
-    pub async fn recover_result(
-        &self,
-        key: &str,
-        event: crate::distribution::domain::shared_mobile::shared_send_v2::ResultEvent,
-    ) -> Result<Value> {
-        self.0.recover_result(&text(key, 1, 128)?, event).await
-    }
-
     pub async fn school_write(
         &self,
         a: &Actor,

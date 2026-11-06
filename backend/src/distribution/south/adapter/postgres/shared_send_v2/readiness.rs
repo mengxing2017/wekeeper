@@ -22,7 +22,6 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
         } else {
             false
         };
-        let risk:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_invocations WHERE device_id=$1 AND state='risk_held') OR EXISTS(SELECT 1 FROM mobile_v9_risk_guards WHERE school_id=$2 AND target_id=$3 AND state='active')").bind(uid(&row,"device_id")?).bind(school).bind(uid(&row,"target_id")?).fetch_one(&mut **tx).await?;
         let remaining = 0;
         let retry_at = Value::Null;
         let busy = inspections::busy(tx, uid(&row, "device_id")?).await?;
@@ -36,15 +35,6 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
                 "绑定、手机、群或共享资格已停用",
                 "platform",
                 "检查共享资格和群绑定",
-                false,
-            );
-        }
-        if risk {
-            add(
-                "risk_held",
-                "存在未核对发送风险，禁止新界面操作",
-                "school",
-                "打开当前或历史任务核对原结果",
                 false,
             );
         }
@@ -133,9 +123,9 @@ fn execution_conditions(row: &Value, consent: &str, busy: bool, mode: Option<&st
     if row["online"] != true {
         conditions.push(condition(
             "waiting_connection",
-            "手机当前离线，任务可提交，连接后继续",
+            "手机当前离线，平台将选择下一授权候选",
             "system",
-            "等待连接恢复",
+            "平台自动切换可用候选",
             true,
         ));
     }

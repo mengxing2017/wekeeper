@@ -210,7 +210,7 @@ mod tests {
     fn package() -> Value {
         let fixture: Value = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../api-contract/fixtures/shared-mobile-send-v9.json"
+            "/../api-contract/fixtures/local-group-text-flow.json"
         )))
         .unwrap();
         // Synthetic evidence only. Empty material must never become an accepted product.

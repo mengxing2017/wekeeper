@@ -126,7 +126,7 @@ mod tests {
         assert_eq!(serde_json::to_value(status).unwrap(), fixture);
         let flow: Value = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../api-contract/fixtures/shared-mobile-send-v9.json"
+            "/../api-contract/fixtures/local-group-text-flow.json"
         )))
         .unwrap();
         let mut package = RuntimeConfiguration {
@@ -163,7 +163,7 @@ mod tests {
     fn configuration_diagnoses_real_failure_without_acceptance_or_artifacts() {
         let fixture: Value = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../api-contract/fixtures/shared-mobile-send-v9.json"
+            "/../api-contract/fixtures/local-group-text-flow.json"
         )))
         .unwrap();
         let config = RuntimeConfiguration {

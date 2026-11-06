@@ -12,6 +12,7 @@ pub struct Credential {
 #[serde(rename_all = "snake_case")]
 pub enum CommandKind {
     TaskAvailable,
+    CancelExecution,
     ConfigurationChanged,
     PauseExecution,
     ResumeExecution,

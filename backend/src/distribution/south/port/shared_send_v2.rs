@@ -27,20 +27,17 @@ pub enum PlatformCommand {
 #[derive(Clone, Debug)]
 pub enum DeviceCommand {
     Runtime(RuntimeReport),
-    Settle(Settlement),
     Diagnostic(Diagnostic),
-    Claim(ClaimRequest),
-    Prepare(Uuid, Preparation),
-    Invoke(Uuid, InvocationInput),
-    Result(ResultEvent),
     Consent(ConsentInput),
-    InspectionClaim(InspectionClaim),
-    InspectionStart(InspectionStart),
-    InspectionResult(InspectionResult),
-    Renew(Uuid, LeaseMutation),
-    Release(Uuid, LeaseMutation),
+    Grant(crate::distribution::domain::shared_mobile::execution::GrantRequest),
+    Receipt(crate::distribution::domain::shared_mobile::execution::ExecutionReceipt),
 }
 pub trait Store: Clone + Send + Sync {
+    fn complete_execution(
+        &self,
+        v: crate::distribution::domain::shared_mobile::execution::Completion,
+    ) -> impl Future<Output = Result<Value>> + Send;
+
     fn inbox_read(
         &self,
         c: &Credential,
@@ -66,12 +63,6 @@ pub trait Store: Clone + Send + Sync {
         s: Uuid,
         key: &str,
         command: crate::distribution::domain::shared_mobile::usage::UsageCommand,
-    ) -> impl Future<Output = Result<Value>> + Send;
-    fn recover_claim(&self, event: ClaimRecovery) -> impl Future<Output = Result<Value>> + Send;
-    fn recover_result(
-        &self,
-        key: &str,
-        event: ResultEvent,
     ) -> impl Future<Output = Result<Value>> + Send;
     fn school_write(
         &self,

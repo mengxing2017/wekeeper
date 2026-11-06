@@ -3602,6 +3602,7 @@ name = "wekeeper-api"
 version = "0.1.0"
 dependencies = [
  "argon2",
+ "aws-lc-rs",
  "axum",
  "cairnkit-jsonapi",
  "chrono",

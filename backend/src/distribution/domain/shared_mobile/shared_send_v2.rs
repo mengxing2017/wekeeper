@@ -1,4 +1,4 @@
-//! Shared phone sending uses its own intent, plans and v9 wire types.
+//! Shared phone business intent, plans, telemetry and management types.
 use crate::business::{Error, Result, hash};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -68,35 +68,6 @@ pub struct ExecutionCondition {
 #[cfg(test)]
 mod execution_status_tests {
     use super::*;
-    #[test]
-    fn device_owned_preparation_requires_no_platform_flow() {
-        let fixture: Value = serde_json::from_str(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../api-contract/fixtures/device-owned-execution.json"
-        )))
-        .unwrap();
-        let input: Preparation = serde_json::from_value(fixture["preparation"].clone()).unwrap();
-        assert!(input.flow_digest.is_none());
-        assert_eq!(serde_json::to_value(input).unwrap(), fixture["preparation"]);
-        let mut legacy = fixture["preparation"].clone();
-        legacy["flow_digest"] = serde_json::json!("a".repeat(64));
-        let input: Preparation = serde_json::from_value(legacy.clone()).unwrap();
-        assert_eq!(serde_json::to_value(input).unwrap(), legacy);
-    }
-    #[test]
-    fn inspection_start_matches_cross_language_identity_without_approval() {
-        let fixture: Value = serde_json::from_str(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../api-contract/fixtures/shared-mobile-send-v9.json"
-        )))
-        .unwrap();
-        let input: InspectionStart =
-            serde_json::from_value(fixture["inspection_start"].clone()).unwrap();
-        assert_eq!(
-            serde_json::to_value(input).unwrap(),
-            fixture["inspection_start"]
-        );
-    }
     #[test]
     fn business_drafts_reject_retired_phase_inputs() {
         let mut value = serde_json::json!({"target_ids":[Uuid::now_v7()],"message":"通知","content_type":"text/plain","expected_revision":null,"between_targets_seconds":30});
@@ -302,99 +273,6 @@ pub struct RuntimeReport {
     pub preparation: Option<DevicePreparationReport>,
     pub apk_sha256: String,
 }
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ClaimRequest {
-    pub eligible_attempt_ids: Vec<Uuid>,
-    pub runtime_epoch: Uuid,
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct Preparation {
-    pub attempt_id: Uuid,
-    pub lease_fence: i64,
-    pub plan_digest: String,
-    pub content_digest: String,
-    pub input_matches: bool,
-    pub page_digest: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub flow_digest: Option<String>,
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct InvocationInput {
-    pub preparation_id: Uuid,
-    pub lease_fence: i64,
-    pub plan_digest: String,
-    pub content_digest: String,
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ResultEvent {
-    pub result_credential: Option<String>,
-    pub schema: String,
-    pub event_id: Uuid,
-    pub claim_id: Uuid,
-    pub attempt_id: Uuid,
-    pub invocation_id: Option<Uuid>,
-    pub credential_generation: i64,
-    pub lease_fence: i64,
-    pub plan_digest: String,
-    pub content_digest: String,
-    pub outcome: String,
-    pub reason: String,
-    pub consumed: bool,
-    pub calling_marked: bool,
-    pub evidence: String,
-}
-impl ResultEvent {
-    pub fn validate(&self) -> Result<()> {
-        require(
-            self.schema == SCHEMA
-                && !self.event_id.is_nil()
-                && (1..=MAX_SAFE_INTEGER).contains(&self.credential_generation)
-                && (1..=MAX_SAFE_INTEGER).contains(&self.lease_fence),
-            "shared_send_result_invalid",
-        )?;
-        for digest in [&self.plan_digest, &self.content_digest] {
-            require(is_digest(digest), "shared_send_digest_invalid")?;
-        }
-        require(
-            matches!(
-                self.outcome.as_str(),
-                "observed_sent" | "unknown" | "failed_before_call"
-            ),
-            "shared_send_result_invalid",
-        )?;
-        require(
-            self.reason.len() <= 200 && self.evidence.len() <= 2000,
-            "shared_send_result_invalid",
-        )?;
-        require(
-            !self.calling_marked || self.consumed,
-            "shared_send_result_invalid",
-        )?;
-        if self.outcome == "unknown" {
-            require(self.invocation_id.is_some(), "shared_send_result_invalid")?;
-        }
-        if self.outcome == "failed_before_call" {
-            require(
-                !self.consumed && !self.calling_marked && self.invocation_id.is_none(),
-                "shared_send_unproven_not_called",
-            )?;
-        }
-        if self.outcome == "observed_sent" {
-            require(
-                self.consumed
-                    && self.calling_marked
-                    && self.invocation_id.is_some()
-                    && !self.evidence.is_empty(),
-                "shared_send_observation_required",
-            )?;
-        }
-        Ok(())
-    }
-}
 pub fn is_digest(s: &str) -> bool {
     s.len() == 64
         && s.bytes()
@@ -532,43 +410,6 @@ pub struct InspectionInput {
     pub target_id: Uuid,
     pub device_id: Uuid,
 }
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct InspectionClaim {
-    pub runtime_epoch: Uuid,
-    pub inspection_id: Uuid,
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct InspectionStart {
-    pub inspection_id: Uuid,
-    pub runtime_epoch: Uuid,
-    pub lease_fence: i64,
-    pub challenge: String,
-    pub dependencies_digest: String,
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct InspectionResult {
-    pub checks: std::collections::BTreeMap<String, bool>,
-    pub apk_sha256: String,
-    pub inspection_id: Uuid,
-    pub runtime_epoch: Uuid,
-    pub lease_fence: i64,
-    pub challenge: String,
-    pub dependencies_digest: String,
-    pub ui_context_epoch: String,
-    pub passed: bool,
-    pub evidence: String,
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct LeaseMutation {
-    pub runtime_epoch: Uuid,
-    pub lease_fence: i64,
-    pub quiescent: bool,
-}
-
 pub fn require(condition: bool, code: &'static str) -> Result<()> {
     if condition {
         Ok(())
@@ -582,13 +423,6 @@ pub struct Reassignment {
     pub expected_revision: i64,
     pub device_id: Uuid,
     pub reason: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ClaimRecovery {
-    pub claim_id: Uuid,
-    pub recovery_credential: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -802,19 +636,9 @@ pub enum ManagementCommand {
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct Settlement {
-    pub event_id: Uuid,
-    pub receipt_id: Uuid,
-    pub runtime_epoch: Uuid,
-    pub lease_fence: i64,
-    pub quiescent: bool,
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct Diagnostic {
     pub event_id: Uuid,
-    pub inspection_id: Option<Uuid>,
-    pub claim_id: Option<Uuid>,
+    pub execution_id: Uuid,
     pub code: String,
     pub stage: String,
     pub details: std::collections::BTreeMap<String, String>,

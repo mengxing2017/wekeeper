@@ -615,37 +615,6 @@ impl Repository {
                 }
             }
         }
-        let devices:Vec<Uuid>=sqlx::query_scalar("SELECT DISTINCT device_id FROM mobile_device_target_bindings WHERE enabled ORDER BY device_id").fetch_all(&self.0).await?;
-        for device in devices {
-            let mut tx = self.0.begin().await?;
-            if !sqlx::query_scalar::<_, bool>(
-                "SELECT pg_try_advisory_xact_lock(hashtextextended($1,72))",
-            )
-            .bind(device.to_string())
-            .fetch_one(&mut *tx)
-            .await?
-            {
-                continue;
-            }
-            sqlx::query("SET LOCAL statement_timeout='2s'")
-                .execute(&mut *tx)
-                .await?;
-            match inspections::reconcile(&mut tx, device).await {
-                Ok(()) => tx.commit().await?,
-                Err(_) => {
-                    tx.rollback().await?;
-                    tracing::warn!("one device check queue remains pending reconciliation");
-                }
-            }
-        }
-        let mut tx = self.0.begin().await?;
-        if sqlx::query_scalar::<_, bool>("SELECT pg_try_advisory_xact_lock(78234610243)")
-            .fetch_one(&mut *tx)
-            .await?
-        {
-            expire(&mut tx).await?;
-            tx.commit().await?;
-        }
         Ok(())
     }
 }

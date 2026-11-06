@@ -17,7 +17,9 @@ pub mod configuration;
 mod delegation;
 pub mod delivery;
 mod device;
+mod diagnostics;
 mod dispatch;
+mod execution;
 mod execution_status;
 mod inbox;
 mod inspections;
@@ -25,20 +27,11 @@ mod platform;
 mod readiness;
 mod screen;
 mod secrets;
-mod settlement;
 mod tasks;
 mod usage;
 mod usage_budgets;
 mod usage_locators;
 mod wait_states;
-async fn expire(tx: &mut Tx<'_>) -> Result<()> {
-    sqlx::query("UPDATE mobile_v9_send_claims c SET state='closed' WHERE c.state='active' AND c.expires_at<clock_timestamp() AND NOT EXISTS(SELECT 1 FROM mobile_v9_invocations i WHERE i.claim_id=c.id)").execute(&mut **tx).await?;
-    sqlx::query("UPDATE mobile_v9_attempts a SET state='failed_before_call',revision=revision+1 FROM mobile_v9_send_claims c WHERE a.id=c.attempt_id AND a.state IN ('leased','prepared') AND c.expires_at<clock_timestamp() AND NOT EXISTS(SELECT 1 FROM mobile_v9_invocations i WHERE i.claim_id=c.id)").execute(&mut **tx).await?;
-    sqlx::query("UPDATE mobile_v9_quota_reservations q SET state='released' FROM mobile_v9_attempts a WHERE q.attempt_id=a.id AND q.state='reserved' AND a.state='failed_before_call'").execute(&mut **tx).await?;
-
-    sqlx::query("UPDATE mobile_v9_attempts a SET state='unknown',revision=revision+1 FROM mobile_v9_invocations i JOIN mobile_v9_send_claims c ON c.id=i.claim_id LEFT JOIN mobile_shared_runtime r ON r.device_id=c.device_id WHERE a.id=i.attempt_id AND a.state='invocation_issued' AND i.state='risk_held' AND i.execute_before<clock_timestamp() AND (r.device_id IS NULL OR r.runtime_epoch<>c.runtime_epoch OR r.quiescent OR r.observed_at<clock_timestamp()-interval '90 seconds')").execute(&mut **tx).await?;
-    Ok(())
-}
 async fn guard(tx: &mut Tx<'_>) -> Result<()> {
     sqlx::query("SELECT pg_advisory_xact_lock(78234610243)")
         .execute(&mut **tx)
@@ -112,7 +105,7 @@ fn uid(v: &Value, k: &str) -> Result<Uuid> {
     serde_json::from_value(v[k].clone()).map_err(|_| Error::Conflict)
 }
 async fn task(tx: &mut Tx<'_>, s: Uuid, id: Uuid) -> Result<Value> {
-    let mut value: Value = sqlx::query_scalar("SELECT to_jsonb(t)||jsonb_build_object('items',coalesce((SELECT jsonb_agg(to_jsonb(i)||jsonb_build_object('attempts',(SELECT jsonb_agg(to_jsonb(a)||jsonb_build_object('plan',p.plan,'plan_digest',p.digest,'result_reason',(SELECT e.body->>'reason' FROM mobile_v9_send_events e WHERE e.attempt_id=a.id AND e.receipt->>'disposition'<>'archived' ORDER BY e.created_at DESC,e.id DESC LIMIT 1)) ORDER BY a.attempt_no) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id WHERE a.item_id=i.id)) ORDER BY i.position) FROM mobile_v9_task_items i WHERE i.task_id=t.id),'[]'::jsonb)) FROM mobile_v9_tasks t WHERE t.school_id=$1 AND t.id=$2").bind(s).bind(id).fetch_optional(&mut **tx).await?.ok_or(Error::NotFound)?;
+    let mut value: Value = sqlx::query_scalar("SELECT to_jsonb(t)||jsonb_build_object('items',coalesce((SELECT jsonb_agg(to_jsonb(i)||jsonb_build_object('attempts',(SELECT jsonb_agg(to_jsonb(a)||jsonb_build_object('plan',p.plan,'plan_digest',p.digest,'result_reason',coalesce((SELECT g.result_body->>'reason' FROM mobile_execution_grants g WHERE g.attempt_id=a.id),(SELECT e.body->>'reason' FROM mobile_v9_send_events e WHERE e.attempt_id=a.id AND e.receipt->>'disposition'<>'archived' ORDER BY e.created_at DESC,e.id DESC LIMIT 1))) ORDER BY a.attempt_no) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id WHERE a.item_id=i.id)) ORDER BY i.position) FROM mobile_v9_task_items i WHERE i.task_id=t.id),'[]'::jsonb)) FROM mobile_v9_tasks t WHERE t.school_id=$1 AND t.id=$2").bind(s).bind(id).fetch_optional(&mut **tx).await?.ok_or(Error::NotFound)?;
     let receipts:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('attempt_id',r.attempt_id,'received_at',r.received_at) FROM mobile_v9_task_receipts r JOIN mobile_v9_attempts a ON a.id=r.attempt_id JOIN mobile_v9_task_items i ON i.id=a.item_id WHERE i.task_id=$1").bind(id).fetch_all(&mut **tx).await?;
     if let Some(items) = value["items"].as_array_mut() {
         for item in items {
@@ -143,6 +136,17 @@ async fn task(tx: &mut Tx<'_>, s: Uuid, id: Uuid) -> Result<Value> {
     Ok(value)
 }
 impl Store for Repository {
+    async fn complete_execution(
+        &self,
+        v: crate::distribution::domain::shared_mobile::execution::Completion,
+    ) -> Result<Value> {
+        let mut tx = self.0.begin().await?;
+        guard(&mut tx).await?;
+        let value = execution::complete(&mut tx, v).await?;
+        tx.commit().await?;
+        Ok(value)
+    }
+
     async fn inbox_read(&self, c: &Credential, q: InboxQuery) -> Result<Value> {
         inbox::read(self, c, q).await
     }
@@ -191,66 +195,6 @@ impl Store for Repository {
         tx.commit().await?;
         Ok(data)
     }
-    async fn recover_claim(&self, event: ClaimRecovery) -> Result<Value> {
-        require(
-            event.recovery_credential.len() == 64,
-            "result_identity_mismatch",
-        )?;
-        let mut tx = self.0.begin().await?;
-        guard(&mut tx).await?;
-        let row:Value=sqlx::query_scalar("SELECT jsonb_build_object('id',c.id,'school_id',c.school_id,'attempt_id',c.attempt_id,'device_id',c.device_id,'lease_fence',c.lease_fence) FROM mobile_v9_send_claims c WHERE c.id=$1 AND c.recovery_credential_hash=$2").bind(event.claim_id).bind(hash(&event.recovery_credential)).fetch_optional(&mut *tx).await?.ok_or(Error::Unauthorized)?;
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,72))")
-            .bind(uid(&row, "device_id")?.to_string())
-            .execute(&mut *tx)
-            .await?;
-        let encrypted: Option<Vec<u8>> = sqlx::query_scalar(
-            "SELECT encrypted_response FROM mobile_v9_invocations WHERE claim_id=$1",
-        )
-        .bind(event.claim_id)
-        .fetch_optional(&mut *tx)
-        .await?;
-        let permit = encrypted.as_deref().map(secrets::open).transpose()?;
-        sqlx::query("UPDATE mobile_v9_send_claims SET state='closed' WHERE id=$1")
-            .bind(event.claim_id)
-            .execute(&mut *tx)
-            .await?;
-        if permit.is_some() {
-            sqlx::query("UPDATE mobile_v9_attempts SET state='unknown',revision=revision+1 WHERE id=$1 AND state='invocation_issued'").bind(uid(&row,"attempt_id")?).execute(&mut *tx).await?;
-        } else {
-            let idle:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_shared_runtime r JOIN execution_devices d ON d.id=r.device_id WHERE r.device_id=$1 AND r.credential_generation=d.credential_generation AND r.quiescent AND r.observed_at>clock_timestamp()-interval '30 seconds')").bind(uid(&row,"device_id")?).fetch_one(&mut *tx).await?;
-            require(idle, "shared_send_runtime_required")?;
-            sqlx::query("UPDATE mobile_shared_device_leases SET expires_at=clock_timestamp() WHERE device_id=$1 AND holder_id=$2 AND fence=$3").bind(uid(&row,"device_id")?).bind(event.claim_id).bind(row["lease_fence"].as_i64().ok_or(Error::Conflict)?).execute(&mut *tx).await?;
-            sqlx::query("UPDATE mobile_v9_attempts SET state='failed_before_call',revision=revision+1 WHERE id=$1 AND state IN ('leased','prepared')").bind(uid(&row,"attempt_id")?).execute(&mut *tx).await?;
-            sqlx::query("UPDATE mobile_v9_quota_reservations SET state='released' WHERE attempt_id=$1 AND state='reserved'").bind(uid(&row,"attempt_id")?).execute(&mut *tx).await?;
-        }
-        // Recovery can inhibit the original owner, never create/renew control or issue a call.
-        tx.commit().await?;
-        Ok(
-            json!({"id":event.claim_id,"attempt_id":row["attempt_id"],"state":if permit.is_some(){"unknown"}else{"failed_before_call"},"permit":permit}),
-        )
-    }
-
-    async fn recover_result(&self, key: &str, event: ResultEvent) -> Result<Value> {
-        event.validate()?;
-        let secret = event
-            .result_credential
-            .as_deref()
-            .ok_or(Error::Unauthorized)?;
-        require(secret.len() == 64, "result_identity_mismatch")?;
-        let mut tx = self.0.begin().await?;
-        guard(&mut tx).await?;
-        let (device_id,generation):(Uuid,i64)=sqlx::query_as("SELECT device_id,credential_generation FROM mobile_v9_invocations WHERE id=$1 AND result_credential_hash=$2").bind(event.invocation_id.ok_or(Error::Unauthorized)?).bind(hash(secret)).fetch_optional(&mut *tx).await?.ok_or(Error::Unauthorized)?;
-        let c = Credential {
-            device_id,
-            generation,
-            token_hash: String::new(),
-        };
-        let response = device::result(&mut tx, &c, event).await?;
-        let _ = key;
-        tx.commit().await?;
-        Ok(response)
-    }
-
     async fn school_write(
         &self,
         a: &Actor,
@@ -394,7 +338,7 @@ impl Store for Repository {
         Ok(value)
     }
     async fn device_read(&self, c: &Credential) -> Result<Value> {
-        device::read(self, c).await
+        execution::context(self, c).await
     }
 }
 

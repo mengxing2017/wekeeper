@@ -34,12 +34,6 @@ fn add(
         retry_at: None,
     });
 }
-fn pending_time(v: &Value) -> bool {
-    v.as_str()
-        .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok())
-        .is_some_and(|t| t > chrono::Utc::now())
-}
-
 pub(super) async fn task(tx: &mut Tx<'_>, school: Uuid, value: &mut Value) -> Result<()> {
     let snapshot = value.clone();
     if let Some(items) = value["items"].as_array_mut() {
@@ -55,381 +49,97 @@ pub(super) async fn task(tx: &mut Tx<'_>, school: Uuid, value: &mut Value) -> Re
     }
     Ok(())
 }
+/// Display the durable dispatcher and grant facts. Runtime telemetry is informational only.
 pub(super) async fn assess(
     tx: &mut Tx<'_>,
-    school: Uuid,
+    _school: Uuid,
     task: &Value,
-    position: i64,
+    _position: i64,
     attempt: &Value,
 ) -> Result<Value> {
-    let mut conditions = Vec::new();
-    let plan = &attempt["plan"];
-    let device = uid(plan, "device_id")?;
+    let device = uid(&attempt["plan"], "device_id")?;
     let state = attempt["state"].as_str().unwrap_or("unknown");
-    let runtime:Value=sqlx::query_scalar("SELECT jsonb_build_object('observed_at',r.observed_at,'fresh',coalesce(r.credential_generation=$2 AND r.observed_at>clock_timestamp()-interval '30 seconds' AND d.credential_generation=$2 AND d.observed_at>clock_timestamp()-interval '30 seconds',false),'ready',r.ui_ready,'paused',r.paused,'conditions',d.conditions,'preparation',d.preparation,'ready_reason',d.ready_reason,'online',coalesce(cp.state='online' AND NOT cp.desired_paused AND cp.last_control_heartbeat_at>clock_timestamp()-interval '30 seconds',false)) FROM mobile_shared_runtime r LEFT JOIN mobile_v9_runtime_details d ON d.device_id=r.device_id AND d.credential_generation=r.credential_generation LEFT JOIN device_control_presence cp ON cp.id=r.device_id WHERE r.device_id=$1").bind(device).bind(plan["credential_generation"].as_i64().unwrap_or(0)).fetch_optional(&mut **tx).await?.unwrap_or(Value::Null);
-    let consent_observed_at:Option<chrono::DateTime<chrono::Utc>>=sqlx::query_scalar("SELECT c.created_at FROM mobile_shared_delegations d JOIN LATERAL(SELECT created_at FROM mobile_shared_delegation_decisions WHERE delegation_id=d.id ORDER BY revision DESC LIMIT 1)c ON true WHERE d.device_id=$1 AND d.credential_generation=$2").bind(device).bind(plan["credential_generation"].as_i64().unwrap_or(0)).fetch_optional(&mut **tx).await?;
-    if task["dispatch_mode"] == "candidate_pool" && state == "queued" && attempt["current"] == true
-    {
-        let dispatch: Option<Value> = sqlx::query_scalar(
-            "SELECT to_jsonb(ds) FROM mobile_v9_dispatch_state ds WHERE item_id=$1",
-        )
-        .bind(uid(attempt, "item_id")?)
-        .fetch_optional(&mut **tx)
-        .await?;
-        if let Some(dispatch) = dispatch {
-            let (code, message, automatic) = if task["stopped"] == true {
-                ("task_stopped", "任务已停止新领取", false)
-            } else if !pending_time(&task["confirmed_until"]) {
-                (
-                    "confirmation_expired",
-                    "任务确认已到期，请重新确认业务意图",
-                    false,
-                )
-            } else if dispatch["state"] == "needs_review" {
-                (
-                    "target_result_pending",
-                    "此目标存在发送结果冲突，请核对原尝试",
-                    false,
-                )
-            } else if dispatch["reason"] == "confirmation_permission_changed" {
-                (
-                    "confirmation_permission_changed",
-                    "确认人的业务授权已变化，请核对学校权限",
-                    false,
-                )
-            } else if pending_time(&task["next_eligible_at"]) {
-                ("waiting_interval", "等待已确认的业务间隔", true)
-            } else if dispatch["state"] == "assigned" {
-                ("", "", true)
-            } else {
-                (
-                    "waiting_resources",
-                    "平台已受理，正在已授权候选范围内自动调度手机",
-                    true,
-                )
-            };
-            if !code.is_empty() {
-                add(&mut conditions, code, message, "system", automatic, device);
-                let c = conditions.last_mut().ok_or(Error::Conflict)?;
-                c.scope_type = "item".into();
-                c.scope_id = uid(attempt, "item_id")?;
-                c.affected_action = "dispatch".into();
-                c.owner = if automatic { "system" } else { "admin" }.into();
-                c.next_action = if automatic {
-                    "系统自动选择可用候选手机，无需重复提交"
-                } else {
-                    "核对对应目标结果或业务授权"
-                }
-                .into();
-                if automatic {
-                    c.retry_at = serde_json::from_value(dispatch["next_retry_at"].clone()).ok();
-                }
-            }
-            return serde_json::to_value(ExecutionStatus {
-                phase: ExecutionPhase::project(state, true, !conditions.is_empty()),
-                observed_at: chrono::Utc::now(),
-                device_state_observed_at: serde_json::from_value(runtime["observed_at"].clone())
-                    .ok()
-                    .flatten(),
-                consent_observed_at,
-                conditions,
-            })
-            .map_err(|_| Error::Conflict);
-        }
-    }
-    if state == "queued" && attempt["current"] == true {
+    let current = attempt["current"] == true;
+    let dispatch: Option<Value> =
+        sqlx::query_scalar("SELECT to_jsonb(ds) FROM mobile_v9_dispatch_state ds WHERE item_id=$1")
+            .bind(uid(attempt, "item_id")?)
+            .fetch_optional(&mut **tx)
+            .await?;
+    let grant:Option<Value>=sqlx::query_scalar("SELECT jsonb_build_object('state',state,'accepted_at',accepted_at,'result_deadline_at',result_deadline_at,'outcome',result_body->>'outcome') FROM mobile_execution_grants WHERE attempt_id=$1").bind(uid(attempt,"id")?).fetch_optional(&mut **tx).await?;
+    let mut conditions = Vec::new();
+    if current && !matches!(state, "observed_sent" | "manually_confirmed_sent") {
+        let expired = task["confirmed_until"]
+            .as_str()
+            .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok())
+            .is_some_and(|t| t <= chrono::Utc::now());
         if task["stopped"] == true {
             add(
                 &mut conditions,
                 "task_stopped",
-                "任务已停止新领取",
-                "school",
+                "任务已停止，撤销消息已排队",
+                "admin",
                 false,
                 device,
             );
-        }
-        if !pending_time(&task["confirmed_until"]) {
+        } else if expired {
             add(
                 &mut conditions,
                 "confirmation_expired",
-                "任务确认已到期，请复制为新草稿并重新确认",
-                "school",
+                "任务确认已到期，请重新确认业务意图",
+                "admin",
                 false,
                 device,
             );
-        }
-        if task["cursor_position"].as_i64() != Some(position) {
-            add(
-                &mut conditions,
-                "previous_target_pending",
-                "等待前一群的确定结果与界面静止",
-                "system",
-                true,
-                device,
-            );
-        }
-        if pending_time(&task["next_eligible_at"]) || pending_time(&attempt["not_before"]) {
-            add(
-                &mut conditions,
-                "waiting_interval",
-                "等待已确认的群间隔或最早执行时间",
-                "system",
-                true,
-                device,
-            );
-        }
-        match tasks::validate_plan(tx, school, plan).await {
-            Ok(()) => {}
-            Err(Error::Policy(code)) => add(
-                &mut conditions,
-                code,
-                "本任务使用范围或计划依赖已变化，请重新预览核对",
-                "school",
-                false,
-                device,
-            ),
-            Err(e) => return Err(e),
-        }
-        match authorize(tx, uid(attempt, "confirmed_by")?, Some(school), true).await {
-            Ok(()) => {}
-            Err(Error::Forbidden | Error::Unauthorized) => add(
-                &mut conditions,
-                "confirmation_permission_changed",
-                "原确认人的学校发送权限已失效",
-                "school",
-                false,
-                device,
-            ),
-            Err(e) => return Err(e),
-        }
-        let consent:Option<bool>=sqlx::query_scalar("SELECT c.accepted FROM mobile_shared_delegations d JOIN LATERAL(SELECT accepted FROM mobile_shared_delegation_decisions WHERE delegation_id=d.id ORDER BY revision DESC LIMIT 1)c ON true WHERE d.device_id=$1 AND d.credential_generation=$2").bind(device).bind(plan["credential_generation"].as_i64().unwrap_or(0)).fetch_optional(&mut **tx).await?;
-        match consent {
-            Some(true) => {}
-            Some(false) => add(
-                &mut conditions,
-                "consent_revoked",
-                "本机已撤回共享托管同意",
-                "device",
-                false,
-                device,
-            ),
-            None => add(
-                &mut conditions,
-                "consent_unknown",
-                "托管状态待同步，不代表用户未授权",
-                "system",
-                true,
-                device,
-            ),
-        }
-        if runtime["fresh"] != true {
-            add(
-                &mut conditions,
-                "runtime_stale",
-                "等待手机上报当前执行条件，不要求重新授权",
-                "system",
-                true,
-                device,
-            );
-        }
-        if runtime["online"] != true {
-            add(
-                &mut conditions,
-                "device_offline",
-                "等待手机后台连接恢复",
-                "device",
-                true,
-                device,
-            );
-        }
-        if runtime["fresh"] == true && runtime["paused"] == true {
-            add(
-                &mut conditions,
-                "execution_paused",
-                "手机执行已暂停",
-                "device",
-                false,
-                device,
-            );
-        }
-        if runtime["fresh"] == true
-            && (runtime["ready"] != true
-                || !super::screen::facts_complete(&runtime["conditions"])
-                || super::screen::state(&runtime["conditions"]).is_some())
+        } else if let Some(g) = &grant
+            && g["state"] == "active"
         {
-            let (code, message) = if !super::screen::facts_complete(&runtime["conditions"]) {
-                ("runtime_unknown", "手机屏幕事实尚未完整上报，系统正在同步")
-            } else if let Some((code, message, _, _)) =
-                super::screen::issue(&runtime["conditions"], &runtime["preparation"])
-            {
-                (code, message)
-            } else if runtime["conditions"]["accessibility"] == false {
-                ("accessibility_required", "等待手机无障碍服务恢复")
-            } else if runtime["conditions"]["notification"] == false {
-                ("notification_required", "等待手机通知权限恢复")
-            } else {
-                super::screen::runtime_issue(&runtime["ready_reason"])
-                    .unwrap_or(("runtime_not_ready", "尚未收到明确就绪原因，系统正在同步"))
-            };
-            let automatic = super::screen::issue(&runtime["conditions"], &runtime["preparation"])
-                .map(|v| v.3)
-                .unwrap_or(true);
-            add(&mut conditions, code, message, "device", automatic, device);
-        }
-        let risk = match tasks::validate_risk(tx, school, plan).await {
-            Ok(()) => false,
-            Err(Error::Policy(_)) => true,
-            Err(e) => return Err(e),
-        };
-        if risk {
             add(
                 &mut conditions,
-                "shared_send_review_required",
-                "存在不确定调用，请先人工核对相关手机或目标群的原结果",
-                "school",
-                false,
-                device,
-            );
-        } else {
-            for source in inspections::busy_sources(tx, device).await? {
-                let code = source["code"].as_str().ok_or(Error::Conflict)?;
-                let message = match code {
-                    "device_claim_active" => "手机仍持有原任务领取，等待安全恢复",
-                    "device_lease_active" => "等待原界面租约安全释放",
-                    "device_idle_unconfirmed" => "手机静止状态已过期，等待重新核验",
-                    "device_invocation_risk" => "原调用结果待核对，禁止重新发送",
-                    _ => "等待手机当前界面操作停止并确认静止",
-                };
-                add(&mut conditions, code, message, "system", true, device);
-                if let Some(condition) = conditions.last_mut() {
-                    condition.valid_until = serde_json::from_value(source["expires_at"].clone())
-                        .map_err(|e| Error::Invalid(e.to_string()))?;
-                    condition.retry_at = condition.valid_until;
-                    if let Ok(at) = serde_json::from_value(source["observed_at"].clone()) {
-                        condition.observed_at = at;
-                    }
-                    condition.scope_type = if code == "device_claim_active" {
-                        "claim"
-                    } else {
-                        "device"
-                    }
-                    .into();
-                    if code == "device_claim_active" {
-                        condition.scope_id = uid(&source, "id")?;
-                    }
-                }
-            }
-        }
-        let closed = match business_scheme::ensure_open(tx).await {
-            Ok(()) => false,
-            Err(Error::Policy(_)) => true,
-            Err(e) => return Err(e),
-        };
-        if closed {
-            add(
-                &mut conditions,
-                "shared_send_platform_closed",
-                "平台已暂停实际执行",
-                "platform",
-                true,
-                device,
-            );
-        }
-        let quota_available = match device::quota(
-            tx,
-            school,
-            device,
-            uid(plan, "target_id")?,
-            uid(attempt, "id")?,
-            false,
-        )
-        .await
-        {
-            Ok(available) => available,
-            Err(Error::Policy(code)) => {
-                add(
-                    &mut conditions,
-                    code,
-                    "发送政策暂不可执行，请管理员查看政策配置；任务已保留",
-                    "school",
-                    false,
-                    device,
-                );
-                true
-            }
-            Err(error) => return Err(error),
-        };
-        if !quota_available {
-            add(
-                &mut conditions,
-                "quota_wait",
-                "等待发送时段、冷却或可用额度",
+                "awaiting_execution_result",
+                if state == "unknown" {
+                    "原尝试结果不确定，平台将在截止时间自动切机"
+                } else {
+                    "等待手机最终结果；离线或明确失败直接切机"
+                },
                 "system",
                 true,
                 device,
             );
+            conditions.last_mut().ok_or(Error::Conflict)?.retry_at =
+                serde_json::from_value(g["result_deadline_at"].clone()).ok();
+        }
+        if conditions.is_empty()
+            && let Some(d) = &dispatch
+            && d["state"] != "assigned"
+            && d["state"] != "completed"
+        {
+            add(
+                &mut conditions,
+                "waiting_resources",
+                "平台正在已授权候选范围内自动选择可用手机",
+                "system",
+                true,
+                device,
+            );
+            conditions.last_mut().ok_or(Error::Conflict)?.retry_at =
+                serde_json::from_value(d["next_retry_at"].clone()).ok();
         }
     }
-    if state == "invalidated" {
-        add(
-            &mut conditions,
-            attempt["invalidation_reason"]
-                .as_str()
-                .unwrap_or("plan_dependency_changed"),
-            if attempt["invalidation_reason"] == "shared_send_execution_configuration_invalid" {
-                "执行配置缺失或损坏，本次未执行，请重新创建任务"
-            } else {
-                "执行依据已失效，请核对原计划后重新安排"
-            },
-            "school",
-            false,
-            device,
-        );
-    }
-    for c in &mut conditions {
-        let scope = match c.code.as_str() {
-            "task_stopped"
-            | "confirmation_expired"
-            | "previous_target_pending"
-            | "waiting_interval"
-            | "confirmation_permission_changed" => Some(("task", uid(task, "id")?)),
-            "shared_send_review_required" => Some(("target", uid(plan, "target_id")?)),
-            "waiting_inspection" | "inspection_retry_wait" | "inspection_retry_exhausted" => {
-                Some(("binding", uid(plan, "binding_id")?))
-            }
-            _ => None,
-        };
-        if let Some((kind, id)) = scope {
-            c.scope_type = kind.into();
-            c.scope_id = id;
-        }
-    }
-    let observed = wait_states::observations(tx, uid(attempt, "id")?).await?;
-    if let Some(rows) = observed.as_ref().and_then(Value::as_array) {
-        for condition in &mut conditions {
-            if let Some(old) = rows
-                .iter()
-                .find(|v| v["code"] == condition.code && v["scope_id"] == json!(condition.scope_id))
-            {
-                condition.waiting_since = serde_json::from_value(old["waiting_since"].clone())
-                    .ok()
-                    .flatten();
-                if old["message"] == condition.message && old["owner"] == condition.owner {
-                    condition.reason_changed_at =
-                        serde_json::from_value(old["reason_changed_at"].clone())
-                            .ok()
-                            .flatten();
-                }
-            }
-        }
-    }
+    let phase = if grant.as_ref().is_some_and(|g| g["state"] == "superseded")
+        && !matches!(
+            state,
+            "observed_sent" | "manually_confirmed_sent" | "unknown"
+        ) {
+        ExecutionPhase::Blocked
+    } else {
+        ExecutionPhase::project(state, current, !conditions.is_empty())
+    };
     serde_json::to_value(ExecutionStatus {
-        phase: ExecutionPhase::project(state, attempt["current"] == true, !conditions.is_empty()),
+        phase,
         observed_at: chrono::Utc::now(),
-        device_state_observed_at: serde_json::from_value(runtime["observed_at"].clone())
-            .map_err(|e| Error::Invalid(e.to_string()))?,
-        consent_observed_at,
+        device_state_observed_at: None,
+        consent_observed_at: None,
         conditions,
     })
-    .map_err(|e| Error::Invalid(e.to_string()))
+    .map_err(|_| Error::Conflict)
 }

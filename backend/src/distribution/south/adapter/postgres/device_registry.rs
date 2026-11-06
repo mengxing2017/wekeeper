@@ -52,7 +52,7 @@ async fn credential(tx: &mut Tx<'_>, d: Uuid) -> Result<Value> {
     );
     let expires:chrono::DateTime<chrono::Utc>=sqlx::query_scalar("INSERT INTO device_credentials(token_hash,device_id,generation,expires_at) VALUES($1,$2,$3,clock_timestamp()+interval '30 days') RETURNING expires_at").bind(hash(&token)).bind(d).bind(generation).fetch_one(&mut **tx).await?;
     Ok(
-        json!({"id":d,"device_token":token,"credential_generation":generation,"expires_at":expires,"protocol_version":9}),
+        json!({"id":d,"device_token":token,"credential_generation":generation,"expires_at":expires,"protocol_version":10}),
     )
 }
 impl Repository {
@@ -125,7 +125,7 @@ impl Repository {
                 client_instance_id,
                 protocol_version,
             } => {
-                if !matches!(p, Principal::Enrollment) || protocol_version != 9 {
+                if !matches!(p, Principal::Enrollment) || protocol_version != 10 {
                     return Err(Error::Policy("protocol_unsupported"));
                 }
                 let d = device_id.ok_or(Error::Policy("pairing_code_invalid"))?;
@@ -135,7 +135,7 @@ impl Repository {
                     .await?
                     .ok_or(Error::Policy("device_revoked"))?;
                 sqlx::query("UPDATE device_enrollments SET consumed_at=clock_timestamp() WHERE device_id=$1 AND code_hash=$2 AND consumed_at IS NULL AND expires_at>clock_timestamp() RETURNING id").bind(d).bind(hash(&code)).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("pairing_code_invalid"))?;
-                sqlx::query("UPDATE execution_devices SET client_instance_id=$2,execution_protocol_version=9,supported_protocol_versions=ARRAY[9] WHERE id=$1").bind(d).bind(text(&client_instance_id,1,200)?).execute(&mut **tx).await?;
+                sqlx::query("UPDATE execution_devices SET client_instance_id=$2,execution_protocol_version=10,supported_protocol_versions=ARRAY[10] WHERE id=$1").bind(d).bind(text(&client_instance_id,1,200)?).execute(&mut **tx).await?;
                 credential(tx, d).await
             }
             Command::Rotate {} => {

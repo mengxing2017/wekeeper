@@ -1,4 +1,4 @@
-//! v9 shared-send transport. Business authorization and persistence stay below HTTP.
+//! Durable v10 execution transport. Business authorization and persistence stay below HTTP.
 use crate::{
     bootstrap::Application,
     business::{Actor, Error, Result},
@@ -166,69 +166,6 @@ async fn runtime(State(a): State<Application>, h: HeaderMap, input: Input) -> Re
             .await?,
     ))
 }
-async fn claim(State(a): State<Application>, h: HeaderMap, input: Input) -> Result<ApiResponse> {
-    let c = credential(&a, &h).await?;
-    Ok(resource(
-        "mobile-shared-claims",
-        service(&a)
-            .device_write(
-                &c,
-                key(&h),
-                DeviceCommand::Claim(input.decode("mobile-shared-claims")?),
-            )
-            .await?,
-    ))
-}
-async fn prepare(
-    State(a): State<Application>,
-    Path(id): Path<Uuid>,
-    h: HeaderMap,
-    input: Input,
-) -> Result<ApiResponse> {
-    let c = credential(&a, &h).await?;
-    Ok(resource(
-        "mobile-shared-preparations",
-        service(&a)
-            .device_write(
-                &c,
-                key(&h),
-                DeviceCommand::Prepare(id, input.decode("mobile-shared-preparations")?),
-            )
-            .await?,
-    ))
-}
-async fn invoke(
-    State(a): State<Application>,
-    Path(id): Path<Uuid>,
-    h: HeaderMap,
-    input: Input,
-) -> Result<ApiResponse> {
-    let c = credential(&a, &h).await?;
-    Ok(resource(
-        "mobile-shared-invocations",
-        service(&a)
-            .device_write(
-                &c,
-                key(&h),
-                DeviceCommand::Invoke(id, input.decode("mobile-shared-invocations")?),
-            )
-            .await?,
-    ))
-}
-async fn result(State(a): State<Application>, h: HeaderMap, input: Input) -> Result<ApiResponse> {
-    let event: crate::distribution::domain::shared_mobile::shared_send_v2::ResultEvent =
-        input.decode("mobile-shared-results")?;
-    // The credential is bound to exactly one invocation; it grants no reads, claims or UI authority.
-    let value = if event.invocation_id.is_some() {
-        service(&a).recover_result(key(&h), event).await?
-    } else {
-        let c = credential(&a, &h).await?;
-        service(&a)
-            .device_write(&c, key(&h), DeviceCommand::Result(event))
-            .await?
-    };
-    Ok(resource("mobile-shared-results", value))
-}
 async fn consent(State(a): State<Application>, h: HeaderMap, input: Input) -> Result<ApiResponse> {
     let c = credential(&a, &h).await?;
     Ok(resource(
@@ -262,93 +199,6 @@ async fn inspection(
             .await?,
     ))
 }
-async fn inspection_claim(
-    State(a): State<Application>,
-    h: HeaderMap,
-    input: Input,
-) -> Result<ApiResponse> {
-    let c = credential(&a, &h).await?;
-    Ok(resource(
-        "mobile-shared-inspection-claims",
-        service(&a)
-            .device_write(
-                &c,
-                key(&h),
-                DeviceCommand::InspectionClaim(input.decode("mobile-shared-inspection-claims")?),
-            )
-            .await?,
-    ))
-}
-async fn inspection_start(
-    State(a): State<Application>,
-    h: HeaderMap,
-    input: Input,
-) -> Result<ApiResponse> {
-    let c = credential(&a, &h).await?;
-    Ok(resource(
-        "mobile-shared-inspection-starts",
-        service(&a)
-            .device_write(
-                &c,
-                key(&h),
-                DeviceCommand::InspectionStart(input.decode("mobile-shared-inspection-starts")?),
-            )
-            .await?,
-    ))
-}
-async fn inspection_result(
-    State(a): State<Application>,
-    h: HeaderMap,
-    input: Input,
-) -> Result<ApiResponse> {
-    let c = credential(&a, &h).await?;
-    Ok(resource(
-        "mobile-shared-inspection-results",
-        service(&a)
-            .device_write(
-                &c,
-                key(&h),
-                DeviceCommand::InspectionResult(input.decode("mobile-shared-inspection-results")?),
-            )
-            .await?,
-    ))
-}
-async fn renew(
-    State(a): State<Application>,
-    Path(id): Path<Uuid>,
-    h: HeaderMap,
-    input: Input,
-) -> Result<ApiResponse> {
-    let c = credential(&a, &h).await?;
-    Ok(resource(
-        "mobile-shared-leases",
-        service(&a)
-            .device_write(
-                &c,
-                key(&h),
-                DeviceCommand::Renew(id, input.decode("mobile-shared-leases")?),
-            )
-            .await?,
-    ))
-}
-async fn release(
-    State(a): State<Application>,
-    Path(id): Path<Uuid>,
-    h: HeaderMap,
-    input: Input,
-) -> Result<ApiResponse> {
-    let c = credential(&a, &h).await?;
-    Ok(resource(
-        "mobile-shared-leases",
-        service(&a)
-            .device_write(
-                &c,
-                key(&h),
-                DeviceCommand::Release(id, input.decode("mobile-shared-leases")?),
-            )
-            .await?,
-    ))
-}
 async fn reassign(
     State(a): State<Application>,
     actor: Actor,
@@ -364,28 +214,6 @@ async fn reassign(
                 s,
                 key(&h),
                 SchoolCommand::Reassign(id, input.decode("mobile-shared-reassignments")?),
-            )
-            .await?,
-    ))
-}
-async fn recover_claim(State(a): State<Application>, input: Input) -> Result<ApiResponse> {
-    Ok(resource(
-        "mobile-shared-recoveries",
-        service(&a)
-            .recover_claim(input.decode("mobile-shared-recoveries")?)
-            .await?,
-    ))
-}
-
-async fn settle(State(a): State<Application>, h: HeaderMap, input: Input) -> Result<ApiResponse> {
-    let c = credential(&a, &h).await?;
-    Ok(resource(
-        "mobile-shared-settlements",
-        service(&a)
-            .device_write(
-                &c,
-                key(&h),
-                DeviceCommand::Settle(input.decode("mobile-shared-settlements")?),
             )
             .await?,
     ))
@@ -407,18 +235,79 @@ async fn diagnostic(
             .await?,
     ))
 }
+async fn execution_grant(
+    State(a): State<Application>,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    let c = credential(&a, &h).await?;
+    Ok(resource(
+        "execution-grants",
+        service(&a)
+            .device_write(
+                &c,
+                key(&h),
+                DeviceCommand::Grant(input.decode("execution-grants")?),
+            )
+            .await?,
+    ))
+}
+async fn execution_receipt(
+    State(a): State<Application>,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    let c = credential(&a, &h).await?;
+    Ok(resource(
+        "execution-receipts",
+        service(&a)
+            .device_write(
+                &c,
+                key(&h),
+                DeviceCommand::Receipt(input.decode("execution-receipts")?),
+            )
+            .await?,
+    ))
+}
+async fn execution_completion(State(a): State<Application>, input: Input) -> Result<ApiResponse> {
+    Ok(resource(
+        "execution-completions",
+        service(&a)
+            .complete_execution(input.decode("execution-completions")?)
+            .await?,
+    ))
+}
 pub fn router() -> Router<Application> {
     Router::new()
         .merge(usage_router())
-        .route("/api/v9/device-execution/send-settlements", post(settle))
         .route(
-            "/api/v9/device-execution/failure-diagnostics",
-            post(diagnostic),
+            "/api/v10/device-execution/execution-grants",
+            post(execution_grant),
         )
         .route(
-            "/api/v9/device-execution/send-recoveries",
-            post(recover_claim),
+            "/api/v10/device-execution/execution-receipts",
+            post(execution_receipt),
         )
+        .route(
+            "/api/v10/device-execution/execution-completions",
+            post(execution_completion),
+        )
+        .route(
+            "/api/v10/device-execution/authority-context",
+            get(delegation_context),
+        )
+        .route("/api/v10/device-execution/task-context", get(context))
+        .route("/api/v10/device-execution/task-inbox", get(inbox))
+        .route(
+            "/api/v10/device-execution/display-receipts",
+            post(inbox_receipt),
+        )
+        .route("/api/v10/device-execution/idle-telemetry", post(runtime))
+        .route(
+            "/api/v10/device-execution/authorization-decisions",
+            post(consent),
+        )
+        .route("/api/v10/device-execution/diagnostics", post(diagnostic))
         .route(
             "/api/v1/schools/{school}/mobile-execution/shared-v2-items/{id}/reassignments",
             post(reassign),
@@ -426,26 +315,6 @@ pub fn router() -> Router<Application> {
         .route(
             "/api/v1/schools/{school}/mobile-execution/shared-v2-inspections",
             post(inspection),
-        )
-        .route(
-            "/api/v9/device-execution/send-inspection-starts",
-            post(inspection_start),
-        )
-        .route(
-            "/api/v9/device-execution/send-inspection-claims",
-            post(inspection_claim),
-        )
-        .route(
-            "/api/v9/device-execution/send-inspection-results",
-            post(inspection_result),
-        )
-        .route(
-            "/api/v9/device-execution/send-claims/{id}/renewals",
-            post(renew),
-        )
-        .route(
-            "/api/v9/device-execution/send-claims/{id}/releases",
-            post(release),
         )
         .route(
             "/api/v1/schools/{school}/mobile-execution/shared-v2-tasks",
@@ -463,42 +332,6 @@ pub fn router() -> Router<Application> {
             "/api/v1/schools/{school}/mobile-execution/shared-v2-items/{id}/reviews",
             post(review),
         )
-        .route(
-            "/api/v9/device-execution/protocol-capabilities",
-            get(context),
-        )
-        .route(
-            "/api/v9/device-execution/send-capability-context",
-            get(context),
-        )
-        .route(
-            "/api/v9/device-execution/send-recovery-context",
-            get(context),
-        )
-        .route(
-            "/api/v9/device-execution/send-delegation-context",
-            get(delegation_context),
-        )
-        .route("/api/v9/device-execution/shared-task-inbox", get(inbox))
-        .route(
-            "/api/v9/device-execution/shared-task-receipts",
-            post(inbox_receipt),
-        )
-        .route("/api/v9/device-execution/runtime-reports", post(runtime))
-        .route(
-            "/api/v9/device-execution/send-delegation-decisions",
-            post(consent),
-        )
-        .route("/api/v9/device-execution/send-claims", post(claim))
-        .route(
-            "/api/v9/device-execution/send-claims/{id}/preparations",
-            post(prepare),
-        )
-        .route(
-            "/api/v9/device-execution/send-claims/{id}/invocations",
-            post(invoke),
-        )
-        .route("/api/v9/device-execution/send-results", post(result))
 }
 
 async fn usage_options(

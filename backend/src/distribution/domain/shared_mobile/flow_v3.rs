@@ -126,7 +126,7 @@ mod tests {
     #[test]
     fn v9_wire_is_separate_and_cross_language_digest_is_frozen() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../../../api-contract/fixtures/shared-mobile-send-v9.json"
+            "../../../../../api-contract/fixtures/local-group-text-flow.json"
         ))
         .unwrap();
         let flow: FlowV3 = serde_json::from_value(fixture["flow"].clone()).unwrap();

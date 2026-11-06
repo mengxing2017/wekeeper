@@ -186,6 +186,9 @@ impl Store for Repository {
     ) -> Result<Value> {
         let mut tx = self.0.begin().await?;
         admin(&mut tx, actor).await?;
+        if input.kind == CommandKind::CancelExecution {
+            return Err(Error::Forbidden);
+        }
         sqlx::query("SELECT id FROM execution_devices WHERE id=$1 FOR UPDATE")
             .bind(device)
             .fetch_optional(&mut *tx)

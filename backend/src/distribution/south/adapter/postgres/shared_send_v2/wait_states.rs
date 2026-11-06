@@ -21,27 +21,6 @@ fn merge(old: &Value, current: &mut Value, now: chrono::DateTime<chrono::Utc>) {
         }
     }
 }
-pub(super) async fn observations(tx: &mut Tx<'_>, attempt: Uuid) -> Result<Option<Value>> {
-    use sqlx::Acquire;
-    let mut read = tx.begin().await?;
-    match sqlx::query_scalar(
-        "SELECT conditions FROM mobile_v9_execution_wait_observations WHERE attempt_id=$1",
-    )
-    .bind(attempt)
-    .fetch_optional(&mut *read)
-    .await
-    {
-        Ok(value) => {
-            read.commit().await?;
-            Ok(value)
-        }
-        Err(error) => {
-            read.rollback().await?;
-            tracing::warn!(%error,"wait history unavailable; execution conditions remain authoritative");
-            Ok(None)
-        }
-    }
-}
 impl Repository {
     pub async fn refresh_wait_states(&self) -> Result<()> {
         let rows:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('task',to_jsonb(t),'attempt',to_jsonb(a)||jsonb_build_object('plan',p.plan),'position',i.position,'old',o.conditions) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id LEFT JOIN mobile_v9_execution_wait_observations o ON o.attempt_id=a.id WHERE a.current AND a.state='queued' ORDER BY o.observed_at NULLS FIRST,a.id LIMIT 20").fetch_all(&self.0).await?;

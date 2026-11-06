@@ -236,9 +236,9 @@ pub fn router() -> Router<Application> {
             "/api/v1/platform/execution-devices/{id}/credential-revocations",
             post(revoke),
         )
-        .route("/api/v9/device-execution/enrollments", post(enroll))
+        .route("/api/v10/device-execution/enrollments", post(enroll))
         .route(
-            "/api/v9/device-execution/credential-rotations",
+            "/api/v10/device-execution/credential-rotations",
             post(rotate),
         )
 }
