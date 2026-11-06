@@ -2,7 +2,7 @@
 use super::*;
 pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> {
     let policy = policy(tx).await?;
-    let rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(b)||jsonb_build_object('device_name',d.name,'target_name',coalesce(nullif(t.alias,''),t.search_text),'search_text',coalesce(b.search_text_override,t.search_text),'online',coalesce(cp.state='online' AND cp.last_control_heartbeat_at>clock_timestamp()-interval '30 seconds',false),'ui_ready',coalesce(rt.ui_ready AND NOT rt.paused AND rt.credential_generation=d.credential_generation AND rt.observed_at>clock_timestamp()-interval '30 seconds' AND NOT cp.desired_paused,false),'context_epoch',rd.ui_context_epoch,'runtime_observed_at',rt.observed_at,'runtime_fresh',coalesce(rt.credential_generation=d.credential_generation AND rd.credential_generation=d.credential_generation AND rt.observed_at>clock_timestamp()-interval '30 seconds' AND rd.observed_at>clock_timestamp()-interval '30 seconds',false),'runtime_conditions',rd.conditions,'runtime_reason',rd.ready_reason,'preparation',rd.preparation,'paused',coalesce(rt.paused,false) OR coalesce(cp.desired_paused,false)) FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id JOIN execution_devices d ON d.id=b.device_id LEFT JOIN device_control_presence cp ON cp.id=d.id LEFT JOIN mobile_shared_runtime rt ON rt.device_id=d.id LEFT JOIN mobile_v9_runtime_details rd ON rd.device_id=d.id WHERE b.school_id=$1 ORDER BY d.name,b.id").bind(school).fetch_all(&mut **tx).await?;
+    let rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(b)||jsonb_build_object('device_name',d.name,'target_name',t.search_text,'search_text',coalesce(b.search_text_override,t.search_text),'online',coalesce(cp.state='online' AND cp.last_control_heartbeat_at>clock_timestamp()-interval '30 seconds',false),'ui_ready',coalesce(rt.ui_ready AND NOT rt.paused AND rt.credential_generation=d.credential_generation AND rt.observed_at>clock_timestamp()-interval '30 seconds' AND NOT cp.desired_paused,false),'context_epoch',rd.ui_context_epoch,'runtime_observed_at',rt.observed_at,'runtime_fresh',coalesce(rt.credential_generation=d.credential_generation AND rd.credential_generation=d.credential_generation AND rt.observed_at>clock_timestamp()-interval '30 seconds' AND rd.observed_at>clock_timestamp()-interval '30 seconds',false),'runtime_conditions',rd.conditions,'runtime_reason',rd.ready_reason,'preparation',rd.preparation,'paused',coalesce(rt.paused,false) OR coalesce(cp.desired_paused,false)) FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id JOIN execution_devices d ON d.id=b.device_id LEFT JOIN device_control_presence cp ON cp.id=d.id LEFT JOIN mobile_shared_runtime rt ON rt.device_id=d.id LEFT JOIN mobile_v9_runtime_details rd ON rd.device_id=d.id WHERE b.school_id=$1 ORDER BY d.name,b.id").bind(school).fetch_all(&mut **tx).await?;
     let mut result = Vec::new();
     for row in rows {
         let candidate = tasks::raw_candidates(tx, school, uid(&row, "target_id")?)
@@ -37,18 +37,6 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
                 "检查共享资格和群绑定",
                 false,
             );
-        }
-        if candidate
-            .as_ref()
-            .is_some_and(|c| c["target"]["exact_name"].is_null())
-        {
-            blockers.push(condition(
-                "target_identity_required",
-                "请补充企业微信实际完整群名",
-                "school_admin",
-                "编辑目标群资料",
-                false,
-            ));
         }
         if !scope_exists && selectable {
             blockers.push(

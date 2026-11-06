@@ -69,7 +69,7 @@ impl Fixture {
         sqlx::query("INSERT INTO execution_devices(id,name,enabled,credential_generation) VALUES($1,'Offline phone',true,1)").bind(device).execute(&pool).await.unwrap();
         let targets = vec![Uuid::new_v4(), Uuid::new_v4()];
         for target in &targets {
-            sqlx::query("INSERT INTO mobile_targets(id,school_id,search_text,exact_name,created_by,updated_by) VALUES($1,$2,'测试群','实际完整群名',$3,$3)").bind(target).bind(school).bind(actor_id).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO mobile_targets(id,school_id,search_text,created_by,updated_by) VALUES($1,$2,'测试群',$3,$3)").bind(target).bind(school).bind(actor_id).execute(&pool).await.unwrap();
             sqlx::query("INSERT INTO mobile_device_target_bindings(id,school_id,device_id,target_id,created_by,updated_by) VALUES($1,$2,$3,$4,$5,$5)").bind(Uuid::new_v4()).bind(school).bind(device).bind(target).bind(actor_id).execute(&pool).await.unwrap();
         }
         let release = Uuid::new_v4();
@@ -466,7 +466,6 @@ async fn business_usage_is_atomic_scoped_idempotent_and_survives_delivery_change
     let input = UsageInput {
         device_ids: vec![f.device],
         targets: vec![UsageTarget {
-            exact_name: Some("实际完整群名".into()),
             id: Some(f.targets[0]),
             name: "测试群".into(),
             search_text: "测试群".into(),
@@ -681,7 +680,6 @@ async fn business_scope_materializes_without_delivery_acceptance_or_activation_a
     let input = UsageInput {
         device_ids: vec![f.device],
         targets: vec![UsageTarget {
-            exact_name: Some("实际完整群名".into()),
             id: None,
             name: "同页新增群".into(),
             search_text: "同页  新增群".into(),
@@ -957,7 +955,6 @@ async fn approved_business_resources_exist_without_any_adapter_or_delivery_recor
     let input = UsageInput {
         device_ids: vec![f.device],
         targets: vec![UsageTarget {
-            exact_name: Some("实际完整群名".into()),
             id: None,
             name: "新增目标".into(),
             search_text: "新增目标".into(),
@@ -1168,7 +1165,6 @@ async fn usage_overrides_reuse_and_renewal_keep_one_business_family() {
     let input = UsageInput {
         device_ids: vec![f.device, second],
         targets: vec![UsageTarget {
-            exact_name: Some("实际完整群名".into()),
             id: Some(f.targets[0]),
             name: "测试群".into(),
             search_text: "测试群".into(),
@@ -1191,8 +1187,8 @@ async fn usage_overrides_reuse_and_renewal_keep_one_business_family() {
     assert_eq!(p["body"]["locators"][0]["search_text"], "手机专用群");
     assert_eq!(p["body"]["locators"][1]["search_text"], "第二台专用群");
     assert_eq!(p["body"]["locators"][0]["target_locator_revision"], 1);
-    // Display aliases and unused default names are not the phone's location.
-    sqlx::query("UPDATE mobile_targets SET alias='显示名已更新',search_text='无关默认搜索名',locator_revision=locator_revision+1 WHERE id=$1").bind(f.targets[0]).execute(&f.pool).await.unwrap();
+    // Unused default names are not the phone's location.
+    sqlx::query("UPDATE mobile_targets SET search_text='无关默认搜索名',locator_revision=locator_revision+1 WHERE id=$1").bind(f.targets[0]).execute(&f.pool).await.unwrap();
     let opened = r
         .usage_write(
             &f.actor,
@@ -1806,7 +1802,6 @@ async fn device_reenable_and_projection_drift_do_not_permanently_invalidate_scop
     let input = UsageInput {
         device_ids: vec![f.device],
         targets: vec![UsageTarget {
-            exact_name: Some("实际完整群名".into()),
             id: None,
             name: "漂移测试群".into(),
             search_text: "漂移测试群".into(),
@@ -2434,7 +2429,7 @@ async fn stale_first_execution_does_not_starve_valid_later_task() {
     let old: Uuid = serde_json::from_value(pool_current(&first["items"][0])["id"].clone()).unwrap();
     let next: Uuid =
         serde_json::from_value(pool_current(&second["items"][0])["id"].clone()).unwrap();
-    sqlx::query("UPDATE mobile_targets SET exact_name='真实群名改变',identity_revision=identity_revision+1,locator_revision=locator_revision+1 WHERE id=$1")
+    sqlx::query("UPDATE mobile_targets SET search_text='变化后的群名',locator_revision=locator_revision+1 WHERE id=$1")
         .bind(f.targets[0]).execute(&f.pool).await.unwrap();
     let request = DeliveryRequest {
         runtime_epoch: epoch,
@@ -2454,7 +2449,7 @@ async fn stale_first_execution_does_not_starve_valid_later_task() {
     assert_eq!(grant["state"], "granted");
     assert_eq!(grant["attempt_id"], json!(next));
     assert!(grant["plan"].get("search_text").is_none());
-    assert_eq!(grant["plan"]["target"]["exact_name"], "实际完整群名");
+    assert!(grant["plan"]["target"].get("exact_name").is_none());
     assert_eq!(grant["plan_digest"], digest(&grant["plan"]).unwrap());
     let state: (String, Option<String>) =
         sqlx::query_as("SELECT state,invalidation_reason FROM mobile_v9_attempts WHERE id=$1")
@@ -2475,7 +2470,7 @@ async fn stale_first_execution_does_not_starve_valid_later_task() {
             .any(|t| t["id"] == json!(old))
     );
     // A committed grant must replay identically even after the target changes again.
-    sqlx::query("UPDATE mobile_targets SET exact_name='后来变化',identity_revision=identity_revision+1,locator_revision=locator_revision+1 WHERE id=$1")
+    sqlx::query("UPDATE mobile_targets SET search_text='变化后的群名',locator_revision=locator_revision+1 WHERE id=$1")
         .bind(f.targets[1]).execute(&f.pool).await.unwrap();
     let replay = f
         .repo()
@@ -2534,50 +2529,19 @@ async fn definite_dependency_rejection_commits_and_replays_without_grant() {
 
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn overridden_query_ignores_default_edits_but_binds_exact_group_name() {
+async fn overridden_group_name_ignores_unused_default_edits() {
     let f = Fixture::with_adapter(false).await;
     let (c, epoch) = pool_ready(&f, f.device).await;
     sqlx::query("UPDATE mobile_device_target_bindings SET search_text_override='专用搜索词',locator_revision=locator_revision+1 WHERE device_id=$1")
         .bind(f.device).execute(&f.pool).await.unwrap();
     let task = pool_confirm(&f, vec![f.targets[0]]).await;
     let aid: Uuid = serde_json::from_value(pool_current(&task["items"][0])["id"].clone()).unwrap();
-    sqlx::query("UPDATE mobile_targets SET search_text='未使用的新默认词',alias='新展示名',locator_revision=locator_revision+1 WHERE id=$1")
+    sqlx::query("UPDATE mobile_targets SET search_text='未使用的新默认词',locator_revision=locator_revision+1 WHERE id=$1")
         .bind(f.targets[0]).execute(&f.pool).await.unwrap();
     let grant = pool_claim(&f, &c, epoch, aid).await;
     assert_eq!(grant["state"], "granted");
     assert_eq!(grant["plan"]["target"]["search_query"], "专用搜索词");
-    assert_eq!(grant["plan"]["target"]["exact_name"], "实际完整群名");
-    f.close().await;
-}
-
-#[tokio::test]
-#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn overridden_query_still_rejects_changed_exact_group_name() {
-    use wekeeper_api::{
-        business::Error, distribution::domain::shared_mobile::execution::GrantRequest,
-    };
-    let f = Fixture::with_adapter(false).await;
-    let (c, epoch) = pool_ready(&f, f.device).await;
-    sqlx::query("UPDATE mobile_device_target_bindings SET search_text_override='专用搜索词',locator_revision=locator_revision+1 WHERE device_id=$1")
-        .bind(f.device).execute(&f.pool).await.unwrap();
-    let task = pool_confirm(&f, vec![f.targets[0]]).await;
-    let aid: Uuid = serde_json::from_value(pool_current(&task["items"][0])["id"].clone()).unwrap();
-    sqlx::query("UPDATE mobile_targets SET exact_name='实际群名已经变化',identity_revision=identity_revision+1,locator_revision=locator_revision+1 WHERE id=$1")
-        .bind(f.targets[0]).execute(&f.pool).await.unwrap();
-    assert!(matches!(
-        f.repo()
-            .device_write(
-                &c,
-                "override-name-change",
-                DeviceCommand::Grant(GrantRequest {
-                    runtime_epoch: epoch,
-                    eligible_attempt_ids: vec![aid],
-                    inspection_id: None
-                })
-            )
-            .await,
-        Err(Error::Policy("plan_dependency_changed"))
-    ));
+    assert!(grant["plan"]["target"].get("exact_name").is_none());
     f.close().await;
 }
 
@@ -2615,7 +2579,7 @@ async fn stale_delivery_is_idle_and_does_not_require_device_authorization_retry(
     let f = Fixture::with_adapter(false).await;
     let (c, epoch) = pool_ready(&f, f.device).await;
     pool_confirm(&f, vec![f.targets[0]]).await;
-    sqlx::query("UPDATE mobile_targets SET identity_revision=identity_revision+1 WHERE id=$1")
+    sqlx::query("UPDATE mobile_targets SET locator_revision=locator_revision+1 WHERE id=$1")
         .bind(f.targets[0])
         .execute(&f.pool)
         .await
@@ -2666,7 +2630,7 @@ async fn delivery_recovers_an_issued_task_without_another_permission_or_dependen
     let attempt = serde_json::from_value(pool_current(&task["items"][0])["id"].clone()).unwrap();
     let issued = pool_claim(&f, &c, epoch, attempt).await;
     assert_eq!(issued["state"], "granted");
-    sqlx::query("UPDATE mobile_targets SET identity_revision=identity_revision+1 WHERE id=$1")
+    sqlx::query("UPDATE mobile_targets SET locator_revision=locator_revision+1 WHERE id=$1")
         .bind(f.targets[0])
         .execute(&f.pool)
         .await
@@ -2694,5 +2658,60 @@ async fn delivery_recovers_an_issued_task_without_another_permission_or_dependen
         .unwrap(),
         1
     );
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn group_name_alone_is_confirmable_and_delivered_for_device_resolution() {
+    use wekeeper_api::distribution::domain::shared_mobile::execution::DeliveryRequest;
+    let f = Fixture::with_adapter(false).await;
+    let (c, epoch) = pool_ready(&f, f.device).await;
+    let task = pool_confirm(&f, vec![f.targets[0]]).await;
+    let overview = f
+        .repo()
+        .school_read(&f.actor, f.school, None)
+        .await
+        .unwrap();
+    let row = readiness_row(&overview, f.device, f.targets[0]);
+    assert_eq!(row["confirmable"], true);
+    assert!(
+        !row["blockers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|b| b["code"] == "target_identity_required")
+    );
+    let context = f.repo().device_read(&c).await.unwrap();
+    assert!(
+        context["inspections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["target"].get("exact_name").is_none())
+    );
+    let delivery = f
+        .repo()
+        .device_write(
+            &c,
+            "single-name-delivery",
+            DeviceCommand::Deliver(DeliveryRequest {
+                runtime_epoch: epoch,
+                inspection_id: None,
+            }),
+        )
+        .await
+        .unwrap();
+    let grant = &delivery["execution"];
+    assert_eq!(grant["state"], "granted");
+    assert!(grant["plan"]["target"].get("exact_name").is_none());
+    assert_eq!(grant["plan"]["target"]["search_query"], "测试群");
+    assert_eq!(grant["plan"]["target_name"], "测试群");
+    assert_eq!(grant["task_id"], task["id"]);
+    // A device-side recognition failure is recorded against this attempt, not a platform gate.
+    let mut result = completion(grant, "not_called");
+    result.reason = "target_identity_required".into();
+    f.repo().complete_execution(result).await.unwrap();
+    pool_tick(&f).await;
     f.close().await;
 }

@@ -446,8 +446,6 @@ pub struct PoolBindingInput {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct PreviewTarget {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exact_name: Option<String>,
     pub id: Uuid,
     pub name: String,
     pub search_text: String,

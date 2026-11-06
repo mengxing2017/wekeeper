@@ -22,8 +22,6 @@ pub struct UsageLocator {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UsageTarget {
-    #[serde(default)]
-    pub exact_name: Option<String>,
     pub id: Option<Uuid>,
     pub name: String,
     pub search_text: String,
@@ -72,13 +70,6 @@ impl UsageInput {
         for t in &self.targets {
             text(&t.name, 1, 256)?;
             super::validate_text(&t.search_text, 1, 256, 1024)?;
-            if let Some(name) = &t.exact_name {
-                super::validate_text(name, 1, 256, 1024)?;
-            }
-            require(
-                t.id.is_some() || t.exact_name.is_some(),
-                "target_identity_required",
-            )?;
         }
         Ok(())
     }
@@ -244,5 +235,27 @@ mod policy_tests {
         );
         body["allowed_stages"] = serde_json::json!(["test_send"]);
         assert!(serde_json::from_value::<BusinessSchemeInput>(body).is_err());
+    }
+}
+
+#[cfg(test)]
+mod single_name_tests {
+    use super::*;
+    #[test]
+    fn new_usage_target_does_not_require_a_second_group_name() {
+        let input = UsageInput {
+            device_ids: vec![Uuid::new_v4()],
+            targets: vec![UsageTarget {
+                id: None,
+                name: "通知群".into(),
+                search_text: "通知群".into(),
+            }],
+            max_calls: 10,
+            expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+            auto_targets: false,
+            renewal_of: None,
+            expected_revision: None,
+        };
+        input.validate().unwrap();
     }
 }

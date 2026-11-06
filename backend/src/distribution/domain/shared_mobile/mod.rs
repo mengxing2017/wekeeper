@@ -11,10 +11,7 @@ pub const SELECTION_POLICY: &str = "first_group_result";
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TargetInput {
-    pub exact_name: String,
     pub search_text: String,
-    #[serde(default)]
-    pub alias: String,
     #[serde(default)]
     pub remark: String,
     #[serde(default)]
@@ -23,8 +20,6 @@ pub struct TargetInput {
 impl TargetInput {
     pub fn validate(&self) -> Result<()> {
         validate_text(&self.search_text, 1, 256, 1024)?;
-        validate_text(&self.exact_name, 1, 256, 1024)?;
-        validate_text(&self.alias, 0, 128, 512)?;
         validate_text(&self.remark, 0, 2000, 8000)?;
         Ok(())
     }
@@ -87,9 +82,7 @@ mod tests {
     #[test]
     fn locator_preserves_internal_whitespace_and_unicode() {
         let v = TargetInput {
-            exact_name: "实际完整群名".into(),
             search_text: "家长  A群🦦".into(),
-            alias: String::new(),
             remark: String::new(),
             duplicate_confirmation: None,
         };
@@ -102,10 +95,23 @@ mod tests {
         assert!(validate_text(&"🦦".repeat(257), 1, 256, 1024).is_err());
     }
     #[test]
+    fn group_name_alone_can_create_and_update_a_target() {
+        let input: TargetInput =
+            serde_json::from_value(serde_json::json!({"search_text":"通知群"})).unwrap();
+        input.validate().unwrap();
+        let update: TargetUpdate = serde_json::from_value(serde_json::json!({"search_text":"通知群","expected_revision":1,"remark":"","enabled":true})).unwrap();
+        assert_eq!(update.search_text, input.search_text);
+    }
+    #[test]
     fn targets_reject_official_and_sender_identity_fields() {
-        for field in ["wecom_group_id", "sender_account_id", "identity_mode"] {
-            let value =
-                serde_json::json!({"search_text":"群","exact_name":"完整群名",field:"forbidden"});
+        for field in [
+            "exact_name",
+            "alias",
+            "wecom_group_id",
+            "sender_account_id",
+            "identity_mode",
+        ] {
+            let value = serde_json::json!({"search_text":"群",field:"forbidden"});
             assert!(serde_json::from_value::<TargetInput>(value).is_err());
         }
     }
@@ -114,10 +120,8 @@ mod tests {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TargetUpdate {
-    pub exact_name: String,
     pub expected_revision: i64,
     pub search_text: String,
-    pub alias: String,
     pub remark: String,
     pub enabled: bool,
 }

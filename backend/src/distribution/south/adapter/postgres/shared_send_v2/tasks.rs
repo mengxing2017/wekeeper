@@ -2,9 +2,9 @@ use super::*;
 /// Only platform-owned resources. Effective locator dependencies omit unused default names.
 pub(super) async fn raw_candidates(tx: &mut Tx<'_>, s: Uuid, target: Uuid) -> Result<Vec<Value>> {
     sqlx::query_scalar(r#"SELECT jsonb_build_object(
- 'target_id',t.id,'target_name',coalesce(nullif(t.alias,''),t.search_text),'device_name',d.name,'device_id',d.id,'binding_id',b.id,'binding_locator_revision',b.locator_revision,
- 'target_locator_revision',CASE WHEN b.search_text_override IS NULL THEN t.locator_revision ELSE t.identity_revision END,
- 'target',jsonb_build_object('kind','group','search_query',coalesce(b.search_text_override,t.search_text),'exact_name',t.exact_name,'match_policy','exact_unique','identity_constraints','[]'::jsonb),'search_source',CASE WHEN b.search_text_override IS NULL THEN 'default' ELSE 'override' END,
+ 'target_id',t.id,'target_name',t.search_text,'device_name',d.name,'device_id',d.id,'binding_id',b.id,'binding_locator_revision',b.locator_revision,
+ 'target_locator_revision',CASE WHEN b.search_text_override IS NULL THEN t.locator_revision ELSE 1 END,
+ 'target',jsonb_build_object('kind','group','search_query',coalesce(b.search_text_override,t.search_text),'match_policy','exact_unique','identity_constraints','[]'::jsonb),'search_source',CASE WHEN b.search_text_override IS NULL THEN 'default' ELSE 'override' END,
  'access_revision',CASE WHEN b.source='school_pool' THEN (SELECT revision FROM mobile_shared_school_access WHERE school_id=b.school_id AND device_id=b.device_id) ELSE NULL END,
  'credential_generation',d.credential_generation,'delegation_id',m.id,'accepted',coalesce(c.accepted,false),'consent_state',CASE WHEN c.accepted IS NULL THEN 'unknown' WHEN c.accepted THEN 'accepted' ELSE 'revoked' END,
  'execution',jsonb_build_object('contract','device_owned/1','capability','wecom.group_text'))
@@ -39,7 +39,7 @@ pub(super) async fn grant(tx: &mut Tx<'_>, s: Uuid, row: &Value) -> Result<Optio
     // The grant is an execution and metering projection keyed on the phone's real
     // locator identity, never on a generic device or access revision: re-enabling a
     // resource must not permanently invalidate an otherwise valid business scope.
-    sqlx::query_scalar("SELECT to_jsonb(g) FROM mobile_v9_scope_grants g WHERE g.school_id=$1 AND $2=ANY(g.device_ids) AND ($3=ANY(g.target_ids) OR g.auto_targets) AND ($4::uuid IS NULL OR g.id=$4) AND g.expires_at>clock_timestamp() AND (EXISTS(SELECT 1 FROM mobile_usage_scopes us JOIN mobile_usages u ON u.id=us.usage_id WHERE us.scope_id=g.id AND u.approval='approved' AND u.state='active' AND u.expires_at>clock_timestamp() AND NOT EXISTS(SELECT 1 FROM mobile_usages n WHERE n.school_id=u.school_id AND n.budget_root=u.budget_root AND n.approval='approved' AND (n.created_at,n.id)>(u.created_at,u.id)) AND EXISTS(SELECT 1 FROM execution_devices ud JOIN mobile_device_target_bindings ub ON ub.device_id=ud.id JOIN mobile_targets ut ON ut.id=ub.target_id WHERE ud.id=$2 AND ut.id=$3 AND ub.school_id=$1 AND us.resource_snapshot=jsonb_build_object('binding_locator_revision',ub.locator_revision,'target_locator_revision',CASE WHEN ub.search_text_override IS NULL THEN ut.locator_revision ELSE ut.identity_revision END,'target',jsonb_build_object('kind','group','search_query',coalesce(ub.search_text_override,ut.search_text),'exact_name',ut.exact_name,'match_policy','exact_unique','identity_constraints','[]'::jsonb))))) AND NOT EXISTS(SELECT 1 FROM mobile_v9_scope_revocations r WHERE r.grant_id=g.id) ORDER BY g.created_at DESC,g.id DESC LIMIT 1")
+    sqlx::query_scalar("SELECT to_jsonb(g) FROM mobile_v9_scope_grants g WHERE g.school_id=$1 AND $2=ANY(g.device_ids) AND ($3=ANY(g.target_ids) OR g.auto_targets) AND ($4::uuid IS NULL OR g.id=$4) AND g.expires_at>clock_timestamp() AND (EXISTS(SELECT 1 FROM mobile_usage_scopes us JOIN mobile_usages u ON u.id=us.usage_id WHERE us.scope_id=g.id AND u.approval='approved' AND u.state='active' AND u.expires_at>clock_timestamp() AND NOT EXISTS(SELECT 1 FROM mobile_usages n WHERE n.school_id=u.school_id AND n.budget_root=u.budget_root AND n.approval='approved' AND (n.created_at,n.id)>(u.created_at,u.id)) AND EXISTS(SELECT 1 FROM execution_devices ud JOIN mobile_device_target_bindings ub ON ub.device_id=ud.id JOIN mobile_targets ut ON ut.id=ub.target_id WHERE ud.id=$2 AND ut.id=$3 AND ub.school_id=$1 AND us.resource_snapshot=jsonb_build_object('binding_locator_revision',ub.locator_revision,'target_locator_revision',CASE WHEN ub.search_text_override IS NULL THEN ut.locator_revision ELSE 1 END,'target',jsonb_build_object('kind','group','search_query',coalesce(ub.search_text_override,ut.search_text),'match_policy','exact_unique','identity_constraints','[]'::jsonb))))) AND NOT EXISTS(SELECT 1 FROM mobile_v9_scope_revocations r WHERE r.grant_id=g.id) ORDER BY g.created_at DESC,g.id DESC LIMIT 1")
     .bind(s).bind(uid(row,"device_id")?).bind(uid(row,"target_id")?).bind(row.get("scope_id").map(|_|uid(row,"scope_id")).transpose()?).fetch_optional(&mut **tx).await.map_err(Into::into)
 }
 /// Current business control state for a school/device/target, resolved from the
@@ -134,33 +134,8 @@ pub(super) async fn validate_scope(tx: &mut Tx<'_>, s: Uuid, plan: &Value) -> Re
     }
 }
 
-/// The phone accepts exactly this identity shape; never silently translate old plans.
-pub(super) fn validate_target(plan: &Value) -> Result<()> {
-    require(plan.get("search_text").is_none(), "retired_target_contract")?;
-    let target = plan
-        .get("target")
-        .filter(|v| v.is_object())
-        .ok_or(Error::Policy("target_identity_required"))?;
-    require(
-        target.as_object().is_some_and(|t| t.len() == 5)
-            && target["kind"] == "group"
-            && target["match_policy"] == "exact_unique",
-        "invalid_target_identity",
-    )?;
-    for key in ["search_query", "exact_name"] {
-        let text = target[key]
-            .as_str()
-            .ok_or(Error::Policy("target_identity_required"))?;
-        crate::distribution::domain::shared_mobile::validate_text(text, 1, 256, 1024)?;
-    }
-    require(
-        target["identity_constraints"]
-            .as_array()
-            .is_some_and(Vec::is_empty),
-        "unsupported_target_identity",
-    )
-}
-
+// Validate platform authorization and frozen dependencies only. Target identity is interpreted
+// by the device after delivery; missing execution metadata must not block task acceptance.
 pub(super) async fn validate_plan(tx: &mut Tx<'_>, s: Uuid, plan: &Value) -> Result<()> {
     require(
         plan["execution"]["contract"] == "device_owned/1"
@@ -169,7 +144,6 @@ pub(super) async fn validate_plan(tx: &mut Tx<'_>, s: Uuid, plan: &Value) -> Res
             && plan.get("flow_digest").is_none(),
         "execution_contract_replaced",
     )?;
-    validate_target(plan)?;
     let choices = raw_candidates(tx, s, uid(plan, "target_id")?).await?;
     if !choices
         .iter()
@@ -250,7 +224,7 @@ pub(super) async fn write(
                 id
             };
             Ok(sqlx::query_scalar(
-                "SELECT to_jsonb(d)||jsonb_build_object('targets',coalesce((SELECT jsonb_agg(jsonb_build_object('id',t.id,'name',coalesce(nullif(t.alias,''),t.search_text)) ORDER BY ids.n) FROM unnest(d.target_ids) WITH ORDINALITY ids(id,n) JOIN mobile_targets t ON t.id=ids.id AND t.school_id=d.school_id),'[]'::jsonb)) FROM mobile_v9_task_drafts d WHERE id=$1",
+                "SELECT to_jsonb(d)||jsonb_build_object('targets',coalesce((SELECT jsonb_agg(jsonb_build_object('id',t.id,'name',t.search_text) ORDER BY ids.n) FROM unnest(d.target_ids) WITH ORDINALITY ids(id,n) JOIN mobile_targets t ON t.id=ids.id AND t.school_id=d.school_id),'[]'::jsonb)) FROM mobile_v9_task_drafts d WHERE id=$1",
             )
             .bind(id)
             .fetch_one(&mut **tx)
@@ -296,7 +270,7 @@ pub(super) async fn write(
                         confirmation_issues.insert(uid(choice, "device_id")?, issue);
                     }
                 }
-                let target_info:PreviewTarget = sqlx::query_scalar::<_,Value>("SELECT jsonb_build_object('id',id,'name',coalesce(nullif(alias,''),search_text),'search_text',search_text,'exact_name',exact_name,'locator_revision',locator_revision) FROM mobile_targets WHERE id=$1 AND school_id=$2").bind(target).bind(s).fetch_optional(&mut **tx).await?.map(serde_json::from_value).transpose().map_err(|_|Error::Conflict)?.ok_or(Error::NotFound)?;
+                let target_info:PreviewTarget = sqlx::query_scalar::<_,Value>("SELECT jsonb_build_object('id',id,'name',search_text,'search_text',search_text,'locator_revision',locator_revision) FROM mobile_targets WHERE id=$1 AND school_id=$2").bind(target).bind(s).fetch_optional(&mut **tx).await?.map(serde_json::from_value).transpose().map_err(|_|Error::Conflict)?.ok_or(Error::NotFound)?;
                 let target_status: Vec<Value> = status
                     .iter()
                     .filter(|r| r["target_id"] == json!(target))
@@ -324,9 +298,6 @@ pub(super) async fn write(
                             }
                             Some("shared_send_review_required") => {
                                 "存在未核对的发送结果，请先核对原任务"
-                            }
-                            Some("target_identity_required") => {
-                                "请补充企业微信实际完整群名后更新业务预览"
                             }
                             Some("plan_dependency_changed") => {
                                 "手机或目标群关联已变化，请更新业务预览"
@@ -695,31 +666,6 @@ mod group_target_tests {
                 case["expected_canonical_utf8"]
             );
             assert_eq!(digest(&projected).unwrap(), case["expected_sha256"]);
-        }
-    }
-    #[test]
-    fn exact_target_contract_rejects_legacy_ambiguous_and_extra_fields() {
-        let mut plan = json!({"target":{"kind":"group","search_query":"项目","exact_name":"项目通知群🙂",
-            "match_policy":"exact_unique","identity_constraints":[]}});
-        validate_target(&plan).unwrap();
-        plan["search_text"] = json!("项目");
-        assert!(matches!(
-            validate_target(&plan),
-            Err(Error::Policy("retired_target_contract"))
-        ));
-        plan.as_object_mut().unwrap().remove("search_text");
-        plan["target"]["extra"] = json!(true);
-        assert!(validate_target(&plan).is_err());
-        plan["target"].as_object_mut().unwrap().remove("extra");
-        plan["target"]["identity_constraints"] = json!(["unsupported"]);
-        assert!(matches!(
-            validate_target(&plan),
-            Err(Error::Policy("unsupported_target_identity"))
-        ));
-        plan["target"]["identity_constraints"] = json!([]);
-        for bad in [" 群", "群 ", "群\n名", ""] {
-            plan["target"]["exact_name"] = json!(bad);
-            assert!(validate_target(&plan).is_err());
         }
     }
 }
