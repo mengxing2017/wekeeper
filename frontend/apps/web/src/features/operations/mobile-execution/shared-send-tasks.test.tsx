@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { api, sharedSend, type SharedPreview } from './api'
+import { api, sharedSend, type SharedPreview, type SharedCandidate } from './api'
 import { SharedSendTasks } from './shared-send-tasks'
 vi.mock('./api', () => ({ api: { targets: vi.fn(), bindings: vi.fn() }, sharedSend: { overview: vi.fn(), taskPreview: vi.fn(), confirm: vi.fn(), task: vi.fn() } }))
 afterEach(() => {cleanup();vi.useRealTimers()})
@@ -41,12 +41,15 @@ it('本校管理员可点击确认，预览检查问题由提交接口明确反�
 
 it('手机授权状态未知与状态过期不阻止确认，也不要求重新授权',async()=>{
  const pending=structuredClone(preview)
- const phone={target_id:'target',target_name:'实际搜索文字',device_name:'测试手机',device_id:'phone',binding_id:'binding',binding_locator_revision:1,target_locator_revision:1,search_text:'实际搜索文字',search_source:'default' as const,access_revision:null,credential_generation:1,delegation_id:null,release_id:null,flow_digest:null,flow:null,confirmable:true}
+ const phone:SharedCandidate={target_id:'target',target_name:'实际搜索文字',device_name:'测试手机',device_id:'phone',binding_id:'binding',binding_locator_revision:1,target_locator_revision:1,target:{kind:'group',search_query:'实际搜索文字',match_policy:'exact_unique',identity_constraints:[]},search_source:'default' as const,access_revision:null,credential_generation:1,delegation_id:null,release_id:null,flow_digest:null,flow:null,confirmable:true}
+ pending.plan.dispatch_mode='candidate_pool'
  pending.plan.items[0]={...pending.plan.items[0],selected:phone,candidates:[phone],blocker:null,readiness:[{binding_id:'binding',device_id:'phone',target_id:'target',device_name:'测试手机',target_name:'实际搜索文字',search_text:'实际搜索文字',state:'runtime_stale',ready:false,plan_selectable:true,confirmable:true,execution_ready:false,automatic:true,blockers:[],inspection:null,inspection_state:'waiting_prerequisites',retry_at:null,retry_remaining:3,consent_state:'unknown',runtime_state:'stale',execution_conditions:[{code:'runtime_stale',message:'手机执行状态已过期，不要求重新授权',owner:'system',automatic:true}]}]}
  vi.mocked(sharedSend.taskPreview).mockResolvedValue(response(pending))
  vi.mocked(sharedSend.confirm).mockResolvedValue({id:'task',school_id:'school',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-03'})
  await compose();fireEvent.click(screen.getByRole('button',{name:'预览逐群执行计划'}))
  expect(await screen.findByText('手机托管：状态待同步，不代表未授权')).toBeTruthy()
+ expect(screen.getByText('确认的授权候选：测试手机（实际搜索文字）；所选为首选，范围内允许自动换机。')).toBeTruthy()
+ expect(screen.queryByText(/undefined/)).toBeNull()
  expect(screen.getByText('执行状态：手机执行状态已过期，不要求重新授权')).toBeTruthy()
  expect(screen.queryByText(/查看范围并启用托管/)).toBeNull()
  const confirm=screen.getByRole('button',{name:'确认发送'}) as HTMLButtonElement
@@ -205,17 +208,25 @@ it('群名变化必须重新预览，手机配置不是受理条件',async()=>{
 },60000)
 
 it('展示授权候选和自动换机轨迹，历史尝试结果冲突仍可核对',async()=>{
- const task={id:'task',school_id:'school',intent_id:'intent',dispatch_mode:'candidate_pool',revision:1,stopped:false,created_at:'2026-11-04',items:[{id:'item',target_id:'target',position:0,dispatch:{state:'needs_review',candidates:[{device_name:'候选甲',search_text:'甲备注群名'},{device_name:'候选乙',search_text:'乙备注群名'}],assignments:[{id:'assignment',source:'automatic',from_device_name:'候选甲',to_device_name:'候选乙',created_at:'2026-11-04T00:00:00Z'}]},attempts:[{id:'old',state:'unknown',current:false,attempt_no:1,revision:3,plan:{search_text:'甲备注群名',device_name:'候选甲'}},{id:'new',state:'queued',current:true,attempt_no:2,revision:1,plan:{search_text:'乙备注群名',device_name:'候选乙'}}]}]} as unknown as Awaited<ReturnType<typeof sharedSend.task>>
+ const candidates:SharedCandidate[]=['甲','乙'].map((name,index)=>({target_id:'target',target_name:'显示群名',device_id:`phone-${index}`,device_name:`候选${name}`,binding_id:`binding-${index}`,binding_locator_revision:1,target_locator_revision:1,target:{kind:'group',search_query:`${name}群名`,match_policy:'exact_unique',identity_constraints:[]},search_source:'default',access_revision:null,credential_generation:1,delegation_id:null}))
+ const task={id:'task',school_id:'school',intent_id:'intent',dispatch_mode:'candidate_pool',revision:1,stopped:false,created_at:'2026-11-04',items:[{id:'item',target_id:'target',position:0,dispatch:{state:'needs_review',candidates,assignments:[{id:'assignment',source:'automatic',from_device_name:'候选甲',to_device_name:'候选乙',created_at:'2026-11-04T00:00:00Z'}]},attempts:[{id:'old',state:'unknown',current:false,attempt_no:1,revision:3,plan:{...candidates[0],message,between_targets_seconds:30}},{id:'new',state:'queued',current:true,attempt_no:2,revision:1,plan:{...candidates[1],message,between_targets_seconds:30}}]}]} as unknown as Awaited<ReturnType<typeof sharedSend.task>>
  vi.mocked(sharedSend.overview).mockResolvedValue({id:'school',tasks:[task],drafts:[],readiness:[],pool:[],inspections:[]})
  vi.mocked(sharedSend.task).mockResolvedValue(task)
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}})
  render(<QueryClientProvider client={client}><SharedSendTasks school="school" admin/></QueryClientProvider>)
  fireEvent.click(await screen.findByRole('button',{name:'查看计划与结果'},{timeout:10_000}))
  expect(await screen.findByText('目标调度：本目标结果待核对，其他目标继续调度',{},{timeout:10_000})).toBeTruthy()
- expect(screen.getByText('授权候选：候选甲（甲备注群名）、候选乙（乙备注群名）')).toBeTruthy()
+ expect(screen.getByText('授权候选：候选甲（甲群名）、候选乙（乙群名）')).toBeTruthy()
+ expect(screen.getByText('目标群：显示群名')).toBeTruthy()
+ expect(screen.getByText(/甲群名 \/ 候选甲/)).toBeTruthy()
+ expect(screen.getByText(/乙群名 \/ 候选乙/)).toBeTruthy()
+ expect(screen.queryByText(/undefined/)).toBeNull()
  expect(screen.getByText(/自动换机：候选甲 → 候选乙/)).toBeTruthy()
  expect(screen.getByText(/平台已受理，按授权候选调度/)).toBeTruthy()
  expect(screen.getByRole('button',{name:'人工核对结果'})).toBeTruthy()
+ fireEvent.click(screen.getByRole('button',{name:'复制原意图为新草稿（需重新确认）'}))
+ expect(screen.getByText('乙群名')).toBeTruthy()
+ expect(screen.getByLabelText('发送文字')).toHaveProperty('value',message)
  expect(sharedSend.confirm).not.toHaveBeenCalled()
  client.clear()
 },60000)
