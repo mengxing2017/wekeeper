@@ -81,6 +81,18 @@ pub(super) async fn assess(
                 false,
                 device,
             );
+        } else if dispatch
+            .as_ref()
+            .is_some_and(|d| d["state"] == "dispatch_failed")
+        {
+            add(
+                &mut conditions,
+                "dispatch_round_limit_exceeded",
+                "任务下发失败：候选手机已遍历3轮，已停止自动下发；历史未知结果仍可补报",
+                "admin",
+                false,
+                device,
+            );
         } else if expired {
             add(
                 &mut conditions,

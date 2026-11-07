@@ -407,10 +407,12 @@ pub(super) async fn write(
                 .bind(json!(pool))
                 .execute(&mut **tx)
                 .await?;
-                sqlx::query("INSERT INTO mobile_v9_dispatch_state(item_id) VALUES($1)")
-                    .bind(iid)
-                    .execute(&mut **tx)
-                    .await?;
+                sqlx::query(
+                    "INSERT INTO mobile_v9_dispatch_state(item_id,candidate_cursor) VALUES($1,1)",
+                )
+                .bind(iid)
+                .execute(&mut **tx)
+                .await?;
                 dispatch::reconcile(tx, iid).await?;
             }
             task(tx, s, id).await
@@ -432,6 +434,20 @@ pub(super) async fn write(
                 "shared_send_review_required",
             )?;
 
+            let budget: Option<Value> = sqlx::query_scalar(
+                "SELECT to_jsonb(ds) FROM mobile_v9_dispatch_state ds WHERE item_id=$1 FOR UPDATE",
+            )
+            .bind(uid(&old, "item_id")?)
+            .fetch_optional(&mut **tx)
+            .await?;
+            if let Some(budget) = &budget {
+                require(
+                    !crate::distribution::domain::shared_mobile::execution::dispatch_terminal(
+                        budget["state"].as_str().unwrap_or(""),
+                    ),
+                    "dispatch_round_limit_exceeded",
+                )?;
+            }
             validate_risk(tx, s, &old["plan"]).await?;
             let target = uid(&old, "target_id")?;
             let mut plan = candidates(tx, s, target)
@@ -449,13 +465,30 @@ pub(super) async fn write(
             .bind(uid(&old, "item_id")?)
             .fetch_optional(&mut **tx)
             .await?;
-            if let Some(allowed) = allowed {
+            if let Some(allowed) = &allowed {
                 require(
                     allowed.as_array().is_some_and(|cs| {
                         cs.iter().any(|c| dependencies(c) == dependencies(&plan))
                     }),
                     "plan_dependency_changed",
                 )?;
+            }
+            if let (Some(budget), Some(allowed)) = (&budget, &allowed) {
+                let candidates = allowed.as_array().ok_or(Error::Conflict)?;
+                let origin = budget["round_origin"].as_u64().ok_or(Error::Conflict)? as usize;
+                let cursor = budget["candidate_cursor"].as_u64().ok_or(Error::Conflict)? as usize;
+                let index = candidates
+                    .iter()
+                    .position(|c| dependencies(c) == dependencies(&plan))
+                    .ok_or(Error::Conflict)?;
+                let offset =
+                    (index + candidates.len() - origin % candidates.len()) % candidates.len();
+                require(
+                    offset >= cursor && budget["state"] != "waiting_resources",
+                    "dispatch_candidate_already_visited",
+                )?;
+                sqlx::query("UPDATE mobile_v9_dispatch_state SET candidate_cursor=$2,assigned_at=clock_timestamp(),state='assigned',reason='manual_reassignment',next_retry_at=clock_timestamp()+interval '5 seconds',revision=revision+1 WHERE item_id=$1")
+                    .bind(uid(&old,"item_id")?).bind((offset+1) as i32).execute(&mut **tx).await?;
             }
             sqlx::query("UPDATE mobile_execution_grants SET state='superseded' WHERE attempt_id=$1 AND state='active'").bind(id).execute(&mut **tx).await?;
             let aid = Uuid::now_v7();
@@ -550,6 +583,10 @@ pub(super) async fn write(
                     .bind(id)
                     .execute(&mut **tx)
                     .await?;
+            }
+            if input.decision == "manually_confirmed_sent" {
+                sqlx::query("UPDATE mobile_v9_dispatch_state SET state='completed',reason='manually_confirmed_sent',next_retry_at=NULL,finished_at=coalesce(finished_at,clock_timestamp()),revision=revision+1,updated_at=clock_timestamp() WHERE item_id=(SELECT item_id FROM mobile_v9_attempts WHERE id=$1)").bind(id).execute(&mut **tx).await?;
+                sqlx::query("UPDATE mobile_execution_grants g SET state='superseded' FROM mobile_v9_attempts a WHERE a.item_id=(SELECT item_id FROM mobile_v9_attempts WHERE id=$1) AND g.attempt_id=a.id AND g.state='active'").bind(id).execute(&mut **tx).await?;
             }
             Ok(json!({"id":rid,"attempt_id":id,"decision":input.decision}))
         }

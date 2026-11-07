@@ -7,7 +7,7 @@ pub(super) async fn context(repo: &Repository, c: &Credential) -> Result<Value> 
     let mut tx = repo.0.begin().await?;
     authenticate(&mut tx, c, false).await?;
     let delegation = delegation::context(&mut tx, c).await?;
-    let turns:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',a.id,'interval_ms',0) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE p.device_id=$1 AND a.current AND a.state='queued' AND (p.plan->>'credential_generation')::bigint=$2 AND NOT t.stopped AND t.confirmed_until>clock_timestamp() ORDER BY t.created_at,i.position LIMIT 100").bind(c.device_id).bind(c.generation).fetch_all(&mut *tx).await?;
+    let turns:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',a.id,'interval_ms',0) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE NOT EXISTS(SELECT 1 FROM mobile_v9_dispatch_state ds WHERE ds.item_id=a.item_id AND ds.state IN ('waiting_resources','completed','stopped','confirmation_expired','dispatch_failed')) AND p.device_id=$1 AND a.current AND a.state='queued' AND (p.plan->>'credential_generation')::bigint=$2 AND NOT t.stopped AND t.confirmed_until>clock_timestamp() ORDER BY t.created_at,i.position LIMIT 100").bind(c.device_id).bind(c.generation).fetch_all(&mut *tx).await?;
     let inspections:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',b.id,'target',jsonb_build_object('kind','group','search_query',t.search_text,'match_policy','exact_unique','identity_constraints','[]'::jsonb)) FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id WHERE b.device_id=$1 AND b.enabled AND t.enabled AND t.archived_at IS NULL LIMIT 100").bind(c.device_id).fetch_all(&mut *tx).await?;
     let (public_key, _) = secrets::sign(&json!({}))?;
     tx.commit().await?;
@@ -24,12 +24,12 @@ pub(super) async fn deliver(
     require(!v.runtime_epoch.is_nil(), "execution_request_invalid")?;
     // A lost delivery (including a legacy grant response) is redelivered as the same task.
     // Never make the device request another permission or wait for its own issued session.
-    let issued: Option<Vec<u8>> = sqlx::query_scalar("SELECT g.envelope FROM mobile_execution_grants g LEFT JOIN mobile_v9_attempts a ON a.id=g.attempt_id LEFT JOIN mobile_v9_task_items i ON i.id=a.item_id LEFT JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE g.device_id=$1 AND g.credential_generation=$2 AND g.state='active' AND NOT g.session_closed AND g.result_id IS NULL AND g.execute_before>clock_timestamp() AND (($3::uuid IS NULL AND g.kind='send' AND a.current AND NOT t.stopped AND NOT EXISTS(SELECT 1 FROM mobile_v9_attempts sent LEFT JOIN mobile_execution_grants result ON result.attempt_id=sent.id WHERE sent.item_id=a.item_id AND (sent.state IN ('observed_sent','manually_confirmed_sent') OR result.result_body->>'outcome'='observed_sent'))) OR (g.kind='inspection' AND g.inspection_id=$3))")
+    let issued: Option<Vec<u8>> = sqlx::query_scalar("SELECT g.envelope FROM mobile_execution_grants g LEFT JOIN mobile_v9_attempts a ON a.id=g.attempt_id LEFT JOIN mobile_v9_task_items i ON i.id=a.item_id LEFT JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE g.device_id=$1 AND g.credential_generation=$2 AND g.state='active' AND NOT g.session_closed AND g.result_id IS NULL AND g.execute_before>clock_timestamp() AND (($3::uuid IS NULL AND g.kind='send' AND a.current AND NOT t.stopped AND NOT EXISTS(SELECT 1 FROM mobile_v9_dispatch_state ds WHERE ds.item_id=a.item_id AND ds.state IN ('waiting_resources','completed','stopped','confirmation_expired','dispatch_failed')) AND NOT EXISTS(SELECT 1 FROM mobile_v9_attempts sent LEFT JOIN mobile_execution_grants result ON result.attempt_id=sent.id WHERE sent.item_id=a.item_id AND (sent.state IN ('observed_sent','manually_confirmed_sent') OR result.result_body->>'outcome'='observed_sent'))) OR (g.kind='inspection' AND g.inspection_id=$3))")
         .bind(c.device_id).bind(c.generation).bind(v.inspection_id).fetch_optional(&mut **tx).await?;
     if let Some(envelope) = issued {
         return secrets::open(&envelope);
     }
-    let eligible_attempt_ids: Vec<Uuid> = sqlx::query_scalar("SELECT a.id FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE p.device_id=$1 AND a.current AND a.state='queued' AND a.not_before<=clock_timestamp() AND NOT t.stopped AND t.confirmed_until>clock_timestamp() AND t.next_eligible_at<=clock_timestamp() ORDER BY t.created_at,i.position LIMIT 100")
+    let eligible_attempt_ids: Vec<Uuid> = sqlx::query_scalar("SELECT a.id FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE NOT EXISTS(SELECT 1 FROM mobile_v9_dispatch_state ds WHERE ds.item_id=a.item_id AND ds.state IN ('waiting_resources','completed','stopped','confirmation_expired','dispatch_failed')) AND p.device_id=$1 AND a.current AND a.state='queued' AND a.not_before<=clock_timestamp() AND NOT t.stopped AND t.confirmed_until>clock_timestamp() AND t.next_eligible_at<=clock_timestamp() ORDER BY t.created_at,i.position LIMIT 100")
         .bind(c.device_id).fetch_all(&mut **tx).await?;
     grant(
         tx,
@@ -44,7 +44,7 @@ pub(super) async fn deliver(
 }
 /// Closed results and success on any attempt fence replay before projection reconciliation.
 pub(super) async fn can_redeliver(tx: &mut Tx<'_>, id: Uuid) -> Result<bool> {
-    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_execution_grants g LEFT JOIN mobile_v9_attempts a ON a.id=g.attempt_id LEFT JOIN mobile_v9_task_items i ON i.id=a.item_id LEFT JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE g.id=$1 AND g.state='active' AND NOT g.session_closed AND g.result_id IS NULL AND g.execute_before>clock_timestamp() AND (g.kind='inspection' OR (a.current AND NOT t.stopped AND NOT EXISTS(SELECT 1 FROM mobile_v9_attempts sent LEFT JOIN mobile_execution_grants result ON result.attempt_id=sent.id WHERE sent.item_id=a.item_id AND (sent.state IN ('observed_sent','manually_confirmed_sent') OR result.result_body->>'outcome'='observed_sent')))))")
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_execution_grants g LEFT JOIN mobile_v9_attempts a ON a.id=g.attempt_id LEFT JOIN mobile_v9_task_items i ON i.id=a.item_id LEFT JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE g.id=$1 AND g.state='active' AND NOT g.session_closed AND g.result_id IS NULL AND g.execute_before>clock_timestamp() AND (g.kind='inspection' OR (a.current AND NOT t.stopped AND NOT EXISTS(SELECT 1 FROM mobile_v9_dispatch_state ds WHERE ds.item_id=a.item_id AND ds.state IN ('waiting_resources','completed','stopped','confirmation_expired','dispatch_failed')) AND NOT EXISTS(SELECT 1 FROM mobile_v9_attempts sent LEFT JOIN mobile_execution_grants result ON result.attempt_id=sent.id WHERE sent.item_id=a.item_id AND (sent.state IN ('observed_sent','manually_confirmed_sent') OR result.result_body->>'outcome'='observed_sent')))))")
         .bind(id).fetch_one(&mut **tx).await?)
 }
 /// Delivery metadata is outside the signed executable envelope and contains no new permission.
@@ -119,7 +119,7 @@ pub(super) async fn grant(tx: &mut Tx<'_>, c: &Credential, v: GrantRequest) -> R
         sqlx::query("INSERT INTO mobile_execution_grants(id,inspection_id,device_id,credential_generation,kind,result_credential_hash,envelope) VALUES($1,$2,$3,$4,'inspection',$5,$6)").bind(id).bind(binding).bind(c.device_id).bind(c.generation).bind(hash(&secret)).bind(secrets::seal(&envelope)?).execute(&mut **tx).await?;
         return Ok(envelope);
     }
-    let rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(a)||jsonb_build_object('plan',p.plan,'plan_digest',p.digest,'content_digest',p.content_digest,'task_id',t.id,'target_id',i.target_id,'confirmed_until',t.confirmed_until) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE p.device_id=$1 AND a.id=ANY($2) AND a.current AND a.state='queued' AND a.not_before<=clock_timestamp() AND NOT t.stopped AND t.confirmed_until>clock_timestamp() AND t.next_eligible_at<=clock_timestamp() ORDER BY t.created_at,i.position FOR UPDATE OF a,t").bind(c.device_id).bind(&v.eligible_attempt_ids).fetch_all(&mut **tx).await?;
+    let rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(a)||jsonb_build_object('plan',p.plan,'plan_digest',p.digest,'content_digest',p.content_digest,'task_id',t.id,'target_id',i.target_id,'confirmed_until',t.confirmed_until) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE NOT EXISTS(SELECT 1 FROM mobile_v9_dispatch_state ds WHERE ds.item_id=a.item_id AND ds.state IN ('waiting_resources','completed','stopped','confirmation_expired','dispatch_failed')) AND p.device_id=$1 AND a.id=ANY($2) AND a.current AND a.state='queued' AND a.not_before<=clock_timestamp() AND NOT t.stopped AND t.confirmed_until>clock_timestamp() AND t.next_eligible_at<=clock_timestamp() ORDER BY t.created_at,i.position FOR UPDATE OF a,t").bind(c.device_id).bind(&v.eligible_attempt_ids).fetch_all(&mut **tx).await?;
     let mut rejected = false;
     for row in rows {
         // Completion facts are authoritative even before the next projection scan.
@@ -194,7 +194,7 @@ fn dependency_rejection(device: Uuid) -> Value {
 async fn reject_attempt(tx: &mut Tx<'_>, attempt: Uuid, reason: &str) -> Result<()> {
     sqlx::query("UPDATE mobile_v9_attempts a SET state='invalidated',revision=revision+1,invalidation_reason=$2,termination_reason=$2,invalidated_at=clock_timestamp() WHERE a.id=$1 AND a.state='queued' AND NOT EXISTS(SELECT 1 FROM mobile_execution_grants g WHERE g.attempt_id=a.id)")
         .bind(attempt).bind(reason).execute(&mut **tx).await?;
-    sqlx::query("UPDATE mobile_v9_dispatch_state ds SET next_retry_at=clock_timestamp() FROM mobile_v9_attempts a WHERE a.id=$1 AND ds.item_id=a.item_id")
+    sqlx::query("UPDATE mobile_v9_dispatch_state ds SET next_retry_at=clock_timestamp() FROM mobile_v9_attempts a WHERE a.id=$1 AND ds.item_id=a.item_id AND ds.state NOT IN ('completed','stopped','confirmation_expired','dispatch_failed')")
         .bind(attempt).execute(&mut **tx).await?;
     tracing::warn!(%attempt, reason, stage="before_grant", comparison_policy="group_target/1",
         "unissued execution attempt invalidated; continuing eligible tasks");
@@ -231,7 +231,7 @@ pub(super) async fn complete(tx: &mut Tx<'_>, v: Completion) -> Result<Value> {
     )?;
     let receipt = json!({"id":Uuid::now_v7(),"result_id":v.result_id,"execution_id":v.execution_id,"body_digest":h,"recorded":true});
     sqlx::query("UPDATE mobile_execution_grants SET result_id=$2,result_body=$3,result_hash=$4,receipt=$5,result_received_at=clock_timestamp(),session_closed=true WHERE id=$1").bind(v.execution_id).bind(v.result_id).bind(body).bind(h).bind(&receipt).execute(&mut **tx).await?;
-    sqlx::query("UPDATE mobile_v9_dispatch_state ds SET next_retry_at=clock_timestamp() FROM mobile_v9_attempts a WHERE a.id=$1 AND ds.item_id=a.item_id").bind(row["attempt_id"].as_str().and_then(|v|v.parse::<Uuid>().ok())).execute(&mut **tx).await?;
+    sqlx::query("UPDATE mobile_v9_dispatch_state ds SET next_retry_at=clock_timestamp() FROM mobile_v9_attempts a WHERE a.id=$1 AND ds.item_id=a.item_id AND ds.state NOT IN ('completed','stopped','confirmation_expired','dispatch_failed')").bind(row["attempt_id"].as_str().and_then(|v|v.parse::<Uuid>().ok())).execute(&mut **tx).await?;
     Ok(receipt)
 }
 /// Apply immutable result facts once. Unknown frees the physical session but retains its deadline.
@@ -276,7 +276,7 @@ pub(super) async fn apply_results(tx: &mut Tx<'_>) -> Result<()> {
             // phone reports success. Record that fact without resuming dispatch.
             sqlx::query("UPDATE mobile_execution_grants g SET state='superseded' FROM mobile_v9_attempts a WHERE g.attempt_id=a.id AND a.item_id=(SELECT item_id FROM mobile_v9_attempts WHERE id=$1) AND g.id<>$2 AND g.state='active'")
                 .bind(aid).bind(uid(&row,"id")?).execute(&mut **tx).await?;
-            sqlx::query("UPDATE mobile_v9_dispatch_state SET state='completed',reason='result_recorded',revision=revision+1,updated_at=clock_timestamp() WHERE item_id=(SELECT item_id FROM mobile_v9_attempts WHERE id=$1)")
+            sqlx::query("UPDATE mobile_v9_dispatch_state SET state='completed',reason='result_recorded',next_retry_at=NULL,finished_at=coalesce(finished_at,clock_timestamp()),revision=revision+1,updated_at=clock_timestamp() WHERE item_id=(SELECT item_id FROM mobile_v9_attempts WHERE id=$1)")
                 .bind(aid).execute(&mut **tx).await?;
         }
     }

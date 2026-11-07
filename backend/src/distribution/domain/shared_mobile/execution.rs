@@ -102,6 +102,14 @@ pub fn replacement_reason(
 mod tests {
     use super::*;
     #[test]
+    fn three_complete_rounds_are_terminal() {
+        assert!(!round_exhausted(0));
+        assert!(!round_exhausted(1));
+        assert!(round_exhausted(2));
+        assert!(dispatch_terminal("dispatch_failed"));
+        assert!(!dispatch_terminal("waiting_resources"));
+    }
+    #[test]
     fn delivery_request_does_not_accept_downstream_candidate_selection() {
         let runtime = Uuid::new_v4();
         let request = serde_json::json!({"runtime_epoch":runtime,"inspection_id":null});
@@ -128,6 +136,20 @@ mod tests {
         );
         assert_eq!(replacement_reason(false, Some("observed_sent"), true), None);
     }
+}
+
+pub const MAX_DISPATCH_ROUNDS: i32 = 3;
+
+pub fn dispatch_terminal(state: &str) -> bool {
+    matches!(
+        state,
+        "completed" | "stopped" | "confirmation_expired" | "dispatch_failed"
+    )
+}
+
+/// A round is charged only after all candidates (including an outstanding assignment) end.
+pub fn round_exhausted(completed_rounds: i32) -> bool {
+    completed_rounds + 1 >= MAX_DISPATCH_ROUNDS
 }
 
 #[cfg(test)]
