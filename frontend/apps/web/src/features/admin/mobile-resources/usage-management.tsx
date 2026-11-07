@@ -69,7 +69,7 @@ export function UsageManagement({school,admin=true}:{school?:string;admin?:boole
     <p>学校：{globalOptions.data?.schools.find(s=>s.id===selectedSchool)?.name??'本校'}</p>
     <p>手机：{preview.body.device_ids.map(id=>options.data?.devices.find(d=>d.id===id)?.name??'已选择手机').join('、')}</p>
     <p>群：{preview.body.targets.map(t=>t.name).join('、')}。{preview.body.auto_targets?'包含本校后续新增群。':''}</p>
-    {preview.body.locators?.map((l,i)=><p key={i}>{l.device_name} / {l.target_name}：实际搜索“{l.search_text}”（{l.search_source==='override'?'手机专用':'群默认'}）</p>)}
+    {preview.body.locators?.map((l,i)=><p key={i}>{l.device_name} / {l.target_name}</p>)}
     {renewal&&<p>本次保留原使用对象和累计消耗；{editKind==='renew'?'续期不重置额度。':'调整或重新申请保留来源历史。'}{renewal.state==='paused'?'暂停状态不会因续期自动恢复。':''}</p>}
     <p>累计额度：{preview.body.max_calls} 次；有效至 {new Date(preview.body.expires_at).toLocaleString()}。</p>
     <p>{school?'在原批准范围内直接使用，其余范围提交平台审批。':'确认即批准此使用范围。'}使用范围会保留，手机恢复可用后自动继续。</p>
