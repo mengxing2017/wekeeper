@@ -266,6 +266,14 @@ pub(super) async fn apply_results(tx: &mut Tx<'_>) -> Result<()> {
             .execute(&mut **tx)
             .await?;
         sqlx::query("UPDATE mobile_execution_grants SET applied=true,state=CASE WHEN $2='unknown' AND state='active' THEN 'active' ELSE 'completed' END WHERE id=$1").bind(uid(&row,"id")?).bind(outcome).execute(&mut **tx).await?;
+        if outcome == "observed_sent" {
+            // A retired target scope may already be terminal when its original
+            // phone reports success. Record that fact without resuming dispatch.
+            sqlx::query("UPDATE mobile_execution_grants g SET state='superseded' FROM mobile_v9_attempts a WHERE g.attempt_id=a.id AND a.item_id=(SELECT item_id FROM mobile_v9_attempts WHERE id=$1) AND g.id<>$2 AND g.state='active'")
+                .bind(aid).bind(uid(&row,"id")?).execute(&mut **tx).await?;
+            sqlx::query("UPDATE mobile_v9_dispatch_state SET state='completed',reason='result_recorded',revision=revision+1,updated_at=clock_timestamp() WHERE item_id=(SELECT item_id FROM mobile_v9_attempts WHERE id=$1)")
+                .bind(aid).execute(&mut **tx).await?;
+        }
     }
     Ok(())
 }

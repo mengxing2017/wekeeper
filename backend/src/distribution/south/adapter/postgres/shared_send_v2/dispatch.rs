@@ -190,6 +190,18 @@ pub(super) async fn reconcile(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
             .await?;
         return status(tx, item, "assigned", reason).await;
     }
+    // An obsolete frozen scope cannot regain authority by waiting for a phone.
+    // Keep its original plans and results, and never silently replace its target.
+    if !approved.iter().any(|snapshot| {
+        choices.iter().any(|candidate| {
+            tasks::dependencies(candidate) == tasks::dependencies(snapshot)
+                && snapshot["target"]["search_query"] == snapshot["target_name"]
+        })
+    }) {
+        sqlx::query("UPDATE mobile_v9_attempts SET state='invalidated',revision=revision+1,invalidation_reason='plan_dependency_changed',invalidated_at=clock_timestamp() WHERE id=$1 AND state='queued' AND NOT EXISTS(SELECT 1 FROM mobile_execution_grants WHERE attempt_id=$1)")
+            .bind(aid).execute(&mut **tx).await?;
+        return status(tx, item, "stopped", "plan_dependency_changed").await;
+    }
     // Persist exhaustion, then allow a fresh candidate round on a later scan.
     sqlx::query("UPDATE mobile_v9_dispatch_state SET candidate_cursor=0 WHERE item_id=$1")
         .bind(item)

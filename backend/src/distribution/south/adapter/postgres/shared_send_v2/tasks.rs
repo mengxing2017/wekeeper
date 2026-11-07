@@ -137,6 +137,12 @@ pub(super) async fn validate_scope(tx: &mut Tx<'_>, s: Uuid, plan: &Value) -> Re
 // by the device after delivery; missing execution metadata must not block task acceptance.
 pub(super) async fn validate_plan(tx: &mut Tx<'_>, s: Uuid, plan: &Value) -> Result<()> {
     require(
+        plan["target_name"].as_str().is_some_and(|name| {
+            !name.is_empty() && plan["target"]["search_query"].as_str() == Some(name)
+        }),
+        "retired_target_contract",
+    )?;
+    require(
         plan["execution"]["contract"] == "device_owned/1"
             && plan["execution"]["capability"] == "wecom.group_text"
             && plan.get("flow").is_none()

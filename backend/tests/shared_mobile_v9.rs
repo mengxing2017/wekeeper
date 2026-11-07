@@ -2524,19 +2524,48 @@ async fn definite_dependency_rejection_commits_and_replays_without_grant() {
 
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn overridden_group_name_ignores_unused_default_edits() {
+async fn renamed_business_group_never_delivers_the_old_target() {
+    use wekeeper_api::distribution::domain::shared_mobile::execution::DeliveryRequest;
     let f = Fixture::with_adapter(false).await;
     let (c, epoch) = pool_ready(&f, f.device).await;
-    sqlx::query("UPDATE mobile_device_target_bindings SET search_text_override='专用搜索词',locator_revision=locator_revision+1 WHERE device_id=$1")
-        .bind(f.device).execute(&f.pool).await.unwrap();
     let task = pool_confirm(&f, vec![f.targets[0]]).await;
-    let aid: Uuid = serde_json::from_value(pool_current(&task["items"][0])["id"].clone()).unwrap();
-    sqlx::query("UPDATE mobile_targets SET search_text='未使用的新默认词',locator_revision=locator_revision+1 WHERE id=$1")
+    sqlx::query("UPDATE mobile_targets SET search_text='新群名',locator_revision=locator_revision+1 WHERE id=$1")
         .bind(f.targets[0]).execute(&f.pool).await.unwrap();
-    let grant = pool_claim(&f, &c, epoch, aid).await;
-    assert_eq!(grant["state"], "granted");
-    assert_eq!(grant["plan"]["target"]["search_query"], "专用搜索词");
-    assert!(grant["plan"]["target"].get("exact_name").is_none());
+    let delivery = f
+        .repo()
+        .device_write(
+            &c,
+            "renamed-group",
+            DeviceCommand::Deliver(DeliveryRequest {
+                runtime_epoch: epoch,
+                inspection_id: None,
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(delivery["state"], "idle");
+    assert!(delivery["execution"].is_null());
+    pool_tick(&f).await;
+    let detail = f
+        .repo()
+        .school_read(
+            &f.actor,
+            f.school,
+            Some(serde_json::from_value(task["id"].clone()).unwrap()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(detail["items"][0]["dispatch"]["state"], "stopped");
+    assert_eq!(pool_current(&detail["items"][0])["state"], "invalidated");
+    assert_eq!(
+        pool_current(&detail["items"][0])["plan"]["target"]["search_query"],
+        "测试群"
+    );
+    let next = pool_confirm_keyed(&f, vec![f.targets[0]], "renamed").await;
+    assert_eq!(
+        pool_current(&next["items"][0])["plan"]["target"]["search_query"],
+        "新群名"
+    );
     f.close().await;
 }
 
@@ -2708,5 +2737,134 @@ async fn group_name_alone_is_confirmable_and_delivered_for_device_resolution() {
     result.reason = "target_identity_required".into();
     f.repo().complete_execution(result).await.unwrap();
     pool_tick(&f).await;
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn legacy_override_data_never_reaches_preview_failover_or_signed_delivery() {
+    use wekeeper_api::distribution::domain::shared_mobile::{execution::DeliveryRequest, usage::*};
+    let f = Fixture::with_adapter(false).await;
+    let b = pool_phone(&f, "B").await;
+    let (cb, eb) = pool_ready(&f, b).await;
+    // Reconstruct the retired mutable column in this isolated schema to simulate an upgrade.
+    // The new resolver must ignore conflicting values even before the removal migration runs.
+    sqlx::query("ALTER TABLE mobile_device_target_bindings ADD COLUMN search_text_override text")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE mobile_device_target_bindings SET search_text_override='废弃接口的搜索词'")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let p = f
+        .repo()
+        .usage_write(
+            &f.actor,
+            f.school,
+            "legacy-source-preview",
+            UsageCommand::TaskPreview(UsageTaskInput {
+                draft_id: None,
+                expected_revision: None,
+                target_ids: vec![f.targets[0]],
+                message: "统一群名回归".into(),
+                between_targets_seconds: 1,
+                selections: vec![Selection {
+                    target_id: f.targets[0],
+                    device_id: f.device,
+                }],
+            }),
+        )
+        .await
+        .unwrap();
+    for candidate in p["preview"]["plan"]["items"][0]["candidates"]
+        .as_array()
+        .unwrap()
+    {
+        assert_eq!(candidate["target_name"], "测试群");
+        assert_eq!(
+            candidate["target"]["search_query"],
+            candidate["target_name"]
+        );
+        assert!(candidate.get("search_source").is_none());
+        assert!(candidate.get("search_text_override").is_none());
+    }
+    let task = pool_confirm(&f, vec![f.targets[0]]).await;
+    let current = pool_current(&task["items"][0]);
+    assert_eq!(current["plan"]["device_id"], json!(b));
+    assert_eq!(current["plan"]["target"]["search_query"], "测试群");
+    assert_eq!(
+        task["items"][0]["dispatch"]["assignments"][0]["source"],
+        "automatic"
+    );
+    let frozen: Vec<Value> = sqlx::query_scalar("SELECT plan FROM mobile_v9_plans ORDER BY id")
+        .fetch_all(&f.pool)
+        .await
+        .unwrap();
+    sqlx::raw_sql(include_str!(
+        "../migrations/202611070137_remove_binding_search_override.sql"
+    ))
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    let after: Vec<Value> = sqlx::query_scalar("SELECT plan FROM mobile_v9_plans ORDER BY id")
+        .fetch_all(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        frozen, after,
+        "migration must preserve frozen plans and their digests"
+    );
+    assert!(!sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='mobile_device_target_bindings' AND column_name='search_text_override')").fetch_one(&f.pool).await.unwrap());
+    let delivery = f
+        .repo()
+        .device_write(
+            &cb,
+            "single-name-signed-delivery",
+            DeviceCommand::Deliver(DeliveryRequest {
+                runtime_epoch: eb,
+                inspection_id: None,
+            }),
+        )
+        .await
+        .unwrap();
+    let grant = &delivery["execution"];
+    assert_eq!(delivery["schema"], "task_delivery/1");
+    assert_eq!(grant["state"], "granted");
+    assert_eq!(grant["plan"]["target"]["search_query"], "测试群");
+    assert_eq!(grant["plan"]["target_name"], "测试群");
+    assert!(grant["signature"].as_str().is_some_and(|s| !s.is_empty()));
+    assert!(grant["plan"].get("search_source").is_none());
+    // Already signed capabilities remain immutable: recovery is not another execution grant.
+    sqlx::query("UPDATE mobile_targets SET search_text='业务群新名',locator_revision=locator_revision+1 WHERE id=$1")
+        .bind(f.targets[0]).execute(&f.pool).await.unwrap();
+    let replay = f
+        .repo()
+        .device_write(
+            &cb,
+            "recover-same-signed-delivery",
+            DeviceCommand::Deliver(DeliveryRequest {
+                runtime_epoch: eb,
+                inspection_id: None,
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay["execution"], *grant);
+    sqlx::query("UPDATE mobile_execution_grants SET result_deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1")
+        .bind(serde_json::from_value::<Uuid>(grant["id"].clone()).unwrap()).execute(&f.pool).await.unwrap();
+    pool_tick(&f).await;
+    assert_eq!(
+        pool_detail(&f, &task).await["items"][0]["dispatch"]["state"],
+        "stopped"
+    );
+    f.repo()
+        .complete_execution(completion(grant, "observed_sent"))
+        .await
+        .unwrap();
+    pool_tick(&f).await;
+    let detail = pool_detail(&f, &task).await;
+    assert_eq!(detail["items"][0]["dispatch"]["state"], "completed");
+    assert_eq!(pool_current(&detail["items"][0])["state"], "observed_sent");
     f.close().await;
 }
