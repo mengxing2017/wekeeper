@@ -709,7 +709,10 @@ pub struct DispatchSnapshot {
     pub state: String,
     pub reason: String,
     pub revision: i64,
-    pub next_retry_at: chrono::DateTime<chrono::Utc>,
+    pub next_retry_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub max_rounds: i32,
+    pub completed_rounds: i32,
+    pub finished_at: Option<chrono::DateTime<chrono::Utc>>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     pub last_failed_attempt_id: Option<Uuid>,
     pub candidates: Vec<Value>,
@@ -739,6 +742,27 @@ mod dispatch_contract_tests {
             "/../api-contract/fixtures/shared-dispatch.json"
         )))
         .unwrap();
+        let snapshot: DispatchSnapshot = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(snapshot).unwrap(), value);
+    }
+}
+
+#[cfg(test)]
+mod dispatch_failure_contract_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn failed_dispatch_has_no_retry_time_and_preserves_budget() {
+        let mut value: Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../api-contract/fixtures/shared-dispatch.json"
+        )))
+        .unwrap();
+        value["state"] = json!("dispatch_failed");
+        value["reason"] = json!("dispatch_round_limit_exceeded");
+        value["completed_rounds"] = json!(3);
+        value["next_retry_at"] = Value::Null;
+        value["finished_at"] = json!("2026-11-08T00:00:00Z");
         let snapshot: DispatchSnapshot = serde_json::from_value(value.clone()).unwrap();
         assert_eq!(serde_json::to_value(snapshot).unwrap(), value);
     }

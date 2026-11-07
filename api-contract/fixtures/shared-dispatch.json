@@ -20,5 +20,8 @@
       "from_device_name": "手机 A",
       "to_device_name": "手机 B"
     }
-  ]
+  ],
+  "max_rounds": 3,
+  "completed_rounds": 0,
+  "finished_at": null
 }
