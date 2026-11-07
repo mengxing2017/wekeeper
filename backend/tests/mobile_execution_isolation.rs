@@ -60,7 +60,7 @@ async fn setup() -> (PgPool, Actor, Uuid, Uuid) {
 }
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn shared_bindings_require_platform_authority_and_preserve_effective_locator() {
+async fn shared_bindings_require_platform_authority_and_follow_business_group_name() {
     let (pool, a, school, device) = setup().await;
     let service = Service(Repository(pool.clone()));
     let target = service
@@ -83,13 +83,12 @@ async fn shared_bindings_require_platform_authority_and_preserve_effective_locat
                 "bind",
                 None,
                 "school-bind",
-                json!({"target_id":target_id,"device_ids":[device],"search_text_override":null})
+                json!({"target_id":target_id,"device_ids":[device]})
             )
             .await
             .is_err()
     );
-    let input =
-        json!({"target_id":target_id,"device_ids":[device],"search_text_override":"手机  备注🦦"});
+    let input = json!({"target_id":target_id,"device_ids":[device]});
     let bound = service
         .write(&a, None, "bind", None, "bind", input.clone())
         .await
@@ -113,9 +112,10 @@ async fn shared_bindings_require_platform_authority_and_preserve_effective_locat
         .await
         .unwrap();
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0]["search_text"], "手机  备注🦦");
-    assert_eq!(rows[0]["search_source"], "binding_override");
-    let source_revision = rows[0]["source_locator_revision"].clone();
+    assert_eq!(rows[0]["search_text"], "默认  群🦦");
+    assert!(rows[0].get("search_text_override").is_none());
+    assert!(rows[0].get("search_source").is_none());
+    let source_revision = rows[0]["target_locator_revision"].as_i64().unwrap();
     service
         .write(
             &a,
@@ -138,8 +138,8 @@ async fn shared_bindings_require_platform_authority_and_preserve_effective_locat
         )
         .await
         .unwrap();
-    assert_eq!(rows[0]["search_text"], "手机  备注🦦");
-    assert_eq!(rows[0]["source_locator_revision"], source_revision);
+    assert_eq!(rows[0]["search_text"], "新默认名");
+    assert_eq!(rows[0]["target_locator_revision"], source_revision + 1);
     let binding: Uuid = serde_json::from_value(rows[0]["id"].clone()).unwrap();
     service
         .write(
@@ -148,7 +148,7 @@ async fn shared_bindings_require_platform_authority_and_preserve_effective_locat
             "update-binding",
             Some(binding),
             "inherit",
-            json!({"expected_revision":1,"enabled":true,"search_text_override":null}),
+            json!({"expected_revision":1,"enabled":true}),
         )
         .await
         .unwrap();
@@ -164,8 +164,8 @@ async fn shared_bindings_require_platform_authority_and_preserve_effective_locat
         .await
         .unwrap();
     assert_eq!(rows[0]["search_text"], "新默认名");
-    assert_eq!(rows[0]["search_source"], "target_default");
-    assert_eq!(rows[0]["revision"], 2);
+    assert!(rows[0].get("search_source").is_none());
+    assert_eq!(rows[0]["revision"], 1);
     assert!(rows[0].get("grant_id").is_none());
     pool.close().await;
 }
@@ -212,7 +212,7 @@ async fn one_shared_device_serves_two_schools_without_leaking_global_notes() {
                 "bind",
                 None,
                 &format!("bind-{index}"),
-                json!({"target_id":target["id"],"device_ids":[device],"search_text_override":null}),
+                json!({"target_id":target["id"],"device_ids":[device]}),
             )
             .await
             .unwrap();
@@ -311,11 +311,11 @@ async fn batch_bind_is_atomic_and_never_infers_school_from_client() {
     for (key, input) in [
         (
             "missing-device",
-            json!({"target_id":target["id"],"device_ids":[device,Uuid::now_v7()],"search_text_override":null}),
+            json!({"target_id":target["id"],"device_ids":[device,Uuid::now_v7()]}),
         ),
         (
             "spoof-school",
-            json!({"target_id":target["id"],"device_ids":[device],"search_text_override":null,"school_id":Uuid::now_v7()}),
+            json!({"target_id":target["id"],"device_ids":[device],"school_id":Uuid::now_v7()}),
         ),
     ] {
         assert!(

@@ -22,19 +22,13 @@ pub(super) async fn resolve(tx: &mut Tx<'_>, school: Uuid, body: &mut Value) -> 
                 .bind(device)
                 .fetch_one(&mut **tx)
                 .await?;
-            let over = binding
-                .as_ref()
-                .and_then(|b| b["search_text_override"].as_str());
-            locators.push(json!({"device_id":device,"device_name":name,"target_id":target["id"],"target_index":index,"target_name":target["name"],"search_text":over.map(json_string).unwrap_or_else(||target["search_text"].clone()),"target":{"kind":"group","search_query":over.map(json_string).unwrap_or_else(||target["search_text"].clone()),"match_policy":"exact_unique","identity_constraints":[]},"search_source":if over.is_some(){"override"}else{"default"},"binding_locator_revision":binding.as_ref().map(|b|b["locator_revision"].clone()).unwrap_or(Value::Null),"target_locator_revision":if over.is_some(){json!(1)}else{target.get("revision").cloned().unwrap_or(json!(1))}}));
+            locators.push(json!({"device_id":device,"device_name":name,"target_id":target["id"],"target_index":index,"target_name":target["search_text"],"search_text":target["search_text"],"target":{"kind":"group","search_query":target["search_text"],"match_policy":"exact_unique","identity_constraints":[]},"binding_locator_revision":binding.as_ref().map(|b|b["locator_revision"].clone()).unwrap_or(Value::Null),"target_locator_revision":target.get("revision").cloned().unwrap_or(json!(1))}));
         }
     }
     let locators: Vec<crate::distribution::domain::shared_mobile::usage::UsageLocator> =
         serde_json::from_value(json!(locators)).map_err(|_| Error::Conflict)?;
     body["locators"] = json!(locators);
     Ok(())
-}
-fn json_string(value: &str) -> Value {
-    json!(value)
 }
 
 pub(super) fn comparison_body(value: &Value) -> Value {
@@ -96,7 +90,6 @@ pub(super) fn same_locator(a: &Value, b: &Value) -> bool {
         "target_id",
         "target",
         "search_text",
-        "search_source",
         "target_locator_revision",
     ]
     .iter()

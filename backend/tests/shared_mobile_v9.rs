@@ -1154,14 +1154,13 @@ async fn durable_grant_replay_and_duplicate_receipt_do_not_extend_deadline() {
 
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn usage_overrides_reuse_and_renewal_keep_one_business_family() {
+async fn usage_group_name_reuse_and_renewal_keep_one_business_family() {
     use wekeeper_api::distribution::domain::shared_mobile::usage::*;
     let f = Fixture::with_adapter(false).await;
     let r = f.repo();
     let second = Uuid::now_v7();
     sqlx::query("INSERT INTO execution_devices(id,name,enabled,credential_generation) VALUES($1,'第二台手机',true,1)").bind(second).execute(&f.pool).await.unwrap();
-    sqlx::query("INSERT INTO mobile_device_target_bindings(id,school_id,device_id,target_id,search_text_override,created_by,updated_by) VALUES($1,$2,$3,$4,'第二台专用群',$5,$5)").bind(Uuid::now_v7()).bind(f.school).bind(second).bind(f.targets[0]).bind(f.actor.id).execute(&f.pool).await.unwrap();
-    sqlx::query("UPDATE mobile_device_target_bindings SET search_text_override='手机专用群',locator_revision=locator_revision+1 WHERE device_id=$1 AND target_id=$2").bind(f.device).bind(f.targets[0]).execute(&f.pool).await.unwrap();
+    sqlx::query("INSERT INTO mobile_device_target_bindings(id,school_id,device_id,target_id,created_by,updated_by) VALUES($1,$2,$3,$4,$5,$5)").bind(Uuid::now_v7()).bind(f.school).bind(second).bind(f.targets[0]).bind(f.actor.id).execute(&f.pool).await.unwrap();
     let input = UsageInput {
         device_ids: vec![f.device, second],
         targets: vec![UsageTarget {
@@ -1184,11 +1183,9 @@ async fn usage_overrides_reuse_and_renewal_keep_one_business_family() {
         )
         .await
         .unwrap();
-    assert_eq!(p["body"]["locators"][0]["search_text"], "手机专用群");
-    assert_eq!(p["body"]["locators"][1]["search_text"], "第二台专用群");
+    assert_eq!(p["body"]["locators"][0]["search_text"], "测试群");
+    assert_eq!(p["body"]["locators"][1]["search_text"], "测试群");
     assert_eq!(p["body"]["locators"][0]["target_locator_revision"], 1);
-    // Unused default names are not the phone's location.
-    sqlx::query("UPDATE mobile_targets SET search_text='无关默认搜索名',locator_revision=locator_revision+1 WHERE id=$1").bind(f.targets[0]).execute(&f.pool).await.unwrap();
     let opened = r
         .usage_write(
             &f.actor,
@@ -1743,7 +1740,6 @@ async fn repeated_identical_pool_binding_save_does_not_advance_locator_revision(
             target_id: target,
             device_id: pool_device,
             expected_access_revision: 1,
-            search_text_override: Some("共享池群".into()),
         }),
     )
     .await
@@ -1759,7 +1755,6 @@ async fn repeated_identical_pool_binding_save_does_not_advance_locator_revision(
             target_id: target,
             device_id: pool_device,
             expected_access_revision: 1,
-            search_text_override: Some("共享池群".into()),
         }),
     )
     .await
@@ -1770,7 +1765,8 @@ async fn repeated_identical_pool_binding_save_does_not_advance_locator_revision(
         "re-saving identical content must not advance locator_revision"
     );
 
-    // A genuine effective-locator change does advance it.
+    // Re-enabling a disabled binding advances its authorization revision.
+    sqlx::query("UPDATE mobile_device_target_bindings SET enabled=false WHERE device_id=$1 AND target_id=$2").bind(pool_device).bind(target).execute(&f.pool).await.unwrap();
     r.school_write(
         &f.actor,
         f.school,
@@ -1779,7 +1775,6 @@ async fn repeated_identical_pool_binding_save_does_not_advance_locator_revision(
             target_id: target,
             device_id: pool_device,
             expected_access_revision: 1,
-            search_text_override: Some("共享池群改名".into()),
         }),
     )
     .await
@@ -2042,7 +2037,7 @@ async fn pool_phone(f: &Fixture, name: &str) -> Uuid {
     .await
     .unwrap();
     for target in &f.targets {
-        sqlx::query("INSERT INTO mobile_device_target_bindings(id,school_id,device_id,target_id,search_text_override,created_by,updated_by) VALUES($1,$2,$3,$4,$5,$6,$6)").bind(Uuid::new_v4()).bind(f.school).bind(id).bind(target).bind(format!("{name}专用群名")).bind(f.actor.id).execute(&f.pool).await.unwrap();
+        sqlx::query("INSERT INTO mobile_device_target_bindings(id,school_id,device_id,target_id,created_by,updated_by) VALUES($1,$2,$3,$4,$5,$5)").bind(Uuid::new_v4()).bind(f.school).bind(id).bind(target).bind(f.actor.id).execute(&f.pool).await.unwrap();
     }
     id
 }
@@ -2210,7 +2205,7 @@ async fn offline_preference_dispatches_authorized_phone_and_never_expands_scope(
     );
     assert_eq!(
         pool_current(&task["items"][0])["plan"]["target"]["search_query"],
-        "B专用群名"
+        "测试群"
     );
     assert_eq!(
         task["items"][0]["dispatch"]["candidates"]

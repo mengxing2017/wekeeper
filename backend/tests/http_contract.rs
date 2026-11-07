@@ -922,14 +922,15 @@ fn shared_submission_status_separates_defaults_and_execution_pause() {
 }
 
 #[test]
-fn usage_summary_preserves_per_phone_override_and_ignores_unused_default_revision() {
+fn usage_summary_serializes_the_business_group_name() {
     use wekeeper_api::distribution::domain::shared_mobile::usage::UsageLocator;
     let fixture: Value = serde_json::from_str(include_str!(
         "../../api-contract/fixtures/mobile-usage-locator.json"
     ))
     .unwrap();
     let output: UsageLocator = serde_json::from_value(fixture.clone()).unwrap();
-    assert_eq!(output.search_source, "override");
+    assert_eq!(output.search_text, output.target_name);
+    assert_eq!(output.target["search_query"], output.target_name);
     assert_eq!(output.target_locator_revision, Some(1));
     assert_eq!(serde_json::to_value(output).unwrap(), fixture);
 }

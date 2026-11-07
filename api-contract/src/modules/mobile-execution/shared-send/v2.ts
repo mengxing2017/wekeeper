@@ -8,7 +8,7 @@ export interface DeviceExecutionIntent {contract:'device_owned/1';capability:'we
 export interface GroupTarget {kind:'group';search_query:string;match_policy:'exact_unique';identity_constraints:[]}
 export interface SharedCandidate {
  target_id:string; target_name:string;device_name:string;device_id:string; binding_id:string; binding_locator_revision:number;
- target_locator_revision:number|null; target?:GroupTarget; /** Historical snapshots only. */ search_text?:string; search_source:'default'|'override';
+ target_locator_revision:number|null; target?:GroupTarget; /** Historical snapshots only. */ search_text?:string;
  consent_state?:'accepted'|'revoked'|'unknown';access_revision:number|null;credential_generation:number; delegation_id:string|null; /** Historical snapshots only. New tasks never carry UI rules. */ release_id?:string|null; flow_digest?:string|null;
  configuration_version?:string|null;scope_id?:string;confirmable?:boolean;flow?:Record<string,Json>|null;execution?:DeviceExecutionIntent;
 }
@@ -65,7 +65,7 @@ export type FlowV3=Omit<import('../flows').FlowV2,'schema_version'|'engine_versi
 export interface UsageTarget {id:string|null;name:string;search_text:string}
 export interface UsageInput {device_ids:string[];targets:UsageTarget[];max_calls:number;expires_at:string;auto_targets:boolean;renewal_of?:string;expected_revision?:number}
 export interface UsageOptions {sending_status?:SendingStatus;business_scheme?:BusinessScheme|null;id:string;schools:Array<{id:string;name:string}>;devices:Array<{id:string;name:string;revision:number;online:boolean}>;targets:Array<UsageTarget & {id:string;revision:number}>;scheme:{id:string|null;timezone:string;allowed_windows:Array<{weekdays:number[];start_minute:number;end_minute:number}>;daily_max_calls:number;interval_seconds:number}|null}
-export interface UsageLocator {target?:GroupTarget;device_id:string;device_name:string;target_id:string|null;target_index:number;target_name:string;search_text:string;search_source:'default'|'override';binding_locator_revision:number|null;target_locator_revision:number|null}
+export interface UsageLocator {target?:GroupTarget;device_id:string;device_name:string;target_id:string|null;target_index:number;target_name:string;search_text:string;binding_locator_revision:number|null;target_locator_revision:number|null}
 export interface UsagePreview {id:string;digest:string;body:UsageInput & {scheme:UsageOptions['scheme'];locators?:UsageLocator[]}}
 export type UsageOperation='approve'|'decline'|'pause'|'resume'|'revoke'
 export interface MobileUsage {readiness?:Array<{device_name:string;target_name:string;state:string;ready:boolean;messages:string[]}>;id:string;budget_root:string;supersedes:string|null;created_at:string;school_id:string;school_name:string;revision:number;approval:'pending'|'approved'|'declined';state:'active'|'paused'|'revoked';body:UsageInput & {locators?:UsageLocator[]};expires_at:string;confirmed_until:string;delivery:'available'|'waiting';progress:string;events:Array<{id:string;action:string;created_at:string}>;issues:Array<{id:string;description:string;state:string;revision:number;response:string}>}

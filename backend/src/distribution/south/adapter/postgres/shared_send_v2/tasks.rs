@@ -1,10 +1,10 @@
 use super::*;
-/// Only platform-owned resources. Effective locator dependencies omit unused default names.
+/// Every phone receives the same business group name; bindings only select authorized devices.
 pub(super) async fn raw_candidates(tx: &mut Tx<'_>, s: Uuid, target: Uuid) -> Result<Vec<Value>> {
     sqlx::query_scalar(r#"SELECT jsonb_build_object(
  'target_id',t.id,'target_name',t.search_text,'device_name',d.name,'device_id',d.id,'binding_id',b.id,'binding_locator_revision',b.locator_revision,
- 'target_locator_revision',CASE WHEN b.search_text_override IS NULL THEN t.locator_revision ELSE 1 END,
- 'target',jsonb_build_object('kind','group','search_query',coalesce(b.search_text_override,t.search_text),'match_policy','exact_unique','identity_constraints','[]'::jsonb),'search_source',CASE WHEN b.search_text_override IS NULL THEN 'default' ELSE 'override' END,
+ 'target_locator_revision',t.locator_revision,
+ 'target',jsonb_build_object('kind','group','search_query',t.search_text,'match_policy','exact_unique','identity_constraints','[]'::jsonb),
  'access_revision',CASE WHEN b.source='school_pool' THEN (SELECT revision FROM mobile_shared_school_access WHERE school_id=b.school_id AND device_id=b.device_id) ELSE NULL END,
  'credential_generation',d.credential_generation,'delegation_id',m.id,'accepted',coalesce(c.accepted,false),'consent_state',CASE WHEN c.accepted IS NULL THEN 'unknown' WHEN c.accepted THEN 'accepted' ELSE 'revoked' END,
  'execution',jsonb_build_object('contract','device_owned/1','capability','wecom.group_text'))
@@ -28,7 +28,6 @@ pub(super) fn dependencies(row: &Value) -> Value {
         "access_revision",
         "target_locator_revision",
         "target",
-        "search_source",
         "credential_generation",
     ] {
         deps.insert(k.into(), row[k].clone());
@@ -39,7 +38,7 @@ pub(super) async fn grant(tx: &mut Tx<'_>, s: Uuid, row: &Value) -> Result<Optio
     // The grant is an execution and metering projection keyed on the phone's real
     // locator identity, never on a generic device or access revision: re-enabling a
     // resource must not permanently invalidate an otherwise valid business scope.
-    sqlx::query_scalar("SELECT to_jsonb(g) FROM mobile_v9_scope_grants g WHERE g.school_id=$1 AND $2=ANY(g.device_ids) AND ($3=ANY(g.target_ids) OR g.auto_targets) AND ($4::uuid IS NULL OR g.id=$4) AND g.expires_at>clock_timestamp() AND (EXISTS(SELECT 1 FROM mobile_usage_scopes us JOIN mobile_usages u ON u.id=us.usage_id WHERE us.scope_id=g.id AND u.approval='approved' AND u.state='active' AND u.expires_at>clock_timestamp() AND NOT EXISTS(SELECT 1 FROM mobile_usages n WHERE n.school_id=u.school_id AND n.budget_root=u.budget_root AND n.approval='approved' AND (n.created_at,n.id)>(u.created_at,u.id)) AND EXISTS(SELECT 1 FROM execution_devices ud JOIN mobile_device_target_bindings ub ON ub.device_id=ud.id JOIN mobile_targets ut ON ut.id=ub.target_id WHERE ud.id=$2 AND ut.id=$3 AND ub.school_id=$1 AND us.resource_snapshot=jsonb_build_object('binding_locator_revision',ub.locator_revision,'target_locator_revision',CASE WHEN ub.search_text_override IS NULL THEN ut.locator_revision ELSE 1 END,'target',jsonb_build_object('kind','group','search_query',coalesce(ub.search_text_override,ut.search_text),'match_policy','exact_unique','identity_constraints','[]'::jsonb))))) AND NOT EXISTS(SELECT 1 FROM mobile_v9_scope_revocations r WHERE r.grant_id=g.id) ORDER BY g.created_at DESC,g.id DESC LIMIT 1")
+    sqlx::query_scalar("SELECT to_jsonb(g) FROM mobile_v9_scope_grants g WHERE g.school_id=$1 AND $2=ANY(g.device_ids) AND ($3=ANY(g.target_ids) OR g.auto_targets) AND ($4::uuid IS NULL OR g.id=$4) AND g.expires_at>clock_timestamp() AND (EXISTS(SELECT 1 FROM mobile_usage_scopes us JOIN mobile_usages u ON u.id=us.usage_id WHERE us.scope_id=g.id AND u.approval='approved' AND u.state='active' AND u.expires_at>clock_timestamp() AND NOT EXISTS(SELECT 1 FROM mobile_usages n WHERE n.school_id=u.school_id AND n.budget_root=u.budget_root AND n.approval='approved' AND (n.created_at,n.id)>(u.created_at,u.id)) AND EXISTS(SELECT 1 FROM execution_devices ud JOIN mobile_device_target_bindings ub ON ub.device_id=ud.id JOIN mobile_targets ut ON ut.id=ub.target_id WHERE ud.id=$2 AND ut.id=$3 AND ub.school_id=$1 AND us.resource_snapshot=jsonb_build_object('binding_locator_revision',ub.locator_revision,'target_locator_revision',ut.locator_revision,'target',jsonb_build_object('kind','group','search_query',ut.search_text,'match_policy','exact_unique','identity_constraints','[]'::jsonb))))) AND NOT EXISTS(SELECT 1 FROM mobile_v9_scope_revocations r WHERE r.grant_id=g.id) ORDER BY g.created_at DESC,g.id DESC LIMIT 1")
     .bind(s).bind(uid(row,"device_id")?).bind(uid(row,"target_id")?).bind(row.get("scope_id").map(|_|uid(row,"scope_id")).transpose()?).fetch_optional(&mut **tx).await.map_err(Into::into)
 }
 /// Current business control state for a school/device/target, resolved from the
@@ -188,15 +187,10 @@ pub(super) async fn write(
         }
 
         SchoolCommand::PoolBinding(v) => {
-            if let Some(ref text) = v.search_text_override {
-                crate::distribution::domain::shared_mobile::validate_text(text, 1, 256, 1024)?;
-            }
             let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_shared_school_access a JOIN schools s ON s.id=a.school_id JOIN execution_devices d ON d.id=a.device_id JOIN mobile_targets t ON t.school_id=a.school_id WHERE a.school_id=$1 AND a.device_id=$2 AND a.enabled AND a.revision=$3 AND s.active AND d.enabled AND t.id=$4 AND t.enabled AND t.archived_at IS NULL)").bind(s).bind(v.device_id).bind(v.expected_access_revision).bind(v.target_id).fetch_one(&mut **tx).await?;
             require(allowed, "shared_pool_access_required")?;
-            // Re-saving identical content is a no-op for the locator: only a real
-            // change to the phone's effective search text advances locator_revision,
-            // so an unchanged binding never invalidates its own usage projection.
-            let id:Option<Uuid>=sqlx::query_scalar("INSERT INTO mobile_device_target_bindings(id,school_id,device_id,target_id,search_text_override,created_by,updated_by,source) VALUES($1,$2,$3,$4,$5,$6,$6,'school_pool') ON CONFLICT(device_id,target_id) DO UPDATE SET enabled=true,search_text_override=$5,updated_by=$6,revision=mobile_device_target_bindings.revision+1,locator_revision=CASE WHEN mobile_device_target_bindings.search_text_override IS DISTINCT FROM $5 THEN mobile_device_target_bindings.locator_revision+1 ELSE mobile_device_target_bindings.locator_revision END WHERE mobile_device_target_bindings.source='school_pool' RETURNING id").bind(Uuid::now_v7()).bind(s).bind(v.device_id).bind(v.target_id).bind(v.search_text_override).bind(a.id).fetch_optional(&mut **tx).await?;
+            // Re-saving an enabled binding does not change its authorization revision.
+            let id:Option<Uuid>=sqlx::query_scalar("INSERT INTO mobile_device_target_bindings(id,school_id,device_id,target_id,created_by,updated_by,source) VALUES($1,$2,$3,$4,$5,$5,'school_pool') ON CONFLICT(device_id,target_id) DO UPDATE SET enabled=true,updated_by=$5,revision=mobile_device_target_bindings.revision+CASE WHEN NOT mobile_device_target_bindings.enabled THEN 1 ELSE 0 END,locator_revision=mobile_device_target_bindings.locator_revision+CASE WHEN NOT mobile_device_target_bindings.enabled THEN 1 ELSE 0 END WHERE mobile_device_target_bindings.source='school_pool' RETURNING id").bind(Uuid::now_v7()).bind(s).bind(v.device_id).bind(v.target_id).bind(a.id).fetch_optional(&mut **tx).await?;
             let id = id.ok_or(Error::Policy("shared_binding_platform_managed"))?;
             Ok(json!({"id":id,"state":"automatic_check_queued"}))
         }

@@ -15,7 +15,6 @@ pub struct UsageLocator {
     pub target_index: usize,
     pub target_name: String,
     pub search_text: String,
-    pub search_source: String,
     pub binding_locator_revision: Option<i64>,
     pub target_locator_revision: Option<i64>,
 }

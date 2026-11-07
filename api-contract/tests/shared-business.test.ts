@@ -39,12 +39,12 @@ it('business scheme has its own authenticated platform endpoint, without technic
  expect(input).not.toHaveProperty('allowed_stages');expect(input).not.toHaveProperty('release_id')
 })
 
-it('opening summary uses the single effective group name for a per-phone override',async()=>{
+it('opening summary uses the business group name for every phone',async()=>{
  const {default:fixture}=await import('../fixtures/mobile-usage-locator.json')
- const locator:import('../src/modules/mobile-execution/shared-send/v2').UsageLocator={...fixture,search_source:'override',target:{...fixture.target,kind:'group',match_policy:'exact_unique',identity_constraints:[]}}
- expect(locator.search_text).toBe('手机专用家长群')
+ const locator:import('../src/modules/mobile-execution/shared-send/v2').UsageLocator={...fixture,target:{...fixture.target,kind:'group',match_policy:'exact_unique',identity_constraints:[]}}
+ expect(locator.search_text).toBe('家长通知群')
  expect(locator.target_locator_revision).toBe(1)
- expect(locator.target?.search_query).toBe('手机专用家长群')
+ expect(locator.target?.search_query).toBe('家长通知群')
  expect(locator.binding_locator_revision).toBe(2)
 })
 

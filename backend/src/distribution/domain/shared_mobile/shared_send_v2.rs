@@ -439,7 +439,6 @@ pub struct PoolBindingInput {
     pub target_id: Uuid,
     pub device_id: Uuid,
     pub expected_access_revision: i64,
-    pub search_text_override: Option<String>,
 }
 
 /// Display identity belongs to a target, even when no phone qualifies.

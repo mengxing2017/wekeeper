@@ -10,7 +10,6 @@
     "access_revision",
     "target_locator_revision",
     "target",
-    "search_source",
     "credential_generation"
   ],
   "cases": [
@@ -33,7 +32,6 @@
           "match_policy": "exact_unique",
           "identity_constraints": []
         },
-        "search_source": "default",
         "credential_generation": 1,
         "message": "合成消息，不用于发送",
         "target_name": "业务展示别名"
@@ -51,11 +49,10 @@
           "match_policy": "exact_unique",
           "identity_constraints": []
         },
-        "search_source": "default",
         "credential_generation": 1
       },
-      "expected_canonical_utf8": "{\"access_revision\":null,\"binding_id\":\"00000000-0000-4000-8000-000000000003\",\"binding_locator_revision\":3,\"credential_generation\":1,\"device_id\":\"00000000-0000-4000-8000-000000000002\",\"search_source\":\"default\",\"target\":{\"identity_constraints\":[],\"kind\":\"group\",\"match_policy\":\"exact_unique\",\"search_query\":\"项目\"},\"target_id\":\"00000000-0000-4000-8000-000000000001\",\"target_locator_revision\":7}",
-      "expected_sha256": "c95e3b6e477cc24a62ed4fb3e64851425d91b6ed32876c47d7dc29dc4fae3521"
+      "expected_canonical_utf8": "{\"access_revision\":null,\"binding_id\":\"00000000-0000-4000-8000-000000000003\",\"binding_locator_revision\":3,\"credential_generation\":1,\"device_id\":\"00000000-0000-4000-8000-000000000002\",\"target\":{\"identity_constraints\":[],\"kind\":\"group\",\"match_policy\":\"exact_unique\",\"search_query\":\"项目\"},\"target_id\":\"00000000-0000-4000-8000-000000000001\",\"target_locator_revision\":7}",
+      "expected_sha256": "557dbdb31b796c3c742aaec2fb0170a15fb841524efc2571341c2098d85575c2"
     },
     {
       "name": "display_and_diagnostic_change",
@@ -76,7 +73,6 @@
           "match_policy": "exact_unique",
           "identity_constraints": []
         },
-        "search_source": "default",
         "credential_generation": 1,
         "message": "合成消息，不用于发送",
         "target_name": "修改后的业务展示名",
@@ -97,11 +93,10 @@
           "match_policy": "exact_unique",
           "identity_constraints": []
         },
-        "search_source": "default",
         "credential_generation": 1
       },
-      "expected_canonical_utf8": "{\"access_revision\":null,\"binding_id\":\"00000000-0000-4000-8000-000000000003\",\"binding_locator_revision\":3,\"credential_generation\":1,\"device_id\":\"00000000-0000-4000-8000-000000000002\",\"search_source\":\"default\",\"target\":{\"identity_constraints\":[],\"kind\":\"group\",\"match_policy\":\"exact_unique\",\"search_query\":\"项目\"},\"target_id\":\"00000000-0000-4000-8000-000000000001\",\"target_locator_revision\":7}",
-      "expected_sha256": "c95e3b6e477cc24a62ed4fb3e64851425d91b6ed32876c47d7dc29dc4fae3521"
+      "expected_canonical_utf8": "{\"access_revision\":null,\"binding_id\":\"00000000-0000-4000-8000-000000000003\",\"binding_locator_revision\":3,\"credential_generation\":1,\"device_id\":\"00000000-0000-4000-8000-000000000002\",\"target\":{\"identity_constraints\":[],\"kind\":\"group\",\"match_policy\":\"exact_unique\",\"search_query\":\"项目\"},\"target_id\":\"00000000-0000-4000-8000-000000000001\",\"target_locator_revision\":7}",
+      "expected_sha256": "557dbdb31b796c3c742aaec2fb0170a15fb841524efc2571341c2098d85575c2"
     },
     {
       "name": "search_query_change",
@@ -122,7 +117,6 @@
           "match_policy": "exact_unique",
           "identity_constraints": []
         },
-        "search_source": "default",
         "credential_generation": 1,
         "message": "合成消息，不用于发送",
         "target_name": "业务展示别名"
@@ -140,11 +134,10 @@
           "match_policy": "exact_unique",
           "identity_constraints": []
         },
-        "search_source": "default",
         "credential_generation": 1
       },
-      "expected_canonical_utf8": "{\"access_revision\":null,\"binding_id\":\"00000000-0000-4000-8000-000000000003\",\"binding_locator_revision\":3,\"credential_generation\":1,\"device_id\":\"00000000-0000-4000-8000-000000000002\",\"search_source\":\"default\",\"target\":{\"identity_constraints\":[],\"kind\":\"group\",\"match_policy\":\"exact_unique\",\"search_query\":\"通知\"},\"target_id\":\"00000000-0000-4000-8000-000000000001\",\"target_locator_revision\":7}",
-      "expected_sha256": "8539677aeda85080b14326990210cb88f8756048f5299b13e58425bda9ec554a"
+      "expected_canonical_utf8": "{\"access_revision\":null,\"binding_id\":\"00000000-0000-4000-8000-000000000003\",\"binding_locator_revision\":3,\"credential_generation\":1,\"device_id\":\"00000000-0000-4000-8000-000000000002\",\"target\":{\"identity_constraints\":[],\"kind\":\"group\",\"match_policy\":\"exact_unique\",\"search_query\":\"通知\"},\"target_id\":\"00000000-0000-4000-8000-000000000001\",\"target_locator_revision\":7}",
+      "expected_sha256": "8ad79ed8126059b13ab478e1940feb82aa9adccfdbdf9482956e3ebbf0fe3230"
     },
     {
       "name": "missing_nullable_revision",
@@ -164,7 +157,6 @@
           "match_policy": "exact_unique",
           "identity_constraints": []
         },
-        "search_source": "default",
         "credential_generation": 1,
         "message": "合成消息，不用于发送",
         "target_name": "业务展示别名"
@@ -182,11 +174,10 @@
           "match_policy": "exact_unique",
           "identity_constraints": []
         },
-        "search_source": "default",
         "credential_generation": 1
       },
-      "expected_canonical_utf8": "{\"access_revision\":null,\"binding_id\":\"00000000-0000-4000-8000-000000000003\",\"binding_locator_revision\":3,\"credential_generation\":1,\"device_id\":\"00000000-0000-4000-8000-000000000002\",\"search_source\":\"default\",\"target\":{\"identity_constraints\":[],\"kind\":\"group\",\"match_policy\":\"exact_unique\",\"search_query\":\"项目\"},\"target_id\":\"00000000-0000-4000-8000-000000000001\",\"target_locator_revision\":null}",
-      "expected_sha256": "5c695519f5a35e83398c2a0c3ded36f137604272c2f23a27b66bc03f8211ef37"
+      "expected_canonical_utf8": "{\"access_revision\":null,\"binding_id\":\"00000000-0000-4000-8000-000000000003\",\"binding_locator_revision\":3,\"credential_generation\":1,\"device_id\":\"00000000-0000-4000-8000-000000000002\",\"target\":{\"identity_constraints\":[],\"kind\":\"group\",\"match_policy\":\"exact_unique\",\"search_query\":\"项目\"},\"target_id\":\"00000000-0000-4000-8000-000000000001\",\"target_locator_revision\":null}",
+      "expected_sha256": "8c1b4986e4294e01425b70b041df6bc25db690f0268b93e8ed9be712722a9a6a"
     }
   ]
 }

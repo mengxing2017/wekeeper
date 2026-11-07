@@ -539,12 +539,12 @@ async fn reconcile_usage(tx: &mut Tx<'_>, u: &Value) -> Result<()> {
                 failures.push(format!("{label}：手机使用资格已停用"));
                 continue;
             }
-            let binding:Option<Value>=sqlx::query_scalar("SELECT to_jsonb(b)||jsonb_build_object('effective_search_text',coalesce(b.search_text_override,t.search_text)) FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id WHERE b.school_id=$1 AND b.device_id=$2 AND b.target_id=$3").bind(school).bind(device).bind(target_id).fetch_optional(&mut **tx).await?;
+            let binding:Option<Value>=sqlx::query_scalar("SELECT to_jsonb(b)||jsonb_build_object('effective_search_text',t.search_text) FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id WHERE b.school_id=$1 AND b.device_id=$2 AND b.target_id=$3").bind(school).bind(device).bind(target_id).fetch_optional(&mut **tx).await?;
             if binding.as_ref().is_some_and(|b| b["enabled"] != true) {
                 failures.push(format!("{label}：目标绑定已停用"));
                 continue;
             }
-            let snapshot:Option<Value>=sqlx::query_scalar("SELECT jsonb_build_object('binding_locator_revision',b.locator_revision,'target_locator_revision',CASE WHEN b.search_text_override IS NULL THEN t.locator_revision ELSE 1 END,'target',jsonb_build_object('kind','group','search_query',coalesce(b.search_text_override,t.search_text),'match_policy','exact_unique','identity_constraints','[]'::jsonb)) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id WHERE b.school_id=$1 AND b.device_id=$2 AND b.target_id=$3").bind(school).bind(device).bind(target_id).fetch_optional(&mut **tx).await?;
+            let snapshot:Option<Value>=sqlx::query_scalar("SELECT jsonb_build_object('binding_locator_revision',b.locator_revision,'target_locator_revision',t.locator_revision,'target',jsonb_build_object('kind','group','search_query',t.search_text,'match_policy','exact_unique','identity_constraints','[]'::jsonb)) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id WHERE b.school_id=$1 AND b.device_id=$2 AND b.target_id=$3").bind(school).bind(device).bind(target_id).fetch_optional(&mut **tx).await?;
             let existing:Option<Value>=sqlx::query_scalar("SELECT jsonb_build_object('scope_id',m.scope_id,'snapshot',m.resource_snapshot,'revoked',EXISTS(SELECT 1 FROM mobile_v9_scope_revocations r WHERE r.grant_id=m.scope_id),'active',EXISTS(SELECT 1 FROM mobile_v9_scope_grants g WHERE g.id=m.scope_id AND g.expires_at>clock_timestamp() AND NOT EXISTS(SELECT 1 FROM mobile_v9_scope_revocations r2 WHERE r2.grant_id=g.id))) FROM mobile_usage_scopes m WHERE m.usage_id=$1 AND m.release_id IS NULL AND m.target_id=$2 AND m.device_id=$3").bind(id).bind(target_id).bind(device).fetch_optional(&mut **tx).await?;
             if let Some(existing) = existing {
                 // An explicit platform revocation of this projection is a real disable.
@@ -583,7 +583,7 @@ async fn reconcile_usage(tx: &mut Tx<'_>, u: &Value) -> Result<()> {
             let revision:i64=sqlx::query_scalar("SELECT revision FROM mobile_shared_school_access WHERE device_id=$1 AND school_id=$2").bind(device).bind(school).fetch_one(&mut **tx).await?;
             let scope = Uuid::now_v7();
             sqlx::query("INSERT INTO mobile_v9_scope_grants(id,school_id,release_id,acceptance_id,stage,device_ids,target_ids,auto_targets,max_calls,expires_at,reason,created_by,resource_revisions) VALUES($1,$2,NULL,NULL,'production_allowlist',ARRAY[$3]::uuid[],ARRAY[$4]::uuid[],false,$5,$6,'使用授权自动关联',$7,$8)").bind(scope).bind(school).bind(device).bind(target_id).bind(body["max_calls"].as_i64().unwrap_or(1)).bind(date(u,"expires_at")?).bind(actor).bind(json!({device.to_string():revision})).execute(&mut **tx).await?;
-            let snapshot:Value=sqlx::query_scalar("SELECT jsonb_build_object('binding_locator_revision',b.locator_revision,'target_locator_revision',CASE WHEN b.search_text_override IS NULL THEN t.locator_revision ELSE 1 END,'target',jsonb_build_object('kind','group','search_query',coalesce(b.search_text_override,t.search_text),'match_policy','exact_unique','identity_constraints','[]'::jsonb)) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id WHERE b.device_id=$1 AND b.target_id=$2").bind(device).bind(target_id).fetch_one(&mut **tx).await?;
+            let snapshot:Value=sqlx::query_scalar("SELECT jsonb_build_object('binding_locator_revision',b.locator_revision,'target_locator_revision',t.locator_revision,'target',jsonb_build_object('kind','group','search_query',t.search_text,'match_policy','exact_unique','identity_constraints','[]'::jsonb)) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id WHERE b.device_id=$1 AND b.target_id=$2").bind(device).bind(target_id).fetch_one(&mut **tx).await?;
             sqlx::query("INSERT INTO mobile_usage_scopes(scope_id,usage_id,release_id,target_id,device_id,resource_snapshot) VALUES($1,$2,NULL,$3,$4,$5)").bind(scope).bind(id).bind(target_id).bind(device).bind(snapshot).execute(&mut **tx).await?;
             ready += 1;
         }
@@ -623,13 +623,10 @@ impl Repository {
 mod tests {
     use super::*;
     #[test]
-    fn summary_depends_on_effective_phone_locator_not_unused_default_or_alias() {
-        let original = json!({"targets":[{"id":"group","name":"旧显示名","search_text":"默认群","revision":1}],"locators":[{"device_id":"phone","target_id":"group","target_index":0,"device_name":"手机","target_name":"旧显示名","search_text":"手机专用群","search_source":"override","binding_locator_revision":2,"target_locator_revision":null}]});
+    fn summary_depends_on_resolved_business_group_name_not_device_display_name() {
+        let original = json!({"targets":[{"id":"group","name":"旧显示名","search_text":"默认群","revision":1}],"locators":[{"device_id":"phone","target_id":"group","target_index":0,"device_name":"手机","target_name":"默认群","search_text":"默认群","binding_locator_revision":2,"target_locator_revision":null}]});
         let mut renamed = original.clone();
-        renamed["targets"][0]["name"] = json!("新显示名");
-        renamed["targets"][0]["search_text"] = json!("新默认值");
-        renamed["targets"][0]["revision"] = json!(99);
-        renamed["locators"][0]["target_name"] = json!("新显示名");
+        renamed["locators"][0]["device_name"] = json!("手机新备注");
         assert!(same_resource_scope(&original, &renamed));
         renamed["locators"][0]["search_text"] = json!("另一群");
         assert!(!same_resource_scope(&original, &renamed));

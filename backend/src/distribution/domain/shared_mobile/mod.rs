@@ -40,8 +40,6 @@ pub fn validate_text(value: &str, min: usize, max: usize, bytes: usize) -> Resul
 pub struct SharedBindingInput {
     pub target_id: Uuid,
     pub device_ids: Vec<Uuid>,
-    #[serde(deserialize_with = "Deserialize::deserialize")]
-    pub search_text_override: Option<String>,
 }
 impl SharedBindingInput {
     pub fn validate(&self) -> Result<()> {
@@ -55,9 +53,6 @@ impl SharedBindingInput {
             ids.len() == self.device_ids.len() && self.device_ids.iter().all(|id| !id.is_nil()),
             "设备不可重复或为空",
         )?;
-        if let Some(value) = &self.search_text_override {
-            validate_text(value, 1, 256, 1024)?;
-        }
         Ok(())
     }
 }
@@ -66,8 +61,6 @@ impl SharedBindingInput {
 pub struct SharedBindingUpdate {
     pub expected_revision: i64,
     pub enabled: bool,
-    #[serde(deserialize_with = "Deserialize::deserialize")]
-    pub search_text_override: Option<String>,
 }
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -133,32 +126,38 @@ pub use flow::*;
 mod shared_binding_tests {
     use super::*;
     #[test]
-    fn shared_binding_preserves_override_and_rejects_inferred_school_authority() {
-        let value = serde_json::json!({"target_id":Uuid::from_u128(1),"device_ids":[Uuid::from_u128(2)],"search_text_override":"同群  手机备注🦦"});
+    fn binding_wire_rejects_retired_names_and_inferred_school_authority() {
+        let value =
+            serde_json::json!({"target_id":Uuid::from_u128(1),"device_ids":[Uuid::from_u128(2)]});
         let input: SharedBindingInput = serde_json::from_value(value.clone()).unwrap();
         input.validate().unwrap();
         assert_eq!(serde_json::to_value(&input).unwrap(), value);
-        for field in ["school_id", "grant_id", "sender_account_id"] {
+        for field in [
+            "school_id",
+            "grant_id",
+            "sender_account_id",
+            "search_text_override",
+        ] {
             let mut bad = value.clone();
-            bad[field] = serde_json::json!(Uuid::from_u128(3));
+            bad[field] = serde_json::json!("retired");
             assert!(serde_json::from_value::<SharedBindingInput>(bad).is_err());
         }
-        for text in ["", " ", " 群", "群\n名"] {
-            let mut bad = value.clone();
-            bad["search_text_override"] = serde_json::json!(text);
-            assert!(
-                serde_json::from_value::<SharedBindingInput>(bad)
-                    .unwrap()
-                    .validate()
-                    .is_err()
-            );
+        let update = serde_json::json!({"expected_revision":1,"enabled":true});
+        assert_eq!(
+            serde_json::to_value(
+                serde_json::from_value::<SharedBindingUpdate>(update.clone()).unwrap()
+            )
+            .unwrap(),
+            update
+        );
+        for retired in [serde_json::Value::Null, serde_json::json!("旧搜索词")] {
+            let mut bad = update.clone();
+            bad["search_text_override"] = retired;
+            assert!(serde_json::from_value::<SharedBindingUpdate>(bad.clone()).is_err());
+            bad = value.clone();
+            bad["search_text_override"] = serde_json::Value::Null;
+            assert!(serde_json::from_value::<SharedBindingInput>(bad).is_err());
         }
-        let mut inherited = value.clone();
-        inherited["search_text_override"] = serde_json::Value::Null;
-        serde_json::from_value::<SharedBindingInput>(inherited)
-            .unwrap()
-            .validate()
-            .unwrap();
         let mut duplicate = value;
         duplicate["device_ids"] = serde_json::json!([Uuid::from_u128(2), Uuid::from_u128(2)]);
         assert!(

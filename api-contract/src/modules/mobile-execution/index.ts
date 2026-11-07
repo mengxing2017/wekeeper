@@ -23,14 +23,13 @@ export interface PlatformTarget {
   id: string; school_id: string; school_name: string; search_text: string; enabled: boolean;
 }
 export interface SharedBindingInput {
-  target_id: string; device_ids: string[]; search_text_override: string | null;
+  target_id: string; device_ids: string[];
 }
 export interface TargetBinding {
  source?: 'platform' | 'school_pool';
   id: string; school_id: string; device_id: string; target_id: string;
-  search_text_override: string | null; locator_revision: number;
+  locator_revision: number;
   target_locator_revision?: number;
-  search_source?: 'target_default' | 'binding_override'; source_locator_revision?: number;
   enabled: boolean; revision: number;
   school_name?: string; device_name?: string; search_text?: string; available?: boolean;
 }
@@ -54,6 +53,6 @@ export const mobileExecutionApi = {
   platformTargets: (page?: number, search?: string) => list<PlatformTarget>('/api/v1/platform/mobile-execution/targets', page, search),
   platformBindings: (page?: number, search?: string, deviceId?: string) => list<TargetBinding>('/api/v1/platform/mobile-execution/target-bindings', page, search, deviceId),
   bind: (input: SharedBindingInput, key: string) => write<{ id: string; school_id: string; target_id: string; bindings: TargetBinding[] }>('/api/v1/platform/mobile-execution/target-bindings', 'POST', input, key),
-  updateBinding: (id: string, input: { expected_revision: number; enabled: boolean; search_text_override: string | null }, key: string) => write<TargetBinding>(`/api/v1/platform/mobile-execution/target-bindings/${encodeURIComponent(id)}`, 'PATCH', input, key),
+  updateBinding: (id: string, input: { expected_revision: number; enabled: boolean }, key: string) => write<TargetBinding>(`/api/v1/platform/mobile-execution/target-bindings/${encodeURIComponent(id)}`, 'PATCH', input, key),
   unbind: (id: string, expected_revision: number, reason: string, key: string) => write<TargetBinding>(`/api/v1/platform/mobile-execution/target-bindings/${encodeURIComponent(id)}/revocations`, 'POST', { expected_revision, reason }, key),
 }
