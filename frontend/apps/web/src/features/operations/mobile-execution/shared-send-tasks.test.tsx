@@ -132,6 +132,7 @@ it('缺少本校管理员角色时明确说明权限原因，而不是无说明�
 
 
 it('打开详情持续轮询，失败保留快照与输入，关闭和切校停止旧任务查询',async()=>{
+ vi.useFakeTimers({toFake:['setInterval','clearInterval']})
  const task={id:'task',school_id:'school',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-03',items:[{id:'item',target_id:'target',position:0,attempts:[{id:'attempt',state:'queued',revision:1,current:true,attempt_no:1,plan_digest:'hash',plan:{search_text:'实际搜索文字',device_id:'phone',device_name:'测试手机'},execution_status:{conditions:[{code:'runtime_stale',message:'等待手机上报当前执行条件',owner:'system'}]}}]}]} as unknown as Awaited<ReturnType<typeof sharedSend.task>>
  vi.mocked(sharedSend.overview).mockResolvedValue({id:'school',tasks:[task],drafts:[],readiness:[],pool:[],inspections:[]})
  vi.mocked(sharedSend.task).mockResolvedValue(task)
@@ -142,12 +143,14 @@ it('打开详情持续轮询，失败保留快照与输入，关闭和切校停�
  await screen.findByText(/等待手机上报当前执行条件/,{},{timeout:10_000})
  expect(sharedSend.task).toHaveBeenCalledTimes(1)
  vi.mocked(sharedSend.task).mockRejectedValueOnce(new Error('模拟断网'))
+ await act(async()=>{await vi.advanceTimersByTimeAsync(5_000)})
  await waitFor(()=>expect(screen.getByText('进度读取失败，以下为上次获取的快照')).toBeTruthy(),{timeout:10_000})
  expect(screen.getByText(/等待手机上报当前执行条件/)).toBeTruthy()
  fireEvent.click(screen.getByRole('button',{name:'停止尚未发放许可的任务'}))
  fireEvent.change(screen.getByLabelText('核对依据与操作理由'),{target:{value:'保留待提交理由'}})
  const running=structuredClone(task);running.items![0].attempts[0].state='prepared';running.revision=2
  vi.mocked(sharedSend.task).mockResolvedValue(running)
+ await act(async()=>{await vi.advanceTimersByTimeAsync(5_000)})
  await waitFor(()=>expect(screen.getByText(/文字准备完成/)).toBeTruthy(),{timeout:10_000})
  expect((screen.getByLabelText('核对依据与操作理由') as HTMLTextAreaElement).value).toBe('保留待提交理由')
  expect(sharedSend.confirm).not.toHaveBeenCalled()
@@ -155,7 +158,7 @@ it('打开详情持续轮询，失败保留快照与输入，关闭和切校停�
  fireEvent.click(within(screen.getByRole('button',{name:'停止尚未发放许可的任务'}).closest('[role=dialog]') as HTMLElement).getByRole('button',{name:'Close'}))
  await waitFor(()=>expect(screen.queryByRole('button',{name:'停止尚未发放许可的任务'})).toBeNull())
  const closedCount=vi.mocked(sharedSend.task).mock.calls.length
- await act(async()=>{await new Promise(resolve=>setTimeout(resolve,5_100))})
+ await act(async()=>{await vi.advanceTimersByTimeAsync(5_100)})
  expect(sharedSend.task).toHaveBeenCalledTimes(closedCount)
  fireEvent.click(screen.getByRole('button',{name:'查看计划与结果'}))
  await screen.findByText(/文字准备完成/,{},{timeout:10_000})
@@ -163,11 +166,11 @@ it('打开详情持续轮询，失败保留快照与输入，关闭和切校停�
  fireEvent.change(screen.getByLabelText('核对依据与操作理由'),{target:{value:'切校前的理由'}})
  // Switch school while both dialogs are open; old details and local action state are gone.
  rendered.rerender(ui('another-school'))
- await act(async()=>{await new Promise(resolve=>setTimeout(resolve,5_100))})
+ await act(async()=>{await vi.advanceTimersByTimeAsync(5_100)})
  expect(screen.queryByRole('button',{name:'停止尚未发放许可的任务'})).toBeNull()
  expect(screen.queryByLabelText('核对依据与操作理由')).toBeNull()
  const count=vi.mocked(sharedSend.task).mock.calls.length
- await act(async()=>{await new Promise(resolve=>setTimeout(resolve,5_100))})
+ await act(async()=>{await vi.advanceTimersByTimeAsync(5_100)})
  expect(sharedSend.task).toHaveBeenCalledTimes(count)
  client.clear()
 },60000)
