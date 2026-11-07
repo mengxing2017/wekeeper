@@ -759,9 +759,9 @@ async fn business_scope_materializes_without_delivery_acceptance_or_activation_a
         )
         .await
         .unwrap();
-    // Acceptance is independent of phone readiness; the offline first round is retired.
+    // Acceptance is independent of phone readiness; the first round still waits five minutes.
     assert_eq!(task["items"][0]["dispatch"]["state"], "waiting_resources");
-    assert_eq!(task["items"][0]["dispatch"]["completed_rounds"], 1);
+    assert_eq!(task["items"][0]["dispatch"]["completed_rounds"], 0);
     assert_eq!(task["items"][0]["attempts"][0]["state"], "invalidated");
     assert_eq!(
         task["items"][0]["attempts"][0]["plan"]["device_id"],
@@ -851,9 +851,9 @@ async fn business_configuration_does_not_require_technical_delivery() {
         )
         .await;
     let task = task.unwrap();
-    // Acceptance is independent of phone readiness; the offline first round is retired.
+    // Acceptance is independent of phone readiness; the first round still waits five minutes.
     assert_eq!(task["items"][0]["dispatch"]["state"], "waiting_resources");
-    assert_eq!(task["items"][0]["dispatch"]["completed_rounds"], 1);
+    assert_eq!(task["items"][0]["dispatch"]["completed_rounds"], 0);
     assert_eq!(task["items"][0]["attempts"][0]["state"], "invalidated");
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_v9_scope_grants")
@@ -918,6 +918,7 @@ async fn business_configuration_does_not_require_technical_delivery() {
     sqlx::query("INSERT INTO device_control_sessions(device_id,connection_id,transport,credential_generation,last_heartbeat_at) VALUES($1,$2,'https',1,clock_timestamp())").bind(f.device).bind(Uuid::new_v4()).execute(&f.pool).await.unwrap();
     sqlx::query("INSERT INTO mobile_shared_runtime(device_id,credential_generation,runtime_epoch,ui_ready,paused,quiescent,observed_at) VALUES($1,1,$2,true,false,true,clock_timestamp())").bind(f.device).bind(epoch).execute(&f.pool).await.unwrap();
     sqlx::query("INSERT INTO mobile_v9_runtime_details(device_id,credential_generation,ui_context_epoch,conditions,apk_sha256) VALUES($1,1,'local','{}',repeat('a',64))").bind(f.device).execute(&f.pool).await.unwrap();
+    pool_expire_round(&f).await;
     pool_tick(&f).await;
     let current_task = pool_detail(&f, &task).await;
     let aid: Uuid =
@@ -1106,9 +1107,9 @@ async fn approved_business_resources_exist_without_any_adapter_or_delivery_recor
     assert_eq!(plan["execution"]["contract"], "device_owned/1");
     assert!(plan.get("flow").is_none());
     assert!(plan.get("flow_digest").is_none());
-    // Acceptance is independent of phone readiness; the offline first round is retired.
+    // Acceptance is independent of phone readiness; the first round still waits five minutes.
     assert_eq!(task["items"][0]["dispatch"]["state"], "waiting_resources");
-    assert_eq!(task["items"][0]["dispatch"]["completed_rounds"], 1);
+    assert_eq!(task["items"][0]["dispatch"]["completed_rounds"], 0);
     assert_eq!(task["items"][0]["attempts"][0]["state"], "invalidated");
     f.close().await;
 }
@@ -2139,6 +2140,12 @@ async fn pool_tick(f: &Fixture) {
     .unwrap();
     f.repo().reconcile_dispatch().await.unwrap();
 }
+// Advance persisted round time explicitly; pool_tick itself never advances time.
+async fn pool_expire_round(f: &Fixture) {
+    sqlx::query("UPDATE mobile_v9_dispatch_state SET round_started_at=clock_timestamp()-interval '5 minutes 1 second' WHERE state NOT IN ('completed','stopped','confirmation_expired','dispatch_failed')")
+        .execute(&f.pool).await.unwrap();
+    pool_tick(f).await;
+}
 async fn pool_detail(f: &Fixture, t: &Value) -> Value {
     f.repo()
         .school_read(
@@ -3046,10 +3053,14 @@ async fn dispatch_three_offline_rounds_stop_and_report_once() {
     let f = Fixture::with_adapter(false).await;
     pool_phone(&f, "B").await;
     let task = pool_confirm(&f, vec![f.targets[0]]).await;
-    assert_eq!(task["items"][0]["dispatch"]["completed_rounds"], 1);
+    assert_eq!(task["items"][0]["dispatch"]["completed_rounds"], 0);
+    pool_expire_round(&f).await;
     pool_tick(&f).await;
+    pool_expire_round(&f).await;
     let second = pool_detail(&f, &task).await;
     assert_eq!(second["items"][0]["dispatch"]["completed_rounds"], 2);
+    pool_tick(&f).await;
+    sqlx::query("UPDATE mobile_v9_dispatch_state SET round_started_at=clock_timestamp()-interval '5 minutes 1 second'").execute(&f.pool).await.unwrap();
     // Two scanners with a stale due list may charge only one remaining round.
     sqlx::query(
         "UPDATE mobile_v9_dispatch_state SET next_retry_at=clock_timestamp()-interval '1 second'",
@@ -3148,6 +3159,7 @@ async fn dispatch_visits_every_candidate_exactly_three_times() {
         pool_tick(&f).await;
         let detail = pool_detail(&f, &task).await;
         if detail["items"][0]["dispatch"]["state"] == "waiting_resources" {
+            pool_expire_round(&f).await;
             pool_tick(&f).await;
         }
     }
@@ -3203,7 +3215,7 @@ async fn dispatch_unclaimed_timeout_and_business_interval_do_not_refresh_budget(
     .unwrap();
     pool_tick(&f).await;
     sqlx::query(
-        "UPDATE mobile_v9_dispatch_state SET assigned_at=clock_timestamp()-interval '6 minutes'",
+        "UPDATE mobile_v9_dispatch_state SET assigned_at=clock_timestamp()-interval '6 minutes',round_started_at=clock_timestamp()-interval '6 minutes'",
     )
     .execute(&f.pool)
     .await
@@ -3229,7 +3241,7 @@ async fn dispatch_third_round_success_completes_without_failure() {
             .execute(&f.pool)
             .await
             .unwrap();
-        pool_tick(&f).await;
+        pool_expire_round(&f).await;
         pool_tick(&f).await;
     }
     let before = pool_detail(&f, &task).await;
@@ -3278,6 +3290,8 @@ async fn dispatch_exhaustion_fences_replay_but_accepts_late_success() {
         .await
         .unwrap();
     for _ in 0..3 {
+        sqlx::query("UPDATE mobile_execution_grants SET result_deadline_at=clock_timestamp()-interval '1 second'").execute(&f.pool).await.unwrap();
+        pool_expire_round(&f).await;
         pool_tick(&f).await;
     }
     let failed = pool_detail(&f, &task).await;
@@ -3322,7 +3336,7 @@ async fn dispatch_exhausted_target_does_not_block_other_targets() {
     pool_ready(&f, f.device).await;
     let task = pool_confirm(&f, f.targets.clone()).await;
     let first = serde_json::from_value::<Uuid>(task["items"][0]["id"].clone()).unwrap();
-    sqlx::query("UPDATE mobile_v9_dispatch_state SET completed_rounds=2 WHERE item_id=$1")
+    sqlx::query("UPDATE mobile_v9_dispatch_state SET completed_rounds=2,round_started_at=clock_timestamp()-interval '5 minutes 1 second' WHERE item_id=$1")
         .bind(first)
         .execute(&f.pool)
         .await
@@ -3361,7 +3375,7 @@ async fn dispatch_historical_singleton_budget_preserves_sequence_wait() {
             .execute(&f.pool)
             .await
             .unwrap();
-        pool_tick(&f).await;
+        pool_expire_round(&f).await;
         let after = pool_detail(&f, &task).await;
         assert_eq!(after["items"][0]["dispatch"]["completed_rounds"], round + 1);
         assert_eq!(
@@ -3383,5 +3397,259 @@ async fn dispatch_historical_singleton_budget_preserves_sequence_wait() {
             .await
             .unwrap();
     assert_eq!(attempts, 3);
+    f.close().await;
+}
+
+// A delivered singleton must get three independent five-minute result windows,
+// even if its control channel disconnects while it executes locally.
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn delivered_single_phone_waits_five_minutes_in_each_of_three_rounds() {
+    use wekeeper_api::distribution::domain::shared_mobile::execution::{
+        DeliveryRequest, ExecutionReceipt,
+    };
+    let f = Fixture::with_adapter(false).await;
+    let (credential, epoch) = pool_ready(&f, f.device).await;
+    let task = pool_confirm(&f, vec![f.targets[0]]).await;
+    for round in 0..3 {
+        sqlx::query(
+            "UPDATE device_control_sessions SET connected=true,last_heartbeat_at=clock_timestamp()",
+        )
+        .execute(&f.pool)
+        .await
+        .unwrap();
+        // Model elapsed business interval/quota cooldown without real-time sleeping.
+        sqlx::query(
+            "UPDATE mobile_v9_tasks SET next_eligible_at=clock_timestamp()-interval '1 second'",
+        )
+        .execute(&f.pool)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE mobile_v9_quota_reservations SET recorded_at=clock_timestamp()-interval '6 minutes'")
+            .execute(&f.pool).await.unwrap();
+        pool_tick(&f).await;
+        let delivery = f
+            .repo()
+            .device_write(
+                &credential,
+                &format!("round-{round}-delivery"),
+                DeviceCommand::Deliver(DeliveryRequest {
+                    runtime_epoch: epoch,
+                    inspection_id: None,
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(delivery["state"], "granted", "{delivery}");
+        let execution_id: Uuid =
+            serde_json::from_value(delivery["execution"]["id"].clone()).unwrap();
+        f.repo()
+            .device_write(
+                &credential,
+                &format!("round-{round}-receipt"),
+                DeviceCommand::Receipt(ExecutionReceipt { execution_id }),
+            )
+            .await
+            .unwrap();
+        let five_minutes: bool = sqlx::query_scalar(
+            "SELECT result_deadline_at>=accepted_at+interval '5 minutes' AND result_deadline_at<accepted_at+interval '5 minutes 1 second' FROM mobile_execution_grants WHERE id=$1",
+        ).bind(execution_id).fetch_one(&f.pool).await.unwrap();
+        assert!(five_minutes);
+        sqlx::query("UPDATE device_control_sessions SET connected=false")
+            .execute(&f.pool)
+            .await
+            .unwrap();
+        // Multiple scans and fresh Repository instances cannot replace a received
+        // assignment just because presence says offline.
+        for _ in 0..3 {
+            pool_tick(&f).await;
+        }
+        let waiting = pool_detail(&f, &task).await;
+        assert_eq!(waiting["items"][0]["dispatch"]["completed_rounds"], round);
+        assert_eq!(waiting["items"][0]["dispatch"]["state"], "executing");
+        let active: String =
+            sqlx::query_scalar("SELECT state FROM mobile_execution_grants WHERE id=$1")
+                .bind(execution_id)
+                .fetch_one(&f.pool)
+                .await
+                .unwrap();
+        assert_eq!(active, "active");
+        // Even when the round's minimum window has elapsed, the actual receipt's
+        // result deadline governs the delivered attempt.
+        sqlx::query("UPDATE mobile_v9_dispatch_state SET round_started_at=clock_timestamp()-interval '6 minutes'")
+            .execute(&f.pool).await.unwrap();
+        sqlx::query("UPDATE mobile_execution_grants SET result_deadline_at=clock_timestamp()+interval '10 seconds',execute_before=clock_timestamp()-interval '1 second' WHERE id=$1")
+            .bind(execution_id).execute(&f.pool).await.unwrap();
+        pool_tick(&f).await;
+        assert_eq!(
+            pool_detail(&f, &task).await["items"][0]["dispatch"]["completed_rounds"],
+            round
+        );
+        sqlx::query("UPDATE mobile_execution_grants SET result_deadline_at=clock_timestamp()-interval '1 second',execute_before=clock_timestamp()-interval '1 second' WHERE id=$1")
+            .bind(execution_id).execute(&f.pool).await.unwrap();
+        pool_tick(&f).await;
+        let elapsed = pool_detail(&f, &task).await;
+        assert_eq!(
+            elapsed["items"][0]["dispatch"]["completed_rounds"],
+            round + 1
+        );
+        assert_eq!(
+            elapsed["items"][0]["dispatch"]["state"],
+            if round == 2 {
+                "dispatch_failed"
+            } else {
+                "waiting_resources"
+            }
+        );
+    }
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM mobile_execution_grants")
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 3);
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn delivered_phone_heartbeat_freshness_does_not_cancel_execution() {
+    let f = Fixture::with_adapter(false).await;
+    let b = pool_phone(&f, "B").await;
+    let (credential, epoch) = pool_ready(&f, f.device).await;
+    pool_ready(&f, b).await;
+    let task = pool_confirm(&f, vec![f.targets[0]]).await;
+    let aid = serde_json::from_value(pool_current(&task["items"][0])["id"].clone()).unwrap();
+    let grant = pool_claim(&f, &credential, epoch, aid).await;
+    assert_eq!(grant["state"], "granted");
+    // Old dispatch used a hard-coded 30-second heartbeat cutoff, independently
+    // of the shared 45/90-second presence policy and the five-minute result wait.
+    for age in [35, 60] {
+        sqlx::query("UPDATE device_control_sessions SET last_heartbeat_at=clock_timestamp()-make_interval(secs=>$2::double precision),desired_paused=true WHERE device_id=$1")
+            .bind(f.device).bind(age as f64).execute(&f.pool).await.unwrap();
+        pool_tick(&f).await;
+        let detail = pool_detail(&f, &task).await;
+        assert_eq!(pool_current(&detail["items"][0])["id"], json!(aid));
+        assert_eq!(detail["items"][0]["dispatch"]["state"], "executing");
+        assert_eq!(detail["items"][0]["dispatch"]["completed_rounds"], 0);
+    }
+    f.repo()
+        .complete_execution(completion(&grant, "observed_sent"))
+        .await
+        .unwrap();
+    pool_tick(&f).await;
+    assert_eq!(
+        pool_detail(&f, &task).await["items"][0]["dispatch"]["state"],
+        "completed"
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn offline_scans_cannot_consume_a_five_minute_round() {
+    let f = Fixture::with_adapter(false).await;
+    let task = pool_confirm(&f, vec![f.targets[0]]).await;
+    for round in 0..3 {
+        for _ in 0..3 {
+            pool_tick(&f).await;
+        }
+        sqlx::query("UPDATE mobile_v9_dispatch_state SET round_started_at=clock_timestamp()-interval '4 minutes 50 seconds'")
+            .execute(&f.pool).await.unwrap();
+        pool_tick(&f).await;
+        let before = pool_detail(&f, &task).await;
+        assert_eq!(before["items"][0]["dispatch"]["completed_rounds"], round);
+        assert_ne!(before["items"][0]["dispatch"]["state"], "dispatch_failed");
+        pool_expire_round(&f).await;
+        assert_eq!(
+            pool_detail(&f, &task).await["items"][0]["dispatch"]["completed_rounds"],
+            round + 1
+        );
+    }
+    let failed = pool_detail(&f, &task).await;
+    assert_eq!(failed["items"][0]["dispatch"]["state"], "dispatch_failed");
+    assert!(failed["items"][0]["dispatch"]["next_retry_at"].is_null());
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn task_list_status_matches_detail_and_completion_survives_manual_stop() {
+    let f = Fixture::with_adapter(false).await;
+    let (credential, epoch) = pool_ready(&f, f.device).await;
+    let task = pool_confirm(&f, vec![f.targets[0]]).await;
+    let task_id = serde_json::from_value::<Uuid>(task["id"].clone()).unwrap();
+    async fn check(f: &Fixture, task: &Value, expected: &str) {
+        let overview = f
+            .repo()
+            .school_read(&f.actor, f.school, None)
+            .await
+            .unwrap();
+        let listed = overview["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["id"] == task["id"])
+            .unwrap();
+        assert!(
+            listed.get("items").is_none(),
+            "list status must not require full details"
+        );
+        assert_eq!(listed["status"], expected);
+        assert_eq!(pool_detail(f, task).await["status"], expected);
+        serde_json::from_value::<TaskStatus>(listed["status"].clone()).unwrap();
+    }
+    let aid = serde_json::from_value(pool_current(&task["items"][0])["id"].clone()).unwrap();
+    let grant = pool_claim(&f, &credential, epoch, aid).await;
+    assert_eq!(grant["state"], "granted");
+    check(&f, &task, "dispatching").await;
+    sqlx::query("UPDATE mobile_v9_dispatch_state SET state='dispatch_failed',completed_rounds=3,next_retry_at=NULL")
+        .execute(&f.pool).await.unwrap();
+    check(&f, &task, "dispatch_failed").await;
+    // A late persisted success is authoritative before asynchronous projection.
+    f.repo()
+        .complete_execution(completion(&grant, "observed_sent"))
+        .await
+        .unwrap();
+    check(&f, &task, "completed").await;
+    let stopped = f
+        .repo()
+        .school_write(
+            &f.actor,
+            f.school,
+            "stop-completed-task",
+            SchoolCommand::Stop(
+                task_id,
+                Mutation {
+                    expected_revision: task["revision"].as_i64().unwrap(),
+                    reason: "stop must preserve completed results".into(),
+                },
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stopped["stopped"], true);
+    assert_eq!(stopped["status"], "completed");
+    check(&f, &task, "completed").await;
+    let other = pool_confirm_keyed(&f, vec![f.targets[1]], "other-status").await;
+    let other_id = serde_json::from_value::<Uuid>(other["id"].clone()).unwrap();
+    let stopped = f
+        .repo()
+        .school_write(
+            &f.actor,
+            f.school,
+            "stop-running-task",
+            SchoolCommand::Stop(
+                other_id,
+                Mutation {
+                    expected_revision: other["revision"].as_i64().unwrap(),
+                    reason: "operator stops remaining work".into(),
+                },
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stopped["status"], "stopped");
+    check(&f, &other, "stopped").await;
+    check(&f, &task, "completed").await;
     f.close().await;
 }
