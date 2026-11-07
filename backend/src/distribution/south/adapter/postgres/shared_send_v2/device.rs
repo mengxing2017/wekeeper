@@ -79,7 +79,15 @@ pub(super) async fn write(
     command: DeviceCommand,
 ) -> Result<Value> {
     let mut tx = repo.0.begin().await?;
-    guard(&mut tx).await?;
+    if !matches!(&command, DeviceCommand::Consent(_)) {
+        guard(&mut tx).await?;
+    }
+    // Consent and grants serialize on this phone. Consent does not wait for
+    // unrelated global task housekeeping, including work for other phones.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 78234610244))")
+        .bind(c.device_id.to_string())
+        .execute(&mut *tx)
+        .await?;
     authenticate(
         &mut tx,
         c,
