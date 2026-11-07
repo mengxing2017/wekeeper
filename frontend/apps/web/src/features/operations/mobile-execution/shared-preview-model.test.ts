@@ -1,5 +1,5 @@
 import {expect,it} from 'vitest'
-import {previewSelections,previewResourcesChanged,isUsageBlocker,currentReadiness,dispatchLabel,taskNeedsPolling} from './shared-preview-model'
+import {previewSelections,previewResourcesChanged,isUsageBlocker,currentReadiness,dispatchLabel,taskNeedsPolling,taskProgressLabel,attemptDispatchLabel} from './shared-preview-model'
 import type {SharedPreview} from './api'
 it('没有旧选中项的目标也会加入本次设备选择',()=>{
  const items=[{target_id:'target',selected:null},{target_id:'other',selected:{device_id:'other-phone'}}] as SharedPreview['plan']['items']
@@ -33,4 +33,36 @@ it('所有目标终止后停止自动轮询，有其他活动目标时继续轮�
  expect(taskNeedsPolling(task(['dispatch_failed','completed']))).toBe(false)
  expect(taskNeedsPolling(task(['dispatch_failed','assigned']))).toBe(true)
  expect(taskNeedsPolling(undefined)).toBe(true)
+})
+
+it('自动耗尽独立于人工停止标记，部分目标失败不误报整任务停止',()=>{
+ const task=(states:string[])=>({stopped:false,items:states.map(state=>({dispatch:{state}}))}) as unknown as Parameters<typeof taskProgressLabel>[0]
+ expect(taskProgressLabel(task(['dispatch_failed','completed']))).toBe('任务已停止自动下发：三轮下发失败')
+ expect(taskProgressLabel(task(['dispatch_failed','executing']))).toBe('任务正在调度')
+ expect(taskProgressLabel(task(['completed']))).toBe('任务已完成')
+ expect(taskNeedsPolling({...task(['executing']),stopped:true})).toBe(false)
+})
+
+it('终止目标不再把当前尝试的领取记录显示为仍在执行，历史结果保留',()=>{
+ const attempt={current:true,state:'leased'} as Parameters<typeof attemptDispatchLabel>[0]
+ expect(attemptDispatchLabel(attempt,'dispatch_failed',false)).toBe('已停止自动下发（已耗尽 3 轮）')
+ expect(attemptDispatchLabel(attempt,'completed',false)).toBe('目标已完成，本次尝试不再下发')
+ expect(attemptDispatchLabel({...attempt,current:false},'dispatch_failed',false)).toBeUndefined()
+ expect(attemptDispatchLabel({...attempt,state:'observed_sent'},'dispatch_failed',false)).toBeUndefined()
+})
+
+it('采用接口汇总状态，完成优先于人工停止标记，不依赖详情缓存',()=>{
+ const task=(status:NonNullable<Parameters<typeof taskProgressLabel>[0]['status']>,stopped=false)=>({status,stopped}) as Parameters<typeof taskProgressLabel>[0]
+ expect(taskProgressLabel(task('completed',true))).toBe('任务已完成')
+ expect(taskProgressLabel(task('stopped',true))).toBe('任务已手动停止')
+ expect(taskProgressLabel(task('dispatch_failed'))).toBe('任务已停止自动下发：三轮下发失败')
+ expect(taskNeedsPolling(task('completed'))).toBe(false)
+ expect(taskNeedsPolling(task('dispatching'))).toBe(true)
+})
+
+it('汇总先记录完成但详情投影尚在刷新时，继续获取逐群最终状态',()=>{
+ const task={status:'completed',stopped:false,items:[{dispatch:{state:'executing'}}]} as unknown as Parameters<typeof taskNeedsPolling>[0]
+ expect(taskProgressLabel(task!)).toBe('任务已完成')
+ expect(taskNeedsPolling(task)).toBe(true)
+ expect(taskNeedsPolling({...task!,items:[{dispatch:{state:'completed'}}]} as Parameters<typeof taskNeedsPolling>[0])).toBe(false)
 })

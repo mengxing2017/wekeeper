@@ -249,3 +249,60 @@ it('页面识别失败显示实际原因，授权候选继续处理且不要求�
  expect(sharedSend.confirm).not.toHaveBeenCalled()
  client.clear()
 },60000)
+
+it('三轮耗尽自动显示整任务停止，领取记录不再显示准备中，手动刷新仍可获取迟到结果',async()=>{
+ vi.useFakeTimers({toFake:['setInterval','clearInterval']})
+ const running={id:'task',school_id:'school',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-08',dispatch_mode:'candidate_pool',next_eligible_at:'2026-11-08T00:00:00Z',items:[{id:'item',target_id:'target',position:0,dispatch:{state:'executing',max_rounds:3,completed_rounds:2,candidates:[],assignments:[]},attempts:[{id:'attempt',state:'leased',revision:1,current:true,attempt_no:3,plan:{target_name:'冻结群名',device_name:'测试手机',device_id:'phone',message,between_targets_seconds:30}}]}]} as unknown as Awaited<ReturnType<typeof sharedSend.task>>
+ const failed=structuredClone(running)
+ failed.items![0].dispatch!.state='dispatch_failed'
+ failed.items![0].dispatch!.completed_rounds=3
+ failed.items![0].dispatch!.next_retry_at=null
+ // The persisted manual stop flag and leased attempt do not change on exhaustion.
+ vi.mocked(sharedSend.overview).mockResolvedValue({id:'school',tasks:[{...running,items:undefined}],drafts:[],readiness:[],pool:[],inspections:[]})
+ vi.mocked(sharedSend.task).mockResolvedValueOnce(running).mockResolvedValue(failed)
+ const client=new QueryClient({defaultOptions:{queries:{retry:false}}})
+ render(<QueryClientProvider client={client}><SharedSendTasks school="school" admin/></QueryClientProvider>)
+ fireEvent.click(await screen.findByRole('button',{name:'查看计划与结果'},{timeout:10_000}))
+ const dialog=await screen.findByRole('dialog')
+ await within(dialog).findByText(/手机已领取，准备中/,{},{timeout:10_000})
+ await act(async()=>{await vi.advanceTimersByTimeAsync(5_000)})
+ await waitFor(()=>expect(within(dialog).getByRole('status').textContent).toBe('任务已停止自动下发：三轮下发失败'),{timeout:10_000})
+ expect(within(dialog).getByText(/已停止自动下发（已耗尽 3 轮）/)).toBeTruthy()
+ expect(within(dialog).getByText('已完成 3/3 轮')).toBeTruthy()
+ expect(within(dialog).queryByText(/手机已领取，准备中|最早安排|其他目标继续独立调度/)).toBeNull()
+ expect(within(dialog).queryByRole('button',{name:'停止尚未发放许可的任务'})).toBeNull()
+ expect(within(dialog).queryByRole('button',{name:'核对后重新安排设备'})).toBeNull()
+ const count=vi.mocked(sharedSend.task).mock.calls.length
+ await act(async()=>{await vi.advanceTimersByTimeAsync(10_000)})
+ expect(sharedSend.task).toHaveBeenCalledTimes(count)
+ const completed=structuredClone(failed)
+ completed.items![0].dispatch!.state='completed'
+ vi.mocked(sharedSend.task).mockResolvedValue(completed)
+ fireEvent.click(within(dialog).getByRole('button',{name:'刷新任务结果'}))
+ await waitFor(()=>expect(within(dialog).getByRole('status').textContent).toBe('任务已完成'),{timeout:10_000})
+ expect(within(dialog).getByText(/目标已完成，本次尝试不再下发/)).toBeTruthy()
+ client.clear()
+},60000)
+
+it('列表不打开详情也区分完成、手动停止和三轮耗尽，不采用旧详情缓存',async()=>{
+ const base={school_id:'school',intent_id:'intent',revision:1,created_at:'2026-11-08'}
+ const tasks:Awaited<ReturnType<typeof sharedSend.task>>[]=[
+  {...base,id:'completed-task',stopped:true,status:'completed'},
+  {...base,id:'stopped-task',stopped:true,status:'stopped'},
+  {...base,id:'failed-task',stopped:false,status:'dispatch_failed'},
+  {...base,id:'running-task',stopped:false,status:'dispatching'},
+ ]
+ vi.mocked(sharedSend.overview).mockResolvedValue({id:'school',tasks,drafts:[],readiness:[],pool:[],inspections:[]})
+ const client=new QueryClient({defaultOptions:{queries:{retry:false}}})
+ client.setQueryData(['mobile-execution','school','shared-task','completed-task'],{...tasks[0],status:'stopped'})
+ render(<QueryClientProvider client={client}><SharedSendTasks school="school" admin/></QueryClientProvider>)
+ await screen.findByText('completed-task',{},{timeout:10_000})
+ for(const [id,label] of [['completed-task','任务已完成'],['stopped-task','任务已手动停止'],['failed-task','任务已停止自动下发：三轮下发失败'],['running-task','任务正在调度']]) {
+  const row=screen.getByText(id).closest('tr')!
+  expect(within(row).getByRole('cell',{name:label})).toBeTruthy()
+ }
+ expect(sharedSend.task).not.toHaveBeenCalled()
+ expect(screen.queryByText('查看逐群进度')).toBeNull()
+ expect(screen.queryByText('已停止领取')).toBeNull()
+ client.clear()
+},60000)
