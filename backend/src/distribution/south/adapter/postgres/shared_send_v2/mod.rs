@@ -27,6 +27,7 @@ mod platform;
 mod readiness;
 mod screen;
 mod secrets;
+mod task_status;
 mod tasks;
 mod usage;
 mod usage_budgets;
@@ -133,6 +134,7 @@ async fn task(tx: &mut Tx<'_>, s: Uuid, id: Uuid) -> Result<Value> {
         }
     }
     execution_status::task(tx, s, &mut value).await?;
+    task_status::attach(tx, s, std::slice::from_mut(&mut value)).await?;
     Ok(value)
 }
 impl Store for Repository {
@@ -240,7 +242,8 @@ impl Store for Repository {
         let v = if let Some(id) = id {
             task(&mut tx, s, id).await?
         } else {
-            let tasks:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(t) FROM mobile_v9_tasks t WHERE school_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100").bind(s).fetch_all(&mut *tx).await?;
+            let mut tasks:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(t) FROM mobile_v9_tasks t WHERE school_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100").bind(s).fetch_all(&mut *tx).await?;
+            task_status::attach(&mut tx, s, &mut tasks).await?;
             let drafts:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(d)||jsonb_build_object('targets',coalesce((SELECT jsonb_agg(jsonb_build_object('id',t.id,'name',t.search_text) ORDER BY ids.n) FROM unnest(d.target_ids) WITH ORDINALITY ids(id,n) JOIN mobile_targets t ON t.id=ids.id AND t.school_id=d.school_id),'[]'::jsonb)) FROM mobile_v9_task_drafts d WHERE school_id=$1 AND NOT EXISTS(SELECT 1 FROM mobile_v9_tasks t WHERE t.draft_id=d.id) ORDER BY created_at DESC LIMIT 100").bind(s).fetch_all(&mut *tx).await?;
             let inspections:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(i)-'challenge' FROM mobile_v9_send_inspections i WHERE school_id=$1 ORDER BY id DESC LIMIT 100").bind(s).fetch_all(&mut *tx).await?;
             json!({"id":s,"tasks":tasks,"drafts":drafts,"inspections":inspections,"readiness":readiness::school(&mut tx,s).await?,"pool":readiness::pool(&mut tx,s).await?,"sending_status":business_scheme::status(&mut tx).await?})

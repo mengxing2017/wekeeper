@@ -767,3 +767,99 @@ mod dispatch_failure_contract_tests {
         assert_eq!(serde_json::to_value(snapshot).unwrap(), value);
     }
 }
+
+/// Public task outcome; the manual stop flag alone does not describe results.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskStatus {
+    Dispatching,
+    Completed,
+    Stopped,
+    DispatchFailed,
+    ConfirmationExpired,
+    NeedsReview,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub struct TaskTargetProgress {
+    pub dispatch_state: Option<String>,
+    pub attempt_state: String,
+    pub sent: bool,
+}
+impl TaskTargetProgress {
+    fn state(&self) -> &str {
+        if self.sent
+            || matches!(
+                self.attempt_state.as_str(),
+                "observed_sent" | "manually_confirmed_sent"
+            )
+        {
+            "completed"
+        } else if let Some(state) = &self.dispatch_state {
+            state
+        } else {
+            match self.attempt_state.as_str() {
+                "cancelled" => "stopped",
+                "unknown" => "needs_review",
+                _ => "dispatching",
+            }
+        }
+    }
+}
+impl TaskStatus {
+    pub fn project(stopped: bool, targets: &[TaskTargetProgress]) -> Self {
+        let states: Vec<&str> = targets.iter().map(TaskTargetProgress::state).collect();
+        // A stop issued after completion must not erase the completed outcome.
+        if !states.is_empty() && states.iter().all(|s| *s == "completed") {
+            Self::Completed
+        } else if stopped {
+            Self::Stopped
+        } else if states.iter().any(|s| {
+            !matches!(
+                *s,
+                "completed"
+                    | "stopped"
+                    | "dispatch_failed"
+                    | "confirmation_expired"
+                    | "needs_review"
+            )
+        }) {
+            Self::Dispatching
+        } else if states.contains(&"needs_review") {
+            Self::NeedsReview
+        } else if states.contains(&"dispatch_failed") {
+            Self::DispatchFailed
+        } else if states.contains(&"confirmation_expired") {
+            Self::ConfirmationExpired
+        } else if states.contains(&"stopped") {
+            Self::Stopped
+        } else {
+            Self::Dispatching
+        }
+    }
+}
+
+#[cfg(test)]
+mod task_status_contract_tests {
+    use super::*;
+    #[derive(Deserialize)]
+    struct Case {
+        name: String,
+        stopped: bool,
+        targets: Vec<TaskTargetProgress>,
+        status: TaskStatus,
+    }
+    #[test]
+    fn list_and_detail_status_precedence_matches_wire_fixture() {
+        let fixture: Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../api-contract/fixtures/shared-task-status.json"
+        )))
+        .unwrap();
+        let cases: Vec<Case> = serde_json::from_value(fixture.clone()).unwrap();
+        for (case, wire) in cases.into_iter().zip(fixture.as_array().unwrap()) {
+            let projected = TaskStatus::project(case.stopped, &case.targets);
+            assert_eq!(projected, case.status, "{}", case.name);
+            assert_eq!(serde_json::to_value(projected).unwrap(), wire["status"]);
+        }
+    }
+}
