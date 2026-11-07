@@ -1,4 +1,4 @@
-import type { SharedPreview, SharedOverview, SharedReadiness } from './api'
+import type { SharedPreview, SharedOverview, SharedReadiness, SharedTask } from './api'
 
 export function previewSelections(items: SharedPreview['plan']['items'], target: string, device: string) {
   return [...items.filter(i=>i.selected && i.target_id!==target).map(i=>({target_id:i.target_id,device_id:i.selected!.device_id})),{target_id:target,device_id:device}]
@@ -19,5 +19,12 @@ export function currentReadiness(snapshot:SharedReadiness,overview:SharedOvervie
 }
 
 export function dispatchLabel(state:string) {
-  return ({scheduling:'平台已受理，正在调度',assigned:'已分配可用候选手机',waiting_resources:'已受理，持续寻找可用候选手机',executing:'手机正在处理本次尝试',completed:'目标结果已记录',needs_review:'本目标结果待核对，其他目标继续调度',stopped:'已停止调度',confirmation_expired:'业务确认已到期'} as Record<string,string>)[state]??'正在同步调度状态'
+  return ({scheduling:'平台已受理，正在调度',assigned:'已分配可用候选手机',waiting_resources:'本轮暂无可用候选，将在轮次上限内重试',dispatch_failed:'任务下发失败：候选手机已遍历 3 轮，已停止自动下发',executing:'手机正在处理本次尝试',completed:'目标结果已记录',needs_review:'本目标结果待核对，其他目标继续调度',stopped:'已停止调度',confirmation_expired:'业务确认已到期'} as Record<string,string>)[state]??'正在同步调度状态'
+}
+
+export function taskNeedsPolling(task:SharedTask|undefined):boolean {
+  if(!task?.items?.length)return !task?.stopped
+  return task.items.some(item=>item.dispatch
+    ? !['completed','stopped','confirmation_expired','dispatch_failed'].includes(item.dispatch.state)
+    : !task.stopped && item.attempts.some(a=>a.current && ['queued','leased','prepared','invocation_issued'].includes(a.state)))
 }
