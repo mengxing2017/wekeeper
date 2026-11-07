@@ -327,7 +327,7 @@ async fn offline_binding_is_selectable_and_confirmable_without_environment_or_co
             .as_array()
             .unwrap()
             .iter()
-            .all(|i| i["attempt_state"] == "queued")
+            .all(|i| i["attempt_state"] == "invalidated")
     );
     let receipt_detail = r.school_read(&f.actor, f.school, Some(id)).await.unwrap();
     assert!(
@@ -377,7 +377,10 @@ async fn offline_binding_is_selectable_and_confirmable_without_environment_or_co
 
     let detail = r.school_read(&f.actor, f.school, Some(id)).await.unwrap();
     let status = &detail["items"][0]["attempts"][0]["execution_status"];
-    assert_eq!(status["phase"], "waiting");
+    assert_eq!(
+        status["phase"], "blocked",
+        "the retired offline attempt cannot execute; its target retains the remaining round budget"
+    );
     assert_eq!(status["conditions"][0]["code"], "waiting_resources");
     assert_eq!(status["conditions"][0]["scope_type"], "device");
     assert_eq!(status["conditions"].as_array().unwrap().len(), 1);
@@ -756,7 +759,10 @@ async fn business_scope_materializes_without_delivery_acceptance_or_activation_a
         )
         .await
         .unwrap();
-    assert_eq!(task["items"][0]["attempts"][0]["state"], "queued");
+    // Acceptance is independent of phone readiness; the offline first round is retired.
+    assert_eq!(task["items"][0]["dispatch"]["state"], "waiting_resources");
+    assert_eq!(task["items"][0]["dispatch"]["completed_rounds"], 1);
+    assert_eq!(task["items"][0]["attempts"][0]["state"], "invalidated");
     assert_eq!(
         task["items"][0]["attempts"][0]["plan"]["device_id"],
         json!(f.device)
@@ -845,7 +851,10 @@ async fn business_configuration_does_not_require_technical_delivery() {
         )
         .await;
     let task = task.unwrap();
-    assert_eq!(task["items"][0]["attempts"][0]["state"], "queued");
+    // Acceptance is independent of phone readiness; the offline first round is retired.
+    assert_eq!(task["items"][0]["dispatch"]["state"], "waiting_resources");
+    assert_eq!(task["items"][0]["dispatch"]["completed_rounds"], 1);
+    assert_eq!(task["items"][0]["attempts"][0]["state"], "invalidated");
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_v9_scope_grants")
             .fetch_one(&f.pool)
@@ -909,7 +918,10 @@ async fn business_configuration_does_not_require_technical_delivery() {
     sqlx::query("INSERT INTO device_control_sessions(device_id,connection_id,transport,credential_generation,last_heartbeat_at) VALUES($1,$2,'https',1,clock_timestamp())").bind(f.device).bind(Uuid::new_v4()).execute(&f.pool).await.unwrap();
     sqlx::query("INSERT INTO mobile_shared_runtime(device_id,credential_generation,runtime_epoch,ui_ready,paused,quiescent,observed_at) VALUES($1,1,$2,true,false,true,clock_timestamp())").bind(f.device).bind(epoch).execute(&f.pool).await.unwrap();
     sqlx::query("INSERT INTO mobile_v9_runtime_details(device_id,credential_generation,ui_context_epoch,conditions,apk_sha256) VALUES($1,1,'local','{}',repeat('a',64))").bind(f.device).execute(&f.pool).await.unwrap();
-    let aid: Uuid = serde_json::from_value(task["items"][0]["attempts"][0]["id"].clone()).unwrap();
+    pool_tick(&f).await;
+    let current_task = pool_detail(&f, &task).await;
+    let aid: Uuid =
+        serde_json::from_value(pool_current(&current_task["items"][0])["id"].clone()).unwrap();
     let grant = r
         .device_write(
             &c,
@@ -1094,7 +1106,10 @@ async fn approved_business_resources_exist_without_any_adapter_or_delivery_recor
     assert_eq!(plan["execution"]["contract"], "device_owned/1");
     assert!(plan.get("flow").is_none());
     assert!(plan.get("flow_digest").is_none());
-    assert_eq!(task["items"][0]["attempts"][0]["state"], "queued");
+    // Acceptance is independent of phone readiness; the offline first round is retired.
+    assert_eq!(task["items"][0]["dispatch"]["state"], "waiting_resources");
+    assert_eq!(task["items"][0]["dispatch"]["completed_rounds"], 1);
+    assert_eq!(task["items"][0]["attempts"][0]["state"], "invalidated");
     f.close().await;
 }
 
@@ -2117,7 +2132,7 @@ async fn pool_confirm_keyed(f: &Fixture, targets: Vec<Uuid>, key: &str) -> Value
 }
 async fn pool_tick(f: &Fixture) {
     sqlx::query(
-        "UPDATE mobile_v9_dispatch_state SET next_retry_at=clock_timestamp()-interval '1 second'",
+        "UPDATE mobile_v9_dispatch_state SET next_retry_at=clock_timestamp()-interval '1 second' WHERE state NOT IN ('completed','stopped','confirmation_expired','dispatch_failed')",
     )
     .execute(&f.pool)
     .await
@@ -2951,6 +2966,8 @@ async fn late_success_fences_issued_successor_replay_and_leaves_other_tasks_deli
     // The test isolates result fencing from the task's normal inter-target interval.
     sqlx::query("UPDATE mobile_v9_tasks SET next_eligible_at=clock_timestamp()-interval '1 second' WHERE id=$1")
         .bind(serde_json::from_value::<Uuid>(task["id"].clone()).unwrap()).execute(&f.pool).await.unwrap();
+    // Preserve quota semantics while isolating result fencing from the frozen 30-second cooldown.
+    sqlx::query("UPDATE mobile_v9_quota_reservations SET recorded_at=clock_timestamp()-interval '2 minutes'").execute(&f.pool).await.unwrap();
     let request = DeliveryRequest {
         runtime_epoch: eb,
         inspection_id: None,
@@ -2964,7 +2981,12 @@ async fn late_success_fences_issued_successor_replay_and_leaves_other_tasks_deli
         )
         .await
         .unwrap();
-    assert_eq!(next["state"], "granted");
+    assert_eq!(
+        next["state"],
+        "granted",
+        "{next}; detail={}",
+        pool_detail(&f, &task).await
+    );
     assert_ne!(next["execution"]["execution_id"], old["execution_id"]);
     f.repo()
         .complete_execution(completion(&old, "observed_sent"))
@@ -2989,6 +3011,7 @@ async fn late_success_fences_issued_successor_replay_and_leaves_other_tasks_deli
         .unwrap();
     assert!(new_key["execution"].is_null());
     pool_tick(&f).await;
+    sqlx::query("UPDATE mobile_v9_quota_reservations SET recorded_at=clock_timestamp()-interval '2 minutes'").execute(&f.pool).await.unwrap();
     let other = pool_confirm_keyed(&f, vec![f.targets[1]], "unrelated-after-success").await;
     pool_tick(&f).await;
     let detail = pool_detail(&f, &other).await;
@@ -3012,5 +3035,353 @@ async fn late_success_fences_issued_successor_replay_and_leaves_other_tasks_deli
         .unwrap();
     assert_eq!(delivered["state"], "granted");
     assert_eq!(delivered["execution"]["task_id"], other["id"]);
+    f.close().await;
+}
+
+// Budget must survive fresh repository instances and terminal rows must stay off the queue.
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn dispatch_three_offline_rounds_stop_and_report_once() {
+    use wekeeper_api::distribution::domain::shared_mobile::execution::DeliveryRequest;
+    let f = Fixture::with_adapter(false).await;
+    pool_phone(&f, "B").await;
+    let task = pool_confirm(&f, vec![f.targets[0]]).await;
+    assert_eq!(task["items"][0]["dispatch"]["completed_rounds"], 1);
+    pool_tick(&f).await;
+    let second = pool_detail(&f, &task).await;
+    assert_eq!(second["items"][0]["dispatch"]["completed_rounds"], 2);
+    // Two scanners with a stale due list may charge only one remaining round.
+    sqlx::query(
+        "UPDATE mobile_v9_dispatch_state SET next_retry_at=clock_timestamp()-interval '1 second'",
+    )
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    let a = f.repo();
+    let b = f.repo();
+    let (left, right) = tokio::join!(a.reconcile_dispatch(), b.reconcile_dispatch());
+    left.unwrap();
+    right.unwrap();
+    let failed = pool_detail(&f, &task).await;
+    let dispatch = &failed["items"][0]["dispatch"];
+    assert_eq!(dispatch["state"], "dispatch_failed");
+    assert_eq!(dispatch["completed_rounds"], 3);
+    assert_eq!(dispatch["reason"], "dispatch_round_limit_exceeded");
+    assert!(dispatch["next_retry_at"].is_null());
+    assert!(dispatch["finished_at"].is_string());
+    let (credential, epoch) = pool_ready(&f, f.device).await;
+    let delivery = f
+        .repo()
+        .device_write(
+            &credential,
+            "after-failed-delivery",
+            DeviceCommand::Deliver(DeliveryRequest {
+                runtime_epoch: epoch,
+                inspection_id: None,
+            }),
+        )
+        .await
+        .unwrap();
+    assert_ne!(delivery["state"], "granted");
+    assert!(delivery["execution"].is_null());
+    let old = pool_current(&failed["items"][0]);
+    let reassigned = f
+        .repo()
+        .school_write(
+            &f.actor,
+            f.school,
+            "after-failed-reassign",
+            SchoolCommand::Reassign(
+                serde_json::from_value(old["id"].clone()).unwrap(),
+                Reassignment {
+                    expected_revision: old["revision"].as_i64().unwrap(),
+                    device_id: f.device,
+                    reason: "must not reset exhausted budget".into(),
+                },
+            ),
+        )
+        .await;
+    assert!(matches!(
+        reassigned,
+        Err(wekeeper_api::business::Error::Policy(
+            "dispatch_round_limit_exceeded"
+        ))
+    ));
+    for _ in 0..5 {
+        f.repo().reconcile_dispatch().await.unwrap();
+    }
+    assert_eq!(
+        pool_detail(&f, &task).await["items"][0]["dispatch"],
+        *dispatch
+    );
+    let events: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM mobile_v9_dispatch_events WHERE kind='dispatch_failed'",
+    )
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(events, 1);
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn dispatch_visits_every_candidate_exactly_three_times() {
+    let f = Fixture::with_adapter(false).await;
+    let b = pool_phone(&f, "B").await;
+    let c = pool_phone(&f, "C").await;
+    for device in [f.device, b, c] {
+        pool_ready(&f, device).await;
+    }
+    let task = pool_confirm(&f, vec![f.targets[0]]).await;
+    let mut seen = Vec::new();
+    for _ in 0..9 {
+        let detail = pool_detail(&f, &task).await;
+        let current = pool_current(&detail["items"][0]);
+        assert_eq!(current["state"], "queued");
+        seen.push(current["plan"]["device_id"].clone());
+        sqlx::query("UPDATE mobile_v9_attempts SET state='failed_before_call' WHERE id=$1")
+            .bind(serde_json::from_value::<Uuid>(current["id"].clone()).unwrap())
+            .execute(&f.pool)
+            .await
+            .unwrap();
+        pool_tick(&f).await;
+        let detail = pool_detail(&f, &task).await;
+        if detail["items"][0]["dispatch"]["state"] == "waiting_resources" {
+            pool_tick(&f).await;
+        }
+    }
+    let detail = pool_detail(&f, &task).await;
+    assert_eq!(detail["items"][0]["dispatch"]["state"], "dispatch_failed");
+    assert_eq!(&seen[..3], &seen[3..6]);
+    assert_eq!(&seen[..3], &seen[6..9]);
+    for device in [f.device, b, c] {
+        assert_eq!(seen.iter().filter(|d| **d == json!(device)).count(), 3);
+    }
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn dispatch_unclaimed_timeout_and_business_interval_do_not_refresh_budget() {
+    let f = Fixture::with_adapter(false).await;
+    pool_ready(&f, f.device).await;
+    let task = pool_confirm(&f, vec![f.targets[0]]).await;
+    let initial = pool_current(&task["items"][0])["id"].clone();
+    pool_tick(&f).await;
+    assert_eq!(
+        pool_detail(&f, &task).await["items"][0]["dispatch"]["completed_rounds"],
+        0
+    );
+    sqlx::query(
+        "UPDATE mobile_v9_tasks SET next_eligible_at=clock_timestamp()+interval '10 minutes'",
+    )
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE mobile_v9_dispatch_state SET assigned_at=clock_timestamp()-interval '10 minutes'",
+    )
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    pool_tick(&f).await;
+    let waiting = pool_detail(&f, &task).await;
+    assert_eq!(waiting["items"][0]["dispatch"]["completed_rounds"], 0);
+    assert_eq!(pool_current(&waiting["items"][0])["id"], initial);
+    let timer: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT assigned_at FROM mobile_v9_dispatch_state")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert!(timer.is_none());
+    sqlx::query(
+        "UPDATE mobile_v9_tasks SET next_eligible_at=clock_timestamp()-interval '1 second'",
+    )
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    pool_tick(&f).await;
+    sqlx::query(
+        "UPDATE mobile_v9_dispatch_state SET assigned_at=clock_timestamp()-interval '6 minutes'",
+    )
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    pool_tick(&f).await;
+    let after = pool_detail(&f, &task).await;
+    assert_eq!(after["items"][0]["dispatch"]["completed_rounds"], 1);
+    assert_eq!(
+        pool_current(&after["items"][0])["termination_reason"],
+        "delivery_not_received_timeout"
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn dispatch_third_round_success_completes_without_failure() {
+    let f = Fixture::with_adapter(false).await;
+    let (credential, epoch) = pool_ready(&f, f.device).await;
+    let task = pool_confirm(&f, vec![f.targets[0]]).await;
+    for _ in 0..2 {
+        sqlx::query("UPDATE mobile_v9_attempts SET state='failed_before_call' WHERE current")
+            .execute(&f.pool)
+            .await
+            .unwrap();
+        pool_tick(&f).await;
+        pool_tick(&f).await;
+    }
+    let before = pool_detail(&f, &task).await;
+    assert_eq!(before["items"][0]["dispatch"]["completed_rounds"], 2);
+    let aid = serde_json::from_value(pool_current(&before["items"][0])["id"].clone()).unwrap();
+    let grant = pool_claim(&f, &credential, epoch, aid).await;
+    assert_eq!(grant["state"], "granted");
+    f.repo()
+        .complete_execution(completion(&grant, "observed_sent"))
+        .await
+        .unwrap();
+    pool_tick(&f).await;
+    let after = pool_detail(&f, &task).await;
+    assert_eq!(after["items"][0]["dispatch"]["state"], "completed");
+    assert_eq!(after["items"][0]["dispatch"]["completed_rounds"], 2);
+    assert!(after["items"][0]["dispatch"]["next_retry_at"].is_null());
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn dispatch_exhaustion_fences_replay_but_accepts_late_success() {
+    use wekeeper_api::distribution::domain::shared_mobile::execution::DeliveryRequest;
+    let f = Fixture::with_adapter(false).await;
+    let (credential, epoch) = pool_ready(&f, f.device).await;
+    let task = pool_confirm(&f, vec![f.targets[0]]).await;
+    let aid = serde_json::from_value(pool_current(&task["items"][0])["id"].clone()).unwrap();
+    let request = DeliveryRequest {
+        runtime_epoch: epoch,
+        inspection_id: None,
+    };
+    let delivered = f
+        .repo()
+        .device_write(
+            &credential,
+            "bounded-delivery",
+            DeviceCommand::Deliver(request.clone()),
+        )
+        .await
+        .unwrap();
+    let grant = &delivered["execution"];
+    assert_eq!(grant["state"], "granted");
+    // No original result yet; the phone goes offline, all remaining rounds exhaust.
+    sqlx::query("UPDATE device_control_sessions SET connected=false")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    for _ in 0..3 {
+        pool_tick(&f).await;
+    }
+    let failed = pool_detail(&f, &task).await;
+    assert_eq!(failed["items"][0]["dispatch"]["state"], "dispatch_failed");
+    let replay = f
+        .repo()
+        .device_write(
+            &credential,
+            "bounded-delivery",
+            DeviceCommand::Deliver(request),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay["state"], "superseded");
+    assert!(replay["execution"].is_null());
+    let claim = pool_claim(&f, &credential, epoch, aid).await;
+    assert_ne!(claim["state"], "granted");
+    f.repo()
+        .complete_execution(completion(grant, "observed_sent"))
+        .await
+        .unwrap();
+    f.repo().reconcile_dispatch().await.unwrap();
+    let after = pool_detail(&f, &task).await;
+    assert_eq!(after["items"][0]["dispatch"]["state"], "completed");
+    assert_eq!(after["items"][0]["dispatch"]["completed_rounds"], 3);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM mobile_v9_dispatch_events WHERE kind='dispatch_failed'"
+        )
+        .fetch_one(&f.pool)
+        .await
+        .unwrap(),
+        1
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn dispatch_exhausted_target_does_not_block_other_targets() {
+    let f = Fixture::with_adapter(false).await;
+    pool_ready(&f, f.device).await;
+    let task = pool_confirm(&f, f.targets.clone()).await;
+    let first = serde_json::from_value::<Uuid>(task["items"][0]["id"].clone()).unwrap();
+    sqlx::query("UPDATE mobile_v9_dispatch_state SET completed_rounds=2 WHERE item_id=$1")
+        .bind(first)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE mobile_v9_attempts SET state='failed_before_call' WHERE item_id=$1 AND current",
+    )
+    .bind(first)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    pool_tick(&f).await;
+    let detail = pool_detail(&f, &task).await;
+    assert_eq!(detail["items"][0]["dispatch"]["state"], "dispatch_failed");
+    assert_eq!(detail["items"][1]["dispatch"]["state"], "assigned");
+    assert_eq!(detail["items"][1]["dispatch"]["completed_rounds"], 0);
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn dispatch_historical_singleton_budget_preserves_sequence_wait() {
+    let f = Fixture::with_adapter(false).await;
+    pool_ready(&f, f.device).await;
+    let task = pool_confirm(&f, f.targets.clone()).await;
+    sqlx::query("UPDATE mobile_v9_tasks SET dispatch_mode='legacy_sequence'")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    // Historical singleton scopes use the same persistent budget, never a larger pool.
+    for round in 0..3 {
+        let before = pool_detail(&f, &task).await;
+        let first = pool_current(&before["items"][0]);
+        sqlx::query("UPDATE mobile_v9_attempts SET state='failed_before_call' WHERE id=$1")
+            .bind(serde_json::from_value::<Uuid>(first["id"].clone()).unwrap())
+            .execute(&f.pool)
+            .await
+            .unwrap();
+        pool_tick(&f).await;
+        let after = pool_detail(&f, &task).await;
+        assert_eq!(after["items"][0]["dispatch"]["completed_rounds"], round + 1);
+        assert_eq!(
+            after["items"][1]["dispatch"]["completed_rounds"], 0,
+            "waiting for a business predecessor cannot consume a round"
+        );
+        if round < 2 {
+            pool_tick(&f).await;
+        }
+    }
+    assert_eq!(
+        pool_detail(&f, &task).await["items"][0]["dispatch"]["state"],
+        "dispatch_failed"
+    );
+    let attempts: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM mobile_v9_attempts WHERE item_id=$1")
+            .bind(serde_json::from_value::<Uuid>(task["items"][0]["id"].clone()).unwrap())
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(attempts, 3);
     f.close().await;
 }
