@@ -85,13 +85,13 @@ pub(super) async fn reconcile(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
     .fetch_one(&mut **tx)
     .await?;
     if row["eligible"] != true && !issued {
-        sqlx::query("UPDATE mobile_v9_dispatch_state SET assigned_at=NULL WHERE item_id=$1")
+        sqlx::query("UPDATE mobile_v9_dispatch_state SET assigned_at=NULL,round_started_at=NULL WHERE item_id=$1")
             .bind(item)
             .execute(&mut **tx)
             .await?;
         return status(tx, item, "scheduling", "business_interval").await;
     }
-    sqlx::query("UPDATE mobile_v9_dispatch_state SET assigned_at=coalesce(assigned_at,clock_timestamp()) WHERE item_id=$1").bind(item).execute(&mut **tx).await?;
+    sqlx::query("UPDATE mobile_v9_dispatch_state SET assigned_at=coalesce(assigned_at,clock_timestamp()),round_started_at=coalesce(round_started_at,clock_timestamp()) WHERE item_id=$1").bind(item).execute(&mut **tx).await?;
     let grant:Option<Value>=sqlx::query_scalar("SELECT (to_jsonb(g)-'envelope')||jsonb_build_object('deadline_reached',result_deadline_at<=clock_timestamp()) FROM mobile_execution_grants g WHERE attempt_id=$1").bind(aid).fetch_optional(&mut **tx).await?;
     let state = row["state"].as_str().ok_or(Error::Conflict)?;
     let outcome = grant
@@ -107,8 +107,25 @@ pub(super) async fn reconcile(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
                 None
             },
         );
+    // Delivery is a durable execution fact. New-assignment readiness (pause,
+    // heartbeat freshness, etc.) cannot cancel an already delivered packet.
+    // A disconnected phone can still hand off to an unvisited authorized
+    // candidate, but a singleton must retain its full result-wait deadline.
+    let available = if grant.is_some() {
+        let has_successor = row["candidate_cursor"].as_u64().ok_or(Error::Conflict)?
+            < row["candidates"].as_array().ok_or(Error::Conflict)?.len() as u64;
+        !has_successor
+            || !sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM device_control_presence WHERE id=$1 AND state='offline')",
+            )
+            .bind(uid(&row["plan"], "device_id")?)
+            .fetch_one(&mut **tx)
+            .await?
+    } else {
+        online(tx, &row["plan"]).await?
+    };
     let mut reason = replacement_reason(
-        online(tx, &row["plan"]).await?,
+        available,
         outcome,
         grant
             .as_ref()
@@ -280,10 +297,23 @@ pub(super) async fn reconcile(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
             .bind(aid).execute(&mut **tx).await?;
         return status(tx, item, "stopped", "plan_dependency_changed").await;
     }
+    // Exhausting candidates must not turn the five-second scanner into the
+    // retry clock. Retire unissued work, but persist this round until its full
+    // five-minute window has elapsed (including offline/busy singleton scopes).
+    let waiting: bool = sqlx::query_scalar("SELECT round_started_at+interval '5 minutes'>clock_timestamp() FROM mobile_v9_dispatch_state WHERE item_id=$1")
+        .bind(item).fetch_one(&mut **tx).await?;
+    if waiting {
+        sqlx::query("UPDATE mobile_v9_attempts SET state='invalidated',revision=revision+1,invalidation_reason=$2,invalidated_at=clock_timestamp() WHERE id=$1 AND state='queued' AND NOT EXISTS(SELECT 1 FROM mobile_execution_grants WHERE attempt_id=$1)")
+            .bind(aid).bind(reason).execute(&mut **tx).await?;
+        status(tx, item, "waiting_resources", "awaiting_round_deadline").await?;
+        sqlx::query("UPDATE mobile_v9_dispatch_state SET candidate_cursor=$2,next_retry_at=round_started_at+interval '5 minutes' WHERE item_id=$1")
+            .bind(item).bind(approved.len() as i32).execute(&mut **tx).await?;
+        return Ok(());
+    }
     event(tx, item, &row, "round_exhausted", None, reason).await?;
     let exhausted =
         round_exhausted(row["completed_rounds"].as_i64().ok_or(Error::Conflict)? as i32);
-    sqlx::query("UPDATE mobile_v9_dispatch_state SET completed_rounds=completed_rounds+1,last_failed_attempt_id=$2,assigned_at=NULL,revision=revision+1 WHERE item_id=$1").bind(item).bind(aid).execute(&mut **tx).await?;
+    sqlx::query("UPDATE mobile_v9_dispatch_state SET completed_rounds=completed_rounds+1,last_failed_attempt_id=$2,assigned_at=NULL,round_started_at=NULL,revision=revision+1 WHERE item_id=$1").bind(item).bind(aid).execute(&mut **tx).await?;
     // The old queued assignment must never become executable between rounds.
     sqlx::query("UPDATE mobile_v9_attempts SET state='invalidated',revision=revision+1,invalidation_reason=$2,termination_reason=$2,invalidated_at=clock_timestamp() WHERE id=$1 AND state='queued' AND NOT EXISTS(SELECT 1 FROM mobile_execution_grants WHERE attempt_id=$1)").bind(aid).bind(if exhausted {"dispatch_round_limit_exceeded"} else {reason}).execute(&mut **tx).await?;
     if exhausted {
