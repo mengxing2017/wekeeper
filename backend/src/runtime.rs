@@ -143,11 +143,16 @@ async fn serve_inner(
     );
     let dispatcher = usages.clone();
     let dispatch_worker = tokio::spawn(async move {
+        let mut delay_seconds = 5;
         loop {
-            if let Err(error) = dispatcher.reconcile_dispatch().await {
-                tracing::warn!(%error,"mobile task dispatch will retry");
+            match dispatcher.reconcile_dispatch().await {
+                Ok(()) => delay_seconds = 5,
+                Err(error) => {
+                    delay_seconds = (delay_seconds * 2).min(60);
+                    tracing::warn!(%error, delay_seconds, "mobile dispatch infrastructure unavailable; backing off");
+                }
             }
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            tokio::time::sleep(std::time::Duration::from_secs(delay_seconds)).await;
         }
     });
     let wait_observer = usages.clone();
