@@ -1,3 +1,9 @@
+import type { SharedCandidate } from './api'
+
+export function candidateGroupName(candidate: SharedCandidate): string {
+  return candidate.target?.search_query ?? candidate.search_text ?? candidate.target_name ?? '目标群已移除'
+}
+
 export function taskError(error: unknown): string {
   const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : ''
   const messages: Record<string, string> = {
