@@ -2868,3 +2868,149 @@ async fn legacy_override_data_never_reaches_preview_failover_or_signed_delivery(
     assert_eq!(pool_current(&detail["items"][0])["state"], "observed_sent");
     f.close().await;
 }
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn closed_completion_fences_delivery_replay_before_projection() {
+    use wekeeper_api::distribution::domain::shared_mobile::execution::DeliveryRequest;
+    let f = Fixture::with_adapter(false).await;
+    let (c, epoch) = pool_ready(&f, f.device).await;
+    let task = pool_confirm(&f, vec![f.targets[0]]).await;
+    let request = DeliveryRequest {
+        runtime_epoch: epoch,
+        inspection_id: None,
+    };
+    let delivery = f
+        .repo()
+        .device_write(
+            &c,
+            "closed-delivery",
+            DeviceCommand::Deliver(request.clone()),
+        )
+        .await
+        .unwrap();
+    let grant = &delivery["execution"];
+    assert_eq!(delivery["state"], "granted");
+    // Transport loss before completion still returns exactly the original executable.
+    let original = f
+        .repo()
+        .device_write(
+            &c,
+            "open-redelivery",
+            DeviceCommand::Deliver(request.clone()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(original["execution"], *grant);
+    f.repo()
+        .complete_execution(completion(grant, "observed_sent"))
+        .await
+        .unwrap();
+    // No reconcile_dispatch call: the grant is still active but its session is closed.
+    let replay = f
+        .repo()
+        .device_write(
+            &c,
+            "closed-delivery",
+            DeviceCommand::Deliver(request.clone()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay["state"], "superseded");
+    assert!(replay["execution"].is_null());
+    let fresh = f
+        .repo()
+        .device_write(&c, "closed-new-key", DeviceCommand::Deliver(request))
+        .await
+        .unwrap();
+    assert_ne!(fresh["state"], "granted");
+    assert!(fresh["execution"].is_null());
+    pool_tick(&f).await;
+    assert_eq!(
+        pool_detail(&f, &task).await["items"][0]["dispatch"]["state"],
+        "completed"
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn late_success_fences_issued_successor_replay_and_leaves_other_tasks_deliverable() {
+    use wekeeper_api::distribution::domain::shared_mobile::execution::DeliveryRequest;
+    let f = Fixture::with_adapter(false).await;
+    let b = pool_phone(&f, "B").await;
+    let (ca, ea) = pool_ready(&f, f.device).await;
+    let (cb, eb) = pool_ready(&f, b).await;
+    let task = pool_confirm(&f, vec![f.targets[0]]).await;
+    pool_tick(&f).await;
+    let detail = pool_detail(&f, &task).await;
+    let aid = serde_json::from_value(pool_current(&detail["items"][0])["id"].clone()).unwrap();
+    let old = pool_claim(&f, &ca, ea, aid).await;
+    sqlx::query("UPDATE mobile_execution_grants SET result_deadline_at=clock_timestamp()-interval '1 second' WHERE attempt_id=$1").bind(aid).execute(&f.pool).await.unwrap();
+    pool_tick(&f).await;
+    // The test isolates result fencing from the task's normal inter-target interval.
+    sqlx::query("UPDATE mobile_v9_tasks SET next_eligible_at=clock_timestamp()-interval '1 second' WHERE id=$1")
+        .bind(serde_json::from_value::<Uuid>(task["id"].clone()).unwrap()).execute(&f.pool).await.unwrap();
+    let request = DeliveryRequest {
+        runtime_epoch: eb,
+        inspection_id: None,
+    };
+    let next = f
+        .repo()
+        .device_write(
+            &cb,
+            "issued-successor",
+            DeviceCommand::Deliver(request.clone()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(next["state"], "granted");
+    assert_ne!(next["execution"]["execution_id"], old["execution_id"]);
+    f.repo()
+        .complete_execution(completion(&old, "observed_sent"))
+        .await
+        .unwrap();
+    // No scan between the late success and either replay path.
+    let same_key = f
+        .repo()
+        .device_write(
+            &cb,
+            "issued-successor",
+            DeviceCommand::Deliver(request.clone()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(same_key["state"], "superseded");
+    assert!(same_key["execution"].is_null());
+    let new_key = f
+        .repo()
+        .device_write(&cb, "successor-new-key", DeviceCommand::Deliver(request))
+        .await
+        .unwrap();
+    assert!(new_key["execution"].is_null());
+    pool_tick(&f).await;
+    let other = pool_confirm_keyed(&f, vec![f.targets[1]], "unrelated-after-success").await;
+    pool_tick(&f).await;
+    let detail = pool_detail(&f, &other).await;
+    let current = pool_current(&detail["items"][0]);
+    let (credential, epoch) = if current["plan"]["device_id"] == json!(b) {
+        (&cb, eb)
+    } else {
+        (&ca, ea)
+    };
+    let delivered = f
+        .repo()
+        .device_write(
+            credential,
+            "other-delivery",
+            DeviceCommand::Deliver(DeliveryRequest {
+                runtime_epoch: epoch,
+                inspection_id: None,
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(delivered["state"], "granted");
+    assert_eq!(delivered["execution"]["task_id"], other["id"]);
+    f.close().await;
+}
