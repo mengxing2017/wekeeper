@@ -379,7 +379,7 @@ async fn offline_binding_is_selectable_and_confirmable_without_environment_or_co
     let status = &detail["items"][0]["attempts"][0]["execution_status"];
     assert_eq!(status["phase"], "waiting");
     assert_eq!(status["conditions"][0]["code"], "waiting_resources");
-    assert_eq!(status["conditions"][0]["scope_type"], "item");
+    assert_eq!(status["conditions"][0]["scope_type"], "device");
     assert_eq!(status["conditions"].as_array().unwrap().len(), 1);
     assert!(status["device_state_observed_at"].is_null());
     let reservations: i64 = sqlx::query_scalar("SELECT count(*) FROM mobile_v9_quota_reservations")
