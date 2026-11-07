@@ -24,7 +24,7 @@ pub(super) async fn deliver(
     require(!v.runtime_epoch.is_nil(), "execution_request_invalid")?;
     // A lost delivery (including a legacy grant response) is redelivered as the same task.
     // Never make the device request another permission or wait for its own issued session.
-    let issued: Option<Vec<u8>> = sqlx::query_scalar("SELECT g.envelope FROM mobile_execution_grants g LEFT JOIN mobile_v9_attempts a ON a.id=g.attempt_id LEFT JOIN mobile_v9_task_items i ON i.id=a.item_id LEFT JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE g.device_id=$1 AND g.credential_generation=$2 AND g.state='active' AND NOT g.session_closed AND g.execute_before>clock_timestamp() AND (($3::uuid IS NULL AND g.kind='send' AND a.current AND NOT t.stopped) OR (g.kind='inspection' AND g.inspection_id=$3))")
+    let issued: Option<Vec<u8>> = sqlx::query_scalar("SELECT g.envelope FROM mobile_execution_grants g LEFT JOIN mobile_v9_attempts a ON a.id=g.attempt_id LEFT JOIN mobile_v9_task_items i ON i.id=a.item_id LEFT JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE g.device_id=$1 AND g.credential_generation=$2 AND g.state='active' AND NOT g.session_closed AND g.result_id IS NULL AND g.execute_before>clock_timestamp() AND (($3::uuid IS NULL AND g.kind='send' AND a.current AND NOT t.stopped AND NOT EXISTS(SELECT 1 FROM mobile_v9_attempts sent LEFT JOIN mobile_execution_grants result ON result.attempt_id=sent.id WHERE sent.item_id=a.item_id AND (sent.state IN ('observed_sent','manually_confirmed_sent') OR result.result_body->>'outcome'='observed_sent'))) OR (g.kind='inspection' AND g.inspection_id=$3))")
         .bind(c.device_id).bind(c.generation).bind(v.inspection_id).fetch_optional(&mut **tx).await?;
     if let Some(envelope) = issued {
         return secrets::open(&envelope);
@@ -41,6 +41,11 @@ pub(super) async fn deliver(
         },
     )
     .await
+}
+/// Closed results and success on any attempt fence replay before projection reconciliation.
+pub(super) async fn can_redeliver(tx: &mut Tx<'_>, id: Uuid) -> Result<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_execution_grants g LEFT JOIN mobile_v9_attempts a ON a.id=g.attempt_id LEFT JOIN mobile_v9_task_items i ON i.id=a.item_id LEFT JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE g.id=$1 AND g.state='active' AND NOT g.session_closed AND g.result_id IS NULL AND g.execute_before>clock_timestamp() AND (g.kind='inspection' OR (a.current AND NOT t.stopped AND NOT EXISTS(SELECT 1 FROM mobile_v9_attempts sent LEFT JOIN mobile_execution_grants result ON result.attempt_id=sent.id WHERE sent.item_id=a.item_id AND (sent.state IN ('observed_sent','manually_confirmed_sent') OR result.result_body->>'outcome'='observed_sent')))))")
+        .bind(id).fetch_one(&mut **tx).await?)
 }
 /// Delivery metadata is outside the signed executable envelope and contains no new permission.
 pub(super) fn delivery_response(value: Value) -> Result<Value> {

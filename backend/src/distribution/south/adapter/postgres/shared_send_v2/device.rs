@@ -115,7 +115,7 @@ pub(super) async fn write(
             old = secrets::open(&encrypted)?;
         }
         if matches!(scope, "execution-grant" | "task-delivery") && old["state"] == "granted" {
-            let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_execution_grants g LEFT JOIN mobile_v9_attempts a ON a.id=g.attempt_id LEFT JOIN mobile_v9_task_items i ON i.id=a.item_id LEFT JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE g.id=$1 AND g.state='active' AND g.execute_before>clock_timestamp() AND (g.kind='inspection' OR (a.current AND NOT t.stopped)))").bind(uid(&old,"id")?).fetch_one(&mut *tx).await?;
+            let active = execution::can_redeliver(&mut tx, uid(&old, "id")?).await?;
             if !active {
                 return command_response(scope, json!({"id":old["id"],"state":"superseded"}));
             }
