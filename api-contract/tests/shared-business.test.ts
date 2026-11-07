@@ -104,3 +104,13 @@ it('dispatch feedback exposes the authorized pool and automatic assignment histo
  expect(snapshot.assignments[0].from_device_name).toBe('手机 A')
  expect(snapshot.assignments[0].to_device_name).toBe('手机 B')
 })
+
+it('task lists expose canonical outcomes without loading individual task details',async()=>{
+ const {default:cases}=await import('../fixtures/shared-task-status.json')
+ const tasks=cases.map(c=>({id:c.name,school_id:'school',intent_id:'intent',revision:1,stopped:c.stopped,created_at:'2026-11-08',status:c.status}))
+ const client=createClient(async()=>({status:200,headers:{'content-type':'application/vnd.api+json'},body:{data:{type:'mobile-shared-tasks',id:'school',attributes:{tasks,drafts:[],readiness:[],pool:[],inspections:[]}}}}))
+ const overview=await createSharedSendV2Client(client).overview('school')
+ const statuses:Array<import('../src/modules/mobile-execution/shared-send/v2').SharedTaskStatus>=['completed','completed','stopped','dispatch_failed','dispatching','confirmation_expired','needs_review','completed']
+ expect(overview.tasks.map(t=>t.status)).toEqual(statuses)
+ expect(overview.tasks.every(t=>!t.items)).toBe(true)
+})

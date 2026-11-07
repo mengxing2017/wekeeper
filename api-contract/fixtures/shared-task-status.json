@@ -1,0 +1,103 @@
+[
+  {
+    "name": "normal_completed",
+    "stopped": false,
+    "targets": [
+      {
+        "dispatch_state": "completed",
+        "attempt_state": "leased",
+        "sent": false
+      }
+    ],
+    "status": "completed"
+  },
+  {
+    "name": "completed_after_stop",
+    "stopped": true,
+    "targets": [
+      {
+        "dispatch_state": "completed",
+        "attempt_state": "leased",
+        "sent": false
+      }
+    ],
+    "status": "completed"
+  },
+  {
+    "name": "manual_stop",
+    "stopped": true,
+    "targets": [
+      {
+        "dispatch_state": "assigned",
+        "attempt_state": "leased",
+        "sent": false
+      }
+    ],
+    "status": "stopped"
+  },
+  {
+    "name": "rounds_exhausted",
+    "stopped": false,
+    "targets": [
+      {
+        "dispatch_state": "dispatch_failed",
+        "attempt_state": "leased",
+        "sent": false
+      }
+    ],
+    "status": "dispatch_failed"
+  },
+  {
+    "name": "other_targets_running",
+    "stopped": false,
+    "targets": [
+      {
+        "dispatch_state": "dispatch_failed",
+        "attempt_state": "leased",
+        "sent": false
+      },
+      {
+        "dispatch_state": "executing",
+        "attempt_state": "leased",
+        "sent": false
+      }
+    ],
+    "status": "dispatching"
+  },
+  {
+    "name": "confirmation_expired",
+    "stopped": false,
+    "targets": [
+      {
+        "dispatch_state": "confirmation_expired",
+        "attempt_state": "leased",
+        "sent": false
+      }
+    ],
+    "status": "confirmation_expired"
+  },
+  {
+    "name": "unknown_result",
+    "stopped": false,
+    "targets": [
+      {
+        "dispatch_state": "needs_review",
+        "attempt_state": "leased",
+        "sent": false
+      }
+    ],
+    "status": "needs_review"
+  },
+  {
+    "name": "late_success",
+    "stopped": true,
+    "targets": [
+      {
+        "dispatch_state": "dispatch_failed",
+        "attempt_state": "leased",
+        "sent": true
+      }
+    ],
+    "status": "completed"
+  }
+]
