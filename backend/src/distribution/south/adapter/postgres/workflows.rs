@@ -29,8 +29,8 @@ async fn usage_snapshot(tx: &mut Tx<'_>, a: &Actor, s: Uuid, v: &UsageInput) -> 
         .bind(v.member_id)
         .fetch_one(&mut **tx)
         .await?;
-        require(own, "学校只能办理本人已核实的官方身份")?;
-        require(v.account_id == a.id, "学校只能选择本人的登录账号")?;
+        require(own, "分发工作空间只能办理本人已核实的官方身份")?;
+        require(v.account_id == a.id, "分发工作空间只能选择本人的登录账号")?;
     }
     let account:Value=sqlx::query_scalar("SELECT jsonb_build_object('id',id,'display_name',display_name,'wecom_member_id',wecom_member_id,'binding_revision',wecom_binding_revision) FROM accounts WHERE id=$1 AND active FOR UPDATE").bind(v.account_id).fetch_optional(&mut **tx).await?.ok_or(Error::NotFound)?;
     require(
@@ -46,7 +46,7 @@ async fn usage_snapshot(tx: &mut Tx<'_>, a: &Actor, s: Uuid, v: &UsageInput) -> 
     .await?;
     require(!collision, "该官方成员已关联其他账号，请由负责人核对")?;
     let role: Option<String> = sqlx::query_scalar(
-        "SELECT role FROM school_memberships WHERE school_id=$1 AND account_id=$2 FOR SHARE",
+        "SELECT role FROM wecom_workspace_members WHERE school_id=$1 AND account_id=$2 FOR SHARE",
     )
     .bind(s)
     .bind(v.account_id)
@@ -67,7 +67,7 @@ async fn usage_snapshot(tx: &mut Tx<'_>, a: &Actor, s: Uuid, v: &UsageInput) -> 
         .await?;
         require(
             bound.as_ref().is_none_or(|b| b["school_id"] == json!(s)),
-            "群当前不能关联到本校，请由负责人核对",
+            "群当前不能关联到当前工作空间，请由负责人核对",
         )?;
         groups.push(json!({"directory":g,"binding":bound}));
     }
@@ -104,7 +104,7 @@ async fn apply_usage(
             old != Some("admin") || v.role == "admin",
             "本次不能降低已有管理员职责",
         )?;
-        sqlx::query("INSERT INTO school_memberships(school_id,account_id,role) VALUES($1,$2,$3) ON CONFLICT(school_id,account_id) DO UPDATE SET role=EXCLUDED.role").bind(s).bind(v.account_id).bind(&v.role).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO wecom_workspace_members(school_id,account_id,role) VALUES($1,$2,$3) ON CONFLICT(school_id,account_id) DO UPDATE SET role=EXCLUDED.role").bind(s).bind(v.account_id).bind(&v.role).execute(&mut **tx).await?;
     }
     sqlx::query("INSERT INTO wecom_sender_qualifications(school_id,account_id,enabled,updated_by) VALUES($1,$2,true,$3) ON CONFLICT(school_id,account_id) DO UPDATE SET enabled=true,revision=wecom_sender_qualifications.revision+1,updated_by=EXCLUDED.updated_by,updated_at=now() WHERE NOT wecom_sender_qualifications.enabled").bind(s).bind(v.account_id).bind(a.id).execute(&mut **tx).await?;
     for g in snapshot["groups"].as_array().ok_or(Error::Conflict)? {
@@ -211,10 +211,11 @@ impl Store for Repository {
                 if let Some(id) = v.id {
                     sqlx::query("SELECT id FROM templates WHERE id=$1 AND school_id=$2 AND revision=$3 FOR SHARE").bind(id).bind(s).bind(v.revision).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
                 }
-                let name: String = sqlx::query_scalar("SELECT name FROM schools WHERE id=$1")
-                    .bind(s)
-                    .fetch_one(&mut *tx)
-                    .await?;
+                let name: String =
+                    sqlx::query_scalar("SELECT name FROM wecom_workspaces WHERE id=$1")
+                        .bind(s)
+                        .fetch_one(&mut *tx)
+                        .await?;
                 let sample: Option<Value> = if let Some(id) = v.sample_post_id {
                     sqlx::query_scalar("SELECT jsonb_build_object('title',title,'summary',left(content,200),'id',id,'revision',revision) FROM distribution_forum_materials WHERE school_id=$1 AND id=$2 AND audit_status='approved' AND visibility='visible'").bind(s).bind(id).fetch_optional(&mut *tx).await?
                 } else {
@@ -241,10 +242,13 @@ impl Store for Repository {
                         ),
                         (
                             "post.detail_url",
-                            format!(
-                                "/community/{s}/posts/{}",
-                                sample_values["id"].as_str().unwrap_or("")
-                            ),
+                            if let Some(post_id) = v.sample_post_id {
+                                crate::distribution::south::adapter::in_process::forum_detail_url(
+                                    s, post_id,
+                                )?
+                            } else {
+                                "示例详情入口".into()
+                            },
                         ),
                     ]),
                 )?;
@@ -514,7 +518,7 @@ impl Store for Repository {
                 }
                 require(
                     kind != "official_usage" || input.state != "revoked",
-                    "请在成员学校资格中明确核对影响并停用，申请状态不能代替撤权",
+                    "请在成员分发工作空间资格中明确核对影响并停用，申请状态不能代替撤权",
                 )?;
                 require(
                     kind != "official_usage" || input.state != "resolved",
@@ -533,13 +537,13 @@ impl Store for Repository {
         let mut tx = self.0.begin().await?;
         preview::authorize(&mut tx, a, s, "operator").await?;
         let (limit, offset) = page.fetch_bounds()?;
-        Ok(sqlx::query_scalar("SELECT (to_jsonb(r)-'payload')||jsonb_build_object('payload',jsonb_build_object('reason',r.payload->'reason','input',r.payload->'input','summary',r.payload->'summary'))||jsonb_build_object('school_name',s.name,'owner_name',a.display_name,'events',coalesce((SELECT jsonb_agg(to_jsonb(e) ORDER BY created_at,id) FROM product_request_events e WHERE e.request_id=r.id),'[]'::jsonb)) FROM product_requests r JOIN schools s ON s.id=r.school_id LEFT JOIN accounts a ON a.id=r.owner_id WHERE ($1::uuid IS NULL OR r.school_id=$1) ORDER BY r.updated_at DESC,r.id DESC LIMIT $2 OFFSET $3").bind(s).bind(limit).bind(offset).fetch_all(&mut *tx).await?)
+        Ok(sqlx::query_scalar("SELECT (to_jsonb(r)-'payload')||jsonb_build_object('payload',jsonb_build_object('reason',r.payload->'reason','input',r.payload->'input','summary',r.payload->'summary'))||jsonb_build_object('school_name',s.name,'owner_name',a.display_name,'events',coalesce((SELECT jsonb_agg(to_jsonb(e) ORDER BY created_at,id) FROM product_request_events e WHERE e.request_id=r.id),'[]'::jsonb)) FROM product_requests r JOIN wecom_workspaces s ON s.id=r.school_id LEFT JOIN accounts a ON a.id=r.owner_id WHERE ($1::uuid IS NULL OR r.school_id=$1) ORDER BY r.updated_at DESC,r.id DESC LIMIT $2 OFFSET $3").bind(s).bind(limit).bind(offset).fetch_all(&mut *tx).await?)
     }
     async fn options(&self, a: &Actor, s: Option<Uuid>) -> Result<Value> {
         let mut tx = self.0.begin().await?;
         preview::authorize(&mut tx, a, s, "admin").await?;
         let members:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',m.id,'name',m.name,'verified',m.verification='verified' AND m.status=1,'bound_account_id',a.id,'account_name',a.display_name,'policy',CASE WHEN p.resource_key IS NOT NULL THEN to_jsonb(p)-'resource_key' ELSE NULL END,'used',CASE WHEN p.resource_key IS NULL THEN NULL ELSE (SELECT count(*) FROM distribution_resource_usage u WHERE u.resource_key=p.resource_key AND u.called_at>now()-make_interval(secs=>p.window_seconds)) END,'restores_at',(SELECT min(u.called_at)+make_interval(secs=>p.window_seconds) FROM distribution_resource_usage u WHERE u.resource_key=p.resource_key AND u.called_at>now()-make_interval(secs=>p.window_seconds))) FROM wecom_members m CROSS JOIN wecom_directory_state d LEFT JOIN accounts a ON a.wecom_member_id=m.id LEFT JOIN distribution_resource_policies p ON p.resource_key='wecom:'||d.corp_id||':'||m.userid_key WHERE ($1 OR a.id=$2) ORDER BY m.name,m.id").bind(a.platform_admin).bind(a.id).fetch_all(&mut *tx).await?;
-        let accounts:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',a.id,'name',a.display_name,'member_id',a.wecom_member_id,'role',m.role) FROM accounts a LEFT JOIN school_memberships m ON m.account_id=a.id AND m.school_id=$1 WHERE a.active AND ($2 OR a.id=$3) ORDER BY a.display_name,a.id").bind(s).bind(a.platform_admin).bind(a.id).fetch_all(&mut *tx).await?;
+        let accounts:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',a.id,'name',a.display_name,'member_id',a.wecom_member_id,'role',m.role) FROM accounts a LEFT JOIN wecom_workspace_members m ON m.account_id=a.id AND m.school_id=$1 WHERE a.active AND ($2 OR a.id=$3) ORDER BY a.display_name,a.id").bind(s).bind(a.platform_admin).bind(a.id).fetch_all(&mut *tx).await?;
         let groups:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',o.id,'name',o.data->>'name','owner_member_id',m.id,'checked_at',o.checked_at,'school_id',g.school_id) FROM wecom_asset_objects o JOIN wecom_directory_state d ON d.credential_generation=o.credential_generation JOIN wecom_members m ON m.userid_key=lower(o.data->>'owner' COLLATE \"C\") LEFT JOIN accounts a ON a.wecom_member_id=m.id LEFT JOIN wecom_groups g ON g.corp_id=d.corp_id AND g.chat_id=coalesce(o.data->>'chat_id',o.key) WHERE o.kind='groups' AND o.verification='verified' AND o.visibility='visible' AND o.checked_at>now()-interval '24 hours' AND ($1 OR a.id=$2) AND (g.school_id IS NULL OR g.school_id=$3) ORDER BY o.data->>'name',o.id").bind(a.platform_admin).bind(a.id).bind(s).fetch_all(&mut *tx).await?;
         let generation: Option<i64> = sqlx::query_scalar(
             "SELECT credential_generation FROM wecom_directory_state WHERE singleton",
