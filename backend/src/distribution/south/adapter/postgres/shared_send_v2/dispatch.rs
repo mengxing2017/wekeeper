@@ -44,11 +44,19 @@ async fn status(tx: &mut Tx<'_>, item: Uuid, state: &str, reason: &str) -> Resul
     sqlx::query("UPDATE mobile_v9_dispatch_state SET revision=revision+CASE WHEN (state,reason) IS DISTINCT FROM ($2,$3) THEN 1 ELSE 0 END,state=$2,reason=$3,infrastructure_failures=0,next_retry_at=CASE WHEN $2 IN ('completed','stopped','confirmation_expired','dispatch_failed') THEN NULL ELSE clock_timestamp()+interval '5 seconds' END,finished_at=CASE WHEN $2 IN ('completed','stopped','confirmation_expired','dispatch_failed') THEN coalesce(finished_at,clock_timestamp()) ELSE finished_at END,updated_at=clock_timestamp() WHERE item_id=$1").bind(item).bind(state).bind(reason).execute(&mut **tx).await?;
     Ok(())
 }
-async fn online(tx: &mut Tx<'_>, candidate: &Value) -> Result<bool> {
-    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM device_control_presence cp JOIN execution_devices d ON d.id=cp.id WHERE cp.id=$1 AND cp.state='online' AND NOT cp.desired_paused AND cp.last_control_heartbeat_at>clock_timestamp()-interval '30 seconds' AND d.enabled AND d.credential_generation=$2)").bind(uid(candidate,"device_id")?).bind(candidate["credential_generation"].as_i64().ok_or(Error::Conflict)?).fetch_one(&mut **tx).await?)
+async fn candidate_available(tx: &mut Tx<'_>, candidate: &Value) -> Result<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM device_control_presence cp JOIN execution_devices d ON d.id=cp.id WHERE cp.id=$1 AND cp.state IN ('online','suspect') AND NOT cp.desired_paused AND d.enabled AND d.credential_generation=$2)").bind(uid(candidate,"device_id")?).bind(candidate["credential_generation"].as_i64().ok_or(Error::Conflict)?).fetch_one(&mut **tx).await?)
+}
+async fn presence_offline(tx: &mut Tx<'_>, device: Uuid) -> Result<bool> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM device_control_presence WHERE id=$1 AND state='offline')",
+    )
+    .bind(device)
+    .fetch_one(&mut **tx)
+    .await?)
 }
 async fn ready(tx: &mut Tx<'_>, candidate: &Value) -> Result<bool> {
-    if candidate["accepted"] != true || !online(tx, candidate).await? {
+    if candidate["accepted"] != true || !candidate_available(tx, candidate).await? {
         return Ok(false);
     }
     Ok(!sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM mobile_execution_grants WHERE device_id=$1 AND NOT session_closed)").bind(uid(candidate,"device_id")?).fetch_one(&mut **tx).await?)
@@ -114,15 +122,9 @@ pub(super) async fn reconcile(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
     let available = if grant.is_some() {
         let has_successor = row["candidate_cursor"].as_u64().ok_or(Error::Conflict)?
             < row["candidates"].as_array().ok_or(Error::Conflict)?.len() as u64;
-        !has_successor
-            || !sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS(SELECT 1 FROM device_control_presence WHERE id=$1 AND state='offline')",
-            )
-            .bind(uid(&row["plan"], "device_id")?)
-            .fetch_one(&mut **tx)
-            .await?
+        !has_successor || !presence_offline(tx, uid(&row["plan"], "device_id")?).await?
     } else {
-        online(tx, &row["plan"]).await?
+        candidate_available(tx, &row["plan"]).await?
     };
     let mut reason = replacement_reason(
         available,
@@ -131,6 +133,14 @@ pub(super) async fn reconcile(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
             .as_ref()
             .is_some_and(|g| g["deadline_reached"] == true),
     );
+    // Pause, stale authorization and other candidate constraints do not mean
+    // that authenticated device presence has timed out.
+    if grant.is_none()
+        && reason == Some("device_offline")
+        && !presence_offline(tx, uid(&row["plan"], "device_id")?).await?
+    {
+        reason = Some("candidate_unavailable");
+    }
     if reason.is_none() && grant.is_none() && state == "queued" {
         let school = uid(&row, "school_id")?;
         let choices = tasks::raw_candidates(tx, school, uid(&row, "target_id")?).await?;
