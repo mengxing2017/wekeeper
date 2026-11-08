@@ -4,7 +4,7 @@ export interface Row {
   id: UUID;
   revision: number;
 }
-export type DeviceControlKind = "task_available" | "configuration_changed" | "pause_execution" | "resume_execution" | "request_status" | "cancel_execution";
+export type DeviceControlKind = "task_available" | "configuration_changed" | "request_status" | "cancel_execution";
 export interface DeviceControlCommand {
   id: UUID; sequence: number; kind: DeviceControlKind;
   state: "queued" | "delivered" | "accepted" | "completed" | "rejected" | "expired";

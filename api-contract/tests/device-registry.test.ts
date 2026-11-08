@@ -7,13 +7,13 @@ test("device control presence and commands use the authenticated platform client
   const fixture = (await import("../fixtures/device-control-frame.json")).default;
   const frame: import("../src/modules/device-registry").DeviceControlFrame = { ...fixture, protocol_version: 1 };
   expect(frame.heartbeat_interval_seconds).toBe(60);
-  const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => response({ data: { type: "device-control-commands", id: "command", attributes: { kind: "pause_execution", state: "queued" } } }));
+  const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => response({ data: { type: "device-control-commands", id: "command", attributes: { kind: "request_status", state: "queued" } } }));
   vi.stubGlobal("fetch", fetcher);
-  await deviceRegistryApi.controlCommand("phone", "pause_execution", "pause-once");
+  await deviceRegistryApi.controlCommand("phone", "request_status", "status-once");
   expect(fetcher.mock.calls[0][0]).toBe("/api/v1/platform/execution-devices/phone/control");
-  expect(JSON.parse(fetcher.mock.calls[0][1]?.body as string).data.attributes).toEqual({ kind: "pause_execution" });
+  expect(JSON.parse(fetcher.mock.calls[0][1]?.body as string).data.attributes).toEqual({ kind: "request_status" });
   expect(JSON.parse(fetcher.mock.calls[0][1]?.body as string).data.type).toBe("device-control-commands");
-  for (const kind of ["request_status", "resume_execution"] as const) {
+  for (const kind of ["task_available", "configuration_changed"] as const) {
     await deviceRegistryApi.controlCommand("phone", kind, `${kind}-once`);
     const call = fetcher.mock.calls.at(-1)!;
     expect(call[0]).toBe("/api/v1/platform/execution-devices/phone/control");
