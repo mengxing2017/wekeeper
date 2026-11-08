@@ -17,7 +17,7 @@ pnpm --dir frontend dev
 
 浏览器地址应匹配 WEKEEPER_PUBLIC_ORIGIN；本地 insecure 模式允许同协议同端口的 localhost、127.0.0.1 和 IPv6 loopback，局域网地址或其他端口需显式配置对应 origin。
 嵌入式库每次停止后删除数据；显式设置开发密码时创建 admin，没有硬编码默认密码。
-后台及企业微信分发入口为 `/admin`，成员社区为 `/community`。
+后台及企业微信分发入口为 `/admin`。论坛、小程序和审核业务在独立 linjian 运行，本项目的 `/community` 已退场。
 
 需要本地调试企业通讯录时，在启动后端的同一终端先 export `WEKEEPER_WECOM_CORP_ID` 和 `WEKEEPER_WECOM_SECRET`；`WEKEEPER_WECOM_AGENT_ID` 可留空。嵌入式启动不会自动读取 `.env`，完整命令及本地文件注入方式见 [本地开发：企业微信凭据注入](../manual/local-development.md#企业微信凭据注入)。嵌入式入口强制本地登录模式，完整凭据也不会开启 OAuth；服务端群发不依赖本地 origin/登录方式，配置凭据后可按预览、人工确认流程调试真实任务。
 
@@ -40,82 +40,41 @@ unset WK_ADMIN_PASSWORD
 
 ## 单校业务闭环
 
-1. 平台管理员创建学校和运营账号，在“企业通讯录”同步可见部门及成员，再到账号管理选择并核验绑定企业成员。
-2. 学校成员中授予 operator 或 admin；同一账号可以有多个明确的运营学校授权。
-3. 配置审核模式、主题、轮播、二维码、客服、法律文本、标签和屏蔽词。
-4. 用户通过微信登录绑定学校，或使用管理员分配账号，在社区发布内容。
-5. 后台审核帖子和评论；编辑正文会回到待审核。
+1. 系统管理员创建企业微信分发工作空间，为已有分发账号授予分发角色；在“企业通讯录”同步可见成员，再到“发送账号”核验企业成员绑定及使用范围。
+2. 企业微信工作空间中授予 operator 或 admin；移动工作空间权限另行维护。
+3. 论坛发帖、评论审核、举报反馈及展示配置在独立 linjian 完成。
+4. 如需使用历史论坛素材，设置 `WEKEEPER_FORUM_ORIGIN` 为 linjian 的实际 HTTPS origin。素材选择由本服务的分发投影提供，新论坛来源事件接入需单独实施。
+5. 核对工作空间客户群和发送范围。
 6. 创建文本模板、新建版本、发布版本。占位符：school.name、post.title、post.summary、post.detail_url。
-7. 配置学校客户群，并确保群主绑定有效本校运营账号。打开“群发任务”直接填写正文，或选择社区内容及模板，再选择多个群并保存冻结草稿。直接文本无须社区内容，operator 可保存，须由本校 admin 确认。
+7. 配置工作空间客户群，并确保群主绑定有效当前工作空间运营账号。打开“群发任务”直接填写正文，或选择来源素材及模板，再选择多个群并保存冻结草稿。直接文本无须社区内容，operator 可保存，须由当前工作空间 admin 确认。
 8. 预览正文（最多 4000 UTF-8 字节）、目标群与群主，人工确认创建企业微信任务。无需打开每个群侧边栏。
 9. API 按群主分批单次创建任务；成员在企业微信确认执行。
 10. 在任务详情查看官方逐群结果、提醒与停止。unknown 先人工核对，再由 admin 明确创建再次发送草稿。当前任务的操作记录在任务详情查看。
-
-平台默认资源在账号/学校管理展开区配置；学校有同类启用资源时覆盖平台默认。
-全局和学校屏蔽词同时生效。资源链接必须为 HTTPS 或本站相对地址。
 
 ## 平台配置
 
 企业微信配置步骤与真机验收矩阵见 [企业微信接入手册](wecom.md)。
 
 - CorpID / Secret：服务端目录、成员核验、OAuth 与群发凭据。群发应用须在客户联系“可调用应用”范围；AgentID 不再是发送前提。
-- 群发自动使用有效服务端凭据，无需额外部署开关；实际调用仍校验腾讯应用权限、群主学校授权、额度与官方接口状态。
+- 群发自动使用有效服务端凭据，无需额外部署开关；实际调用仍校验腾讯应用权限、群主分发授权、额度与官方接口状态。
 - OAuth 回调：`https://域名/api/v1/wecom/oauth/callback`；认证成功后进入当前后台群发页。
-- 后台普通登录可组织任务，学校授权与执行群主绑定必须有效。确认及领取时重新校验内容、群主和凭据代次。
+- 后台普通登录可组织任务，分发授权与执行群主绑定必须有效。确认及领取时重新校验内容、群主和凭据代次。
 - token 缓存在 PostgreSQL，不再生成 JS-SDK 签名/票据或加载外部 SDK。群发使用服务端凭据，与 OAuth 登录方式独立。
 - 官方创建成功只表示任务创建；结果同步、人工核对和再次发送各自保留证据。无有效配置不模拟成功。
 
 官方创建、结果、提醒和停止接口已核对；实际企业权限和真机发送仍须按 [接入手册](wecom.md) 验收。
 
-## 小程序切换
+## 论坛与小程序
 
-`uniapp/config/domain.js` 指向新 HTTPS 域名；`baseApiUrl` 仍为 `/api/`。
-旧 `/api/discover/Common/*` 与 `/api/discover/User/*` 由 Rust 兼容层承接。
-保留整数 ID、表单 POST 和 code/msg/data；旧 token 切换后需要重新登录。
-上传使用 `/api/discover/Ajax/upload`，客户端 header 字段已修正。
-普通接口需要登录并绑定学校；显式配置 `school.config.public_read=true` 才允许无身份的指定学校阅读。
-学校选择目录可公开读取，不暴露群映射或管理配置。
-旧短信/手机号接口没有迁移旧供应商，返回明确停用错误；使用微信登录和后台密码重置。
-小程序真机回归必须覆盖首页分页、详情、评论回复、我的发布、消息、学校绑定、图片和旧链接。
-兼容代码存在和 Rust 测试通过不等同于小程序全路径真机验收。
+论坛和整个小程序由 linjian 独立运行。本项目已删除论坛管理五项功能、小程序源码、专用登录接口及平台凭据配置；旧社区与资源接口不再对外提供。迁移与发布步骤以 linjian 项目文档为准。
 
-## 迁移预演
+## 数据表退场与历史工具
 
-迁移工具不读取项目 `.env`、旧 PHP 凭据，也不会自动连接生产库。
-导出工具需要单独 Python 环境安装 PyMySQL；MySQL 配置 JSON 权限必须为 0600。
-账号至少应有一致性快照 SELECT 权限，不需要写权限。
+论坛、学校、旧资源发布和无运行消费者的旧发送表已通过前向迁移 `202611080140_retire_unused_tables.sql` 下线。新库按完整迁移链初始化，已运行数据库在升级 API 时由 SQLx 执行新增迁移；已有迁移文件及账本不应修改或清空。
 
-```bash
-python3 tools/migration/export.py --config /secure/mysql-readonly.json --out /secure/snapshot.json --legal-docs /secure/old-public/legal-docs.json
-python3 tools/migration/convert.py /secure/snapshot.json --out /secure/batch \
-  --states /secure/reviewed-status-map.json --media-root /secure/old-public \
-  --media-map /secure/media-map.json --corp-id 企业ID
-# 先阅读 report.json / mapping.json / normalized.json / apply.sql。
-# 仅对隔离预演数据库执行；psql 使用受控连接参数或 PGSERVICE。
-psql -v ON_ERROR_STOP=1 -f /secure/batch/apply.sql
-psql -v ON_ERROR_STOP=1 -f tools/migration/verify.sql
-```
+该迁移会永久删除 27 张废弃表的数据。升级前完成数据库备份，并确认论坛数据已迁至 linjian；迁移文件逐项列出删除对象，遇到未预期依赖时事务失败，不使用 `CASCADE` 删除额外对象。当前分发账号、两类工作空间、手机任务与目标、消息快照和发送结果、系统审计继续保留。旧账号绑定学校字段、旧论坛投影触发器及旧公开数字 ID 序列一并移除。
 
-默认 statusdata 只接受 `1 -> visible`；2/3 等必须核对来源后提供映射。
-不要按旧 SQL 文件名批量执行安装、演示数据或修补脚本。
-转换失败时不存在 apply.sql，必须处理 rejected 后重新转换；warnings 同样需要逐项确认。
-读取 exported snapshot 的 excluded_tables，确认没有遗漏业务扩展表。
-校验学校/审核/展示分组数量、引用关系、正文、图片、账号映射、历史分享记录与法律文档。
-旧配置中的企业成员身份必须由平台管理员从已同步通讯录中选择并核验绑定，不能以字符串相似或旧管理员名称猜测。
-
-增量追平仍使用完整快照作为一致性依据，比较后只写变化行：
-
-```bash
-python3 tools/migration/convert.py /secure/final-snapshot.json \
-  --previous /secure/snapshot.json --out /secure/final-batch \
-  --states /secure/reviewed-status-map.json --media-root /secure/old-public
-psql -v ON_ERROR_STOP=1 -f /secure/final-batch/apply.sql
-```
-
-同一批次可重放，原值冲突整批回滚；源端硬删除需人工审查。
-媒体源在两次快照间应保持不可变或按内容版本归档，不能覆盖同一路径后假设可重建旧媒体快照。
-最后追平前停止旧学校写入，检查旧 Java/Hook/定时任务不会重启，再启用新学校入口。
-若新库已有写入，不可直接切回陈旧 MySQL；先停写和对账，选择前滚修复或受控反向迁移。
+`tools/migration/` 是旧论坛 schema 的只读导出与离线转换参考，不适用于当前 WeKeeper schema。不要把旧工具生成的 `apply.sql` 或旧版本备份直接导入已升级的业务库；转换输出会检查旧表是否存在。论坛数据迁移以 linjian 的当前接口和文档为准。
 
 ## 验证命令
 
@@ -137,7 +96,7 @@ devbox run -- make test-embedded
 1. 在企微管理后台配置自建应用的客户联系调用权限、成员/群主可见范围和 API 出口可信 IP。单套 CorpID/Secret 同时用于通讯录与客户群目录，AgentID 留空不阻止读取。
 2. 先在「企业通讯录」完成当前凭据代次的完整同步，再进入「客户群管理」点击「同步客户群」。仅创建 groups 数据集任务，群主范围来自当前完整内部通讯录和历史群主，不再调用客户联系成员列表或客户列表/详情接口。
 3. 「客户群」详情保留内部成员和群内外部联系人标识；「运营成员统计」仅统计群主群数和参与群数。客户、跟进关系、客户联系成员目录及客户数统计已移除，内部企业通讯录与账号绑定保留。
-4. 学校群配置默认使用候选目录。学校 admin 需要有效账号绑定且是群主；operator/member 无候选权限。已被其他学校关联的群不显示；版本冲突需刷新重选。平台手填入口仅用于已知历史群，仍必须读取官方详情。停用已有群无需上游成功。
+4. 工作空间群配置默认使用候选目录。工作空间 admin 需要有效账号绑定且是群主；operator/member 无候选权限。已被其他工作空间关联的群不显示；版本冲突需刷新重选。平台手填入口仅用于已知历史群，仍必须读取官方详情。停用已有群无需上游成功。
 
 `WEKEEPER_WECOM_ASSET_SYNC_INTERVAL_SECONDS` 默认 1800 秒，0 为仅手动，非零最小 60。Compose 已透传；`make dev-embedded` 继承同终端的 export，不自动读取 `.env`。内部通讯录与客户群目录共用限速器（初始每 200ms 一次），群目录 worker 串行处理群任务、20 秒续租。超时重启任务从头重扫，不复用旧游标。
 

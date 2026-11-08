@@ -5,10 +5,9 @@
 | 手册 | 适用任务 |
 | --- | --- |
 | [Docker 完整手册](../runbooks/docker.md) | 构建、发布、离线交付、HTTPS、管理员、备份、更新与故障 |
-| [业务运行、迁移与验收](../runbooks/business.md) | 学校、账号、内容审核、旧数据迁移和业务闭环 |
+| [业务运行、迁移与验收](../runbooks/business.md) | 分发工作空间、数据表退场和业务运行 |
 | [企业微信接入](../runbooks/wecom.md) | 目录和群发权限、人工确认、unknown、真实平台验收 |
 | [手机共享发送使用手册](../guide/operator/mobile-execution-tasks.md) | 逐群预览、人工确认、手机现场条件及结果核对 |
-| [基础阶段验证记录](../runbooks/foundation-validation.md) | 2026-10-20 骨架检查及当时的环境限制，不是当前全部业务的验收结论 |
 
 ## 常用检查
 

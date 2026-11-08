@@ -13,17 +13,17 @@ hero:
       link: /guide/troubleshooting
 features:
   - title: 业务人员
-    details: 从审核、客户群和消息准备开始，了解确认与发送结果。
+    details: 从客户群和消息准备开始，了解确认与发送结果。
     link: /guide/operator/
     linkText: 每日工作清单
-  - title: 学校管理员
-    details: 核对本校设置、成员、客户群与发送范围。
-    link: /guide/school-admin/
-    linkText: 学校准备清单
-  - title: 平台管理员
-    details: 从账号、学校和授权开始，准备通讯录、群目录与手机。
+  - title: 分发管理员
+    details: 核对独立工作空间、授权、目标群与发送范围。
+    link: /guide/workspaces
+    linkText: 工作空间与授权
+  - title: 系统管理员
+    details: 从分发工作空间和授权开始，准备通讯录、群目录与手机。
     link: /guide/platform-admin/
-    linkText: 平台上线清单
+    linkText: 系统上线清单
   - title: 开发与部署
     details: 查看架构、契约、测试、Docker 和故障处理。
     link: /development/

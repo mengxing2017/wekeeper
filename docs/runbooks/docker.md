@@ -84,7 +84,6 @@ docker compose --env-file .env -f compose.yaml -f compose.dev.yaml ps
 入口：
 
 - 后台：`http://127.0.0.1:8088/admin`
-- 社区：`http://127.0.0.1:8088/community`
 - 企业微信预览：`http://127.0.0.1:8088/wecom`
 - API 存活/就绪：`/healthz`、`/readyz`
 
@@ -249,7 +248,6 @@ React 使用同源 `/api/...` 请求，由 Web 容器的 Caddy 转发到 API。�
 | `WEKEEPER_WECOM_AGENT_ID` | 空或同一应用的正整数 AgentID | 当前客户端分享必需；目录同步与 OAuth 可留空 |
 | `WEKEEPER_WECOM_DIRECTORY_INTERVAL_SECONDS` | `1800` | 内部通讯录周期同步；`0` 仅手动，非零至少 60 秒 |
 | `WEKEEPER_WECOM_ASSET_SYNC_INTERVAL_SECONDS` | `1800` | 客户群周期同步；`0` 仅手动，非零至少 60 秒 |
-| `WEKEEPER_WX_APP_ID` / `WEKEEPER_WX_SECRET` | 空 | 使用小程序能力时填写 |
 | `RUST_LOG` | `wekeeper_api=info,tower_http=info` | 后端日志级别 |
 
 ### 5.4 使用仓库 Compose：一份 .env，分别注入
@@ -285,8 +283,6 @@ WEKEEPER_WECOM_SECRET=
 WEKEEPER_WECOM_AGENT_ID=
 WEKEEPER_WECOM_DIRECTORY_INTERVAL_SECONDS=1800
 WEKEEPER_WECOM_ASSET_SYNC_INTERVAL_SECONDS=1800
-WEKEEPER_WX_APP_ID=
-WEKEEPER_WX_SECRET=
 ```
 
 替换密码及镜像名后，使用已制作好的镜像启动：
@@ -377,8 +373,6 @@ WEKEEPER_WECOM_SECRET=
 WEKEEPER_WECOM_AGENT_ID=
 WEKEEPER_WECOM_DIRECTORY_INTERVAL_SECONDS=1800
 WEKEEPER_WECOM_ASSET_SYNC_INTERVAL_SECONDS=1800
-WEKEEPER_WX_APP_ID=
-WEKEEPER_WX_SECRET=
 RUST_LOG=wekeeper_api=info,tower_http=info
 ```
 
@@ -680,7 +674,7 @@ Web 镜像同时构建 React 与独立 docs 包。访问站点 `/docs/` 阅读�
 
 ### 官方渠道运行检查
 
-API 进程内置只读健康工作器，使用现有企业微信凭据自动检查接口，每分钟检查、20 秒超时、180 秒缓存。不新增 Compose 服务、人工服务账号或定时 CLI，不需要交付记录续期。平台管理员在“官方发送账号 → 官方渠道运行状态”暂停或恢复新发送；健康恢复不会解除明确暂停。首次升级保留旧渠道的明确暂停事实。草稿和本地内容预览不依赖健康缓存，确认与实际调用仍检查真实权限、账号、目标、额度和防重。
+API 进程内置只读健康工作器，使用现有企业微信凭据自动检查接口，每分钟检查、20 秒超时、180 秒缓存。不新增 Compose 服务、人工服务账号或定时 CLI，不需要交付记录续期。系统管理员在“官方发送账号 → 官方渠道运行状态”暂停或恢复新发送；健康恢复不会解除明确暂停。首次升级保留旧渠道的明确暂停事实。草稿和本地内容预览不依赖健康缓存，确认与实际调用仍检查真实权限、账号、目标、额度和防重。
 
 ## 手机发送执行边界
 

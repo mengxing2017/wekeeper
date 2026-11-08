@@ -4,7 +4,7 @@ export default defineConfig({
   base: "/docs/",
   lang: "zh-CN",
   title: "WeKeeper",
-  description: "校园社区与内容运营：开发、部署、业务运行与验收",
+  description: "企业微信与手机群消息转发：开发、部署与业务运行",
   cleanUrls: true,
   lastUpdated: false,
   themeConfig: {
@@ -20,17 +20,15 @@ export default defineConfig({
           text: "开始使用",
           items: [
             { text: "选择你的角色", link: "/guide/" },
-            { text: "三个业务域", link: "/guide/business-domains" },
+            { text: "业务域", link: "/guide/business-domains" },
             { text: "第一次登录", link: "/guide/quick-start" },
-            { text: "角色与学校", link: "/guide/roles-and-schools" },
+            { text: "工作空间与授权", link: "/guide/workspaces" },
             { text: "术语与状态", link: "/guide/glossary" },
             { text: "常见问题", link: "/guide/troubleshooting" },
           ],
         },
-        { text: "论坛管理", items: [
-          { text: "内容、评论与举报", link: "/guide/operator/moderation" },
-        ] },
         { text: "企业微信分发管理", items: [
+          { text: "工作空间与权限", link: "/guide/workspaces" },
           { text: "客户群与模板", link: "/guide/operator/groups-and-templates" },
           { text: "官方发送账号", link: "/guide/operator/official-senders" },
           { text: "官方群发任务", link: "/guide/operator/broadcast-tasks" },
@@ -44,26 +42,12 @@ export default defineConfig({
           { text: "结果与异常处理", link: "/guide/operator/results-and-recovery" },
         ] },
         {
-          text: "学校管理员",
+          text: "系统管理",
           items: [
-            { text: "学校准备清单", link: "/guide/school-admin/" },
+            { text: "系统上线清单", link: "/guide/platform-admin/" },
             {
-              text: "学校设置与成员",
-              link: "/guide/school-admin/settings-and-members",
-            },
-            {
-              text: "发送前的准备",
-              link: "/guide/school-admin/delivery-setup",
-            },
-          ],
-        },
-        {
-          text: "平台管理员",
-          items: [
-            { text: "平台上线清单", link: "/guide/platform-admin/" },
-            {
-              text: "账号、学校与授权",
-              link: "/guide/platform-admin/accounts-and-schools",
+              text: "系统管理员维护",
+              link: "/guide/platform-admin/administrators",
             },
             {
               text: "通讯录与客户群目录",
@@ -79,7 +63,7 @@ export default defineConfig({
               link: "/guide/platform-admin/flow-maintenance",
             },
             {
-              text: "审计与公共资源",
+              text: "操作审计",
               link: "/guide/platform-admin/audit-and-resources",
             },
           ],
@@ -91,10 +75,9 @@ export default defineConfig({
           items: [
             { text: "开发入口", link: "/development/" },
             { text: "本地开发", link: "/manual/local-development" },
-            { text: "Web 与小程序", link: "/development/frontend" },
+            { text: "Web 前端", link: "/development/frontend" },
             { text: "Rust 后端", link: "/development/backend" },
             { text: "协议与授权", link: "/development/contracts-and-auth" },
-            { text: "旧手机维护协议退场", link: "/development/legacy-mobile-retirement" },
             { text: "测试与验收", link: "/development/testing" },
             { text: "文档构建与发布", link: "/development/docs-publishing" },
           ],
