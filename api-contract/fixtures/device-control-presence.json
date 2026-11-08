@@ -12,7 +12,8 @@
   "last_disconnected_at": null,
   "disconnect_reason": null,
   "server_time": "2026-11-01T00:00:00Z",
-  "heartbeat_interval_seconds": 20,
-  "suspect_after_seconds": 45,
-  "offline_after_seconds": 90
+  "heartbeat_interval_seconds": 60,
+  "suspect_after_seconds": 130,
+  "offline_after_seconds": 190,
+  "transport_connected": true
 }

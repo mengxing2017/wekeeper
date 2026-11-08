@@ -1,0 +1,27 @@
+{
+  "frame": {
+    "id": "00000000-0000-4000-8000-000000000001",
+    "connection_id": "00000000-0000-4000-8000-000000000002",
+    "epoch": 2,
+    "protocol_version": 1,
+    "heartbeat_id": null,
+    "heartbeat_interval_seconds": 60,
+    "offline_after_seconds": 190,
+    "server_time": "2026-10-31T00:00:00Z",
+    "desired_paused": true,
+    "desired_revision": 3,
+    "commands": [],
+    "credential_expires_at": "2026-11-30T00:00:00Z",
+    "probe_id": "00000000-0000-4000-8000-000000000003"
+  },
+  "response": {
+    "connection_id": "00000000-0000-4000-8000-000000000002",
+    "epoch": 2,
+    "heartbeat_id": "00000000-0000-4000-8000-000000000004",
+    "probe_id": "00000000-0000-4000-8000-000000000003",
+    "readiness": "blocked",
+    "block_reason": "device_locked",
+    "receipts": [],
+    "heartbeat_sequence": 1
+  }
+}

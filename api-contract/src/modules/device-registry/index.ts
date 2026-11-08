@@ -15,6 +15,7 @@ export interface DeviceControlSnapshot {
   last_control_heartbeat_at: string | null; transport: "wss" | "https" | null;
   readiness: string | null; block_reason: string | null;
   desired_paused: boolean; desired_revision: number; credential_expires_at: string | null;
+  transport_connected?: boolean;
   server_time?: string;
   heartbeat_interval_seconds?: number; suspect_after_seconds?: number; offline_after_seconds?: number;
   connected_at?: string | null; last_disconnected_at?: string | null; disconnect_reason?: string | null;
@@ -23,13 +24,13 @@ export interface DeviceControlPresence extends DeviceControlSnapshot {
   commands: DeviceControlCommand[];
 }
 export interface DeviceControlPulse {
-  connection_id: UUID; epoch: number; heartbeat_id: UUID;
+  connection_id: UUID; epoch: number; heartbeat_id: UUID; heartbeat_sequence: number; probe_id?: UUID | null;
   readiness: string; block_reason: string | null;
   receipts: Array<{ id: UUID; state: "accepted" | "completed" | "rejected"; result_code: string | null }>;
 }
 export interface DeviceControlFrame {
   id: UUID; connection_id: UUID; epoch: number; protocol_version: 1;
-  heartbeat_id: UUID | null; heartbeat_interval_seconds: number; offline_after_seconds: number;
+  probe_id?: UUID; heartbeat_id: UUID | null; heartbeat_interval_seconds: number; offline_after_seconds: number;
   server_time: string; desired_paused: boolean; desired_revision: number;
   credential_expires_at: string; commands: Array<Omit<DeviceControlCommand, "result_code"> & { resource_id: UUID | null; desired_revision: number | null }>;
 }
