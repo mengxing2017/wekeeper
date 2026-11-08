@@ -230,7 +230,7 @@ impl Repository {
         g: i64,
     ) -> Result<Vec<Value>> {
         let (limit, offset) = q.pagination().fetch_bounds()?;
-        Ok(sqlx::query_scalar("SELECT jsonb_build_object('id',o.id,'name',o.data->>'name','chat_id',o.key,'corp_id',o.corp_id,'owner',o.data->>'owner','owner_name',m.name,'member_count',o.data->'member_count','already_associated',EXISTS(SELECT 1 FROM wecom_groups wg WHERE wg.school_id=$2 AND wg.corp_id=o.corp_id AND wg.chat_id=o.key),'credential_generation',o.credential_generation,'checked_at',o.checked_at) FROM wecom_asset_objects o LEFT JOIN wecom_members m ON m.userid_key=o.member_key WHERE o.kind='groups' AND o.verification='verified' AND o.visibility='visible' AND o.credential_generation=$1 AND o.checked_at>now()-interval '24 hours' AND EXISTS(SELECT 1 FROM schools WHERE id=$2 AND active) AND NOT EXISTS(SELECT 1 FROM wecom_groups g WHERE g.corp_id=o.corp_id AND g.chat_id=o.key AND g.school_id<>$2) AND ($3 OR EXISTS(SELECT 1 FROM accounts a WHERE a.id=$4 AND a.active AND a.wecom_member_id=m.id AND m.status=1 AND m.verification='verified')) AND ($5::text IS NULL OR strpos(lower(coalesce(o.data->>'name','')||' '||o.key),lower($5))>0) ORDER BY o.key LIMIT $6 OFFSET $7").bind(g).bind(school).bind(a.platform_admin).bind(a.id).bind(&q.search).bind(limit).bind(offset).fetch_all(&self.0).await?)
+        Ok(sqlx::query_scalar("SELECT jsonb_build_object('id',o.id,'name',o.data->>'name','chat_id',o.key,'corp_id',o.corp_id,'owner',o.data->>'owner','owner_name',m.name,'member_count',o.data->'member_count','already_associated',EXISTS(SELECT 1 FROM wecom_groups wg WHERE wg.school_id=$2 AND wg.corp_id=o.corp_id AND wg.chat_id=o.key),'credential_generation',o.credential_generation,'checked_at',o.checked_at) FROM wecom_asset_objects o LEFT JOIN wecom_members m ON m.userid_key=o.member_key WHERE o.kind='groups' AND o.verification='verified' AND o.visibility='visible' AND o.credential_generation=$1 AND o.checked_at>now()-interval '24 hours' AND EXISTS(SELECT 1 FROM wecom_workspaces WHERE id=$2 AND active) AND NOT EXISTS(SELECT 1 FROM wecom_groups g WHERE g.corp_id=o.corp_id AND g.chat_id=o.key AND g.school_id<>$2) AND ($3 OR EXISTS(SELECT 1 FROM accounts a WHERE a.id=$4 AND a.active AND a.wecom_member_id=m.id AND m.status=1 AND m.verification='verified')) AND ($5::text IS NULL OR strpos(lower(coalesce(o.data->>'name','')||' '||o.key),lower($5))>0) ORDER BY o.key LIMIT $6 OFFSET $7").bind(g).bind(school).bind(a.platform_admin).bind(a.id).bind(&q.search).bind(limit).bind(offset).fetch_all(&self.0).await?)
     }
     pub async fn bind_group(
         &self,
@@ -246,7 +246,7 @@ impl Repository {
         if key != group.chat_id {
             return Err(Error::Conflict);
         }
-        sqlx::query("SELECT id FROM schools WHERE id=$1 AND active FOR SHARE")
+        sqlx::query("SELECT id FROM wecom_workspaces WHERE id=$1 AND active FOR SHARE")
             .bind(school)
             .fetch_optional(&mut *tx)
             .await?
@@ -256,8 +256,8 @@ impl Repository {
             .fetch_optional(&mut *tx)
             .await?
             .ok_or(Error::Forbidden)?;
-        sqlx::query("SELECT school_id FROM school_memberships WHERE school_id=$1 AND account_id=$2 FOR SHARE").bind(school).bind(a.id).fetch_optional(&mut *tx).await?;
-        let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts a LEFT JOIN wecom_members m ON m.id=a.wecom_member_id WHERE a.id=$1 AND a.active AND (a.platform_admin OR (a.wecom_binding_revision=$2 AND m.userid_key=lower($3 COLLATE \"C\") AND m.verification='verified' AND m.status=1 AND EXISTS(SELECT 1 FROM school_memberships r WHERE r.account_id=a.id AND r.school_id=$4 AND r.role='admin'))))").bind(a.id).bind(a.wecom_binding_revision).bind(&group.owner).bind(school).fetch_one(&mut *tx).await?;
+        sqlx::query("SELECT school_id FROM wecom_workspace_members WHERE school_id=$1 AND account_id=$2 FOR SHARE").bind(school).bind(a.id).fetch_optional(&mut *tx).await?;
+        let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts a LEFT JOIN wecom_members m ON m.id=a.wecom_member_id WHERE a.id=$1 AND a.active AND (a.platform_admin OR (a.wecom_binding_revision=$2 AND m.userid_key=lower($3 COLLATE \"C\") AND m.verification='verified' AND m.status=1 AND EXISTS(SELECT 1 FROM wecom_workspace_members r WHERE r.account_id=a.id AND r.school_id=$4 AND r.role='admin'))))").bind(a.id).bind(a.wecom_binding_revision).bind(&group.owner).bind(school).fetch_one(&mut *tx).await?;
         if !allowed {
             return Err(Error::Forbidden);
         }

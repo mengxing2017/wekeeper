@@ -32,10 +32,6 @@ impl Repository {
         .await?
         .ok_or(Error::Forbidden)
     }
-    pub async fn wx_account(&self, openid: &str) -> Result<Uuid> {
-        let id = Uuid::now_v7();
-        Ok(sqlx::query_scalar("INSERT INTO accounts(id,username,display_name,wx_openid) VALUES($1,$2,'微信用户',$3) ON CONFLICT(wx_openid) DO UPDATE SET wx_openid=excluded.wx_openid RETURNING id").bind(id).bind(format!("wx_{}",hash(openid))).bind(openid).fetch_one(&self.0).await?)
-    }
     pub async fn cached_or_fetch<F, Fut>(&self, key: &str, fetch: F) -> Result<String>
     where
         F: FnOnce() -> Fut,

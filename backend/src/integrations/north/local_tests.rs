@@ -453,10 +453,13 @@ async fn asset_http_reads_preserve_errors_and_do_not_need_agent_id() {
         .await
         .unwrap();
     let (_, admin_actor) = app.identity.0.session(aid, "browser", false).await.unwrap();
-    let school = app.schools.create(&admin_actor, "School").await.unwrap();
-    let school: uuid::Uuid = school["id"].as_str().unwrap().parse().unwrap();
-    app.schools
-        .grant(&admin_actor, school, uid, "admin")
+    let school = uuid::Uuid::new_v4();
+    app.wecom_workspaces()
+        .save(&admin_actor, school, "Workspace")
+        .await
+        .unwrap();
+    app.wecom_workspaces()
+        .grant(&admin_actor, school, "user", "admin")
         .await
         .unwrap();
     let (bound_token, bound_actor) = app.identity.0.session(uid, "browser", false).await.unwrap();
@@ -471,7 +474,7 @@ async fn asset_http_reads_preserve_errors_and_do_not_need_agent_id() {
         .await
         .unwrap();
     let router = crate::http::app_router(app.clone());
-    let path = format!("/api/v1/schools/{school}/wecom-group-candidates");
+    let path = format!("/api/v1/wecom-distribution/workspaces/{school}/wecom-group-candidates");
     let response = router
         .clone()
         .oneshot(
@@ -506,10 +509,15 @@ async fn asset_http_reads_preserve_errors_and_do_not_need_agent_id() {
         .await
         .unwrap();
     for role in ["operator", "member"] {
-        app.schools
-            .grant(&admin_actor, school, uid, role)
-            .await
-            .unwrap();
+        sqlx::query(
+            "UPDATE wecom_workspace_members SET role=$3 WHERE school_id=$1 AND account_id=$2",
+        )
+        .bind(school)
+        .bind(uid)
+        .bind(role)
+        .execute(&pool)
+        .await
+        .unwrap();
         let (role_token, _) = app.identity.0.session(uid, "browser", false).await.unwrap();
         let response = router
             .clone()

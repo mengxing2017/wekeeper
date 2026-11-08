@@ -44,7 +44,13 @@ async fn download(
 }
 pub fn router() -> Router<Application> {
     Router::new()
-        .route("/api/v1/schools/{school}/media", post(upload))
-        .route("/api/v1/schools/{school}/media/{id}", get(download))
+        .route(
+            "/api/v1/wecom-distribution/workspaces/{workspace}/media",
+            post(upload),
+        )
+        .route(
+            "/api/v1/wecom-distribution/workspaces/{workspace}/media/{id}",
+            get(download),
+        )
         .layer(DefaultBodyLimit::max(5 * 1024 * 1024))
 }

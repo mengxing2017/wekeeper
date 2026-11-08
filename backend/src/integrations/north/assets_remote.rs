@@ -165,11 +165,11 @@ pub fn router() -> Router<Application> {
             get(relations),
         )
         .route(
-            "/api/v1/schools/{school}/wecom-group-candidates",
+            "/api/v1/wecom-distribution/workspaces/{workspace}/wecom-group-candidates",
             get(candidates),
         )
         .route(
-            "/api/v1/schools/{school}/groups/from-directory",
+            "/api/v1/wecom-distribution/workspaces/{workspace}/groups/from-directory",
             axum::routing::post(bind),
         )
 }

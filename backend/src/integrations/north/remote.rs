@@ -1,18 +1,17 @@
 use crate::{
     bootstrap::Application,
-    business::{Actor, Error, Result, require, text},
-    http::jsonapi::{Input, singleton},
-    identity::north::remote::{check_origin, cookie},
+    business::{Actor, Error, Result, require},
+    http::jsonapi::singleton,
+    identity::north::remote::cookie,
 };
 use axum::{
     Router,
     extract::{Query, State},
     http::{HeaderMap, header},
     response::{IntoResponse, Redirect, Response},
-    routing::{get, post},
+    routing::get,
 };
 use serde::Deserialize;
-use serde_json::{Value, json};
 #[derive(Deserialize)]
 struct Callback {
     code: String,
@@ -21,13 +20,13 @@ struct Callback {
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct Start {
-    school: Option<uuid::Uuid>,
+    workspace: Option<uuid::Uuid>,
 }
 impl Start {
     fn return_path(&self) -> String {
         let mut query = vec!["view=broadcast-tasks".to_owned()];
-        if let Some(id) = self.school {
-            query.push(format!("school={id}"));
+        if let Some(id) = self.workspace {
+            query.push(format!("wecom_workspace={id}"));
         }
         format!("/admin?{}", query.join("&"))
     }
@@ -129,27 +128,6 @@ async fn status(State(a): State<Application>) -> Response {
     )
         .into_response()
 }
-async fn mini(
-    State(a): State<Application>,
-    h: HeaderMap,
-    input_document: Input,
-) -> Result<Response> {
-    let v = input_document.decode::<Value>("sessions")?;
-    if h.contains_key(header::ORIGIN) {
-        check_origin(&h, &a)?;
-    }
-    let code = text(v["code"].as_str().unwrap_or(""), 1, 256)?;
-    let id = a.integrations.miniapp(&code).await?;
-    let (token, user) = a.identity.0.session(id, "miniapp", false).await?;
-    Ok(miniapp_session_response(token, user))
-}
-fn miniapp_session_response(token: String, user: Actor) -> Response {
-    (
-        [(header::CACHE_CONTROL, "no-store")],
-        singleton("sessions", "current", json!({"token":token,"user":user})),
-    )
-        .into_response()
-}
 pub fn router() -> Router<Application> {
     Router::new()
         .route("/api/v1/wecom/status", get(status))
@@ -157,31 +135,11 @@ pub fn router() -> Router<Application> {
         .route("/api/v1/wecom/oauth/callback", get(callback))
         .route("/api/v1/wecom/js-sdk-config", get(retired_share))
         .route("/api/v1/wecom/config", get(retired_share))
-        .route("/api/v1/auth/miniapp", post(mini))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[tokio::test]
-    async fn miniapp_session_matches_client_fixture_without_browser_secrets() {
-        let fixture: Value = serde_json::from_str(include_str!(
-            "../../../../api-contract/fixtures/miniapp-session.json"
-        ))
-        .unwrap();
-        let mut value = fixture["data"]["attributes"]["user"].clone();
-        // Actor's private browser fields must never escape into the response.
-        value["csrf"] = json!("must-not-be-serialized");
-        let user: Actor = serde_json::from_value(value).unwrap();
-        let response = miniapp_session_response("fixture-only-miniapp-token".into(), user);
-        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
-        assert!(!response.headers().contains_key(header::SET_COOKIE));
-        let body = axum::body::to_bytes(response.into_body(), 8192)
-            .await
-            .unwrap();
-        let actual: Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(actual, fixture);
-    }
     #[test]
     fn oauth_return_path_is_local_and_preserves_selection() {
         assert_eq!(
@@ -190,8 +148,11 @@ mod tests {
         );
         let id = uuid::Uuid::nil();
         assert_eq!(
-            Start { school: Some(id) }.return_path(),
-            format!("/admin?view=broadcast-tasks&school={id}")
+            Start {
+                workspace: Some(id)
+            }
+            .return_path(),
+            format!("/admin?view=broadcast-tasks&wecom_workspace={id}")
         );
     }
 }

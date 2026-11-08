@@ -11,8 +11,6 @@ pub struct Service {
     secret: String,
     #[cfg(test)]
     api_origin: Option<String>,
-    wx_app: String,
-    wx_secret: String,
 }
 impl Service {
     pub fn new(pool: sqlx::PgPool) -> Self {
@@ -28,8 +26,6 @@ impl Service {
             secret: env("WEKEEPER_WECOM_SECRET"),
             #[cfg(test)]
             api_origin: None,
-            wx_app: env("WEKEEPER_WX_APP_ID"),
-            wx_secret: env("WEKEEPER_WX_SECRET"),
         }
     }
     pub fn server_configured(&self) -> bool {
@@ -135,27 +131,6 @@ impl Service {
             )
             .await?;
         Ok((id, userid.to_owned(), generation))
-    }
-    pub async fn miniapp(&self, code: &str) -> Result<uuid::Uuid> {
-        require(
-            !self.wx_app.is_empty() && !self.wx_secret.is_empty(),
-            "尚未配置微信小程序",
-        )?;
-        let v = self
-            .json(
-                self.client
-                    .get("https://api.weixin.qq.com/sns/jscode2session")
-                    .query(&[
-                        ("appid", self.wx_app.as_str()),
-                        ("secret", self.wx_secret.as_str()),
-                        ("js_code", code),
-                        ("grant_type", "authorization_code"),
-                    ]),
-            )
-            .await?;
-        self.repository
-            .wx_account(v["openid"].as_str().ok_or(Error::Forbidden)?)
-            .await
     }
     pub async fn validate_group(&self, corp: &str, chat: &str) -> Result<()> {
         require(

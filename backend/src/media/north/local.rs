@@ -20,7 +20,9 @@ impl<R: Store> Service<R> {
             return Err(Error::Invalid("仅支持 PNG/JPEG/GIF/WebP 图片".into()));
         };
         let id = self.0.put(s, a.id, mime, b).await?;
-        Ok(format!("/api/v1/schools/{s}/media/{id}"))
+        Ok(format!(
+            "/api/v1/wecom-distribution/workspaces/{s}/media/{id}"
+        ))
     }
     pub async fn get(&self, a: &Actor, s: Uuid, id: Uuid) -> Result<(String, Vec<u8>)> {
         a.authorize(s, "member")?;

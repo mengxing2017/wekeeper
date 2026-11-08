@@ -120,7 +120,7 @@ pub fn router() -> Router<Application> {
         )
         .route("/api/v1/platform/wecom-directory/sync-runs/{id}", get(job))
         .route(
-            "/api/v1/accounts/{id}/wecom-binding",
+            "/api/v1/platform/wecom-distribution/operators/{id}/wecom-binding",
             put(bind).delete(unbind),
         )
 }
