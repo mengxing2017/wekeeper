@@ -29,16 +29,17 @@ test-unit:
 
 test-integration:
 	@test -n "$$WEKEEPER_TEST_DATABASE_URL" || (echo "Set isolated WEKEEPER_TEST_DATABASE_URL" >&2; exit 1)
-	cargo test --locked --manifest-path backend/Cargo.toml --lib --test database --test business --test directory --test assets --test broadcast --test device_registry --test device_control_presence --test mobile_execution_isolation --test shared_mobile_v9 -- --ignored
+	cargo test --locked --manifest-path backend/Cargo.toml --lib --test source_access --test database --test business --test directory --test assets --test broadcast --test device_registry --test device_control_presence --test mobile_execution_isolation --test shared_mobile_v9 -- --ignored
 
 api-dev:
 	cargo run --locked --manifest-path backend/Cargo.toml
 
 dev-embedded:
 	python3 tools/repair_rustup_linker.py
-	exec cargo run --locked --manifest-path backend/Cargo.toml --example embedded_postgres
+	exec python3 tools/dev_embedded.py
 
 test-embedded:
+	python3 tools/test_dev_embedded.py
 	python3 tools/test_repair_rustup_linker.py
 	python3 tools/repair_rustup_linker.py
 	cargo build --locked --manifest-path backend/Cargo.toml --example embedded_postgres
