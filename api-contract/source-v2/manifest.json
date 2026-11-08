@@ -1,0 +1,39 @@
+{
+  "release": "source-v2-1",
+  "signature_versions": [
+    2
+  ],
+  "schema_versions": [
+    2
+  ],
+  "secret_encoding": "base64url-no-padding",
+  "secret_min_bytes": 32,
+  "max_body_bytes": 1048576,
+  "timestamp_window_seconds": 300,
+  "canonical_lines": [
+    "version",
+    "key_id",
+    "METHOD",
+    "path",
+    "timestamp",
+    "nonce",
+    "idempotency_key",
+    "body_sha256_lower_hex"
+  ],
+  "canonical_trailing_lf": false,
+  "machine_paths": [
+    "/api/v2/source-events",
+    "/api/v2/source-receipts/00000000-0000-0000-0000-000000000002",
+    "/api/v2/source-authentications",
+    "/api/v2/source-route-checks"
+  ],
+  "fixtures_sha256": "2265c1496fc64d2360328cb822e8bbd02d24abe6e5e1663e002262e85241496e",
+  "files_sha256": {
+    "fixtures/source-authentication-v2.json": "520b19c02e70db962d4c066aeaa520afe5acf11bd9ffc1d59a546763deb9b054",
+    "fixtures/source-errors-v2.json": "9663ee0d3e1ac0734a9532b28805fba9f58479076772349e53ae1366d88a2471",
+    "fixtures/source-receipt-v2.json": "f642da5c011a31b5d40b915c91ce5460fa52202cafcb10e70aac1b50f06a080c",
+    "fixtures/source-v2.json": "2265c1496fc64d2360328cb822e8bbd02d24abe6e5e1663e002262e85241496e",
+    "source-v2/errors.json": "da286daf20347cd0fde98e327495725d703517e6ba5673acd54e3ff1c0b923f7",
+    "source-v2/event.schema.json": "3f2585b302a1ac54f209226e20cccd145104ec5c1571f45e3c15d86187d10657"
+  }
+}

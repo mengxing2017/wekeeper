@@ -1,0 +1,16 @@
+{
+  "errors": [
+    {
+      "status": "401",
+      "code": "credential_unavailable",
+      "title": "请求未完成",
+      "meta": {
+        "retryable": false,
+        "supported_versions": [
+          2
+        ],
+        "request_id": "fixture-request"
+      }
+    }
+  ]
+}

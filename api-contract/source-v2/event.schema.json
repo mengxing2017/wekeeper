@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SourceEventV2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "data"
+  ],
+  "properties": {
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "id",
+        "attributes"
+      ],
+      "properties": {
+        "type": {
+          "const": "source-events"
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "attributes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "event_id",
+            "schema_version",
+            "route_id",
+            "event_type",
+            "external_content_id",
+            "version",
+            "sequence",
+            "occurred_at",
+            "title",
+            "content",
+            "detail_url"
+          ],
+          "properties": {
+            "event_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "schema_version": {
+              "const": 2
+            },
+            "route_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            },
+            "event_type": {
+              "enum": [
+                "content.upsert",
+                "content.withdrawn"
+              ]
+            },
+            "external_content_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "sequence": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "occurred_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "title": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 512
+            },
+            "content": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 100000
+            },
+            "detail_url": {
+              "type": "string",
+              "maxLength": 2048,
+              "pattern": "^https://"
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "event_type": {
+                    "const": "content.upsert"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "content": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              "else": {
+                "properties": {
+                  "content": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

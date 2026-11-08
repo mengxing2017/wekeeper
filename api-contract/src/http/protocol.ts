@@ -102,6 +102,7 @@ export function decodeResource(value: unknown): Record<string, unknown> {
 /** Explicit aliases for action routes whose target resource differs from the URL leaf. */
 export function resourceType(path: string): string {
   const parts = path.split("?")[0].split("/").filter(Boolean);
+  if (parts[1] === 'v2' && parts[2] === 'admin' && ['source-routes','source-credentials'].includes(parts[3])) return parts[5] === 'routes' ? 'source-key-routes' : parts[5] === 'secret-reveals' ? 'source-credential-secret-reveals' : parts[3];
   if (parts[2] === 'wecom-distribution' && parts[3] === 'workspaces') {
     if (!parts[5]) return 'wecom-workspaces';
     if (parts[5] === 'members') return 'wecom-workspace-members';

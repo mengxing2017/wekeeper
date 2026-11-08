@@ -1,0 +1,30 @@
+{
+  "data": {
+    "type": "source-authentications",
+    "id": "00000000-0000-0000-0000-000000000001",
+    "attributes": {
+      "source_id": "00000000-0000-0000-0000-000000000003",
+      "signature_versions": [
+        2
+      ],
+      "schema_versions": [
+        2
+      ],
+      "paths": {
+        "authentication": "/api/v2/source-authentications",
+        "events": "/api/v2/source-events",
+        "receipts": "/api/v2/source-receipts/{id}",
+        "routes": "/api/v2/source-route-checks"
+      },
+      "credential_revision": 1,
+      "authorization_revision": 1,
+      "routes": [
+        {
+          "route_id": "fixture-route",
+          "available": true
+        }
+      ],
+      "next_cursor": null
+    }
+  }
+}

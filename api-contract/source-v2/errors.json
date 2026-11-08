@@ -1,0 +1,38 @@
+{
+  "400": [
+    "invalid_request",
+    "forbidden_field",
+    "event_identity_mismatch",
+    "unsupported_version"
+  ],
+  "401": [
+    "authentication_failed",
+    "credential_unavailable",
+    "timestamp_expired"
+  ],
+  "403": [
+    "source_disabled",
+    "route_unavailable"
+  ],
+  "404": [
+    "receipt_not_found"
+  ],
+  "409": [
+    "event_conflict",
+    "revision_conflict",
+    "cursor_stale",
+    "replay_detected"
+  ],
+  "413": [
+    "payload_too_large"
+  ],
+  "415": [
+    "unsupported_media_type"
+  ],
+  "429": [
+    "rate_limited"
+  ],
+  "503": [
+    "temporarily_unavailable"
+  ]
+}
