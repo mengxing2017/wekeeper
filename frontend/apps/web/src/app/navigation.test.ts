@@ -45,9 +45,19 @@ test('共享手机目标绑定属于平台资源，学校不保留旧设备授�
   expect(navigation.find(n => n.key === 'mobile-device-grants')).toBeUndefined()
 })
 
-test('保留两类分发业务与平台支撑，论坛入口已移除', () => {
-  expect(new Set(navigation.map(item => item.domain))).toEqual(new Set(['wecom', 'mobile', 'support']))
+test('保留消息接收、两类分发业务与系统支撑，论坛入口已移除', () => {
+  expect(new Set(navigation.map(item => item.domain))).toEqual(new Set(['source', 'wecom', 'mobile', 'support']))
   expect(navigation.find(item => item.key === 'wecom-directory')?.domain).toBe('wecom')
   for (const key of ['posts','comments','cases','resources','platform-resources']) expect(navigation.find(item => item.key === key)).toBeUndefined()
   expect(navigation.find(item => item.key === 'execution-accounts')).toBeUndefined()
+})
+
+test('消息分发路由是调用方凭据的子项，不注册独立导航', () => {
+  const credential = navigation.find(item => item.key === 'source-credentials')!
+  expect(credential.label).toBe('调用方凭据')
+  expect(credential.domain).toBe('source')
+  expect(credential.scope).toBe('global')
+  expect(canNavigate(credential, true)).toBe(true)
+  expect(canNavigate(credential, false, 'admin', 'admin')).toBe(false)
+  expect(navigation.find(item => item.key === 'source-routes')).toBeUndefined()
 })

@@ -12,8 +12,8 @@ import {
   UserOutlined,
 } from '@ant-design/icons'
 
-export type NavigationDomain = 'wecom' | 'mobile' | 'support'
-export const navigationDomains = [{ key: 'wecom', label: '企业微信分发管理' }, { key: 'mobile', label: '移动端分发管理' }, { key: 'support', label: '系统管理' }] as const
+export type NavigationDomain = 'source' | 'wecom' | 'mobile' | 'support'
+export const navigationDomains = [{ key: 'source', label: '消息接收管理' }, { key: 'wecom', label: '企业微信分发管理' }, { key: 'mobile', label: '移动端分发管理' }, { key: 'support', label: '系统管理' }] as const
 export interface NavigationItem {
   key: string
   label: string
@@ -102,6 +102,7 @@ export const navigation: NavigationItem[] = [
     scope: 'global',
     capability: 'global.manage',
   },
+  {key:'source-credentials',label:'调用方凭据',description:'签发下游消息推送凭据，维护消息分发路由。',domain:'source',scope:'global',capability:'global.manage',icon:<SafetyCertificateOutlined/>},
 ]
 
 export function canNavigate(item: NavigationItem, platformAdmin: boolean, schoolRole?: string, mobileRole?: string): boolean {

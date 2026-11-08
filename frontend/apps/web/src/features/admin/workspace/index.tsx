@@ -1,3 +1,4 @@
+import { SourceAccess } from '../../operations/source-access'
 import { TemplateManager } from './template-manager'
 import { OfficialSenders } from '../../operations/wecom-senders'
 import { MobileExecutionTasks } from '../../operations/mobile-execution/tasks'
@@ -83,6 +84,7 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
   else if (tab === 'wecom-workspaces') page = <WecomWorkspacePanel manage platformAdmin={user.platform_admin} workspaces={official.data?.items ?? []} selected={wecom} loading={official.isPending} error={official.error} onSelect={id=>selectWorkspace('wecom_workspace',id)}>
     <p>管理当前企业微信分发工作空间及成员授权。客户群、消息模板和群发任务在对应业务页面操作。</p>
   </WecomWorkspacePanel>
+  else if (tab === 'source-credentials') page = <SourceAccess />
   else if (tab === 'audit') page = <AuditEvents />
   else if (knownPage.scope === 'mobile') page = <MobileWorkspacePanel platformAdmin={user.platform_admin} workspaces={mobile.data?.items ?? []} selected={phone} loading={mobile.isPending} error={mobile.error} onSelect={id=>selectWorkspace('workspace',id)}>
     {phone && (tab === 'mobile-execution-tasks' ? <MobileExecutionTasks key={phone.id} school={phone.id} admin={phone.role==='admin'} onNavigate={navigate} /> : <MobileTargets key={phone.id} school={phone.id} admin={phone.role==='admin'} />)}
