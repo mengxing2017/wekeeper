@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Form, Input } from 'antd'
 import { Field } from '../../shared/field'
@@ -16,6 +16,7 @@ export function SessionGate({
   const q = useQuery({ queryKey: ['session'], queryFn: identity.session, retry: false })
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const logoutRequest = useRef<Promise<void> | null>(null)
   useEffect(() => subscribeUnauthorized(() => {
     // Initial login failures already render the form. Expiry must also discard
     // cached session data and protected results, including background requests.
@@ -39,15 +40,29 @@ export function SessionGate({
       setBusy(false)
     }
   }
-  async function logout() {
+  function logout(): Promise<void> {
+    if (logoutRequest.current) return logoutRequest.current
     setError('')
-    try {
-      await identity.logout()
-      await cache.cancelQueries()
-      cache.clear()
-    } catch (e) {
-      setError((e as Error).message)
-    }
+    setBusy(true)
+    const request = (async () => {
+      try {
+        // Stop protected refreshes before revoking the session.
+        await cache.cancelQueries()
+        await identity.logout()
+        // Notify the active session observer; clearing the cache alone leaves
+        // its last authenticated result on screen until a later render.
+        cache.setQueryData(['session'], null)
+        cache.removeQueries({ predicate: query => query.queryKey[0] !== 'session' })
+        cache.getMutationCache().clear()
+      } catch (e) {
+        setError((e as Error).message)
+      } finally {
+        logoutRequest.current = null
+        setBusy(false)
+      }
+    })()
+    logoutRequest.current = request
+    return request
   }
   if (q.isPending)
     return (
@@ -64,7 +79,7 @@ export function SessionGate({
           </div>
           <div>
             <h1>登录工作空间</h1>
-            <p>校园社区 · 内容运营 · 企业群发</p>
+            <p>企业微信分发 · 移动端分发</p>
           </div>
           {error && <Alert type="error" title={error} showIcon />}
           <Form layout="vertical" onFinish={login} disabled={busy} className="business-form">
@@ -99,7 +114,7 @@ export function SessionGate({
       {showSessionBar && (
         <div className="session-bar">
           <span>{q.data.user.display_name}</span>
-          <Button onClick={logout}>退出登录</Button>
+          <Button onClick={logout} loading={busy} disabled={busy}>退出登录</Button>
         </div>
       )}
       {error && <Alert type="error" showIcon className="session-error" title={<>{error}</>} />}

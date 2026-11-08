@@ -5,3 +5,6 @@ export type { SourcePolicy, ResourcePolicy } from '@wekeeper/api-contract/wecom-
 
 export {product,workspace} from '@wekeeper/api-contract/business'
 export type {BusinessPreview,UsageInput,MemberPolicyInput,BusinessRequest,RequestDecision} from '@wekeeper/api-contract/business'
+
+export { wecomWorkspaces } from '@wekeeper/api-contract/wecom-distribution'
+export type { WecomWorkspace, WecomWorkspaceMember } from '@wekeeper/api-contract/wecom-distribution'

@@ -3,8 +3,8 @@ import { Alert, Button, Card, Descriptions, Space, Tag, Typography } from 'antd'
 import { getReadiness, getSystemInfo } from './api'
 
 const modules = [
-  { name: '学校与权限', detail: '学校范围、成员身份与运营角色' },
-  { name: '内容与审核', detail: '校园动态、审核记录与内容治理' },
+  { name: '工作空间与权限', detail: '独立分发范围、成员身份与运营角色' },
+  { name: '分发与调度', detail: '官方群发、手机任务与执行进度' },
   { name: '模板与分享', detail: '模板版本、内容预览与人工确认' },
   { name: '记录与核对', detail: '发送尝试、异常核对与操作审计' },
 ]
@@ -15,7 +15,7 @@ export function Overview() {
   const refresh = () => { void system.refetch(); void readiness.refetch() }
 
   return <Space orientation="vertical" size="large" className="full-width">
-    <Alert title="当前为基础骨架" description="已连接应用状态与数据库检查。登录、学校权限和业务操作将在后续阶段开放。" type="info" showIcon />
+    <Alert title="当前为基础骨架" description="已连接应用状态与数据库检查。分发操作请进入运营工作台。" type="info" showIcon />
     <Card title="服务状态" extra={<Button onClick={refresh} loading={system.isFetching || readiness.isFetching}>刷新</Button>}>
       {system.isPending ? <p role="status">正在连接 API…</p> : system.isError ?
         <Alert title="API 暂不可用" description={system.error.message} type="error" showIcon /> :

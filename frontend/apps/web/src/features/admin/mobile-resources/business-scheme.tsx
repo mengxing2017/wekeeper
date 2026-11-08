@@ -29,7 +29,7 @@ export function BusinessSchemeEditor({scheme}:{scheme?:BusinessScheme|null;statu
  </Space>)}
  <Button disabled={form.allowed_windows.length>=32} onClick={()=>setForm({...form,allowed_windows:[...form.allowed_windows,newPolicyWindow()]})}>添加允许时段</Button>
  <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(280px,1fr))',gap:16,width:'100%'}}>
- {(Object.entries({global:'平台全局',school:'每所学校',device:'每台手机',target:'每个目标群'}) as Array<[keyof BusinessSchemeInput['limits'],string]>).map(([scope,title])=><fieldset key={scope}><legend>{title}</legend><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+ {(Object.entries({global:'平台全局',school:'每个工作空间',device:'每台手机',target:'每个目标群'}) as Array<[keyof BusinessSchemeInput['limits'],string]>).map(([scope,title])=><fieldset key={scope}><legend>{title}</legend><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
  {(Object.entries({interval_seconds:'最小间隔（秒）',window_seconds:'滚动窗口（秒）',max_calls:'窗口最多调用数',daily_max_calls:'每日最多调用数'}) as Array<[keyof BusinessSchemeInput['limits']['global'],string]>).map(([field,label])=><label key={field}>{label}<InputNumber aria-label={`${title}${label}`} min={1} max={field==='window_seconds'?2592000:field==='interval_seconds'?86400:100000} precision={0} value={form.limits[scope][field]} onChange={v=>{if(v!==null)setForm({...form,limits:{...form.limits,[scope]:{...form.limits[scope],[field]:v}}})}}/></label>)}
  </div></fieldset>)}
  </div>

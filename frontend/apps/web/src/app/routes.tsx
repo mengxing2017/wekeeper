@@ -2,7 +2,6 @@ import { PageErrorBoundary } from './page-error-boundary'
 import { lazy, Suspense } from 'react'
 import { Link, Navigate, Route, Routes } from 'react-router-dom'
 
-const CommunityEntry = lazy(() => import('../features/community'))
 const AdminEntry = lazy(() => import('../entries/admin'))
 
 export function AppRoutes() {
@@ -10,8 +9,6 @@ export function AppRoutes() {
     <Routes>
       <Route path="/" element={<Navigate to="/admin" replace />} />
       <Route path="/admin" element={<AdminEntry />} />
-      <Route path="/community" element={<CommunityEntry />} />
-      <Route path="/community/:school/posts/:id" element={<CommunityEntry />} />
       <Route path="*" element={<main className="not-found"><h1>页面不存在</h1><Link to="/admin">返回运营入口</Link></main>} />
     </Routes>
   </Suspense></PageErrorBoundary>

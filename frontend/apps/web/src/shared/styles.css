@@ -104,7 +104,6 @@ a:focus-visible {
   gap: 16px;
   margin-left: auto;
 }
-.community-link,
 .help-center-link {
   color: var(--color-text-secondary);
 }
@@ -408,7 +407,6 @@ a:focus-visible {
 .empty-state {
   padding: 32px 16px;
 }
-.community-shell .ant-alert,
 .wecom-workspace .ant-alert {
   margin-block: 12px;
 }
@@ -495,50 +493,12 @@ code {
   font-family: var(--font-family-mono);
   font-size: var(--font-size-sm);
 }
-.community-shell {
-  max-width: 1000px;
-  margin: auto;
-  padding: 24px;
-}
-.community-shell > header,
 .wecom-header {
   display: flex;
   align-items: center;
   gap: 16px;
   padding: 20px 0;
   border-bottom: 1px solid var(--color-border);
-}
-.community-shell > header > a:first-child {
-  font-size: 20px;
-  font-weight: 700;
-}
-.community-shell .auth-page {
-  min-height: 75vh;
-}
-.community-card {
-  margin: 18px 0;
-}
-.community-card img {
-  max-width: 100%;
-  max-height: 360px;
-  border-radius: 4px;
-}
-.community-nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-  margin: 18px 0;
-}
-.community-shell .business-form {
-  background: white;
-  border: 1px solid var(--color-border);
-  padding: 24px;
-  border-radius: 5px;
-  max-width: none;
-}
-.community-card > p:not(.text-content) {
-  font-size: 12px;
-  color: var(--color-text-muted);
 }
 .wecom-shell {
   max-width: 760px;
@@ -611,13 +571,8 @@ code {
   display: block;
   margin-top: 6px;
 }
-.community-shell .ant-alert,
 .wecom-workspace .ant-alert {
   margin-block: 12px;
-}
-.community-card .ant-card-body > p:not(.text-content) {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-xs);
 }
 @media (max-width: 768px) {
   .workspace-shell,
@@ -628,8 +583,7 @@ code {
     padding: 0 16px;
     gap: 12px;
   }
-  .header-workspace,
-  .community-link {
+  .header-workspace {
     display: none;
   }
   .header-actions {
@@ -708,7 +662,6 @@ code {
   .auth-panel {
     padding: 26px;
   }
-  .community-shell,
   .wecom-shell {
     padding: 0 16px 28px;
   }

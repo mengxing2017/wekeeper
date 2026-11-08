@@ -21,7 +21,7 @@ export function DistributionPolicyPanel() {
     finally { setBusy(false) }
   }
   return <Card title="分发资源治理（平台权限）">
-    <p>来源积压按来源累计，官方资源调用量跨来源和学校累计。这里的额度是平台运营限制，不代表官方安全发送次数。手机业务状态在手机使用管理中查看。</p>
+    <p>来源积压按来源累计，官方资源调用量跨来源和分发工作空间累计。这里的额度是平台运营限制，不代表官方安全发送次数。手机业务状态在手机使用管理中查看。</p>
     {(error || query.error) && <Alert type="error" title={error || query.error?.message} />}
     <Table<SourcePolicy> rowKey="namespace" pagination={false} dataSource={query.data?.sources ?? []} columns={[
       { title: '受信来源', render: (_,r) => ({'builtin.forum':'校园社区','builtin.direct':'直接通知'}[r.namespace]??'已登记业务来源') }, { title: '草稿/待执行限制', dataIndex: 'max_pending' },
@@ -37,7 +37,7 @@ export function DistributionPolicyPanel() {
     {(source || resource) && <Space orientation="vertical">
       {source && <><p>{source.namespace}</p><label>来源积压限制<InputNumber aria-label="来源积压限制" min={1} max={100000} value={source.max_pending} onChange={v => setSource({ ...source, max_pending: Number(v) })} /></label><Switch aria-label="来源允许新发送" checked={source.enabled} onChange={enabled => setSource({ ...source, enabled })} /></>}
       {resource && !preview && <><label>官方成员<Select aria-label="受限官方成员" value={resource.member_id} options={members.data?.members.map(v=>({value:v.id,label:v.name}))} onChange={id=>{const m=members.data?.members.find(v=>v.id===id);setResource({...resource,member_id:id,revision:m?.policy?.revision??0})}}/></label><label>窗口秒数<InputNumber aria-label="窗口秒数" min={1} max={2592000} value={resource.window_seconds} onChange={v=>setResource({...resource,window_seconds:Number(v)})}/></label><label>窗口调用数<InputNumber aria-label="窗口调用数" min={1} max={100000} value={resource.max_calls} onChange={v=>setResource({...resource,max_calls:Number(v)})}/></label><Switch aria-label="资源允许新发送" checked={resource.enabled} onChange={enabled=>setResource({...resource,enabled})}/></>}
-      {preview&&<><p>成员：{members.data?.members.find(v=>v.id===preview.summary.member_id)?.name} · {preview.summary.window_seconds} 秒内最多 {preview.summary.max_calls} 次 · {preview.summary.enabled?'启用':'暂停'}。同一成员跨学校和内容来源累计，变更不会清空已用额度。</p><Button disabled={busy} onClick={()=>setPreview(undefined)}>返回修改</Button><Button type="primary" loading={busy} onClick={()=>{setBusy(true);setError('');void product.memberPolicies.confirm({preview_id:preview.id,digest:preview.digest}).then(async()=>{setPreview(undefined);setResource(undefined);await members.refetch()}).catch(e=>setError(e instanceof Error?e.message:'更新失败')).finally(()=>setBusy(false))}}>确认限额生效</Button></>}
+      {preview&&<><p>成员：{members.data?.members.find(v=>v.id===preview.summary.member_id)?.name} · {preview.summary.window_seconds} 秒内最多 {preview.summary.max_calls} 次 · {preview.summary.enabled?'启用':'暂停'}。同一成员跨分发工作空间和内容来源累计，变更不会清空已用额度。</p><Button disabled={busy} onClick={()=>setPreview(undefined)}>返回修改</Button><Button type="primary" loading={busy} onClick={()=>{setBusy(true);setError('');void product.memberPolicies.confirm({preview_id:preview.id,digest:preview.digest}).then(async()=>{setPreview(undefined);setResource(undefined);await members.refetch()}).catch(e=>setError(e instanceof Error?e.message:'更新失败')).finally(()=>setBusy(false))}}>确认限额生效</Button></>}
 
       <Space><Button type="primary" loading={busy} disabled={!!preview} onClick={() => void save()}>{resource?'核对限制':'保存政策'}</Button><Button onClick={() => { setSource(undefined); setResource(undefined) }}>取消调整</Button></Space>
     </Space>}

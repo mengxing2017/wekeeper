@@ -265,7 +265,7 @@ export function Directory() {
         <p>
           <Popconfirm
             title="验证并切换服务器当前凭据？"
-            description="旧企业会话将退出，旧任务停止，成员待重新核验；账号绑定和学校授权保留。"
+            description="旧企业会话将退出，旧任务停止，成员待重新核验；账号绑定和分发工作空间授权保留。"
             onConfirm={() => void rotate()}
             okText="验证并切换"
             cancelText="取消"
@@ -315,7 +315,7 @@ export function WecomBinding({
       <h3>绑定企业微信成员</h3>
       <p>
         当前绑定：{String(account.wecom_name ?? '')} {String(account.wecom_userid ?? '未绑定')}
-        。绑定变更将退出此账号现有会话，不改变学校角色。
+        。绑定变更将退出此账号现有会话，不改变分发工作空间角色。
       </p>
       <a href="/admin?view=wecom-directory">查看同步状态或同步通讯录</a>
       {error && <Alert type="error" title={error} />}

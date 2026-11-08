@@ -64,7 +64,7 @@ function SchoolSharedSendTasks({ school, admin }: { school: string; admin: boole
   const synchronized=overview.isSuccess&&!overview.isError
   const liveOverview=synchronized ? overview.data : undefined
   const resourcesChanged=preview ? previewResourcesChanged(preview,liveOverview) : false
-  const confirmationIssues = !admin ? ['当前账号没有本校管理员发送权限；平台管理员也需在学校成员管理中获得本校管理员角色'] : preview?.plan.items.flatMap(i => !i.selected ? [`${i.target.name}：请选择已绑定手机`] : i.blocker ? [`${i.target.name}：${i.blocker}`] : []) ?? []
+  const confirmationIssues = !admin ? ['当前账号没有当前工作空间管理员发送权限'] : preview?.plan.items.flatMap(i => !i.selected ? [`${i.target.name}：请选择已绑定手机`] : i.blocker ? [`${i.target.name}：${i.blocker}`] : []) ?? []
   return <Card title="手机共享发送">
     {errorContext}
     <Space orientation="vertical" style={{ width: '100%' }}>
@@ -72,8 +72,8 @@ function SchoolSharedSendTasks({ school, admin }: { school: string; admin: boole
       {overview.data?.sending_status&&<Alert type={overview.data.sending_status.can_confirm?'info':'warning'} title={overview.data.sending_status.message}/>}
       {overview.isError&&<Alert type="warning" title="当前状态同步失败，预览快照不能作为实时状态" description={<Button onClick={()=>void overview.refetch()}>重试同步当前状态</Button>}/>}
       {error && <Alert type="error" title={taskError(error)} />}
-      <Input.Search aria-label="搜索手机目标群" placeholder="搜索本校群名称" onSearch={value=>{setTargetSearch(value);setTargetPage(1)}} />
-      <Select labelInValue mode="multiple" aria-label="手机目标群" placeholder="选择本校手机目标群" style={{ width: '100%' }} value={targets.map(value=>({value,label:targetNames[value] ?? draft?.targets.find(t=>t.id===value)?.name ?? '目标信息待核对'}))} onChange={values=>{setTargets(values.map(v=>v.value));setTargetNames(names=>({...names,...Object.fromEntries(values.map(v=>[v.value,String(v.label)]))}))}} options={(options.data?.items ?? []).filter(t => t.enabled && !t.archived_at).map(t => ({ value: t.id, label: t.search_text }))} />
+      <Input.Search aria-label="搜索手机目标群" placeholder="搜索当前工作空间群名称" onSearch={value=>{setTargetSearch(value);setTargetPage(1)}} />
+      <Select labelInValue mode="multiple" aria-label="手机目标群" placeholder="选择当前工作空间手机目标群" style={{ width: '100%' }} value={targets.map(value=>({value,label:targetNames[value] ?? draft?.targets.find(t=>t.id===value)?.name ?? '目标信息待核对'}))} onChange={values=>{setTargets(values.map(v=>v.value));setTargetNames(names=>({...names,...Object.fromEntries(values.map(v=>[v.value,String(v.label)]))}))}} options={(options.data?.items ?? []).filter(t => t.enabled && !t.archived_at).map(t => ({ value: t.id, label: t.search_text }))} />
       <PaginationControls page={targetPage} more={options.data?.page?.has_more} change={setTargetPage} subject="可选手机目标群" />
       {!!overview.data?.drafts.length && <Select aria-label="恢复共享发送草稿" placeholder="恢复已保存草稿" style={{width:'100%'}} options={overview.data.drafts.map(d=>({value:d.id,label:`${d.message.slice(0,30)}（${d.target_ids.length} 个目标群）`}))} onChange={id=>{const d=overview.data!.drafts.find(x=>x.id===id)!;setDraft(d);setTargetNames(n=>({...n,...Object.fromEntries(d.targets.map(t=>[t.id,t.name]))}));setTargets(d.target_ids);setMessage(d.message);setGap(d.between_targets_seconds);setPreview(undefined)}} />}
       <label>逐群间隔（秒）<InputNumber aria-label="逐群间隔秒数" value={gap} min={1} max={86400} precision={0} onChange={v=>setGap(v??30)}/></label>
@@ -97,13 +97,13 @@ function SchoolSharedSendTasks({ school, admin }: { school: string; admin: boole
               return <div key={snapshot.binding_id}>
                 <SharedReadinessView snapshot={snapshot} current={current} blocked={!!i.blocker}/>
                 {preview.plan.dispatch_mode==='candidate_pool'&&<p>确认的授权候选：{i.candidates.filter(c=>c.confirmable!==false).map(c=>`${c.device_name}（${candidateGroupName(c)}）`).join('、')}；所选为首选，范围内允许自动换机。</p>}
-                {admin&&snapshot.blockers.some(b=>isUsageBlocker(b.code))&&<Button onClick={()=>setUsageOpen(true)}>查看本校使用范围</Button>}
+                {admin&&snapshot.blockers.some(b=>isUsageBlocker(b.code))&&<Button onClick={()=>setUsageOpen(true)}>查看当前工作空间使用范围</Button>}
               </div>
             })}
-            {i.blocker&&!(i.readiness?.length)&&<p>没有可选绑定，请核对本校目标群与手机的关联</p>}
+            {i.blocker&&!(i.readiness?.length)&&<p>没有可选绑定，请核对当前工作空间目标群与手机的关联</p>}
           </Space> },
         ]} />
-        {confirmationIssues.length > 0 && <Alert type="warning" title={admin ? "提交时需要核对以下问题" : "没有本校管理员发送权限"} description={admin ? `${confirmationIssues.length} 个目标需要处理受理问题，请查看上表。` : confirmationIssues[0]}/>}
+        {confirmationIssues.length > 0 && <Alert type="warning" title={admin ? "提交时需要核对以下问题" : "没有工作空间管理员发送权限"} description={admin ? `${confirmationIssues.length} 个目标需要处理受理问题，请查看上表。` : confirmationIssues[0]}/>}
         <Button type="primary" loading={confirm.isPending} disabled={!admin || resourcesChanged || reselect.isPending || inspect.isPending} onClick={() => confirm.mutate()}>确认发送</Button>
       </>}
       <Table<SharedTask> rowKey="id" loading={overview.isFetching} dataSource={overview.data?.tasks ?? []} pagination={{ pageSize: 10 }} columns={[

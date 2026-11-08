@@ -7,9 +7,9 @@ import { Link } from 'react-router-dom'
 import { helpHref } from './help'
 
 export const schoolRoleLabel = (role?: string) =>
-  ({ member: '普通成员', operator: '运营', admin: '学校管理员', revoked: '已撤销学校授权' })[
+  ({ member: '普通成员', operator: '运营', admin: '分发管理员', revoked: '已撤销分发授权' })[
     role ?? ''
-  ] ?? '无学校授权'
+  ] ?? '无分发授权'
 
 export function AppShell({
   children,
@@ -19,6 +19,7 @@ export function AppShell({
   platformAdmin,
   allowedKeys,
   schoolRole,
+  mobileRole,
   onLogout,
   pageExtra,
 }: {
@@ -29,6 +30,7 @@ export function AppShell({
   platformAdmin: boolean
   allowedKeys: string[]
   schoolRole?: string
+  mobileRole?: string
   onLogout: () => Promise<void>
   pageExtra?: ReactNode
 }) {
@@ -39,8 +41,8 @@ export function AppShell({
   const sidebar = useRef<HTMLElement>(null)
   const current = navigation.find((item) => item.key === active) ?? {
     domain: 'support',
-    label: '学校工作区',
-    description: '选择学校后使用已授权的管理功能。',
+    label: '分发工作空间',
+    description: '选择分发工作空间后使用已授权功能。',
   }
   useEffect(() => {
     if (!open) return
@@ -69,16 +71,13 @@ export function AppShell({
           <a className="help-center-link" href="/docs/">
             帮助中心
           </a>
-          <Link className="community-link" to="/community">
-            校园社区 ↗
-          </Link>
           <Dropdown
             trigger={['click']}
             menu={{
               items: [
                 {
                   key: 'role',
-                  label: platformAdmin ? '平台管理员' : schoolRoleLabel(schoolRole),
+                  label: platformAdmin ? '系统管理员' : current.domain === 'mobile' ? (mobileRole === 'admin' ? '移动分发管理员' : mobileRole === 'operator' ? '移动分发运营' : '无移动分发授权') : schoolRoleLabel(schoolRole),
                   disabled: true,
                 },
                 { type: 'divider' },

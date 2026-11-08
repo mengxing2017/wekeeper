@@ -27,7 +27,7 @@ import {
   type BroadcastTarget,
   type BroadcastDraftInput,
   type BroadcastAction,
-  type Post,
+  type DistributionMaterial,
   type Row,
 } from './api'
 
@@ -290,10 +290,10 @@ function DraftEditor({
     enabled: source === 'posts',
     queryKey: ['business', school, 'broadcast-posts', search, page],
     queryFn: () =>
-      workspace.list<Post>(
+      workspace.list<DistributionMaterial>(
         school,
-        'posts',
-        `?status=approved&page[number]=${page}&page[size]=30&search=${encodeURIComponent(search)}`,
+        'distribution-materials',
+        `?page[number]=${page}&page[size]=30&search=${encodeURIComponent(search)}`,
       ),
   })
   const targets = useQuery({
@@ -356,7 +356,7 @@ function DraftEditor({
           disabled={busy}
           options={[
             { value: 'text', label: '直接填写' },
-            { value: 'posts', label: '从社区内容生成' },
+            { value: 'posts', label: '从来源素材生成' },
           ]}
           onChange={(v) =>
             void (async () => {
@@ -385,7 +385,7 @@ function DraftEditor({
               placeholder="直接输入通知，无需社区帖子或模板"
             />
           </Field>
-          <p>{bytes} / 4000 UTF-8 字节 · 直接文本需本校管理员确认提交，运营人员可保存草稿。</p>
+          <p>{bytes} / 4000 UTF-8 字节 · 直接文本需当前工作空间管理员确认提交，运营人员可保存草稿。</p>
           <pre className="message-preview" aria-label="正文预览">
             {normalized}
           </pre>
@@ -415,7 +415,6 @@ function DraftEditor({
             已选 {chosen.length} 条<Button onClick={() => setChosen([])}>清空内容</Button>
           </p>
           {posts.data?.items
-            .filter((p) => p.visibility === 'visible')
             .map((p) => (
               <Checkbox
                 className="check-row"
@@ -461,10 +460,10 @@ function DraftEditor({
         />
       </Field>
       {targets.isSuccess && !targets.data.items.some((g) => g.active) && (
-        <p>暂无可用客户群，可以先保留正文草稿；平台准备好本校范围后再预览。</p>
+        <p>暂无可用客户群，可以先保留正文草稿；平台准备好当前工作空间范围后再预览。</p>
       )}
       <p>
-        预览会核验目录和群主学校授权；未就绪时保留草稿，确认前再次校验。
+        预览会核验目录和群主分发工作空间授权；未就绪时保留草稿，确认前再次校验。
       </p>
       {initial?.source_task_id && (
         <Field label="再次发送原因">
@@ -494,7 +493,7 @@ function DraftEditor({
        {result.preview?<><h3>完整发送预览</h3><pre>{result.preview.content}</pre><p>全部 {result.preview.target_count} 个群；确认仅创建官方任务，执行成员仍需在企业微信确认。</p><ul>{previewTargets.map(v=><li key={v.id}>{v.group_name} · 执行成员：{v.sender}</li>)}</ul>
        <Button disabled={busy} onClick={()=>{setResult(undefined);saveIntent.current=null}}>返回修改</Button>
        <Button type="primary" disabled={busy||(source==='text'&&!admin)||previewTargets.length!==result.preview.target_count} onClick={()=>{if(lock.current)return;lock.current=true;setBusy(true);setError('');void broadcast.action(school,result.task_id,'confirm',confirmKey.current,{revision:result.preview!.revision,preview_digest:result.preview!.digest}).then(saved).catch(e=>setError(e instanceof Error?e.message:'确认失败')).finally(()=>{lock.current=false;setBusy(false)})}}>确认创建官方群发任务</Button>
-       {source==='text'&&!admin&&<p>请本校管理员从同一草稿核对确认；当前已保存正文。</p>}</>:<Alert type="info" title={result.reason??'草稿已保存'}/>}
+       {source==='text'&&!admin&&<p>请当前工作空间管理员从同一草稿核对确认；当前已保存正文。</p>}</>:<Alert type="info" title={result.reason??'草稿已保存'}/>}
        <Button disabled={busy} onClick={()=>void broadcast.task(school,result.task_id).then(saved)}>查看已保存草稿</Button>
       </>}
     </Card>
@@ -611,7 +610,7 @@ function Detail({
             !enabled
               ? unavailableReason
               : t.content_source === 'text' && !admin
-                ? '当前账号没有本校管理员权限，不能提交直接文本群发。请本校管理员打开此草稿确认提交；平台管理员身份不能替代学校授权。'
+                ? '当前账号没有当前工作空间管理员权限，不能提交直接文本群发。请当前工作空间管理员打开此草稿确认提交；系统管理员身份不能替代分发工作空间授权。'
                 : '草稿尚未提交到企业微信。请检查下方正文和目标群，再点击“确认创建企业微信群发任务”。'
           }
         />
@@ -624,7 +623,7 @@ function Detail({
       )}
       <Tag>{t.content_source === 'text' ? '直接填写' : t.content_source === 'materials' ? '独立来源素材' : '论坛内容'}</Tag>
       {t.state === 'draft' && t.content_source === 'text' && !admin && (
-        <p>直接文本草稿需本校管理员检查并确认提交。</p>
+        <p>直接文本草稿需当前工作空间管理员检查并确认提交。</p>
       )}
       <Descriptions
         bordered
@@ -792,7 +791,7 @@ function Detail({
             ]}
             onChange={setDecision}
           />
-          {decision==='linked'&&<Select aria-label="候选证据" placeholder="先查询本校可见证据" value={evidenceId||undefined} options={candidates.map(v=>({value:v.id,label:`${v.summary.content.slice(0,60)} · ${v.summary.sender_name??v.summary.sender} · ${v.summary.target_count} 个群 · ${v.summary.created_at?formatDate(new Date(v.summary.created_at*1000).toISOString()):'时间待核对'}`}))} onChange={setEvidenceId}/>}
+          {decision==='linked'&&<Select aria-label="候选证据" placeholder="先查询当前工作空间可见证据" value={evidenceId||undefined} options={candidates.map(v=>({value:v.id,label:`${v.summary.content.slice(0,60)} · ${v.summary.sender_name??v.summary.sender} · ${v.summary.target_count} 个群 · ${v.summary.created_at?formatDate(new Date(v.summary.created_at*1000).toISOString()):'时间待核对'}`}))} onChange={setEvidenceId}/>}
           <Input.TextArea
             aria-label="核对依据"
             placeholder="核对依据"
@@ -816,12 +815,12 @@ function Detail({
           >
             保存核对依据
           </Button>
-          <Button disabled={busy} onClick={()=>void run(async()=>{const response=await broadcast.evidenceCandidates(school,id,batch);setCandidates(response.items);setEvidenceReason(response.reason);setEvidenceId('')})}>查询本校候选证据</Button>
+          <Button disabled={busy} onClick={()=>void run(async()=>{const response=await broadcast.evidenceCandidates(school,id,batch);setCandidates(response.items);setEvidenceReason(response.reason);setEvidenceId('')})}>查询当前工作空间候选证据</Button>
           {evidenceReason&&<p>{evidenceReason}</p>}
 
         </Card>
       )}
-      <Card title="报告群发问题"><Input.TextArea aria-label="问题现象" placeholder="描述现象，系统自动关联本校任务与范围" value={issueReason} onChange={e=>setIssueReason(e.target.value)}/><Button disabled={busy||!issueReason.trim()} onClick={()=>void run(async()=>{await product.requests.issue(school,{reason:issueReason,task_id:id,batch_id:batch||undefined});setIssueReason('')})}>确认移交负责人</Button></Card>
+      <Card title="报告群发问题"><Input.TextArea aria-label="问题现象" placeholder="描述现象，系统自动关联当前工作空间任务与范围" value={issueReason} onChange={e=>setIssueReason(e.target.value)}/><Button disabled={busy||!issueReason.trim()} onClick={()=>void run(async()=>{await product.requests.issue(school,{reason:issueReason,task_id:id,batch_id:batch||undefined});setIssueReason('')})}>确认移交负责人</Button></Card>
       <BusinessRequests school={school}/>
       <h3>操作记录</h3>
       {events.error && <Alert type="error" title={events.error.message} />}
