@@ -7,11 +7,11 @@
 
 `/api/v1` 结构化成功和错误响应统一为 `application/vnd.api+json`，后端使用固定版本的 Cairnkit `Resource`、`DocumentData`、`PrimaryData`、`error_document`。没有旧 `{data: DTO}`、`{error: ...}` 解包分支。
 
-- 单资源：`{"data":{"type":"posts","id":"…","attributes":{"title":"…"}}}`。
+- 单资源：`{"data":{"type":"groups","id":"…","attributes":{"title":"…"}}}`。
 - 集合：`{"data":[资源对象,…]}`；空集合为 `[]`。
 - 无返回资源的命令（注销、领取、授权等）：`{"data":null}`。
 - 错误：`{"errors":[{"status":"422","code":"validation","title":"Unprocessable Entity","detail":"…"}]}`；HTTP 状态码不折叠成 200。
-- 写入：`{"data":{"type":"posts","attributes":{"title":"…","content":"…"}}}`；更新 DTO 的 `id` 由 client 移到资源顶层。服务端验证资源类型，拒绝扁平 JSON、保留字段冲突及不支持的关系写入。无参数命令不需要请求体。
+- 写入：`{"data":{"type":"groups","attributes":{"name":"…"}}}`；更新 DTO 的 `id` 由 client 移到资源顶层。服务端验证资源类型，拒绝扁平 JSON、保留字段冲突及不支持的关系写入。无参数命令不需要请求体。
 
 client 统一编码/解码协议，向 feature 提供 `{id,...attributes}` 领域 DTO；列表返回 `{items,page?}`。只接受 JSON:API 成功文档和媒体类型，不能靠旧格式回退。`ApiError.status/code/message` 保持稳定；网关 HTML 或畸形错误使用通用提示。请求限定同源，保留 Cookie、CSRF、AbortSignal 和 Idempotency-Key。
 
@@ -19,7 +19,7 @@ client 统一编码/解码协议，向 feature 提供 `{id,...attributes}` 领�
 
 ## 分页与任务记录
 
-帖子、评论、审计、任务、通知、反馈采用 `page[number]`、`page[size]`，默认 1/30，size 为 1–100，number 为 1–100000。旧 `page/page_size` 被拒绝。数据库多取一条，响应只保留请求页大小，并提供 `meta.page = {number,size,has_more}`；不伪造 total。前端据 `has_more` 控制翻页。学校/账号/成员/配置等完整选择列表不分页、不暗中截断，故没有 `meta.page`。
+来源素材、审计及任务记录采用 `page[number]`、`page[size]`，默认 1/30，size 为 1–100，number 为 1–100000。旧 `page/page_size` 被拒绝。数据库多取一条，响应只保留请求页大小，并提供 `meta.page = {number,size,has_more}`；不伪造 total。前端据 `has_more` 控制翻页。学校/账号/成员/配置等完整选择列表不分页、不暗中截断，故没有 `meta.page`。
 
 
 ## 验证
@@ -29,7 +29,7 @@ pnpm --dir api-contract build
 pnpm --dir api-contract test
 ```
 
-`fixtures/system.json`、`wecom-status.json`、`post-created.json`、`not-found.json` 由真实 Rust 序列化/路由与 TS client 共同核对。公开接口修改需同步后端、contract、fixture 与调用方。后端和前端必须同批发布，旧 client 不再兼容。
+`fixtures/system.json`、`wecom-status.json`、`not-found.json` 由真实 Rust 序列化/路由与 TS client 共同核对。公开接口修改需同步后端、contract、fixture 与调用方。后端和前端必须同批发布，旧 client 不再兼容。
 
 ## 企业通讯录
 
@@ -42,3 +42,7 @@ pnpm --dir api-contract test
 `broadcast` client 提供任务草稿创建/修改、确认、目标与事件分页、刷新、提醒、停止和核对。所有操作绑定学校，写操作使用 JSON:API `broadcast-tasks`，确认与管理动作带 Idempotency-Key。Task 汇总、成员状态和群级 official_status 分别建模；人工分享及旧历史读取 client 已移除。Rust 序列化测试与 TypeScript 共用 broadcast-task / broadcast-target fixture。
 
 群发新增 `content_source: posts | text`；来源必须显式提交，缺失来源的旧请求被拒绝。text 请求使用 `text_content`，不需模板或帖子；输出统一使用冻结 `content`，`template_version_id` 为 null，`post_ids` 为空数组。posts/text 请求互斥，草稿 PATCH 仍需 revision。`broadcast-text-task.json` 与 posts 来源 fixture 均经 Rust 实际序列化及 TS client 验证。
+
+论坛 community client、小程序登录和展示资源 client 已迁至 linjian；本包不再导出这些接口。发送素材使用学校范围的 `distribution-materials` 只读接口。
+
+分发范围使用 `/api/v1/wecom-distribution/workspaces/{workspace}` 与 `/api/v1/mobile-execution/workspaces/{workspace}`。学校客户端和普通账号 CRUD 已移除，系统管理员维护使用独立 `/api/v1/platform/administrators`（查询、新增），以及 `/{id}`（编辑、删除）和 `/{id}/password`（重设密码）。历史 `school_id` 为工作空间兼容字段，不代表学校主数据依赖。

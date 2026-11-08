@@ -25,3 +25,11 @@
 常规检查运行 `make check-backend`。隔离数据库测试仅使用显式 `WEKEEPER_TEST_DATABASE_URL`，运行 `make test-integration`；其中覆盖编号唯一、正常重复启动保留记录，以及残留函数/序列不阻止初始化。
 
 此次合并在隔离 PostgreSQL 17 中对原 14 份 SQL 与新 4 份 SQL 分别建库，对比了 1,643 条目录记录：表、列及顺序、默认值、约束、索引、视图、函数、触发器、序列归属和初始数据完全一致。目录对比不能替代事务并发和 HTTP 集成验收；完整集成测试仍需可监听数据库的环境。
+
+## 废弃表正式下线
+
+`202611080140_retire_unused_tables.sql` 是对已运行数据库的前向删除迁移，删除 27 张已退场的论坛、学校、旧资源发布、旧发送流程和导入映射表。基线中仍保留原始创建语句以维持 SQLx checksum 和迁移顺序；完整执行后的 schema 不再包含这些表。
+
+该迁移永久清除被删表数据，升级前备份并确认论坛迁移已完成。删除清单显式列出依赖闭包，不使用 `CASCADE`；两处现行记录指向旧 claim 表的外键单独移除，保留历史 claim ID 和现有调用/诊断记录。`accounts.bound_school_id`、旧论坛生产者函数及触发器也被移除，`legacy_public_id` 随所属表删除。当前分发投影、不可变快照、任务、结果、设备、权限与系统审计保留。
+
+执行 `python3 tools/check_product_workflows_sql.py --postgres-bin /path/to/postgresql/bin` 可在临时单用户 PostgreSQL 中验证带历史数据升级和现行 SQL。现有业务数据库由新版 API 启动时执行 SQLx 迁移，不另行手工清库。

@@ -1,6 +1,6 @@
 # WeKeeper
 
-新架构只有两个部署应用：`backend/`（Rust）与 `frontend/`（React Web 与 uni-app Vue 3 小程序工作区）。
+新架构只有两个部署应用：`backend/`（Rust）与 `frontend/`（React Web 工作区）。
 `api-contract/` 是不部署的 TypeScript 类型与 client 包。
 旧 PHP、根目录 `uniapp/`（Vue 2 迁移参考）、Java 与历史资源保留供迁移核对，不在新 Docker 镜像中构建或运行。
 
@@ -9,11 +9,11 @@
 - Rust 按业务模块划分 `domain/`、`north/local/`、`north/remote/`、`south/port/`、`south/adapter/postgres/`。
 - HTTP 层不写 SQL；业务规则不依赖 Axum、SQLx。
 - SQLx migration 放在 `backend/migrations/`，递增且 forward-only；启动时自动迁移。
-- `frontend/apps/web/` 为 React Web，`frontend/apps/miniapp/` 为 uni-app Vue 3 + TypeScript 微信小程序；独立构建，禁止相互 import。管理与运营按 `features/admin/`、`features/operations/` 组织；身份、学校上下文、社区、媒体、资源与反馈放在各自 feature，`shared/` 不保存接口 DTO/client。
-- 小程序制品发布到微信平台，不新增 Compose 服务；Web 镜像只构建 contract + web，不构建旧 uniapp 或新小程序。平台中立协议/client 不依赖 DOM，平台请求适配保留独立凭据。
+- `frontend/apps/web/` 为 React Web。论坛管理及整个小程序已迁至独立的 linjian，禁止恢复旧论坛接口或 import 其客户端代码。管理与运营按 `features/admin/`、`features/operations/` 组织；`shared/` 不保存接口 DTO/client。
+- Web 镜像只构建 contract + web 与 docs，不构建旧 uniapp 或小程序。平台中立协议/client 不依赖 DOM。
 - 只在 feature 的 `api/index.ts` 引用 `@wekeeper/api-contract/*`，不得另写相同 DTO 或绕过 client 请求。
 - 公开接口修改同步更新后端、contract 与契约测试。TS 编译不能替代 Rust 序列化契约验证。
-- 业务接口必须经过身份、学校范围与用例授权；公开阅读仅在指定学校显式启用时开放。
+- 业务接口必须经过身份、所属业务范围与用例授权；手机分发使用独立移动工作空间权限，不依赖学校成员；企业微信使用 wecom_workspaces 与 wecom_workspace_members，不依赖学校主数据或学校成员。
 - 不接入千寻、Hook、Binlog 发送；发送流程遵守人工确认、随任务交付的单次调用授权与 unknown 核对语义。
 
 ## 研发流程与业务运行隔离
@@ -25,10 +25,23 @@
 - 设备通过 `task-deliveries` 一次接收完整签名执行包，候选选择与依赖检查均在平台交付前完成。接收落盘后直接本地执行，不再申请执行许可、联网复核依赖或续租；历史申请恢复、显示收件和结果补报不得排在已交付任务前。
 - 平台任务、目标投递与设备尝试必须分离。离线、锁屏、权限、本地适配、忙碌、托管准备、租约或恢复状态只约束对应设备或尝试，不得阻塞平台受理和管理合法任务，也不得使任务永久等待某台手机。
 - 新任务确认业务内容、目标与授权候选范围，所选手机为首选。在此范围内根据离线、拒绝、失败、超时与反馈自动换机并记录审计，不重复办理业务确认。原手机恢复、静止证明或物理锁释放不得成为另一台合法手机承接确定未发送目标的前提。历史任务不自动扩大授权范围。
-- 当前手机离线或明确执行失败时直接切换下一授权候选；接收后 5 分钟没有最终执行结果时切换下一台。平台按固定周期扫描持久结果，不为每个任务驻留线程等待。unknown 与历史许可风险保留审计但不阻止换机；迟到结果按原尝试入账，不覆盖后继身份。离线改派可能产生跨手机重复消息，不承诺同目标跨设备绝不重复。设备物理锁仍约束该设备；身份、学校授权、人工确认、业务额度和单次许可继续生效。
+- 当前手机离线或明确执行失败时直接切换下一授权候选；接收后 5 分钟没有最终执行结果时切换下一台。平台按固定周期扫描持久结果，不为每个任务驻留线程等待。unknown 与历史许可风险保留审计但不阻止换机；迟到结果按原尝试入账，不覆盖后继身份。离线改派可能产生跨手机重复消息，不承诺同目标跨设备绝不重复。设备物理锁仍约束该设备；身份、移动工作空间授权、人工确认、业务额度和单次许可继续生效。
 - 当前用户业务要求优先。现行架构规则见 `docs/adr/0008-mobile-candidate-dispatch.md`；历史报告、旧测试与旧 ADR 不得自行产生新门禁。发现冲突须同步消除，不能只在新文档写相反结论。
 
 - 不得从 Git 历史中恢复已删除的手机验收放行、交付激活或旧维护流程手册作为新需求；历史 ADR 与旧测试只解释其当时行为，不得覆盖本节的业务隔离约束。当前手机业务操作以 `docs/guide/operator/mobile-execution-tasks.md` 和 `docs/guide/platform-admin/shared-mobile-resources.md` 为准。
+
+## 产品文案
+
+- 当前产品使用“系统管理”“系统管理员”，不再使用“平台与系统管理”“平台管理员”等旧称谓。用户文案与操作手册保持一致；既有协议字段及权限标识不因文案调整而更改。
+
+操作审计属于系统管理，仅系统管理员可查询，不依赖企业微信或移动分发工作空间；审计页不挂载工作空间选择、创建或授权控件。
+
+企业微信客户群、消息模板、群发任务、发送账号及工作空间与权限页不显示分发工作空间下拉框；工作空间管理使用列表行操作，业务请求继续遵守对应范围与授权。
+
+## 文档归档
+
+- `docs/` 保存正式手册、架构决策与开发参考，参与文档站构建与发布。
+- 实施方案、实施记录、代码移除记录、阶段验证和验收报告等过程文档统一放在 `report/`，不得登记到文档站导航或搜索索引；移动时同步清理正式文档中的旧引用。`docs/` 中不得引用 `report/` 下文件的路径或链接。
 
 ## 验证
 
@@ -41,4 +54,6 @@ devbox run -- make check-backend
 本地无 Docker 调试使用 `devbox run -- make dev-embedded`，自动创建临时 PostgreSQL 17。
 嵌入式入口忽略外部数据库配置，退出删除数据；`devbox run -- make test-embedded` 验证生命周期。
 部署入口为 `compose.yaml`、`compose.dev.yaml` 与 `env.example`，仅包含 web、api、postgres。
-业务边界与授权设计见 [社区业务、学校边界与人工分享 ADR](docs/adr/0002-business-migration.md)，运行方法见根 [README.md](README.md) 与 [业务运行手册](docs/runbooks/business.md)。
+论坛管理、论坛 Web、小程序、学校成员与权限、学校设置、学校管理及登录账号管理均已退场。保留分发登录、系统管理员维护与两类独立工作空间授权。手机任务、手机目标群及手机使用管理保留在 wekeeper；使用 mobile_workspaces 与 mobile_workspace_members，不得恢复学校依赖。手机历史协议中的 school_id 仅为工作空间兼容字段。只读历史素材使用 distribution 自有投影，禁止依赖论坛业务模块或直接读取 posts；已确认废弃的论坛、学校及旧工作流表通过新增前向 migration 正式下线；不得修改既有 migration，不得恢复废弃表或依赖它们的运行代码。当前分发快照、执行授权、结果和审计表继续保留。
+
+当前业务边界与授权见 [独立分发工作空间](docs/guide/workspaces.md)；历史设计见 [社区业务、学校边界与人工分享 ADR](docs/adr/0002-business-migration.md)，运行方法见根 [README.md](README.md) 与 [业务运行手册](docs/runbooks/business.md)。
