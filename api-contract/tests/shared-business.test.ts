@@ -26,7 +26,7 @@ it('business input fixture has only business selection values',async()=>{
  const calls:unknown[]=[]
  const client=createSharedSendV2Client({requestResource:async(path,...args)=>{calls.push([path,...args]);return {} as never}})
  await client.usagePreview('school',input,'key')
- expect(calls[0]).toEqual(['/api/v1/schools/school/mobile-execution/usage-previews','POST',input,undefined,{'Idempotency-Key':'key'}])
+ expect(calls[0]).toEqual(['/api/v1/mobile-execution/workspaces/school/usage-previews','POST',input,undefined,{'Idempotency-Key':'key'}])
  expect(Object.keys(input).sort()).toEqual(['auto_targets','device_ids','expires_at','max_calls','targets'])
 })
 

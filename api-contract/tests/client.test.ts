@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import fixture from '../fixtures/system.json'
 import { ApiError, getJson } from '../src/http'
+import { workspace } from '../src/modules/business'
 import { getSystemInfo, type SystemInfo } from '../src/modules/system'
 
 function json(value: unknown, init: ResponseInit = {}) { return Response.json(value, {...init, headers:{'Content-Type':'application/vnd.api+json',...init.headers}}) }
@@ -37,23 +38,10 @@ describe('shared HTTP contract', () => {
   })
 })
 
-import postFixture from '../fixtures/post-created.json'
-import { workspace, type Post } from '../src/modules/business'
-import { setCsrf } from '../src/http'
-it('shares a real Rust create-post response and sends CSRF for writes', async () => {
-  const typed: Post = {id:postFixture.data.id,...postFixture.data.attributes, audit_status:'pending', visibility:'visible'}
-  expect(typed.id).toEqual(postFixture.data.id)
-  const fetchMock=vi.fn().mockResolvedValue(json(postFixture))
-  vi.stubGlobal('fetch',fetchMock);setCsrf('test-csrf')
-  expect(await workspace.mutate('school','posts',{title:'Campus',content:'Hello',images:[],tags:[]})).toEqual(typed)
-  expect(fetchMock).toHaveBeenCalledWith('/api/v1/schools/school/posts',expect.objectContaining({method:'POST',headers:expect.objectContaining({'X-CSRF-Token':'test-csrf'})}))
-  setCsrf('')
-})
-
 it('keeps OAuth selection in a fixed local entry URL', async () => {
   const { wecomOAuthUrl } = await import('../src/modules/business')
   expect(wecomOAuthUrl()).toBe('/api/v1/wecom/oauth/start')
-  expect(wecomOAuthUrl({school: '00000000-0000-0000-0000-000000000000'})).toBe('/api/v1/wecom/oauth/start?school=00000000-0000-0000-0000-000000000000')
+  expect(wecomOAuthUrl({workspace: '00000000-0000-0000-0000-000000000000'})).toBe('/api/v1/wecom/oauth/start?workspace=00000000-0000-0000-0000-000000000000')
 })
 
 it('reads the public WeCom status using the backend fixture', async () => {
@@ -79,25 +67,24 @@ it('uses JSON:API title when no detail is available', async () => {
   await expect(getSystemInfo()).rejects.toMatchObject({status:503,message:'Unavailable'})
 })
 
-it('sends only JSON:API resources, including nested comment writes', async () => {
+it('sends only JSON:API resources, and rejects retired forum writes', async () => {
   const mock = vi.fn().mockImplementation(async () => json({data:null}))
   vi.stubGlobal('fetch', mock)
   await workspace.mutate('s','groups',{id:'g',name:'Group'})
   expect(mock.mock.calls[0][1]).toMatchObject({headers:{'Content-Type':'application/vnd.api+json'},body:JSON.stringify({data:{type:'groups',id:'g',attributes:{name:'Group'}}})})
-  await workspace.mutate('s','posts/p/comments',{content:'Reply'})
-  expect(JSON.parse(mock.mock.calls[1][1].body).data.type).toBe('comments')
+  await expect(workspace.mutate('s','posts/p/comments',{content:'Reply'})).rejects.toThrow()
   await expect(workspace.mutate('s','templates/t/versions',{body:'Template'})).rejects.toThrow()
-  expect(mock).toHaveBeenCalledTimes(2)
+  expect(mock).toHaveBeenCalledTimes(1)
 })
 it.each([{data:{id:'old',title:'Legacy'}},{data:{type:'posts',id:'p',attributes:{id:'conflict'}}},{data:[],meta:{page:{number:1,size:30,has_more:'false'}}},{data:null,errors:[]}])('rejects incompatible success documents rather than supporting two formats: %j',async fixture=>{
   vi.stubGlobal('fetch',vi.fn().mockResolvedValue(json(fixture)))
-  await expect(workspace.list('s','posts')).rejects.toMatchObject({code:'invalid_document'})
+  await expect(workspace.list('s','groups')).rejects.toMatchObject({code:'invalid_document'})
 })
 it('exposes authoritative page metadata and empty collections',async()=>{
   vi.stubGlobal('fetch',vi.fn().mockResolvedValue(json({data:[],meta:{page:{number:2,size:30,has_more:false}}})))
-  expect(await workspace.list('s','posts','?page[number]=2')).toEqual({items:[],page:{number:2,size:30,has_more:false}})
+  expect(await workspace.list('s','groups','?page[number]=2')).toEqual({items:[],page:{number:2,size:30,has_more:false}})
 })
 it('rejects a successful application/json response after the protocol cutover',async()=>{
   vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json({data:null})))
-  await expect(workspace.mutate('s','posts/p/visibility',{revision:1})).rejects.toMatchObject({code:'invalid_document'})
+  await expect(workspace.mutate('s','groups',{name:'Group'})).rejects.toMatchObject({code:'invalid_document'})
 })

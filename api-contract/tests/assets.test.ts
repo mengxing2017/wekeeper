@@ -16,7 +16,7 @@ it('group sync returns its run and uses the asset JSON API resource type',async(
 it('school association requires both credential generation and the exact observed object version',async()=>{
  const fetch=vi.fn().mockResolvedValue(Response.json({data:{type:'groups',id:'g',attributes:{}}},{headers:{'Content-Type':'application/vnd.api+json'}}));vi.stubGlobal('fetch',fetch);
  const input={directory_group_id:'directory',expected_generation:3,expected_checked_at:'2026-10-21T00:00:00Z',name:'学校显示名'};
- await assets.bind('school',input);expect(fetch.mock.calls[0][0]).toBe('/api/v1/schools/school/groups/from-directory');expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({data:{type:'wecom-group-bindings',attributes:input}});
+ await assets.bind('school',input);expect(fetch.mock.calls[0][0]).toBe('/api/v1/wecom-distribution/workspaces/school/groups/from-directory');expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({data:{type:'wecom-group-bindings',attributes:input}});
 });
 
 it('decodes group relations using member_type without a reserved type attribute',async()=>{

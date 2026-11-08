@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { directory, identity } from '../src/modules/business';
+import { directory } from '../src/modules/business';
 import fixture from '../fixtures/wecom-directory-member.json';
 afterEach(()=>vi.unstubAllGlobals());
 it('decodes the shared Rust directory fixture and preserves filters',async()=>{
@@ -15,8 +15,7 @@ it('uses a dedicated binding resource and revision header for unbinding',async()
     expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({data:{type:'wecom-bindings',attributes:{member_id:'member',revision:3}}});
     await directory.unbind('account',4);
     expect(fetch.mock.calls[1][1].headers['If-Match']).toBe('"4"');
-    await identity.update('account',{display_name:'昵称',active:true});
-    expect(JSON.parse(fetch.mock.calls[2][1].body).data.attributes).not.toHaveProperty('wecom_userid');
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/platform/wecom-distribution/operators/account/wecom-binding');
 });
 it('rotates only the current server credentials with an explicit generation',async()=>{
     const fetch=vi.fn().mockResolvedValue(Response.json({data:null},{headers:{'Content-Type':'application/vnd.api+json'}}));vi.stubGlobal('fetch',fetch);
