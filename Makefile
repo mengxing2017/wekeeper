@@ -1,4 +1,4 @@
-.PHONY: install check check-web check-backend fmt test-unit test-integration test-embedded api-dev dev-embedded web-dev miniapp-dev check-miniapp compose-config compose-up compose-down reset-dev-database smoke
+.PHONY: install check check-web check-backend fmt test-unit test-integration test-embedded api-dev dev-embedded web-dev compose-config compose-up compose-down reset-dev-database smoke
 
 install:
 	pnpm --dir api-contract install --frozen-lockfile
@@ -43,15 +43,6 @@ test-embedded:
 	python3 tools/repair_rustup_linker.py
 	cargo build --locked --manifest-path backend/Cargo.toml --example embedded_postgres
 	python3 tools/check_embedded.py
-
-check-miniapp:
-	pnpm --dir frontend --filter @wekeeper/miniapp typecheck
-	pnpm --dir frontend --filter @wekeeper/miniapp lint
-	pnpm --dir frontend --filter @wekeeper/miniapp test
-	pnpm --dir frontend build:miniapp
-
-miniapp-dev:
-	pnpm --dir frontend dev:miniapp
 
 web-dev:
 	pnpm --dir frontend dev

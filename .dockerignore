@@ -21,7 +21,3 @@ api-contract/node_modules/
 **/.env.*
 **/*.log
 **/.DS_Store
-
-# The miniapp is a separate client artifact, never built in the web image.
-frontend/apps/miniapp/src/
-frontend/apps/miniapp/tests/

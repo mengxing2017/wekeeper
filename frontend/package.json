@@ -5,13 +5,11 @@
   "packageManager": "pnpm@11.22.0",
   "scripts": {
     "dev": "pnpm --filter @wekeeper/web dev",
-    "dev:miniapp": "pnpm --filter @wekeeper/miniapp dev",
     "typecheck": "pnpm -r typecheck",
     "lint": "node tools/check-boundaries.mjs && pnpm -r lint",
     "test": "node --test tools/*.test.mjs && pnpm -r test",
     "build": "pnpm -r build",
-    "build:web": "pnpm --filter @wekeeper/web build",
-    "build:miniapp": "pnpm --filter @wekeeper/miniapp build"
+    "build:web": "pnpm --filter @wekeeper/web build"
   },
   "devDependencies": {
     "prettier": "3.6.2",
