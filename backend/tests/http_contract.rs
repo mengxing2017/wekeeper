@@ -1157,3 +1157,19 @@ async fn system_audit_rejects_workspace_members_before_database_access() {
         Err(wekeeper_api::business::Error::Forbidden)
     ));
 }
+
+#[test]
+fn platform_heartbeat_probe_and_response_match_shared_contract() {
+    use wekeeper_api::distribution::domain::device_control::{Frame, Pulse};
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/device-control-probe.json"
+    ))
+    .unwrap();
+    let frame: Frame = serde_json::from_value(fixture["frame"].clone()).unwrap();
+    let response: Pulse = serde_json::from_value(fixture["response"].clone()).unwrap();
+    assert_eq!(frame.probe_id, response.probe_id);
+    assert!(response.heartbeat_id.is_some());
+    assert_eq!(response.heartbeat_sequence, 1);
+    assert_eq!(serde_json::to_value(frame).unwrap(), fixture["frame"]);
+    assert_eq!(serde_json::to_value(response).unwrap(), fixture["response"]);
+}

@@ -2244,7 +2244,7 @@ async fn offline_preference_dispatches_authorized_phone_and_never_expands_scope(
     );
     let outsider = pool_phone(&f, "C").await;
     pool_ready(&f, outsider).await;
-    sqlx::query("UPDATE device_control_sessions SET connected=false WHERE device_id=$1")
+    sqlx::query("UPDATE device_control_sessions SET connected=false,last_heartbeat_at=clock_timestamp()-interval '191 seconds' WHERE device_id=$1")
         .bind(b)
         .execute(&f.pool)
         .await
@@ -2285,7 +2285,7 @@ async fn offline_granted_phone_moves_to_next_without_receipt_or_idle_proof() {
     let grant = pool_claim(&f, &ca, ea, aid).await;
     assert_eq!(grant["state"], "granted", "{grant}");
 
-    sqlx::query("UPDATE device_control_sessions SET connected=false WHERE device_id=$1")
+    sqlx::query("UPDATE device_control_sessions SET connected=false,last_heartbeat_at=clock_timestamp()-interval '191 seconds' WHERE device_id=$1")
         .bind(f.device)
         .execute(&f.pool)
         .await
@@ -3287,7 +3287,7 @@ async fn dispatch_exhaustion_fences_replay_but_accepts_late_success() {
     let grant = &delivered["execution"];
     assert_eq!(grant["state"], "granted");
     // No original result yet; the phone goes offline, all remaining rounds exhaust.
-    sqlx::query("UPDATE device_control_sessions SET connected=false")
+    sqlx::query("UPDATE device_control_sessions SET connected=false,last_heartbeat_at=clock_timestamp()-interval '191 seconds'")
         .execute(&f.pool)
         .await
         .unwrap();
@@ -3457,7 +3457,7 @@ async fn delivered_single_phone_waits_five_minutes_in_each_of_three_rounds() {
             "SELECT result_deadline_at>=accepted_at+interval '5 minutes' AND result_deadline_at<accepted_at+interval '5 minutes 1 second' FROM mobile_execution_grants WHERE id=$1",
         ).bind(execution_id).fetch_one(&f.pool).await.unwrap();
         assert!(five_minutes);
-        sqlx::query("UPDATE device_control_sessions SET connected=false")
+        sqlx::query("UPDATE device_control_sessions SET connected=false,last_heartbeat_at=clock_timestamp()-interval '191 seconds'")
             .execute(&f.pool)
             .await
             .unwrap();
@@ -3524,8 +3524,8 @@ async fn delivered_phone_heartbeat_freshness_does_not_cancel_execution() {
     let grant = pool_claim(&f, &credential, epoch, aid).await;
     assert_eq!(grant["state"], "granted");
     // Old dispatch used a hard-coded 30-second heartbeat cutoff, independently
-    // of the shared 45/90-second presence policy and the five-minute result wait.
-    for age in [35, 60] {
+    // of the shared heartbeat presence policy and the five-minute result wait.
+    for age in [35, 60, 130, 180] {
         sqlx::query("UPDATE device_control_sessions SET last_heartbeat_at=clock_timestamp()-make_interval(secs=>$2::double precision),desired_paused=true WHERE device_id=$1")
             .bind(f.device).bind(age as f64).execute(&f.pool).await.unwrap();
         pool_tick(&f).await;
@@ -3703,5 +3703,40 @@ async fn mobile_membership_is_independent_of_school_membership_and_revocation() 
     .await
     .unwrap();
     assert!(service.school_read(&actor, f.school, None).await.is_err());
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn candidate_retains_assignment_through_two_lost_cycles_and_transport_repair() {
+    let f = Fixture::with_adapter(false).await;
+    let b = pool_phone(&f, "B").await;
+    pool_ready(&f, f.device).await;
+    pool_ready(&f, b).await;
+    let task = pool_confirm(&f, vec![f.targets[0]]).await;
+    let original = pool_current(&task["items"][0])["id"].clone();
+    assert_eq!(
+        pool_current(&task["items"][0])["plan"]["device_id"],
+        json!(f.device)
+    );
+    for age in [35, 70, 131, 181] {
+        sqlx::query("UPDATE device_control_sessions SET connected=false,last_heartbeat_at=clock_timestamp()-make_interval(secs=>$2::double precision) WHERE device_id=$1")
+            .bind(f.device).bind(age as f64).execute(&f.pool).await.unwrap();
+        pool_tick(&f).await;
+        let detail = pool_detail(&f, &task).await;
+        assert_eq!(
+            pool_current(&detail["items"][0])["id"],
+            original,
+            "premature replacement at {age}s: {detail}"
+        );
+    }
+    sqlx::query("UPDATE device_control_sessions SET last_heartbeat_at=clock_timestamp()-interval '191 seconds' WHERE device_id=$1")
+        .bind(f.device).execute(&f.pool).await.unwrap();
+    pool_tick(&f).await;
+    let detail = pool_detail(&f, &task).await;
+    assert_eq!(
+        pool_current(&detail["items"][0])["plan"]["device_id"],
+        json!(b)
+    );
     f.close().await;
 }
