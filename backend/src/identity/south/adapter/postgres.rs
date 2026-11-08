@@ -47,9 +47,9 @@ impl Repository {
     }
     pub async fn authenticate(&self, token: &str, kind: &str) -> Result<Actor> {
         let h = hash(token);
-        let row=sqlx::query("UPDATE sessions s SET last_seen_at=now() FROM accounts a WHERE s.account_id=a.id AND s.token_hash=$1 AND s.kind=$2 AND s.expires_at>now() AND s.last_seen_at>now()-interval '30 minutes' AND a.active AND (NOT s.wecom_authenticated OR (s.wecom_binding_revision=a.wecom_binding_revision AND s.credential_generation=(SELECT credential_generation FROM wecom_directory_state) AND EXISTS(SELECT 1 FROM wecom_members m WHERE m.id=a.wecom_member_id AND m.verification='verified' AND m.status=1))) RETURNING a.id,a.username,a.display_name,a.platform_admin,a.bound_school_id,s.csrf,s.wecom_authenticated,a.wecom_binding_revision").bind(&h).bind(kind).fetch_optional(&self.0).await?.ok_or(Error::Unauthorized)?;
+        let row=sqlx::query("UPDATE sessions s SET last_seen_at=now() FROM accounts a WHERE s.account_id=a.id AND s.token_hash=$1 AND s.kind=$2 AND s.expires_at>now() AND s.last_seen_at>now()-interval '30 minutes' AND a.active AND (NOT s.wecom_authenticated OR (s.wecom_binding_revision=a.wecom_binding_revision AND s.credential_generation=(SELECT credential_generation FROM wecom_directory_state) AND EXISTS(SELECT 1 FROM wecom_members m WHERE m.id=a.wecom_member_id AND m.verification='verified' AND m.status=1))) RETURNING a.id,a.username,a.display_name,a.platform_admin,NULL::uuid AS bound_school_id,s.csrf,s.wecom_authenticated,a.wecom_binding_revision").bind(&h).bind(kind).fetch_optional(&self.0).await?.ok_or(Error::Unauthorized)?;
         let id: Uuid = row.get("id");
-        let grants=sqlx::query("SELECT m.school_id,m.role FROM school_memberships m JOIN schools s ON s.id=m.school_id WHERE m.account_id=$1 AND s.active AND m.role<>'revoked'").bind(id).fetch_all(&self.0).await?.into_iter().map(|r|Grant{school_id:r.get("school_id"),role:r.get("role")}).collect();
+        let grants=sqlx::query("SELECT m.school_id,m.role FROM wecom_workspace_members m JOIN wecom_workspaces s ON s.id=m.school_id WHERE m.account_id=$1 AND s.active AND m.role<>'revoked'").bind(id).fetch_all(&self.0).await?.into_iter().map(|r|Grant{school_id:r.get("school_id"),role:r.get("role")}).collect();
         Ok(Actor {
             id,
             username: row.get("username"),
@@ -83,38 +83,108 @@ impl Repository {
         sqlx::query("INSERT INTO accounts(id,username,display_name,password_hash,platform_admin) VALUES($1,$2,$3,$4,$5)").bind(id).bind(username).bind(name).bind(password).bind(admin).execute(&self.0).await?;
         Ok(id)
     }
-    pub async fn list(&self) -> Result<Vec<Value>> {
-        Ok(sqlx::query_scalar("SELECT jsonb_build_object('id',id,'username',username,'display_name',display_name,'active',active,'platform_admin',platform_admin,'bound_school_id',bound_school_id,'wecom_userid',(SELECT userid FROM wecom_members WHERE id=accounts.wecom_member_id),'wecom_member_id',wecom_member_id,'wecom_binding_revision',wecom_binding_revision,'wecom_name',(SELECT name FROM wecom_members WHERE id=accounts.wecom_member_id),'wecom_status',(SELECT status FROM wecom_members WHERE id=accounts.wecom_member_id),'wecom_verification',(SELECT verification FROM wecom_members WHERE id=accounts.wecom_member_id),'wecom_departments',coalesce((SELECT jsonb_agg(d.name ORDER BY d.id) FROM wecom_members m JOIN wecom_departments d ON d.id=ANY(m.department) WHERE m.id=accounts.wecom_member_id),'[]'::jsonb)) FROM accounts ORDER BY created_at DESC,id").fetch_all(&self.0).await?)
+    pub async fn list(&self, search: &str) -> Result<Vec<Value>> {
+        Ok(sqlx::query_scalar("SELECT jsonb_build_object('id',id,'username',username,'display_name',display_name,'active',active,'platform_admin',platform_admin) FROM accounts WHERE platform_admin AND ($1 = '' OR strpos(lower(username),lower($1))>0 OR strpos(lower(display_name),lower($1))>0) ORDER BY created_at DESC,id").bind(search).fetch_all(&self.0).await?)
     }
-    pub async fn update(&self, actor: Uuid, id: Uuid, name: &str, active: bool) -> Result<()> {
+    pub async fn create_administrator(
+        &self,
+        actor: &Actor,
+        username: &str,
+        name: &str,
+        password: &str,
+    ) -> Result<Value> {
         let mut tx = self.0.begin().await?;
-        let n = sqlx::query(
-            "UPDATE accounts SET display_name=$2,active=$3 WHERE id=$1 AND NOT platform_admin",
+        Self::lock_administrators(&mut tx, actor).await?;
+        let id = Uuid::now_v7();
+        let value = sqlx::query_scalar("INSERT INTO accounts(id,username,display_name,password_hash,platform_admin) VALUES($1,$2,$3,$4,true) ON CONFLICT(username) DO NOTHING RETURNING jsonb_build_object('id',id,'username',username,'display_name',display_name,'active',active,'platform_admin',platform_admin)")
+            .bind(id).bind(username).bind(name).bind(password).fetch_optional(&mut *tx).await?.ok_or_else(|| Error::Invalid("账号已存在，请使用其他账号".into()))?;
+        crate::audit::record(
+            &mut tx,
+            actor,
+            Uuid::nil(),
+            "identity.administrator.create",
+            id,
+            json!({"username":username,"display_name":name}),
         )
-        .bind(id)
-        .bind(name)
-        .bind(active)
-        .execute(&mut *tx)
-        .await?
-        .rows_affected();
-        if n == 0 {
-            return Err(Error::Forbidden);
+        .await?;
+        tx.commit().await?;
+        Ok(value)
+    }
+    async fn lock_administrators(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        actor: &Actor,
+    ) -> Result<()> {
+        // Serialize administrator changes and recheck the actor after acquiring the lock.
+        sqlx::query("LOCK TABLE accounts IN SHARE ROW EXCLUSIVE MODE")
+            .execute(&mut **tx)
+            .await?;
+        sqlx::query("SELECT id FROM accounts WHERE id=$1 AND active AND platform_admin")
+            .bind(actor.id)
+            .fetch_optional(&mut **tx)
+            .await?
+            .ok_or(Error::Forbidden)?;
+        Ok(())
+    }
+    pub async fn edit_administrator(
+        &self,
+        actor: &Actor,
+        id: Uuid,
+        name: &str,
+        active: bool,
+    ) -> Result<Value> {
+        let mut tx = self.0.begin().await?;
+        Self::lock_administrators(&mut tx, actor).await?;
+        let value = sqlx::query_scalar("UPDATE accounts SET display_name=$2,active=$3 WHERE id=$1 AND platform_admin RETURNING jsonb_build_object('id',id,'username',username,'display_name',display_name,'active',active,'platform_admin',platform_admin)")
+            .bind(id).bind(name).bind(active).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
+        if !active {
+            sqlx::query("DELETE FROM sessions WHERE account_id=$1")
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
         }
+        crate::audit::record(
+            &mut tx,
+            actor,
+            Uuid::nil(),
+            "identity.administrator.update",
+            id,
+            json!({"display_name":name,"active":active}),
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(value)
+    }
+    pub async fn remove_administrator(&self, actor: &Actor, id: Uuid) -> Result<()> {
+        let mut tx = self.0.begin().await?;
+        Self::lock_administrators(&mut tx, actor).await?;
+        // Keep account references in historical task and audit records intact.
+        sqlx::query("UPDATE accounts SET platform_admin=false,active=false WHERE id=$1 AND platform_admin RETURNING id").bind(id).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
         sqlx::query("DELETE FROM sessions WHERE account_id=$1")
             .bind(id)
             .execute(&mut *tx)
             .await?;
-        sqlx::query("INSERT INTO audit_events(id,actor_id,action,object_id) VALUES($1,$2,'account.update',$3)").bind(Uuid::now_v7()).bind(actor).bind(id).execute(&mut *tx).await?;
+        crate::audit::record(
+            &mut tx,
+            actor,
+            Uuid::nil(),
+            "identity.administrator.delete",
+            id,
+            json!({}),
+        )
+        .await?;
         tx.commit().await?;
         Ok(())
     }
     pub async fn reset_password(&self, id: Uuid, password: &str) -> Result<()> {
         let mut tx = self.0.begin().await?;
-        sqlx::query("UPDATE accounts SET password_hash=$2 WHERE id=$1")
-            .bind(id)
-            .bind(password)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            "UPDATE accounts SET password_hash=$2 WHERE id=$1 AND platform_admin RETURNING id",
+        )
+        .bind(id)
+        .bind(password)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(Error::NotFound)?;
         sqlx::query("DELETE FROM sessions WHERE account_id=$1")
             .bind(id)
             .execute(&mut *tx)
@@ -160,11 +230,29 @@ impl crate::identity::south::port::Store for Repository {
     ) -> Result<Uuid> {
         Repository::create(self, username, name, password, admin).await
     }
-    async fn list(&self) -> Result<Vec<Value>> {
-        Repository::list(self).await
+    async fn list(&self, search: &str) -> Result<Vec<Value>> {
+        Repository::list(self, search).await
     }
-    async fn update(&self, actor: Uuid, id: Uuid, name: &str, active: bool) -> Result<()> {
-        Repository::update(self, actor, id, name, active).await
+    async fn create_administrator(
+        &self,
+        actor: &Actor,
+        username: &str,
+        name: &str,
+        password: &str,
+    ) -> Result<Value> {
+        Repository::create_administrator(self, actor, username, name, password).await
+    }
+    async fn edit_administrator(
+        &self,
+        actor: &Actor,
+        id: Uuid,
+        name: &str,
+        active: bool,
+    ) -> Result<Value> {
+        Repository::edit_administrator(self, actor, id, name, active).await
+    }
+    async fn remove_administrator(&self, actor: &Actor, id: Uuid) -> Result<()> {
+        Repository::remove_administrator(self, actor, id).await
     }
     async fn reset_password(&self, id: Uuid, password: &str) -> Result<()> {
         Repository::reset_password(self, id, password).await

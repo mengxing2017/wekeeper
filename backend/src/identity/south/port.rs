@@ -27,13 +27,25 @@ pub trait Store: Clone + Send + Sync + 'static {
         password: &str,
         admin: bool,
     ) -> impl std::future::Future<Output = Result<Uuid>> + Send;
-    fn list(&self) -> impl std::future::Future<Output = Result<Vec<Value>>> + Send;
-    fn update(
+    fn list(&self, search: &str) -> impl std::future::Future<Output = Result<Vec<Value>>> + Send;
+    fn create_administrator(
         &self,
-        actor: Uuid,
+        actor: &Actor,
+        username: &str,
+        name: &str,
+        password: &str,
+    ) -> impl std::future::Future<Output = Result<Value>> + Send;
+    fn edit_administrator(
+        &self,
+        actor: &Actor,
         id: Uuid,
         name: &str,
         active: bool,
+    ) -> impl std::future::Future<Output = Result<Value>> + Send;
+    fn remove_administrator(
+        &self,
+        actor: &Actor,
+        id: Uuid,
     ) -> impl std::future::Future<Output = Result<()>> + Send;
     fn reset_password(
         &self,

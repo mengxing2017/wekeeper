@@ -1,12 +1,12 @@
-use super::local::{AccountUpdate, Login, NewAccount};
+use super::local::{AdministratorCreate, AdministratorEdit, Login};
 use crate::{
     bootstrap::Application,
-    business::{Actor, Error, Result},
+    business::{Actor, Error, Page, Result},
     http::jsonapi::{ApiResponse, Input, completed, resource, singleton},
 };
 use axum::{
     Router,
-    extract::{FromRequestParts, Path, State},
+    extract::{FromRequestParts, Path, Query, State},
     http::{HeaderMap, header, request::Parts},
     response::{IntoResponse, Response},
     routing::{get, post, put},
@@ -16,11 +16,6 @@ use uuid::Uuid;
 impl FromRequestParts<Application> for Actor {
     type Rejection = Error;
     async fn from_request_parts(parts: &mut Parts, state: &Application) -> Result<Self> {
-        let bearer = parts
-            .headers
-            .get(header::AUTHORIZATION)
-            .and_then(|s| s.to_str().ok())
-            .and_then(|s| s.strip_prefix("Bearer "));
         let cookie = parts
             .headers
             .get(header::COOKIE)
@@ -29,12 +24,8 @@ impl FromRequestParts<Application> for Actor {
                 s.split(';')
                     .find_map(|v| v.trim().strip_prefix("wekeeper_session="))
             });
-        let (token, kind) = if let Some(t) = bearer {
-            (t, "miniapp")
-        } else {
-            (cookie.ok_or(Error::Unauthorized)?, "browser")
-        };
-        let mut actor = state.identity.authenticate(token, kind).await?;
+        let token = cookie.ok_or(Error::Unauthorized)?;
+        let mut actor = state.identity.authenticate(token, "browser").await?;
         if actor.wecom_authenticated {
             state.integrations.directory().ensure_config().await?;
         }
@@ -142,26 +133,60 @@ async fn logout(State(a): State<Application>, actor: Actor) -> Result<Response> 
     )
         .into_response())
 }
-async fn list(State(a): State<Application>, actor: Actor) -> Result<ApiResponse> {
-    Ok(resource("accounts", a.identity.list(&actor).await?))
-}
-async fn create(
+async fn list(
     State(a): State<Application>,
     actor: Actor,
-    input_document: Input,
+    Query(query): Query<Page>,
 ) -> Result<ApiResponse> {
-    let v = input_document.decode::<NewAccount>("accounts")?;
-    Ok(resource("accounts", a.identity.create(&actor, v).await?))
+    Ok(resource(
+        "administrators",
+        a.identity
+            .list(&actor, query.search.as_deref().unwrap_or(""))
+            .await?,
+    ))
 }
-async fn update(
+async fn create_administrator(
+    State(a): State<Application>,
+    actor: Actor,
+    input: Input,
+) -> Result<ApiResponse> {
+    let value = a
+        .identity
+        .create_administrator(
+            &actor,
+            input.decode::<AdministratorCreate>("administrators")?,
+        )
+        .await?;
+    Ok(resource("administrators", value))
+}
+async fn edit_administrator(
     State(a): State<Application>,
     actor: Actor,
     Path(id): Path<Uuid>,
-    input_document: Input,
+    input: Input,
 ) -> Result<ApiResponse> {
-    let v = input_document.decode::<AccountUpdate>("accounts")?;
-    a.identity.update(&actor, id, v).await?;
+    let value = a
+        .identity
+        .edit_administrator(
+            &actor,
+            id,
+            input.decode::<AdministratorEdit>("administrators")?,
+        )
+        .await?;
+    Ok(resource("administrators", value))
+}
+async fn remove_administrator(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(id): Path<Uuid>,
+) -> Result<ApiResponse> {
+    a.identity.remove_administrator(&actor, id).await?;
     Ok(completed())
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PasswordReset {
+    password: String,
 }
 async fn reset(
     State(a): State<Application>,
@@ -169,7 +194,7 @@ async fn reset(
     Path(id): Path<Uuid>,
     input_document: Input,
 ) -> Result<ApiResponse> {
-    let v = input_document.decode::<Login>("accounts")?;
+    let v = input_document.decode::<PasswordReset>("administrators")?;
     a.identity.reset(&actor, id, &v.password).await?;
     Ok(completed())
 }
@@ -191,9 +216,15 @@ pub fn router() -> Router<Application> {
     Router::new()
         .route("/api/v1/auth/sessions", post(login))
         .route("/api/v1/auth/session", get(session).delete(logout))
-        .route("/api/v1/accounts", get(list).post(create))
-        .route("/api/v1/accounts/{id}", put(update))
-        .route("/api/v1/accounts/{id}/password", post(reset))
+        .route(
+            "/api/v1/platform/administrators",
+            get(list).post(create_administrator),
+        )
+        .route(
+            "/api/v1/platform/administrators/{id}",
+            put(edit_administrator).delete(remove_administrator),
+        )
+        .route("/api/v1/platform/administrators/{id}/password", post(reset))
         .route("/api/v1/profile", put(profile))
 }
 

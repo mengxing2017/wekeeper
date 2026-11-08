@@ -2,7 +2,7 @@ use super::super::{domain, south::adapter::postgres::Repository};
 use crate::business::{Actor, Error, Result, require, text};
 use crate::identity::south::port::Store;
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 use uuid::Uuid;
 #[derive(Clone)]
 pub struct Service<R: Store = Repository>(pub R);
@@ -12,14 +12,15 @@ pub struct Login {
     pub password: String,
 }
 #[derive(Deserialize)]
-pub struct NewAccount {
+#[serde(deny_unknown_fields)]
+pub struct AdministratorCreate {
     pub username: String,
     pub display_name: String,
     pub password: String,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct AccountUpdate {
+pub struct AdministratorEdit {
     pub display_name: String,
     pub active: bool,
 }
@@ -46,13 +47,6 @@ impl<R: Store> Service<R> {
             .session(row.expect("verified account").0, "browser", false)
             .await
     }
-    pub async fn create(&self, actor: &Actor, input: NewAccount) -> Result<Value> {
-        actor.platform()?;
-        let id = self
-            .bootstrap(&input.username, &input.display_name, &input.password, false)
-            .await?;
-        Ok(json!({"id":id}))
-    }
     pub async fn bootstrap(
         &self,
         username: &str,
@@ -65,16 +59,39 @@ impl<R: Store> Service<R> {
             .create(&text(username, 1, 100)?, &text(name, 1, 100)?, &hash, admin)
             .await
     }
-    pub async fn list(&self, a: &Actor) -> Result<Vec<Value>> {
+    pub async fn list(&self, a: &Actor, search: &str) -> Result<Vec<Value>> {
         a.platform()?;
-        self.0.list().await
+        self.0.list(search.trim()).await
     }
-    pub async fn update(&self, a: &Actor, id: Uuid, input: AccountUpdate) -> Result<()> {
+    pub async fn create_administrator(
+        &self,
+        a: &Actor,
+        input: AdministratorCreate,
+    ) -> Result<Value> {
         a.platform()?;
-        require(a.id != id, "不能通过管理接口禁用自身")?;
+        let username = text(&input.username, 1, 100)?;
+        let name = text(&input.display_name, 1, 100)?;
+        let hash = domain::password_hash(&input.password)?;
         self.0
-            .update(a.id, id, &text(&input.display_name, 1, 100)?, input.active)
+            .create_administrator(a, &username, &name, &hash)
             .await
+    }
+    pub async fn edit_administrator(
+        &self,
+        a: &Actor,
+        id: Uuid,
+        input: AdministratorEdit,
+    ) -> Result<Value> {
+        a.platform()?;
+        require(id != a.id || input.active, "不能停用当前登录管理员")?;
+        self.0
+            .edit_administrator(a, id, &text(&input.display_name, 1, 100)?, input.active)
+            .await
+    }
+    pub async fn remove_administrator(&self, a: &Actor, id: Uuid) -> Result<()> {
+        a.platform()?;
+        require(id != a.id, "不能删除当前登录管理员")?;
+        self.0.remove_administrator(a, id).await
     }
     pub async fn reset(&self, a: &Actor, id: Uuid, p: &str) -> Result<()> {
         a.platform()?;
