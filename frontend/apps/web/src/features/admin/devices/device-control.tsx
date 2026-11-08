@@ -25,7 +25,7 @@ export function DeviceControlPanel({ deviceId }: { deviceId: string }) {
     {query.error && <Alert type="error" title={query.error.message} />}
     {value && <><ControlStatus state={value.state} fresh={fresh} />
       {!fresh && <p>状态获取失败或已过期，上次确认于：{new Date(query.dataUpdatedAt).toLocaleString()}</p>}
-      <p>控制通道：{value.transport ?? '尚未建立'} · 最近心跳：{value.last_control_heartbeat_at ?? '尚未连接'}</p>
+      <p>控制通道：{value.transport ?? '尚未建立'}{value.transport_connected === false ? '（正在恢复连接）' : ''} · 最近心跳：{value.last_control_heartbeat_at ?? '尚未连接'}</p>
       <p>执行条件：{value.readiness === 'ready' ? '就绪' : (value.block_reason ? reasons[value.block_reason] ?? '设备尚未就绪' : '等待设备上报')} · 平台期望：{value.desired_paused ? '暂停执行' : '允许按原授权评估执行'}</p>
       <p>凭据到期：{value.credential_expires_at ?? '无有效凭据'}。在线不代表已获准发送；离线指令将等待设备恢复后确认。</p>
       <Space wrap><Button disabled={busy} onClick={() => void send('pause_execution')}>暂停执行</Button><Button disabled={busy} onClick={() => void send('resume_execution')}>解除平台暂停</Button><Button disabled={busy} onClick={() => void send('request_status')}>请求状态</Button></Space>
