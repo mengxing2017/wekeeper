@@ -14,8 +14,6 @@ pub enum CommandKind {
     TaskAvailable,
     CancelExecution,
     ConfigurationChanged,
-    PauseExecution,
-    ResumeExecution,
     RequestStatus,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]

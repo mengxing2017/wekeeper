@@ -172,7 +172,7 @@ impl Store for Repository {
         frame.heartbeat_id = heartbeat_id;
         frame.heartbeat_fresh = heartbeat_fresh;
         if !closing {
-            let rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(c) FROM device_control_commands c WHERE device_id=$1 AND state IN ('queued','delivered','accepted') ORDER BY sequence LIMIT 100").bind(c.device_id).fetch_all(&mut *tx).await?;
+            let rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(c) FROM device_control_commands c WHERE device_id=$1 AND state IN ('queued','delivered','accepted') AND kind NOT IN ('pause_execution','resume_execution') ORDER BY sequence LIMIT 100").bind(c.device_id).fetch_all(&mut *tx).await?;
             for row in rows {
                 frame
                     .commands
@@ -230,20 +230,10 @@ impl Store for Repository {
    if old["request_digest"]!=digest{return Err(Error::Conflict)}
    tx.commit().await?;return Ok(old)
   }
-        let paused = match input.kind {
-            CommandKind::PauseExecution => Some(true),
-            CommandKind::ResumeExecution => Some(false),
-            _ => None,
-        };
-        let revision: Option<i64> = if let Some(paused) = paused {
-            Some(sqlx::query_scalar("INSERT INTO device_control_sessions(device_id,connection_id,transport,connected,desired_paused,desired_revision) VALUES($1,$2,'https',false,$3,1) ON CONFLICT(device_id) DO UPDATE SET desired_paused=$3,desired_revision=device_control_sessions.desired_revision+1 RETURNING desired_revision").bind(device).bind(Uuid::new_v4()).bind(paused).fetch_one(&mut *tx).await?)
-        } else {
-            None
-        };
         let kind = serde_json::to_value(input.kind).map_err(|e| Error::Database(e.to_string()))?;
         let id = Uuid::new_v4();
         sqlx::query("INSERT INTO device_control_commands(id,device_id,kind,desired_revision,request_key,request_digest,actor_id) VALUES($1,$2,$3,$4,$5,$6,$7)")
-   .bind(id).bind(device).bind(kind.as_str().ok_or(Error::Conflict)?).bind(revision).bind(key).bind(digest).bind(actor).execute(&mut *tx).await?;
+   .bind(id).bind(device).bind(kind.as_str().ok_or(Error::Conflict)?).bind(Option::<i64>::None).bind(key).bind(digest).bind(actor).execute(&mut *tx).await?;
         let result = value_command(&mut tx, id).await?;
         tx.commit().await?;
         Ok(result)

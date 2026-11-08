@@ -31,12 +31,12 @@ __CONTROL_OPEN__;
 DO $$ BEGIN
  IF EXISTS(SELECT 1 FROM device_control_sessions s CROSS JOIN control_last_evidence e WHERE s.device_id='00000000-0000-4000-8000-000000000201' AND (s.last_heartbeat_at IS DISTINCT FROM e.last_heartbeat_at OR s.presence_started_at IS DISTINCT FROM e.presence_started_at)) THEN RAISE EXCEPTION 'reopen erased or renewed heartbeat evidence'; END IF;
 END $$;
-UPDATE device_control_sessions SET desired_paused=true WHERE device_id='00000000-0000-4000-8000-000000000201';
-DO $$ DECLARE candidate_ready boolean; BEGIN
- __CONTROL_CANDIDATE__ INTO candidate_ready;
- IF candidate_ready OR (SELECT state FROM device_control_presence WHERE id='00000000-0000-4000-8000-000000000201')<>'online' THEN RAISE EXCEPTION 'pause confused with presence'; END IF;
+DO $$ BEGIN
+ BEGIN
+  UPDATE device_control_sessions SET desired_paused=true WHERE device_id='00000000-0000-4000-8000-000000000201';
+  RAISE EXCEPTION 'retired remote pause accepted';
+ EXCEPTION WHEN check_violation THEN NULL; END;
 END $$;
-UPDATE device_control_sessions SET desired_paused=false WHERE device_id='00000000-0000-4000-8000-000000000201';
 UPDATE device_control_sessions SET last_heartbeat_at=NULL,presence_started_at=clock_timestamp()-interval '191 seconds' WHERE device_id='00000000-0000-4000-8000-000000000201';
 __CONTROL_OPEN__;
 DO $$ DECLARE result uuid; evidence_at timestamptz; BEGIN

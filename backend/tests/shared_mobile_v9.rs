@@ -3526,7 +3526,7 @@ async fn delivered_phone_heartbeat_freshness_does_not_cancel_execution() {
     // Old dispatch used a hard-coded 30-second heartbeat cutoff, independently
     // of the shared heartbeat presence policy and the five-minute result wait.
     for age in [35, 60, 130, 180] {
-        sqlx::query("UPDATE device_control_sessions SET last_heartbeat_at=clock_timestamp()-make_interval(secs=>$2::double precision),desired_paused=true WHERE device_id=$1")
+        sqlx::query("UPDATE device_control_sessions SET last_heartbeat_at=clock_timestamp()-make_interval(secs=>$2::double precision) WHERE device_id=$1")
             .bind(f.device).bind(age as f64).execute(&f.pool).await.unwrap();
         pool_tick(&f).await;
         let detail = pool_detail(&f, &task).await;

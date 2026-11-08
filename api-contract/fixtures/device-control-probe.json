@@ -8,7 +8,7 @@
     "heartbeat_interval_seconds": 60,
     "offline_after_seconds": 190,
     "server_time": "2026-10-31T00:00:00Z",
-    "desired_paused": true,
+    "desired_paused": false,
     "desired_revision": 3,
     "commands": [],
     "credential_expires_at": "2026-11-30T00:00:00Z",

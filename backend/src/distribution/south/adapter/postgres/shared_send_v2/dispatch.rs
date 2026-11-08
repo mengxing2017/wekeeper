@@ -45,7 +45,7 @@ async fn status(tx: &mut Tx<'_>, item: Uuid, state: &str, reason: &str) -> Resul
     Ok(())
 }
 async fn candidate_available(tx: &mut Tx<'_>, candidate: &Value) -> Result<bool> {
-    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM device_control_presence cp JOIN execution_devices d ON d.id=cp.id WHERE cp.id=$1 AND cp.state IN ('online','suspect') AND NOT cp.desired_paused AND d.enabled AND d.credential_generation=$2)").bind(uid(candidate,"device_id")?).bind(candidate["credential_generation"].as_i64().ok_or(Error::Conflict)?).fetch_one(&mut **tx).await?)
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM device_control_presence cp JOIN execution_devices d ON d.id=cp.id WHERE cp.id=$1 AND cp.state IN ('online','suspect') AND d.enabled AND d.credential_generation=$2)").bind(uid(candidate,"device_id")?).bind(candidate["credential_generation"].as_i64().ok_or(Error::Conflict)?).fetch_one(&mut **tx).await?)
 }
 async fn presence_offline(tx: &mut Tx<'_>, device: Uuid) -> Result<bool> {
     Ok(sqlx::query_scalar(

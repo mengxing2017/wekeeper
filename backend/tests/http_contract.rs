@@ -1173,3 +1173,16 @@ fn platform_heartbeat_probe_and_response_match_shared_contract() {
     assert_eq!(serde_json::to_value(frame).unwrap(), fixture["frame"]);
     assert_eq!(serde_json::to_value(response).unwrap(), fixture["response"]);
 }
+
+#[test]
+fn remote_hosting_pause_commands_are_rejected_by_the_wire_contract() {
+    use wekeeper_api::distribution::domain::device_control::CommandInput;
+    for kind in ["pause_execution", "resume_execution"] {
+        assert!(serde_json::from_value::<CommandInput>(json!({"kind": kind})).is_err());
+    }
+    let status: CommandInput = serde_json::from_value(json!({"kind": "request_status"})).unwrap();
+    assert_eq!(
+        serde_json::to_value(status).unwrap(),
+        json!({"kind": "request_status"})
+    );
+}
