@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { violations } from './check-boundaries.mjs'
-test('checks static, type-only, re-export and dynamic imports, including Vue scripts', () => {
+test('checks static, type-only, re-export and dynamic imports, without client boundary bypasses', () => {
   for (const statement of [
     "import type {User} from '@wekeeper/api-contract/identity'",
     "export * from '@wekeeper/api-contract/community'",
@@ -9,14 +9,14 @@ test('checks static, type-only, re-export and dynamic imports, including Vue scr
   ]) {
     assert.ok(
       violations(
-        'apps/miniapp/src/pages/index.vue',
-        `<script setup lang="ts">${statement}</script>`,
+        'apps/web/src/pages/index.tsx',
+        statement,
       ).length,
     )
   }
   assert.equal(
     violations(
-      'apps/miniapp/src/features/identity/api/index.ts',
+      'apps/web/src/features/identity/api/index.ts',
       "export type {User} from '@wekeeper/api-contract/identity'",
     ).length,
     0,

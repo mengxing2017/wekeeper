@@ -55,29 +55,16 @@ export function violations(file, source) {
       : spec
     if (spec.startsWith('.') && /(?:^|\/)api-contract(?:\/|$)/.test(resolved))
       errors.push('禁止通过源码相对路径绕过 contract 包导出')
-    const app = file.match(/apps\/(web|miniapp)\//)?.[1]
-    if (
-      app &&
-      ((app === 'web' && resolved.includes('apps/miniapp')) ||
-        (app === 'miniapp' && resolved.includes('apps/web')))
-    )
-      errors.push('客户端禁止互相依赖')
     if (
       file.startsWith('packages/') &&
       (/apps\//.test(resolved) || /react|vue|antd|uni-app/.test(spec))
     )
       errors.push('纯共享包禁止依赖应用或 UI 框架')
+    if (resolved.includes('apps/miniapp/') || /@wekeeper\/api-contract\/community(?:$|\/)/.test(spec))
+      errors.push('论坛和小程序已迁至 linjian，禁止引用旧客户端')
     if (/(?:^|\/)uniapp\//.test(resolved) || resolved.includes('uniapp/config'))
       errors.push('禁止引用旧 uniapp 工程')
-    if (/\/features\/community\//.test(file) && resolved.includes('/features/admin/'))
-      errors.push('社区禁止依赖管理端')
   }
-  if (
-    file.includes('apps/miniapp/src/') &&
-    !file.endsWith('/app/transport.ts') &&
-    /\b(?:uni|wx)\s*\.\s*(?:request|uploadFile|downloadFile)\s*\(/.test(source)
-  )
-    errors.push('业务请求必须通过 contract client 和平台 transport')
   return errors
 }
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')

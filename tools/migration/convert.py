@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Convert a read-only legacy JSON snapshot to reviewable, transactional PostgreSQL SQL.
+"""Historical reference converter for the pre-retirement forum schema only.
+Its output cannot be imported into the current WeKeeper database.
+Convert a read-only legacy JSON snapshot to reviewable, transactional PostgreSQL SQL.
 No network or production DB access. Unknown states/references/media block the apply file.
 Input: {"tables":{"fa_school":[...], ...}}. Passwords/tokens are never imported.
 """
@@ -180,6 +182,8 @@ def convert(source, out, states, media_root=None, media_map=None, corp_id=None, 
         if apply.exists():apply.unlink()
         return report
     sql=["\\set ON_ERROR_STOP on",'BEGIN;',"SET LOCAL standard_conforming_strings=on;", "SELECT pg_advisory_xact_lock(hashtext('wekeeper-legacy-import'));",f"SELECT NOT EXISTS(SELECT 1 FROM migration_runs WHERE source_hash={literal(digest)}) AS apply_batch \\gset",'\\if :apply_batch']
+    # Fail clearly before referencing retired batch/ID-map tables.
+    sql.insert(3, "DO $$ BEGIN IF to_regclass('schools') IS NULL OR to_regclass('migration_runs') IS NULL THEN RAISE EXCEPTION 'Historical converter only: forum tables are retired from current WeKeeper'; END IF; END $$;")
     sql.append('CREATE TEMP TABLE migration_assertion(ok BOOLEAN NOT NULL CHECK(ok)) ON COMMIT DROP;')
     if previous_hash:sql.append(f"INSERT INTO migration_assertion SELECT EXISTS(SELECT 1 FROM migration_runs WHERE source_hash={literal(previous_hash)});")
     for table,row in rows:
