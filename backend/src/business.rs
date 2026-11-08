@@ -112,17 +112,6 @@ impl Page {
     }
 }
 #[derive(Deserialize)]
-pub struct Revision {
-    pub revision: i64,
-}
-#[derive(Deserialize)]
-pub struct Decision {
-    pub revision: i64,
-    pub decision: String,
-    #[serde(default)]
-    pub reason: String,
-}
-#[derive(Deserialize)]
 pub struct Named {
     pub name: String,
 }

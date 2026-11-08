@@ -22,8 +22,6 @@ pub struct Application {
     pub legacy: crate::legacy::south::adapter::postgres::Repository,
     pub options: Options,
     pub identity: crate::identity::north::local::Service,
-    pub schools: crate::schools::north::local::Service,
-    pub community: crate::community::north::local::Service,
     pub distribution: crate::distribution::north::local::Service,
     pub integrations: crate::integrations::north::local::Service,
     pub media: crate::media::north::local::Service,
@@ -35,12 +33,6 @@ pub fn build_application(pool: PgPool) -> Application {
         options: Options::default(),
         identity: crate::identity::north::local::Service(
             crate::identity::south::adapter::postgres::Repository(pool.clone()),
-        ),
-        schools: crate::schools::north::local::Service(
-            crate::schools::south::adapter::postgres::Repository(pool.clone()),
-        ),
-        community: crate::community::north::local::Service(
-            crate::community::south::adapter::postgres::Repository(pool.clone()),
         ),
         distribution: crate::distribution::north::local::Service(
             crate::distribution::south::adapter::postgres::Repository(pool.clone()),
