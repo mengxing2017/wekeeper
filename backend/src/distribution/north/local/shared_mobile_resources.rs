@@ -11,7 +11,6 @@ use uuid::Uuid;
 pub struct Service<R = Repository>(pub R);
 impl<R: Store> Service<R> {
     pub async fn target(&self, actor: &Actor, school: Uuid, id: Uuid) -> Result<Value> {
-        actor.authorize(school, "operator")?;
         self.0.target(actor, school, id).await
     }
 
@@ -24,9 +23,7 @@ impl<R: Store> Service<R> {
         search: String,
         device: Option<Uuid>,
     ) -> Result<Vec<Value>> {
-        if let Some(s) = school {
-            actor.authorize(s, "operator")?;
-        } else if !actor.platform_admin {
+        if school.is_none() && !actor.platform_admin {
             return Err(crate::business::Error::Forbidden);
         }
         page.fetch_bounds()?;
@@ -46,9 +43,7 @@ impl<R: Store> Service<R> {
         if school.is_some() && matches!(action, "bind" | "update-binding" | "revoke-binding") {
             return Err(crate::business::Error::Forbidden);
         }
-        if let Some(s) = school {
-            actor.authorize(s, "admin")?;
-        } else if !actor.platform_admin {
+        if school.is_none() && !actor.platform_admin {
             return Err(crate::business::Error::Forbidden);
         }
         self.0

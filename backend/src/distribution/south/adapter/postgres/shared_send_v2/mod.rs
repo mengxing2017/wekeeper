@@ -39,18 +39,18 @@ async fn guard(tx: &mut Tx<'_>) -> Result<()> {
         .await?;
     Ok(())
 }
-async fn authorize(tx: &mut Tx<'_>, actor: Uuid, school: Option<Uuid>, admin: bool) -> Result<()> {
-    if let Some(s) = school {
-        sqlx::query("SELECT a.id FROM accounts a JOIN school_memberships m ON m.account_id=a.id JOIN schools s ON s.id=m.school_id WHERE a.id=$1 AND a.active AND s.id=$2 AND s.active AND (m.role='admin' OR (NOT $3 AND m.role='operator')) FOR SHARE OF a,m,s").bind(actor).bind(s).bind(admin).fetch_optional(&mut **tx).await?.ok_or(Error::Forbidden)?;
-    } else {
-        sqlx::query("SELECT id FROM accounts WHERE id=$1 AND active AND platform_admin FOR SHARE")
-            .bind(actor)
-            .fetch_optional(&mut **tx)
-            .await?
-            .ok_or(Error::Forbidden)?;
-    }
-    Ok(())
+async fn authorize(
+    tx: &mut Tx<'_>,
+    actor: Uuid,
+    workspace: Option<Uuid>,
+    admin: bool,
+) -> Result<()> {
+    crate::distribution::south::adapter::postgres::mobile_workspaces::authorize(
+        tx, actor, workspace, admin,
+    )
+    .await
 }
+
 async fn authenticate(tx: &mut Tx<'_>, c: &Credential, control: bool) -> Result<()> {
     sqlx::query("SELECT c.device_id FROM device_credentials c JOIN execution_devices d ON d.id=c.device_id WHERE c.token_hash=$1 AND c.device_id=$2 AND c.generation=$3 AND c.revoked_at IS NULL AND c.expires_at>clock_timestamp() AND (NOT $4 OR d.enabled) AND d.credential_generation=c.generation FOR SHARE OF c,d").bind(&c.token_hash).bind(c.device_id).bind(c.generation).bind(control).fetch_optional(&mut **tx).await?.ok_or(Error::Unauthorized)?;
     Ok(())
@@ -276,7 +276,7 @@ impl Store for Repository {
             PlatformCommand::Manage(v) => platform::write(&mut tx, a, v).await?,
             PlatformCommand::Artifact(v) => platform::artifact(&mut tx, a, v).await?,
             PlatformCommand::Access(v) => {
-                let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM schools s,execution_devices d WHERE s.id=$1 AND d.id=$2 AND (NOT $3 OR (s.active AND d.enabled)))").bind(v.school_id).bind(v.device_id).bind(v.enabled).fetch_one(&mut *tx).await?;
+                let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_workspaces s,execution_devices d WHERE s.id=$1 AND d.id=$2 AND (NOT $3 OR (s.active AND d.enabled)))").bind(v.school_id).bind(v.device_id).bind(v.enabled).fetch_one(&mut *tx).await?;
                 require(valid, "shared_access_invalid")?;
                 let old:Option<(i64,bool)>=sqlx::query_as("SELECT revision,enabled FROM mobile_shared_school_access WHERE device_id=$1 AND school_id=$2").bind(v.device_id).bind(v.school_id).fetch_optional(&mut *tx).await?;
                 require(
@@ -318,9 +318,9 @@ impl Store for Repository {
             .fetch_all(&mut *tx)
             .await?
         );
-        v["schools"] = json!(sqlx::query_scalar::<_, Value>("SELECT jsonb_build_object('id',id,'name',name) FROM schools WHERE active ORDER BY name,id").fetch_all(&mut *tx).await?);
+        v["schools"] = json!(sqlx::query_scalar::<_, Value>("SELECT jsonb_build_object('id',id,'name',name) FROM mobile_workspaces WHERE active ORDER BY name,id").fetch_all(&mut *tx).await?);
         v["targets"] = json!(sqlx::query_scalar::<_, Value>("SELECT to_jsonb(t)||jsonb_build_object('name',search_text) FROM mobile_targets t WHERE archived_at IS NULL ORDER BY school_id,id").fetch_all(&mut *tx).await?);
-        v["access"] = json!(sqlx::query_scalar::<_, Value>("SELECT to_jsonb(a)||jsonb_build_object('id',a.device_id::text||':'||a.school_id::text,'device_name',d.name,'school_name',s.name) FROM mobile_shared_school_access a JOIN execution_devices d ON d.id=a.device_id JOIN schools s ON s.id=a.school_id ORDER BY s.name,d.name").fetch_all(&mut *tx).await?);
+        v["access"] = json!(sqlx::query_scalar::<_, Value>("SELECT to_jsonb(a)||jsonb_build_object('id',a.device_id::text||':'||a.school_id::text,'device_name',d.name,'school_name',s.name) FROM mobile_shared_school_access a JOIN execution_devices d ON d.id=a.device_id JOIN mobile_workspaces s ON s.id=a.school_id ORDER BY s.name,d.name").fetch_all(&mut *tx).await?);
         tx.commit().await?;
         Ok(v)
     }

@@ -274,11 +274,11 @@ async fn evidence_candidates(
 pub fn router() -> Router<Application> {
     Router::new()
         .route(
-            "/api/v1/schools/{school}/broadcast-task-previews",
+            "/api/v1/wecom-distribution/workspaces/{workspace}/broadcast-task-previews",
             axum::routing::post(save_preview),
         )
         .route(
-            "/api/v1/schools/{school}/broadcast-tasks/{id}/evidence-candidates",
+            "/api/v1/wecom-distribution/workspaces/{workspace}/broadcast-tasks/{id}/evidence-candidates",
             get(evidence_candidates),
         )
         .route("/api/v1/platform/distribution-policies", get(policies))
@@ -287,32 +287,32 @@ pub fn router() -> Router<Application> {
             axum::routing::post(source_policy),
         )
         .route(
-            "/api/v1/schools/{school}/wecom-senders",
+            "/api/v1/wecom-distribution/workspaces/{workspace}/wecom-senders",
             get(school_senders),
         )
         .route("/api/v1/platform/wecom-senders", get(platform_senders))
         .route(
-            "/api/v1/platform/schools/{school}/wecom-senders/{id}/qualification",
+            "/api/v1/platform/wecom-distribution/workspaces/{workspace}/wecom-senders/{id}/qualification",
             axum::routing::post(qualify),
         )
         .route(
-            "/api/v1/schools/{school}/broadcast-tasks/{id}/preview",
+            "/api/v1/wecom-distribution/workspaces/{workspace}/broadcast-tasks/{id}/preview",
             axum::routing::post(preview),
         )
         .route(
-            "/api/v1/schools/{school}/broadcast-tasks",
+            "/api/v1/wecom-distribution/workspaces/{workspace}/broadcast-tasks",
             get(list).post(create),
         )
         .route(
-            "/api/v1/schools/{school}/broadcast-capabilities",
+            "/api/v1/wecom-distribution/workspaces/{workspace}/broadcast-capabilities",
             get(capability),
         )
         .route(
-            "/api/v1/schools/{school}/broadcast-tasks/{id}",
+            "/api/v1/wecom-distribution/workspaces/{workspace}/broadcast-tasks/{id}",
             get(task).patch(edit),
         )
         .route(
-            "/api/v1/schools/{school}/broadcast-tasks/{id}/{operation}",
+            "/api/v1/wecom-distribution/workspaces/{workspace}/broadcast-tasks/{id}/{operation}",
             get(rows).post(action),
         )
 }

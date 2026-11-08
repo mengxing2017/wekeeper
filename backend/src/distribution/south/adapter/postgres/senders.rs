@@ -20,7 +20,7 @@ impl Repository {
             actor.platform()?;
         }
         let (limit, offset) = page.fetch_bounds()?;
-        let rows=sqlx::query("SELECT a.id,sm.school_id,m.userid,m.name,m.verification='verified' AS member_verified,coalesce(m.status=1,false) AS member_active,a.active AS account_active,a.wecom_binding_revision,coalesce(q.revision,0) AS qualification_revision,coalesce(q.enabled,true) AS enabled FROM accounts a JOIN wecom_members m ON m.id=a.wecom_member_id JOIN school_memberships sm ON sm.account_id=a.id JOIN schools s ON s.id=sm.school_id LEFT JOIN wecom_sender_qualifications q ON q.school_id=sm.school_id AND q.account_id=a.id WHERE ($1::uuid IS NULL OR sm.school_id=$1) AND s.active AND sm.role IN ('operator','admin') ORDER BY sm.school_id,m.userid,a.id LIMIT $2 OFFSET $3")
+        let rows=sqlx::query("SELECT a.id,sm.school_id,m.userid,m.name,m.verification='verified' AS member_verified,coalesce(m.status=1,false) AS member_active,a.active AS account_active,a.wecom_binding_revision,coalesce(q.revision,0) AS qualification_revision,coalesce(q.enabled,true) AS enabled FROM accounts a JOIN wecom_members m ON m.id=a.wecom_member_id JOIN wecom_workspace_members sm ON sm.account_id=a.id JOIN wecom_workspaces s ON s.id=sm.school_id LEFT JOIN wecom_sender_qualifications q ON q.school_id=sm.school_id AND q.account_id=a.id WHERE ($1::uuid IS NULL OR sm.school_id=$1) AND s.active AND sm.role IN ('operator','admin') ORDER BY sm.school_id,m.userid,a.id LIMIT $2 OFFSET $3")
             .bind(school).bind(limit).bind(offset).fetch_all(&mut *tx).await?;
         let out = rows
             .into_iter()
@@ -43,7 +43,7 @@ impl Repository {
                     enabled,
                     eligible,
                     reason: if !enabled {
-                        Some("学校发送资格已停用".into())
+                        Some("分发工作空间发送资格已停用".into())
                     } else if !eligible {
                         Some("官方成员或平台身份不可用，请核对通讯录和映射".into())
                     } else {
@@ -65,7 +65,7 @@ impl Repository {
         actor.platform()?;
         let mut tx = self.0.begin().await?;
         super::broadcast::guard(&mut tx).await?;
-        sqlx::query("SELECT a.id FROM accounts a JOIN wecom_members m ON m.id=a.wecom_member_id JOIN school_memberships s ON s.account_id=a.id WHERE a.id=$1 AND s.school_id=$2 AND s.role IN ('admin','operator') FOR SHARE OF a,m,s").bind(id).bind(school).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
+        sqlx::query("SELECT a.id FROM accounts a JOIN wecom_members m ON m.id=a.wecom_member_id JOIN wecom_workspace_members s ON s.account_id=a.id WHERE a.id=$1 AND s.school_id=$2 AND s.role IN ('admin','operator') FOR SHARE OF a,m,s").bind(id).bind(school).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
         let updated=sqlx::query("INSERT INTO wecom_sender_qualifications(school_id,account_id,enabled,updated_by) SELECT $1,$2,$3,$4 WHERE $5=0 ON CONFLICT(school_id,account_id) DO NOTHING")
             .bind(school).bind(id).bind(input.enabled).bind(actor.id).bind(input.revision).execute(&mut *tx).await?.rows_affected();
         if updated == 0 {

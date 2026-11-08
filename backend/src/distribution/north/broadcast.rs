@@ -69,7 +69,11 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
         let mut materials = self.sources.read(a, s, &references).await?;
         for material in &mut materials {
             if material.detail_url.starts_with('/') {
-                material.detail_url = format!("{}{}", self.origin, material.detail_url);
+                material.detail_url =
+                    crate::distribution::south::adapter::in_process::absolute_detail_url(
+                        &self.origin,
+                        &material.detail_url,
+                    )?;
             }
         }
         let scope = if self.management_available {
@@ -120,7 +124,11 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
         let mut materials = self.sources.read(a, s, &references).await?;
         for m in &mut materials {
             if m.detail_url.starts_with('/') {
-                m.detail_url = format!("{}{}", self.origin, m.detail_url);
+                m.detail_url =
+                    crate::distribution::south::adapter::in_process::absolute_detail_url(
+                        &self.origin,
+                        &m.detail_url,
+                    )?;
             }
         }
         let ready = self.management_available;
@@ -258,7 +266,7 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
             }
         }
         Ok(
-            serde_json::json!({"id":batch,"items":items,"reason":"仅列出目标及成员证据完整且属于本校的候选。候选不代表已发送；没有候选可移交负责人。"}),
+            serde_json::json!({"id":batch,"items":items,"reason":"仅列出目标及成员证据完整且属于当前工作空间的候选。候选不代表已发送；没有候选可移交负责人。"}),
         )
     }
     pub async fn preview(
@@ -321,10 +329,13 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
             )?;
         }
         if operation == "reconcile" && input.decision.as_deref() == Some("linked") {
-            require(input.msgid.is_none(), "请从本校证据候选中选择核对记录")?;
+            require(
+                input.msgid.is_none(),
+                "请从当前工作空间证据候选中选择核对记录",
+            )?;
             let evidence = input
                 .evidence_id
-                .ok_or_else(|| Error::Invalid("请选择本校证据候选".into()))?;
+                .ok_or_else(|| Error::Invalid("请选择当前工作空间证据候选".into()))?;
             input.msgid = Some(
                 self.store
                     .evidence(a, s, id, input.batch_id.ok_or(Error::Conflict)?, evidence)
@@ -370,7 +381,7 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
                     && w.chats
                         .iter()
                         .all(|chat| results.groups.iter().any(|g| &g.chat_id == chat)),
-                "未取得本校完整成员和目标证据，请移交负责人",
+                "未取得当前工作空间完整成员和目标证据，请移交负责人",
             )?;
         }
         self.store
@@ -469,7 +480,7 @@ impl crate::bootstrap::Application {
             store: Repository(self.pool.clone()),
             client: broadcast_http::Client(self.integrations.clone()),
             management_available,
-            origin: self.options.public_origin.clone(),
+            origin: std::env::var("WEKEEPER_FORUM_ORIGIN").unwrap_or_default(),
         }
     }
 }

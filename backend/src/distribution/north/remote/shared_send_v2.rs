@@ -330,27 +330,27 @@ pub fn router() -> Router<Application> {
         )
         .route("/api/v10/device-execution/diagnostics", post(diagnostic))
         .route(
-            "/api/v1/schools/{school}/mobile-execution/shared-v2-items/{id}/reassignments",
+            "/api/v1/mobile-execution/workspaces/{workspace}/shared-v2-items/{id}/reassignments",
             post(reassign),
         )
         .route(
-            "/api/v1/schools/{school}/mobile-execution/shared-v2-inspections",
+            "/api/v1/mobile-execution/workspaces/{workspace}/shared-v2-inspections",
             post(inspection),
         )
         .route(
-            "/api/v1/schools/{school}/mobile-execution/shared-v2-tasks",
+            "/api/v1/mobile-execution/workspaces/{workspace}/shared-v2-tasks",
             get(list).post(confirm),
         )
         .route(
-            "/api/v1/schools/{school}/mobile-execution/shared-v2-tasks/{id}",
+            "/api/v1/mobile-execution/workspaces/{workspace}/shared-v2-tasks/{id}",
             get(detail),
         )
         .route(
-            "/api/v1/schools/{school}/mobile-execution/shared-v2-tasks/{id}/stops",
+            "/api/v1/mobile-execution/workspaces/{workspace}/shared-v2-tasks/{id}/stops",
             post(stop),
         )
         .route(
-            "/api/v1/schools/{school}/mobile-execution/shared-v2-items/{id}/reviews",
+            "/api/v1/mobile-execution/workspaces/{workspace}/shared-v2-items/{id}/reviews",
             post(review),
         )
 }
@@ -495,7 +495,7 @@ fn usage_router() -> Router<Application> {
             post(business_scheme),
         )
         .route(
-            "/api/v1/schools/{school}/mobile-execution/usages/{id}/issues/{issue}/responses",
+            "/api/v1/mobile-execution/workspaces/{workspace}/usages/{id}/issues/{issue}/responses",
             post(usage_issue_update),
         )
         .route(
@@ -507,31 +507,31 @@ fn usage_router() -> Router<Application> {
             get(usage_global_options),
         )
         .route(
-            "/api/v1/schools/{school}/mobile-execution/usage-options",
+            "/api/v1/mobile-execution/workspaces/{workspace}/usage-options",
             get(usage_options),
         )
         .route(
-            "/api/v1/schools/{school}/mobile-execution/usage-previews",
+            "/api/v1/mobile-execution/workspaces/{workspace}/usage-previews",
             post(usage_preview),
         )
         .route(
-            "/api/v1/schools/{school}/mobile-execution/usages",
+            "/api/v1/mobile-execution/workspaces/{workspace}/usages",
             get(usage_list).post(usage_confirm),
         )
         .route(
-            "/api/v1/schools/{school}/mobile-execution/usages/{id}",
+            "/api/v1/mobile-execution/workspaces/{workspace}/usages/{id}",
             get(usage_detail),
         )
         .route(
-            "/api/v1/schools/{school}/mobile-execution/usages/{id}/issues",
+            "/api/v1/mobile-execution/workspaces/{workspace}/usages/{id}/issues",
             post(usage_issue),
         )
         .route(
-            "/api/v1/schools/{school}/mobile-execution/usages/{id}/{operation}",
+            "/api/v1/mobile-execution/workspaces/{workspace}/usages/{id}/{operation}",
             post(usage_mutate),
         )
         .route(
-            "/api/v1/schools/{school}/mobile-execution/usage-task-previews",
+            "/api/v1/mobile-execution/workspaces/{workspace}/usage-task-previews",
             post(usage_task_preview),
         )
 }

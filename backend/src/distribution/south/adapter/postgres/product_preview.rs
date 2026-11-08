@@ -17,21 +17,9 @@ pub async fn authorize(
     s: Option<Uuid>,
     role: &str,
 ) -> Result<()> {
-    if a.platform_admin {
-        platform(tx, a).await?;
-        if let Some(s) = s {
-            sqlx::query("SELECT id FROM schools WHERE id=$1 AND active FOR SHARE")
-                .bind(s)
-                .fetch_optional(&mut **tx)
-                .await?
-                .ok_or(Error::NotFound)?;
-        }
-        return Ok(());
-    }
-    let s = s.ok_or(Error::Forbidden)?;
-    sqlx::query("SELECT a.id FROM accounts a JOIN school_memberships m ON m.account_id=a.id JOIN schools s ON s.id=m.school_id WHERE a.id=$1 AND a.active AND s.active AND s.id=$2 AND (m.role='admin' OR ($3='operator' AND m.role='operator') OR ($3='member' AND m.role<>'revoked')) FOR SHARE OF a,m,s").bind(a.id).bind(s).bind(role).fetch_optional(&mut **tx).await?.ok_or(Error::Forbidden)?;
-    Ok(())
+    super::wecom_workspaces::authorize(tx, a.id, s, role == "admin").await
 }
+
 pub async fn create(
     tx: &mut Transaction<'_, Postgres>,
     a: &Actor,

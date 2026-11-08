@@ -61,23 +61,11 @@ impl<R: Store> Service<R> {
         key: &str,
         command: SchoolCommand,
     ) -> Result<Value> {
-        a.authorize(
-            s,
-            if matches!(
-                &command,
-                SchoolCommand::Draft(..) | SchoolCommand::Preview(_)
-            ) {
-                "operator"
-            } else {
-                "admin"
-            },
-        )?;
         self.0
             .school_write(a, s, &text(key, 1, 128)?, command)
             .await
     }
     pub async fn school_read(&self, a: &Actor, s: Uuid, id: Option<Uuid>) -> Result<Value> {
-        a.authorize(s, "operator")?;
         self.0.school_read(a, s, id).await
     }
     pub async fn platform_write(

@@ -26,9 +26,7 @@ pub(super) async fn authorize(
     school: Uuid,
     admin: bool,
 ) -> Result<()> {
-    sqlx::query("SELECT a.id FROM accounts a JOIN school_memberships m ON m.account_id=a.id JOIN schools s ON s.id=m.school_id WHERE a.id=$1 AND m.school_id=$2 AND a.active AND s.active AND (m.role='admin' OR (NOT $3 AND m.role='operator')) FOR SHARE OF a,m,s")
-        .bind(actor).bind(school).bind(admin).fetch_optional(&mut **tx).await?.ok_or(Error::Forbidden)?;
-    Ok(())
+    super::wecom_workspaces::authorize(tx, actor, Some(school), admin).await
 }
 async fn event(
     tx: &mut Tx<'_>,
@@ -152,10 +150,11 @@ impl Repository {
                 .collect::<Vec<_>>()
                 .join("\n\n"),
             ContentSource::Posts => {
-                let name: String = sqlx::query_scalar("SELECT name FROM schools WHERE id=$1")
-                    .bind(s)
-                    .fetch_one(&mut *tx)
-                    .await?;
+                let name: String =
+                    sqlx::query_scalar("SELECT name FROM wecom_workspaces WHERE id=$1")
+                        .bind(s)
+                        .fetch_one(&mut *tx)
+                        .await?;
                 let body: String = sqlx::query_scalar("SELECT body FROM template_versions WHERE school_id=$1 AND id=$2 AND published FOR SHARE").bind(s).bind(input.template_version_id).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
                 let mut snippets = Vec::new();
                 for material in &materials {
@@ -185,8 +184,8 @@ impl Repository {
         let mut sorted = input.group_ids.clone();
         sorted.sort();
         for group in sorted.into_iter().filter(|_| generation.is_some()) {
-            let row = sqlx::query("SELECT g.id,g.chat_id,g.name,g.revision,m.userid,a.id AS account_id,a.wecom_binding_revision FROM wecom_groups g JOIN wecom_asset_objects o ON o.id=g.directory_group_id AND o.kind='groups' JOIN wecom_members m ON m.userid_key=lower(o.data->>'owner' COLLATE \"C\") JOIN accounts a ON a.wecom_member_id=m.id JOIN school_memberships sm ON sm.account_id=a.id AND sm.school_id=g.school_id WHERE g.id=$1 AND g.school_id=$2 AND g.active AND g.corp_id=$3 AND o.credential_generation=$4 AND o.verification='verified' AND o.visibility='visible' AND o.checked_at>now()-interval '24 hours' AND m.verification='verified' AND m.status=1 AND a.active AND sm.role IN ('operator','admin') AND NOT EXISTS(SELECT 1 FROM wecom_sender_qualifications q WHERE q.school_id=g.school_id AND q.account_id=a.id AND NOT q.enabled) FOR SHARE OF g,o,m,a,sm")
-                .bind(group).bind(s).bind(&corp).bind(generation).fetch_optional(&mut *tx).await?.ok_or_else(|| Error::Invalid("群目录过期或群主未绑定本校有效运营账号，请同步并核对".into()))?;
+            let row = sqlx::query("SELECT g.id,g.chat_id,g.name,g.revision,m.userid,a.id AS account_id,a.wecom_binding_revision FROM wecom_groups g JOIN wecom_asset_objects o ON o.id=g.directory_group_id AND o.kind='groups' JOIN wecom_members m ON m.userid_key=lower(o.data->>'owner' COLLATE \"C\") JOIN accounts a ON a.wecom_member_id=m.id JOIN wecom_workspace_members sm ON sm.account_id=a.id AND sm.school_id=g.school_id WHERE g.id=$1 AND g.school_id=$2 AND g.active AND g.corp_id=$3 AND o.credential_generation=$4 AND o.verification='verified' AND o.visibility='visible' AND o.checked_at>now()-interval '24 hours' AND m.verification='verified' AND m.status=1 AND a.active AND sm.role IN ('operator','admin') AND NOT EXISTS(SELECT 1 FROM wecom_sender_qualifications q WHERE q.school_id=g.school_id AND q.account_id=a.id AND NOT q.enabled) FOR SHARE OF g,o,m,a,sm")
+                .bind(group).bind(s).bind(&corp).bind(generation).fetch_optional(&mut *tx).await?.ok_or_else(|| Error::Invalid("群目录过期或群主未绑定当前工作空间有效运营账号，请同步并核对".into()))?;
             groups.push((row.get::<String, _>("userid"), row));
         }
         if id.is_some() {
@@ -281,7 +280,7 @@ impl Repository {
         .await?;
         sqlx::query("SELECT singleton FROM wecom_directory_state WHERE corp_id=$1 AND credential_generation=$2 FOR SHARE").bind(t.get::<String,_>("corp_id")).bind(t.get::<i64,_>("generation")).fetch_optional(&mut **tx).await?.ok_or(Error::Conflict)?;
         super::content::validate_task(&mut *tx, task).await?;
-        let groups=sqlx::query("SELECT g.id FROM broadcast_targets x JOIN broadcast_batches b ON b.id=x.batch_id JOIN wecom_groups g ON g.id=x.group_id JOIN wecom_asset_objects o ON o.id=g.directory_group_id JOIN accounts a ON a.id=b.sender_account JOIN wecom_members m ON m.id=a.wecom_member_id JOIN school_memberships sm ON sm.account_id=a.id AND sm.school_id=x.school_id WHERE x.task_id=$1 AND g.school_id=x.school_id AND g.active AND g.revision=x.group_revision AND g.chat_id=x.chat_id AND g.corp_id=b.corp_id AND o.credential_generation=$2 AND o.verification='verified' AND o.visibility='visible' AND o.checked_at>now()-interval '24 hours' AND lower(o.data->>'owner' COLLATE \"C\")=m.userid_key AND lower(b.sender COLLATE \"C\")=m.userid_key AND a.active AND a.wecom_binding_revision=b.binding_revision AND m.verification='verified' AND m.status=1 AND sm.role IN ('operator','admin') AND NOT EXISTS(SELECT 1 FROM wecom_sender_qualifications q WHERE q.school_id=g.school_id AND q.account_id=a.id AND NOT q.enabled) ORDER BY g.id FOR UPDATE OF g FOR SHARE OF a,m,sm,o")
+        let groups=sqlx::query("SELECT g.id FROM broadcast_targets x JOIN broadcast_batches b ON b.id=x.batch_id JOIN wecom_groups g ON g.id=x.group_id JOIN wecom_asset_objects o ON o.id=g.directory_group_id JOIN accounts a ON a.id=b.sender_account JOIN wecom_members m ON m.id=a.wecom_member_id JOIN wecom_workspace_members sm ON sm.account_id=a.id AND sm.school_id=x.school_id WHERE x.task_id=$1 AND g.school_id=x.school_id AND g.active AND g.revision=x.group_revision AND g.chat_id=x.chat_id AND g.corp_id=b.corp_id AND o.credential_generation=$2 AND o.verification='verified' AND o.visibility='visible' AND o.checked_at>now()-interval '24 hours' AND lower(o.data->>'owner' COLLATE \"C\")=m.userid_key AND lower(b.sender COLLATE \"C\")=m.userid_key AND a.active AND a.wecom_binding_revision=b.binding_revision AND m.verification='verified' AND m.status=1 AND sm.role IN ('operator','admin') AND NOT EXISTS(SELECT 1 FROM wecom_sender_qualifications q WHERE q.school_id=g.school_id AND q.account_id=a.id AND NOT q.enabled) ORDER BY g.id FOR UPDATE OF g FOR SHARE OF a,m,sm,o")
             .bind(task).bind(t.get::<i64,_>("generation")).fetch_all(&mut **tx).await?;
         let count: i64 =
             sqlx::query_scalar("SELECT count(*) FROM broadcast_targets WHERE task_id=$1")

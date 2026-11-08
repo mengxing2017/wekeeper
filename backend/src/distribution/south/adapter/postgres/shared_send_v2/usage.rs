@@ -15,12 +15,12 @@ async fn permission(tx: &mut Tx<'_>, a: &Actor, s: Option<Uuid>, admin: bool) ->
     } else if let Some(s) = s {
         require(
             sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS(SELECT 1 FROM schools WHERE id=$1 AND active)",
+                "SELECT EXISTS(SELECT 1 FROM mobile_workspaces WHERE id=$1 AND active)",
             )
             .bind(s)
             .fetch_one(&mut **tx)
             .await?,
-            "学校已停用",
+            "移动分发工作空间已停用",
         )?;
     }
     Ok(platform)
@@ -35,7 +35,7 @@ fn same_resource_scope(a: &Value, b: &Value) -> bool {
 async fn options(tx: &mut Tx<'_>, a: &Actor, s: Option<Uuid>) -> Result<Value> {
     let platform = permission(tx, a, s, false).await?;
     let devices:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',d.id,'name',d.name,'revision',d.revision,'online',coalesce(cp.state='online' AND cp.last_control_heartbeat_at>clock_timestamp()-interval '30 seconds',false)) FROM execution_devices d LEFT JOIN device_control_presence cp ON cp.id=d.id WHERE d.enabled AND ($1 OR EXISTS(SELECT 1 FROM mobile_shared_school_access x WHERE x.device_id=d.id AND x.school_id=$2 AND x.enabled)) ORDER BY d.name,d.id").bind(platform).bind(s).fetch_all(&mut **tx).await?;
-    let schools:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',id,'name',name) FROM schools WHERE active AND ($1 OR id=$2) ORDER BY name,id").bind(platform).bind(s).fetch_all(&mut **tx).await?;
+    let schools:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',id,'name',name) FROM mobile_workspaces WHERE active AND ($1 OR id=$2) ORDER BY name,id").bind(platform).bind(s).fetch_all(&mut **tx).await?;
     let targets:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',id,'name',search_text,'search_text',search_text,'revision',locator_revision) FROM mobile_targets WHERE school_id=$1 AND enabled AND archived_at IS NULL ORDER BY search_text,id").bind(s).fetch_all(&mut **tx).await?;
     let p = policy(tx).await?;
     Ok(
@@ -158,7 +158,7 @@ async fn valid_selection(tx: &mut Tx<'_>, a: &Actor, s: Uuid, v: &UsageInput) ->
     Ok(body)
 }
 async fn detail(tx: &mut Tx<'_>, s: Option<Uuid>, id: Option<Uuid>) -> Result<Value> {
-    let mut rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(u)||jsonb_build_object('school_name',s.name,'delivery',CASE WHEN j.state='ready' THEN 'available' ELSE 'waiting' END,'progress',coalesce(j.reason,'等待处理'),'issues',coalesce((SELECT jsonb_agg(to_jsonb(i)-'context') FROM mobile_usage_issues i WHERE i.usage_id=u.id),'[]'::jsonb),'events',coalesce((SELECT jsonb_agg(to_jsonb(e) ORDER BY e.created_at) FROM mobile_usage_events e WHERE e.usage_id=u.id),'[]'::jsonb)) FROM mobile_usages u JOIN schools s ON s.id=u.school_id LEFT JOIN mobile_usage_jobs j ON j.usage_id=u.id WHERE ($1::uuid IS NULL OR u.school_id=$1) AND ($2::uuid IS NULL OR u.id=$2) ORDER BY u.created_at DESC,u.id DESC").bind(s).bind(id).fetch_all(&mut **tx).await?;
+    let mut rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(u)||jsonb_build_object('school_name',s.name,'delivery',CASE WHEN j.state='ready' THEN 'available' ELSE 'waiting' END,'progress',coalesce(j.reason,'等待处理'),'issues',coalesce((SELECT jsonb_agg(to_jsonb(i)-'context') FROM mobile_usage_issues i WHERE i.usage_id=u.id),'[]'::jsonb),'events',coalesce((SELECT jsonb_agg(to_jsonb(e) ORDER BY e.created_at) FROM mobile_usage_events e WHERE e.usage_id=u.id),'[]'::jsonb)) FROM mobile_usages u JOIN mobile_workspaces s ON s.id=u.school_id LEFT JOIN mobile_usage_jobs j ON j.usage_id=u.id WHERE ($1::uuid IS NULL OR u.school_id=$1) AND ($2::uuid IS NULL OR u.id=$2) ORDER BY u.created_at DESC,u.id DESC").bind(s).bind(id).fetch_all(&mut **tx).await?;
     for row in &mut rows {
         let school = uid(row, "school_id")?;
         let states = readiness::school(tx, school).await?;
@@ -529,9 +529,9 @@ async fn reconcile_usage(tx: &mut Tx<'_>, u: &Value) -> Result<()> {
             // Business membership follows resource identity and enabled state.
             // Search locators are execution dependencies, checked against each frozen
             // task separately; they are not a reason to reopen business authorization.
-            let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM execution_devices d JOIN schools s ON s.id=$2 JOIN mobile_targets t ON t.school_id=s.id WHERE d.id=$1 AND d.enabled AND s.active AND t.id=$3 AND t.enabled AND t.archived_at IS NULL)").bind(device).bind(school).bind(target_id).fetch_one(&mut **tx).await?;
+            let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM execution_devices d JOIN mobile_workspaces s ON s.id=$2 JOIN mobile_targets t ON t.school_id=s.id WHERE d.id=$1 AND d.enabled AND s.active AND t.id=$3 AND t.enabled AND t.archived_at IS NULL)").bind(device).bind(school).bind(target_id).fetch_one(&mut **tx).await?;
             if !valid {
-                failures.push(format!("{label}：学校、手机或目标群已停用"));
+                failures.push(format!("{label}：工作空间、手机或目标群已停用"));
                 continue;
             }
             let access:Option<bool>=sqlx::query_scalar("SELECT enabled FROM mobile_shared_school_access WHERE device_id=$1 AND school_id=$2").bind(device).bind(school).fetch_optional(&mut **tx).await?;

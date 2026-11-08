@@ -65,7 +65,7 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
     Ok(result)
 }
 pub(super) async fn pool(tx: &mut Tx<'_>, s: Uuid) -> Result<Vec<Value>> {
-    sqlx::query_scalar("SELECT jsonb_build_object('id',d.id,'name',d.name,'access_revision',a.revision) FROM mobile_shared_school_access a JOIN execution_devices d ON d.id=a.device_id JOIN schools s ON s.id=a.school_id WHERE a.school_id=$1 AND a.enabled AND d.enabled AND s.active ORDER BY d.name,d.id").bind(s).fetch_all(&mut **tx).await.map_err(Into::into)
+    sqlx::query_scalar("SELECT jsonb_build_object('id',d.id,'name',d.name,'access_revision',a.revision) FROM mobile_shared_school_access a JOIN execution_devices d ON d.id=a.device_id JOIN mobile_workspaces s ON s.id=a.school_id WHERE a.school_id=$1 AND a.enabled AND d.enabled AND s.active ORDER BY d.name,d.id").bind(s).fetch_all(&mut **tx).await.map_err(Into::into)
 }
 
 fn condition(code: &str, message: &str, owner: &str, action: &str, automatic: bool) -> Value {
@@ -207,15 +207,16 @@ async fn scope_issue(tx: &mut Tx<'_>, school: Uuid, device: Uuid, target: Uuid) 
     let (code, message) = match tasks::scope_control(tx, school, device, target).await? {
         tasks::ScopeControl::Revoked => (
             "business_scope_revoked",
-            "此学校使用范围已撤销，手机托管同意不受此状态说明影响",
+            "此工作空间使用范围已撤销，手机托管同意不受此状态说明影响",
         ),
         tasks::ScopeControl::Paused => (
             "business_scope_paused",
-            "此学校使用范围已暂停，请在使用管理恢复",
+            "此工作空间使用范围已暂停，请在使用管理恢复",
         ),
-        tasks::ScopeControl::Expired => {
-            ("business_scope_expired", "此学校使用范围已到期，请办理续期")
-        }
+        tasks::ScopeControl::Expired => (
+            "business_scope_expired",
+            "此工作空间使用范围已到期，请办理续期",
+        ),
         // Authorized never reaches here because validate_scope already passed; kept as
         // a non-blocking note should the execution projection still be reconciling.
         tasks::ScopeControl::Authorized => (
@@ -227,7 +228,7 @@ async fn scope_issue(tx: &mut Tx<'_>, school: Uuid, device: Uuid, target: Uuid) 
         code,
         message,
         "school",
-        "查看本校手机与目标群使用管理",
+        "查看当前工作空间手机与目标群使用管理",
         code == "business_scope_sync_pending",
     ))
 }

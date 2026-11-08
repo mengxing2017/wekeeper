@@ -9,7 +9,7 @@ pub(super) async fn raw_candidates(tx: &mut Tx<'_>, s: Uuid, target: Uuid) -> Re
  'credential_generation',d.credential_generation,'delegation_id',m.id,'accepted',coalesce(c.accepted,false),'consent_state',CASE WHEN c.accepted IS NULL THEN 'unknown' WHEN c.accepted THEN 'accepted' ELSE 'revoked' END,
  'execution',jsonb_build_object('contract','device_owned/1','capability','wecom.group_text'))
  FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id AND t.school_id=b.school_id
- JOIN schools s ON s.id=t.school_id AND s.active JOIN execution_devices d ON d.id=b.device_id
+ JOIN mobile_workspaces s ON s.id=t.school_id AND s.active JOIN execution_devices d ON d.id=b.device_id
  LEFT JOIN mobile_shared_delegations m ON m.device_id=d.id AND m.credential_generation=d.credential_generation
  LEFT JOIN LATERAL(SELECT * FROM mobile_shared_delegation_decisions c WHERE c.delegation_id=m.id ORDER BY revision DESC LIMIT 1)c ON true
  WHERE t.school_id=$1 AND t.id=$2 AND t.enabled AND t.archived_at IS NULL AND b.enabled AND d.enabled
@@ -193,7 +193,7 @@ pub(super) async fn write(
         }
 
         SchoolCommand::PoolBinding(v) => {
-            let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_shared_school_access a JOIN schools s ON s.id=a.school_id JOIN execution_devices d ON d.id=a.device_id JOIN mobile_targets t ON t.school_id=a.school_id WHERE a.school_id=$1 AND a.device_id=$2 AND a.enabled AND a.revision=$3 AND s.active AND d.enabled AND t.id=$4 AND t.enabled AND t.archived_at IS NULL)").bind(s).bind(v.device_id).bind(v.expected_access_revision).bind(v.target_id).fetch_one(&mut **tx).await?;
+            let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_shared_school_access a JOIN mobile_workspaces s ON s.id=a.school_id JOIN execution_devices d ON d.id=a.device_id JOIN mobile_targets t ON t.school_id=a.school_id WHERE a.school_id=$1 AND a.device_id=$2 AND a.enabled AND a.revision=$3 AND s.active AND d.enabled AND t.id=$4 AND t.enabled AND t.archived_at IS NULL)").bind(s).bind(v.device_id).bind(v.expected_access_revision).bind(v.target_id).fetch_one(&mut **tx).await?;
             require(allowed, "shared_pool_access_required")?;
             // Re-saving an enabled binding does not change its authorization revision.
             let id:Option<Uuid>=sqlx::query_scalar("INSERT INTO mobile_device_target_bindings(id,school_id,device_id,target_id,created_by,updated_by,source) VALUES($1,$2,$3,$4,$5,$5,'school_pool') ON CONFLICT(device_id,target_id) DO UPDATE SET enabled=true,updated_by=$5,revision=mobile_device_target_bindings.revision+CASE WHEN NOT mobile_device_target_bindings.enabled THEN 1 ELSE 0 END,locator_revision=mobile_device_target_bindings.locator_revision+CASE WHEN NOT mobile_device_target_bindings.enabled THEN 1 ELSE 0 END WHERE mobile_device_target_bindings.source='school_pool' RETURNING id").bind(Uuid::now_v7()).bind(s).bind(v.device_id).bind(v.target_id).bind(a.id).fetch_optional(&mut **tx).await?;
@@ -288,13 +288,13 @@ pub(super) async fn write(
                             .map(String::as_str)
                         {
                             Some("shared_send_usage_paused") => {
-                                "本校此手机与目标群的使用范围已暂停，请在使用管理恢复后再确认"
+                                "当前工作空间此手机与目标群的使用范围已暂停，请在使用管理恢复后再确认"
                             }
                             Some("shared_send_usage_revoked") => {
-                                "本校此手机与目标群的使用范围已撤销，请在使用管理核对"
+                                "当前工作空间此手机与目标群的使用范围已撤销，请在使用管理核对"
                             }
                             Some("shared_send_usage_expired") => {
-                                "本校此手机与目标群的使用范围已到期，请在使用管理办理续期"
+                                "当前工作空间此手机与目标群的使用范围已到期，请在使用管理办理续期"
                             }
                             Some("shared_send_review_required") => {
                                 "存在未核对的发送结果，请先核对原任务"
@@ -302,7 +302,7 @@ pub(super) async fn write(
                             Some("plan_dependency_changed") => {
                                 "手机或目标群关联已变化，请更新业务预览"
                             }
-                            _ => "当前手机不满足任务受理条件，请核对本校使用范围",
+                            _ => "当前手机不满足任务受理条件，请核对当前工作空间使用范围",
                         },
                     )
                 } else {

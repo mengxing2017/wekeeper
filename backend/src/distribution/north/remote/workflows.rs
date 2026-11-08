@@ -219,38 +219,44 @@ pub fn router() -> Router<Application> {
             get(channel_control_read).post(channel_control),
         )
         .route(
-            "/api/v1/schools/{school}/official-usage-options",
+            "/api/v1/wecom-distribution/workspaces/{workspace}/official-usage-options",
             get(options),
         )
         .route(
             "/api/v1/platform/official-usage-options",
             get(platform_options),
         )
-        .route("/api/v1/schools/{school}/business-requests", get(requests))
+        .route(
+            "/api/v1/wecom-distribution/workspaces/{workspace}/business-requests",
+            get(requests),
+        )
         .route("/api/v1/platform/business-requests", get(platform_requests))
         .route(
             "/api/v1/platform/business-requests/{id}/decisions",
             post(decision),
         )
         .route(
-            "/api/v1/schools/{school}/broadcast-access-requests",
+            "/api/v1/wecom-distribution/workspaces/{workspace}/broadcast-access-requests",
             post(channel_request),
         )
-        .route("/api/v1/schools/{school}/broadcast-issues", post(issue))
         .route(
-            "/api/v1/schools/{school}/template-previews",
+            "/api/v1/wecom-distribution/workspaces/{workspace}/broadcast-issues",
+            post(issue),
+        )
+        .route(
+            "/api/v1/wecom-distribution/workspaces/{workspace}/template-previews",
             post(template_preview),
         )
         .route(
-            "/api/v1/schools/{school}/template-publications",
+            "/api/v1/wecom-distribution/workspaces/{workspace}/template-publications",
             post(template_confirm),
         )
         .route(
-            "/api/v1/schools/{school}/official-usage-previews",
+            "/api/v1/wecom-distribution/workspaces/{workspace}/official-usage-previews",
             post(usage_preview),
         )
         .route(
-            "/api/v1/schools/{school}/official-usages",
+            "/api/v1/wecom-distribution/workspaces/{workspace}/official-usages",
             post(usage_confirm),
         )
         .route(

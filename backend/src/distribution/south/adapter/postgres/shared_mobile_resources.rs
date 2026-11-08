@@ -12,19 +12,18 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct Repository(pub PgPool);
 type Tx<'a> = Transaction<'a, Postgres>;
-async fn authorize(tx: &mut Tx<'_>, actor: Uuid, school: Option<Uuid>, admin: bool) -> Result<()> {
-    if let Some(school) = school {
-        sqlx::query("SELECT a.id FROM accounts a JOIN school_memberships m ON m.account_id=a.id JOIN schools s ON s.id=m.school_id WHERE a.id=$1 AND a.active AND s.id=$2 AND s.active AND (m.role='admin' OR (NOT $3 AND m.role='operator')) FOR SHARE OF a,m,s")
-            .bind(actor).bind(school).bind(admin).fetch_optional(&mut **tx).await?.ok_or(Error::Forbidden)?;
-    } else {
-        sqlx::query("SELECT id FROM accounts WHERE id=$1 AND active AND platform_admin FOR SHARE")
-            .bind(actor)
-            .fetch_optional(&mut **tx)
-            .await?
-            .ok_or(Error::Forbidden)?;
-    }
-    Ok(())
+async fn authorize(
+    tx: &mut Tx<'_>,
+    actor: Uuid,
+    workspace: Option<Uuid>,
+    admin: bool,
+) -> Result<()> {
+    crate::distribution::south::adapter::postgres::mobile_workspaces::authorize(
+        tx, actor, workspace, admin,
+    )
+    .await
 }
+
 async fn object(tx: &mut Tx<'_>, table: &str, id: Uuid) -> Result<Value> {
     sqlx::query_scalar(&format!("SELECT to_jsonb(t) FROM {table} t WHERE id=$1"))
         .bind(id)
@@ -72,10 +71,10 @@ impl Store for Repository {
                 "SELECT jsonb_build_object('id',d.id,'name',d.name,'enabled',d.enabled,'last_seen_at',d.last_seen_at,'control_state',p.state,'last_control_heartbeat_at',p.last_control_heartbeat_at) FROM execution_devices d LEFT JOIN device_control_presence p ON p.id=d.id WHERE EXISTS(SELECT 1 FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id AND t.school_id=b.school_id WHERE b.device_id=d.id AND b.school_id=$1 AND b.enabled AND t.enabled AND t.archived_at IS NULL) AND strpos(lower(d.name),lower($2))>0 AND ($3::uuid IS NULL OR d.id=$3) ORDER BY d.created_at,d.id LIMIT $4 OFFSET $5"
             }
             Resource::Bindings | Resource::PlatformBindings => {
-                "SELECT to_jsonb(b)||jsonb_build_object('school_name',s.name,'device_name',d.name,'search_text',t.search_text,'target_locator_revision',t.locator_revision,'available',b.enabled AND d.enabled AND t.enabled AND t.archived_at IS NULL) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id AND t.school_id=b.school_id JOIN schools s ON s.id=t.school_id WHERE ($1::uuid IS NULL OR b.school_id=$1) AND (strpos(lower(t.search_text),lower($2))>0 OR strpos(lower(d.name),lower($2))>0) AND ($3::uuid IS NULL OR b.device_id=$3) ORDER BY b.created_at,b.id LIMIT $4 OFFSET $5"
+                "SELECT to_jsonb(b)||jsonb_build_object('school_name',s.name,'device_name',d.name,'search_text',t.search_text,'target_locator_revision',t.locator_revision,'available',b.enabled AND d.enabled AND t.enabled AND t.archived_at IS NULL) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id AND t.school_id=b.school_id JOIN mobile_workspaces s ON s.id=t.school_id WHERE ($1::uuid IS NULL OR b.school_id=$1) AND (strpos(lower(t.search_text),lower($2))>0 OR strpos(lower(d.name),lower($2))>0) AND ($3::uuid IS NULL OR b.device_id=$3) ORDER BY b.created_at,b.id LIMIT $4 OFFSET $5"
             }
             Resource::PlatformTargets => {
-                "SELECT jsonb_build_object('id',t.id,'school_id',t.school_id,'school_name',s.name,'search_text',t.search_text,'enabled',t.enabled) FROM mobile_targets t JOIN schools s ON s.id=t.school_id WHERE $1::uuid IS NULL AND s.active AND t.archived_at IS NULL AND (strpos(lower(t.search_text),lower($2))>0 OR strpos(lower(s.name),lower($2))>0) AND $3::uuid IS NULL ORDER BY t.created_at,t.id LIMIT $4 OFFSET $5"
+                "SELECT jsonb_build_object('id',t.id,'school_id',t.school_id,'school_name',s.name,'search_text',t.search_text,'enabled',t.enabled) FROM mobile_targets t JOIN mobile_workspaces s ON s.id=t.school_id WHERE $1::uuid IS NULL AND s.active AND t.archived_at IS NULL AND (strpos(lower(t.search_text),lower($2))>0 OR strpos(lower(s.name),lower($2))>0) AND $3::uuid IS NULL ORDER BY t.created_at,t.id LIMIT $4 OFFSET $5"
             }
         };
         let rows = sqlx::query_scalar(sql)
@@ -180,7 +179,7 @@ impl Store for Repository {
                 let v: SharedBindingInput = serde_json::from_value(input.clone())
                     .map_err(|_| Error::Invalid("绑定字段无效".into()))?;
                 v.validate()?;
-                let target_school: Uuid = sqlx::query_scalar("SELECT t.school_id FROM mobile_targets t JOIN schools s ON s.id=t.school_id WHERE t.id=$1 AND t.enabled AND t.archived_at IS NULL AND s.active FOR SHARE OF t,s")
+                let target_school: Uuid = sqlx::query_scalar("SELECT t.school_id FROM mobile_targets t JOIN mobile_workspaces s ON s.id=t.school_id WHERE t.id=$1 AND t.enabled AND t.archived_at IS NULL AND s.active FOR SHARE OF t,s")
                     .bind(v.target_id).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
                 let mut bindings = Vec::new();
                 for device in &v.device_ids {
@@ -200,7 +199,7 @@ impl Store for Repository {
             "update-binding" => {
                 let v: SharedBindingUpdate = serde_json::from_value(input.clone())
                     .map_err(|_| Error::Invalid("绑定字段无效".into()))?;
-                let n=sqlx::query("UPDATE mobile_device_target_bindings b SET source='platform',enabled=$3,revision=revision+CASE WHEN enabled<>$3 THEN 1 ELSE 0 END,locator_revision=locator_revision+CASE WHEN enabled<>$3 THEN 1 ELSE 0 END,updated_by=$4,updated_at=clock_timestamp() WHERE id=$1 AND revision=$2 AND (NOT $3 OR EXISTS(SELECT 1 FROM mobile_targets t JOIN schools s ON s.id=t.school_id JOIN execution_devices d ON d.id=b.device_id WHERE t.id=b.target_id AND t.enabled AND t.archived_at IS NULL AND s.active AND d.enabled))")
+                let n=sqlx::query("UPDATE mobile_device_target_bindings b SET source='platform',enabled=$3,revision=revision+CASE WHEN enabled<>$3 THEN 1 ELSE 0 END,locator_revision=locator_revision+CASE WHEN enabled<>$3 THEN 1 ELSE 0 END,updated_by=$4,updated_at=clock_timestamp() WHERE id=$1 AND revision=$2 AND (NOT $3 OR EXISTS(SELECT 1 FROM mobile_targets t JOIN mobile_workspaces s ON s.id=t.school_id JOIN execution_devices d ON d.id=b.device_id WHERE t.id=b.target_id AND t.enabled AND t.archived_at IS NULL AND s.active AND d.enabled))")
                     .bind(resource).bind(v.expected_revision).bind(v.enabled).bind(actor.id).execute(&mut *tx).await?.rows_affected();
                 if n != 1 {
                     return Err(Error::Policy("revision_conflict"));

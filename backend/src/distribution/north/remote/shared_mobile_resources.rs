@@ -311,7 +311,7 @@ pub fn router() -> Router<Application> {
             get(platform_devices),
         )
         .route(
-            "/api/v1/schools/{school}/mobile-execution/targets/{id}",
+            "/api/v1/mobile-execution/workspaces/{workspace}/targets/{id}",
             get(target_detail)
                 .patch(update_target)
                 .delete(archive_target),
@@ -333,15 +333,15 @@ pub fn router() -> Router<Application> {
             get(platform_targets),
         )
         .route(
-            "/api/v1/schools/{school}/mobile-execution/devices",
+            "/api/v1/mobile-execution/workspaces/{workspace}/devices",
             get(devices),
         )
         .route(
-            "/api/v1/schools/{school}/mobile-execution/targets",
+            "/api/v1/mobile-execution/workspaces/{workspace}/targets",
             get(targets).post(target),
         )
         .route(
-            "/api/v1/schools/{school}/mobile-execution/target-bindings",
+            "/api/v1/mobile-execution/workspaces/{workspace}/target-bindings",
             get(bindings),
         )
 }

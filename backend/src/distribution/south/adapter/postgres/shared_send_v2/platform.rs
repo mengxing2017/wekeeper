@@ -326,7 +326,7 @@ pub(super) async fn read(tx: &mut Tx<'_>, page: u32) -> Result<Value> {
     .fetch_optional(&mut **tx)
     .await?;
     data.insert("activation".into(), json!(activation));
-    let bindings:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(b)||jsonb_build_object('device_name',d.name,'school_name',s.name,'target_name',t.search_text) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN schools s ON s.id=b.school_id JOIN mobile_targets t ON t.id=b.target_id WHERE b.enabled ORDER BY b.id LIMIT 100").fetch_all(&mut **tx).await?;
+    let bindings:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(b)||jsonb_build_object('device_name',d.name,'school_name',s.name,'target_name',t.search_text) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_workspaces s ON s.id=b.school_id JOIN mobile_targets t ON t.id=b.target_id WHERE b.enabled ORDER BY b.id LIMIT 100").fetch_all(&mut **tx).await?;
     data.insert("bindings".into(), json!(bindings));
     data.insert("counts".into(), Value::Object(counts));
     data.insert(
