@@ -30,12 +30,13 @@
 | `WEKEEPER_WECOM_CORP_ID` / `WEKEEPER_WECOM_SECRET` | 单企业后端凭据，不能注入前端 |
 | `WEKEEPER_WECOM_AGENT_ID` | 旧配置识别兼容；当前目录、群发与 OAuth 不要求 |
 | `WEKEEPER_WECOM_DIRECTORY_INTERVAL_SECONDS` / `WEKEEPER_WECOM_ASSET_SYNC_INTERVAL_SECONDS` | 周期同步；0 关闭周期调度，不关闭手工同步 |
+| `WEKEEPER_SOURCE_MASTER_KEY_V1` | 调用方 secret 的数据库存储加密主密钥，32 随机字节、无填充 base64url 编码；Docker 使用调用方凭据时必填且仅注入 API；跨重启/实例/恢复保持原值，详见 [Docker 配置](../runbooks/docker.md#调用方凭据主密钥-首次配置与已有部署更新) |
 | `WEKEEPER_SHARED_SEND_KEY` | 共享手机发送恢复材料的后端加密密钥；`openssl rand -hex 32` 生成，跨重启/实例保持一致并配套备份；仅注入 API，详见 [Docker 配置](../runbooks/docker.md#共享手机发送密钥-首次配置与已有部署更新) |
 | `WEKEEPER_TEST_DATABASE_URL` | 集成测试专用隔离库，不回退生产地址 |
 | `WEKEEPER_API_ORIGIN` | Vite 开发代理的 API 目标 |
 
 ## 加载规则
 
-Compose 读取 `.env` 并按编排注入；普通本地 API 和嵌入式入口不自动加载 `.env`。嵌入式入口忽略外部数据库配置，但继承导出的企业微信配置。具体注入见 [本地开发](../manual/local-development.md#企业微信凭据注入)。
+Compose 读取 `.env` 并按编排注入；普通本地 API 和嵌入式入口不自动加载 `.env`。嵌入式入口忽略外部数据库配置，但继承导出的企业微信配置。`make dev-embedded` 对未设置或为空的调用方凭据主密钥自动生成临时值；Docker 和普通 API 不执行此自动配置。具体注入见 [本地开发](../manual/local-development.md#企业微信凭据注入)。
 
 Secret、数据库密码和设备 token 不进入 VITE 变量、日志或文档仓库。修改配置后按运行方式重启/重建进程；仅 `docker restart` 不会重新读取 env 文件。数据库卷、发送历史与 unknown 不能用清库方式处理配置错误。

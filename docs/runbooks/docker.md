@@ -67,7 +67,10 @@ API_IMAGE=wekeeper-api:local
 WEB_IMAGE=wekeeper-web:local
 WEKEEPER_PUBLIC_ORIGIN=http://127.0.0.1:8088
 WEKEEPER_INSECURE_LOCAL_AUTH=true
+WEKEEPER_SOURCE_MASTER_KEY_V1=替换为下文生成的32字节base64url密钥
 ```
+
+调用方凭据主密钥需先按[配置说明](#调用方凭据主密钥-首次配置与已有部署更新)生成并保存。Docker 启动不会像 `make dev-embedded` 一样自动生成。
 
 先验证配置，再构建并等待健康：
 
@@ -209,7 +212,7 @@ docker compose --env-file .env -f compose.yaml up --no-build --pull never -d --w
 | 前端镜像构建 | `frontend/Dockerfile` | 当前没有业务环境变量或 API 地址构建参数；同一镜像可部署到不同环境 |
 | 后端镜像构建 | `backend/Dockerfile` | 不传数据库、CorpID、Secret 或域名；这些值均在启动时注入 |
 | 前端容器运行 | Web 容器 environment | Caddy 的 `WEKEEPER_WEB_LISTEN`、`WEKEEPER_API_UPSTREAM` |
-| 后端容器运行 | API 容器 environment | 数据库、浏览器 Origin、登录模式、企微凭据、同步间隔及日志 |
+| 后端容器运行 | API 容器 environment | 数据库、调用方凭据存储主密钥、浏览器 Origin、登录模式、企微凭据、同步间隔及日志 |
 | Compose 编排 | `.env` | 镜像名、宿主机端口、数据库初始化值，以及 Compose 明确引用的应用变量 |
 
 React 使用同源 `/api/...` 请求，由 Web 容器的 Caddy 转发到 API。不要给 React 填内部地址 `http://api:8080`，浏览器无法解析这个容器名。`WEKEEPER_API_ORIGIN` 仅用于源码开发的 Vite 代理，不是生产 Web 容器的配置；生产应使用 `WEKEEPER_API_UPSTREAM`。
@@ -239,6 +242,7 @@ React 使用同源 `/api/...` 请求，由 Web 容器的 Caddy 转发到 API。�
 | `WEKEEPER_DATABASE_PASSWORD` | 必填实际密码 | 分项密码，无需 URL 编码 |
 | `WEKEEPER_DATABASE_SSL_MODE` | 同机容器示例 `disable`；程序默认 `prefer` | 远程生产数据库按证书条件使用 `verify-full` 并配置受信任 CA |
 | `WEKEEPER_DATABASE_MAX_CONNECTIONS` | `10` | 连接池上限，允许 1–100 |
+| `WEKEEPER_SOURCE_MASTER_KEY_V1` | 32 字节随机密钥的无填充 base64url 编码（43 个字符） | 使用调用方凭据时必填，仅注入 API；加密数据库中的调用方 secret；跨实例、重启和恢复使用同一原值，详见下文 |
 | `WEKEEPER_SHARED_SEND_KEY` | 32 字节随机密钥的 64 个十六进制字符 | 仅注入 API，保护共享发送许可与恢复材料；生成、首次配置和更新见下文；跨实例、重启和恢复保持一致 |
 | `WEKEEPER_DATABASE_URL` | 可选，默认不设置 | 完整连接 URL；设置后优先于分项连接字段。不使用时删除该变量，不要填空值 |
 | `WEKEEPER_PUBLIC_ORIGIN` | `https://keeper.example.com` | 浏览器实际访问的协议、域名、端口，不带路径和末尾斜杠；不能写 `api:8080` |
@@ -273,6 +277,8 @@ WEKEEPER_WEB_LISTEN=:80
 WEKEEPER_PUBLIC_ORIGIN=http://127.0.0.1:8088
 WEKEEPER_INSECURE_LOCAL_AUTH=true
 WEKEEPER_DATABASE_MAX_CONNECTIONS=10
+# 使用调用方凭据前生成并填写；重启、更新和恢复保持原值
+WEKEEPER_SOURCE_MASTER_KEY_V1=替换为生成的32字节base64url密钥
 # 使用共享手机发送前生成并填写；后续重启保持原值
 WEKEEPER_SHARED_SEND_KEY=
 RUST_LOG=wekeeper_api=info,tower_http=info
@@ -296,6 +302,61 @@ docker compose --env-file .env -f compose.yaml up --no-build -d --wait --wait-ti
 Compose 已固定注入 API 监听 `0.0.0.0:8080`、数据库地址 `postgres:5432`、SSL `disable` 和 Web 上游 `api:8080`，并将 `POSTGRES_*` 转换为 API 的数据库分项配置。因此，单独在 `.env` 新增 `WEKEEPER_DATABASE_HOST`、`WEKEEPER_DATABASE_URL` 或 `WEKEEPER_API_UPSTREAM` **不会覆盖这些值或自动传入容器**。使用外部数据库/自定义上游时采用下一节独立配置，或显式修改编排中的 environment 和 depends_on。
 
 Shell 已 export 的同名变量优先于 Compose `.env`；部署前核对 `API_IMAGE`、`WEB_IMAGE` 等，避免沿用构建终端的旧标签。密码可用 `openssl rand -hex 32` 生成；Compose `.env` 中含 `$` 等字符时注意引号和插值规则。`POSTGRES_DEV_PORT`、`API_DEV_PORT` 仅在叠加 `compose.dev.yaml` 时生效。
+
+### 调用方凭据主密钥：首次配置与已有部署更新
+
+使用“调用方凭据”功能前，必须配置 `WEKEEPER_SOURCE_MASTER_KEY_V1`。它用于 AES-256-GCM 加密数据库中的调用方 secret，是 WeKeeper 自身的存储密钥，不发给下游，也不用于生成下游的 key_id/secret。各调用方的签名凭据另行随机生成。它与 `WEKEEPER_SHARED_SEND_KEY`、数据库密码和企业微信 Secret 是不同用途的独立密钥，不互相复用。
+
+**首次生成：** 在可信终端执行以下命令，取得 32 个随机字节的无填充 base64url 编码（43 个字符），并妥善保存完整输出。仅在新部署或此前尚无加密调用方凭据时生成；已有凭据的部署使用原主密钥。
+
+```bash
+openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
+```
+
+也可使用 Python：
+
+```bash
+python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
+```
+
+**Compose 配置：** 将生成值写入部署 `.env`，替换所有占位文本，不保留尖括号：
+
+```dotenv
+WEKEEPER_SOURCE_MASTER_KEY_V1=<生成并保存的43字符base64url值>
+```
+
+`compose.yaml` 已将该变量注入 `api`，不需要修改编排。确认启动终端没有过期的同名 export 覆盖文件值；首次配置或修改 `.env` 后执行：
+
+```bash
+chmod 600 .env
+docker compose --env-file .env -f compose.yaml config --quiet
+docker compose --env-file .env -f compose.yaml up --no-build -d --no-deps --force-recreate --wait api
+```
+
+此命令用于已有栈更新 API 配置；全新部署按第 3 或第 6 节启动完整栈。仅 `docker restart` 不会加载修改后的 `.env`；`config --quiet` 仅检查 Compose 配置，不验证主密钥格式。
+
+**独立 Docker / 1Panel：** 将同名变量加入 `.env.api` 或 API 容器的环境变量配置，按第 5.5 节参数重新创建 API 容器。只注入 API；不填入 Web、PostgreSQL 或下游项目，不作为镜像构建参数或 `VITE_*` 变量。
+
+**部署后核对：** 以下命令只检查 API 容器是否收到非空变量，不输出密钥值；格式有效性还需通过凭据创建/使用确认。
+
+```bash
+docker compose --env-file .env -f compose.yaml exec -T api /bin/sh -c '
+  if [ -n "${WEKEEPER_SOURCE_MASTER_KEY_V1:-}" ]; then
+    printf "%s\n" "调用方凭据主密钥已注入"
+  else
+    printf "%s\n" "调用方凭据主密钥未注入" >&2
+    exit 1
+  fi
+'
+```
+
+独立容器将命令前缀替换为 `docker exec api /bin/sh -c`。不要通过完整 `docker inspect`、`env` 或 `docker compose config` 输出共享密钥；日常配置检查使用 `config --quiet`。
+
+**开发与 Docker 的区别：** 只有 `make dev-embedded` 在变量未设置或为空时自动生成临时主密钥，供本次全新临时数据库使用；已有非空配置保持不变。Docker、独立 API 和持久数据库均不会自动生成或替换该值。API `/readyz` 正常、凭据列表可读取，都不表示凭据加密主密钥已配置。
+
+**备份、更新与恢复：** 所有共享业务数据库的 API 实例必须使用同一原值；重启、更新镜像、迁移服务器及恢复数据库时保持不变。主密钥不在数据库 dump 中，需与数据库配套受控备份。丢失或换错值会使已有调用方 secret 无法解密；不要通过重新生成、清表或删除数据卷处理。当前没有主密钥在线轮换入口，不能直接替换环境变量；删除后重新签发调用方凭据也继续使用原存储主密钥。
+
+**错误处理：** 新增返回 503 且提示“调用方凭据加密服务未配置”时，检查非空值、base64url 格式和 API 容器实际注入情况，重建 API 后重试。已有凭据解密失败时核对原主密钥及各实例配置。列表 GET 不依赖这把密钥，列表 503 应查看后端数据库/迁移日志，不要盲目重新生成主密钥。
 
 ### 共享手机发送密钥：首次配置与已有部署更新
 
@@ -364,6 +425,8 @@ WEKEEPER_DATABASE_USER=wekeeper
 WEKEEPER_DATABASE_PASSWORD=replace-with-a-long-random-password
 WEKEEPER_DATABASE_SSL_MODE=disable
 WEKEEPER_DATABASE_MAX_CONNECTIONS=10
+# 使用调用方凭据前生成并填写；重启、更新和恢复保持原值
+WEKEEPER_SOURCE_MASTER_KEY_V1=替换为生成的32字节base64url密钥
 # 使用共享手机发送前生成并填写；后续重启保持原值
 WEKEEPER_SHARED_SEND_KEY=
 WEKEEPER_PUBLIC_ORIGIN=http://127.0.0.1:8088
@@ -558,7 +621,7 @@ test -s "$WK_BACKUP"
 sha256sum "$WK_BACKUP" > "$WK_BACKUP.sha256"
 ```
 
-同时保存环境配置的受控副本、镜像 digest 和 migration 版本；备份移出单机并限制访问。使用共享手机发送时，必须同时保管对应的 `WEKEEPER_SHARED_SEND_KEY`，数据库 dump 不包含该运行环境密钥。隔离恢复使用原密钥且保持新执行关闭；仅恢复数据库并生成新密钥不能恢复旧许可与结果材料。
+同时保存环境配置的受控副本、镜像 digest 和 migration 版本；备份移出单机并限制访问。使用调用方凭据时，必须同时保管对应的 `WEKEEPER_SOURCE_MASTER_KEY_V1`；数据库 dump 不包含该运行环境密钥，恢复时使用原值。使用共享手机发送时，必须同时保管对应的 `WEKEEPER_SHARED_SEND_KEY`，数据库 dump 不包含该运行环境密钥。隔离恢复使用原密钥且保持新执行关闭；仅恢复数据库并生成新密钥不能恢复旧许可与结果材料。
 校验文件非空不等于可恢复，定期在新建隔离库演练：
 
 ```bash
@@ -575,7 +638,7 @@ docker compose --env-file .env -f compose.yaml exec -T postgres \
 ## 9. 更新、验收与回滚
 
 1. 保留当前镜像 digest、配置与数据库备份，审查 forward-only migration 的兼容性。
-2. 在 `.env` 填写新 API/Web digest；确认 shell 没有旧的同名 export 覆盖。
+2. 在 `.env` 填写新 API/Web digest；确认 shell 没有旧的同名 export 覆盖。使用调用方凭据时核对 `WEKEEPER_SOURCE_MASTER_KEY_V1` 已注入所有 API 实例并保持原值，不随镜像更新重新生成。
 3. 执行生产 pull、up，并等待就绪。
 4. 检查日志和真实浏览器业务流程，记录发布结果。
 
@@ -619,6 +682,8 @@ docker compose --env-file .env -f compose.yaml exec -T web \
 | 构建找不到 Cargo.toml 或 api-contract | 是否从仓库根目录使用 `.` 构建 |
 | 无法拉取镜像 | 仓库地址、登录、标签/digest、主机 CPU 架构 |
 | PostgreSQL 不健康 | 初始化变量、已有卷的真实密码、磁盘空间和日志 |
+| 新增调用方凭据返回 503、提示加密服务未配置 | 核对 `WEKEEPER_SOURCE_MASTER_KEY_V1` 的 32 字节无填充 base64url 格式及 API 环境注入；修改后重建 API；Docker 不自动生成 |
+| 已有调用方凭据无法解密 | 核对原存储主密钥及所有 API 实例配置，使用与数据库配套备份的原值，不重新生成 |
 | API 启动失败/readyz 503 | 数据库连接、migration 错误；不要绕过迁移启动 |
 | 页面 200 但 API 失败 | Caddy 上游、容器 DNS 与 API readiness |
 | HTTP 登录失败/没有 Cookie | 本地才启用 insecure；Origin 要匹配实际浏览器地址 |

@@ -27,6 +27,9 @@ export default defineConfig({
             { text: "常见问题", link: "/guide/troubleshooting" },
           ],
         },
+        { text: "消息接收管理", items: [
+          { text: "调用方凭据与路由授权", link: "/guide/operator/source-access" },
+        ] },
         { text: "企业微信分发管理", items: [
           { text: "工作空间与权限", link: "/guide/workspaces" },
           { text: "客户群与模板", link: "/guide/operator/groups-and-templates" },

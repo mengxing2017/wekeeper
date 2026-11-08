@@ -23,7 +23,7 @@ pnpm --dir frontend dev
 
 ## Docker 与首次管理员
 
-配置 `.env` 中数据库密码、WEKEEPER_PUBLIC_ORIGIN、HTTPS 域名及平台凭据。
+配置 `.env` 中数据库密码、WEKEEPER_PUBLIC_ORIGIN、HTTPS 域名及平台凭据。使用调用方凭据功能时，还需生成并设置 `WEKEEPER_SOURCE_MASTER_KEY_V1`，仅注入 API；Docker 不自动生成。生成、配置更新及备份要求见 [Docker 调用方凭据主密钥](docker.md#调用方凭据主密钥-首次配置与已有部署更新)。
 本地 HTTP 验证才设置 WEKEEPER_INSECURE_LOCAL_AUTH=true；生产保持 false。
 
 ```bash
