@@ -64,6 +64,8 @@ DO $probe$ BEGIN
 END $probe$;
 DROP TABLE retirement_dependency_probe;
 """)
+ if migration.name == '202611080143_retire_remote_hosting_pause.sql':
+  schema_parts.append((r/'backend/tests/sql/remote_hosting_pause_seed.sql').read_text())
  schema_parts.append('BEGIN;\n' + migration.read_text() + '\nCOMMIT;')
 schema='\n\n'.join(schema_parts)
 seed=f"INSERT INTO wecom_workspaces(id,name) VALUES('{s}','隔离分发'); INSERT INTO accounts(id,username,display_name) VALUES('{a}','isolated-test','测试');"
@@ -150,6 +152,7 @@ control_checks=control_checks.replace('__CONTROL_OPEN_GENERATION__',bound_sql(co
 control_checks=control_checks.replace('__CONTROL_PULSE__',bound_sql(control_pulse,control_device,control_connection,control_epoch,"'blocked'","'device_locked'",'true'))
 control_checks=control_checks.replace('__CONTROL_DUPLICATE_PULSE__',bound_sql(control_pulse,control_device,control_connection,control_epoch,"'blocked'","'device_locked'",'false'))
 checks += control_checks
+checks += (r/'backend/tests/sql/remote_hosting_pause_assertions.sql').read_text()
 with tempfile.TemporaryDirectory(prefix='keeper67-effects-') as tmp:
  db=Path(tmp)/'db';subprocess.run([str(pg/'initdb'),'-D',str(db),'-U','keeper67_test','--auth=trust','--no-locale','--encoding=UTF8'],check=True,capture_output=True)
  script='\n\n'.join([schema,seed,checks,(r/'backend/tests/sql/retired_tables_assertions.sql').read_text()]+[f'PREPARE product_query_{i} AS {q};' for i,q in enumerate(queries)])+'\n\n'
