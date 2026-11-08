@@ -43,6 +43,9 @@ async fn open(State(a): State<Application>, h: HeaderMap) -> Result<Response> {
 async fn pulse(State(a): State<Application>, h: HeaderMap, input: Input) -> Result<Response> {
     let c = credential(&a, &h).await?;
     let p = input.decode::<Pulse>("device-control-pulses")?;
+    if p.probe_id.is_some() {
+        return Err(Error::Invalid("主动探测响应必须来自原控制连接".into()));
+    }
     Ok(resource(
         "device-control-frames",
         a.device_control().device(&c, Operation::Pulse(p)).await?,
@@ -143,15 +146,29 @@ async fn run(a: Application, c: Credential, mut socket: WebSocket) {
         tokio::time::timeout(std::time::Duration::from_secs(5), send(&mut socket, &frame)).await,
         Ok(Ok(()))
     ) {
+        let _ = service
+            .device(
+                &c,
+                Operation::Close {
+                    connection_id: id,
+                    epoch,
+                },
+            )
+            .await;
         return;
     }
-    let mut tick = tokio::time::interval(std::time::Duration::from_secs(2));
+    // Command latency remains bounded by five seconds; this is not a heartbeat.
+    let mut tick = tokio::time::interval(std::time::Duration::from_secs(5));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut probes = ProbeSchedule::new(tokio::time::Instant::now());
+    let mut heartbeat_interval = frame.heartbeat_interval_seconds;
     let mut last = String::new();
     let mut budget_started = tokio::time::Instant::now();
     let mut messages = 0u32;
     loop {
-        let (result, reply) = tokio::select! {
-         _=tick.tick()=>(service.device(&c,Operation::Poll{connection_id:id,epoch}).await,false),
+        let (result, reply, probe_response) = tokio::select! {
+         _=tokio::time::sleep_until(probes.next_due(heartbeat_interval))=>(service.device(&c,Operation::Poll{connection_id:id,epoch}).await,false,false),
+         _=tick.tick()=>(service.device(&c,Operation::Poll{connection_id:id,epoch}).await,false,false),
          incoming=socket.recv()=>{
           match incoming {
            Some(Ok(Message::Text(text)))=>{
@@ -159,7 +176,12 @@ async fn run(a: Application, c: Credential, mut socket: WebSocket) {
             messages+=1;
             if messages>120 {break;}
             match serde_json::from_str::<Pulse>(&text){
-            Ok(p) if p.connection_id==id&&p.epoch==epoch=>(service.device(&c,Operation::Pulse(p)).await,true),
+            Ok(p) if p.connection_id==id&&p.epoch==epoch=>{
+                if let Some(probe) = p.probe_id
+                    && !probes.accept(probe, tokio::time::Instant::now()) { continue; }
+                let probe_response = p.probe_id.is_some();
+                (service.device(&c,Operation::Pulse(p)).await,true,probe_response)
+            },
             _=>break,
            }},
            Some(Ok(Message::Ping(_)))|Some(Ok(Message::Pong(_)))=>continue,
@@ -168,13 +190,21 @@ async fn run(a: Application, c: Credential, mut socket: WebSocket) {
          }
         };
         match result {
-            Ok(f) => {
+            Ok(mut f) => {
+                heartbeat_interval = f.heartbeat_interval_seconds;
+                let now = tokio::time::Instant::now();
+                if reply && f.heartbeat_fresh && probe_response {
+                    probes.activity(now);
+                }
+                if !(reply && f.heartbeat_fresh) {
+                    f.probe_id = probes.due(now, f.heartbeat_interval_seconds);
+                }
                 let signature = format!(
                     "{}:{}",
                     f.desired_revision,
                     serde_json::to_string(&f.commands).unwrap_or_default()
                 );
-                if reply || signature != last {
+                if reply || f.probe_id.is_some() || signature != last {
                     last = signature;
                     if !matches!(
                         tokio::time::timeout(
@@ -185,6 +215,24 @@ async fn run(a: Application, c: Credential, mut socket: WebSocket) {
                         Ok(Ok(()))
                     ) {
                         break;
+                    }
+                    if reply && f.heartbeat_fresh && !probe_response {
+                        if let Some(heartbeat_id) = f.heartbeat_id
+                            && service
+                                .device(
+                                    &c,
+                                    Operation::ConfirmHeartbeat {
+                                        connection_id: id,
+                                        epoch,
+                                        heartbeat_id,
+                                    },
+                                )
+                                .await
+                                .is_err()
+                        {
+                            break;
+                        }
+                        probes.activity(tokio::time::Instant::now());
                     }
                 }
             }
@@ -230,4 +278,65 @@ pub fn router() -> Router<Application> {
             "/api/v1/platform/execution-devices/{id}/control",
             get(presence).post(enqueue),
         )
+}
+
+// A successful device pulse suppresses redundant server probes. A probe timeout
+// does not close the socket: persisted presence owns the full three-cycle window.
+struct ProbeSchedule {
+    last_activity: tokio::time::Instant,
+    pending: Option<(Uuid, tokio::time::Instant)>,
+}
+impl ProbeSchedule {
+    fn new(now: tokio::time::Instant) -> Self {
+        Self {
+            last_activity: now,
+            pending: None,
+        }
+    }
+    fn activity(&mut self, now: tokio::time::Instant) {
+        self.last_activity = now;
+        self.pending = None;
+    }
+    fn next_due(&self, interval: u16) -> tokio::time::Instant {
+        self.last_activity + std::time::Duration::from_secs(u64::from(interval))
+    }
+    fn due(&mut self, now: tokio::time::Instant, interval: u16) -> Option<Uuid> {
+        if now.duration_since(self.last_activity).as_secs() < u64::from(interval) {
+            return None;
+        }
+        let id = Uuid::new_v4();
+        self.last_activity = now;
+        self.pending = Some((id, now));
+        Some(id)
+    }
+    fn accept(&mut self, id: Uuid, now: tokio::time::Instant) -> bool {
+        if self.pending.is_some_and(|(expected, sent)| {
+            expected == id && now.duration_since(sent).as_secs() < 10
+        }) {
+            self.pending = None;
+            true
+        } else {
+            false
+        }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    #[test]
+    fn probes_share_activity_window_and_require_one_timely_correlated_reply() {
+        let start = tokio::time::Instant::now();
+        let mut schedule = ProbeSchedule::new(start);
+        assert!(schedule.due(start + Duration::from_secs(59), 60).is_none());
+        let probe = schedule.due(start + Duration::from_secs(60), 60).unwrap();
+        assert!(!schedule.accept(Uuid::new_v4(), start + Duration::from_secs(61)));
+        assert!(schedule.accept(probe, start + Duration::from_secs(61)));
+        assert!(!schedule.accept(probe, start + Duration::from_secs(62)));
+        schedule.activity(start + Duration::from_secs(61));
+        assert_eq!(schedule.next_due(60), start + Duration::from_secs(121));
+        assert!(schedule.due(start + Duration::from_secs(120), 60).is_none());
+        let expired = schedule.due(start + Duration::from_secs(121), 60).unwrap();
+        assert!(!schedule.accept(expired, start + Duration::from_secs(131)));
+    }
 }

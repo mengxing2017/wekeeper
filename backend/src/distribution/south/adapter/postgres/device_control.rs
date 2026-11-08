@@ -54,6 +54,7 @@ impl Store for Repository {
         };
         let mut closing = false;
         let mut heartbeat_id = None;
+        let mut heartbeat_fresh = false;
         match op {
             Operation::Renew { candidate_hash } => {
                 if candidate_hash.len() != 64
@@ -100,13 +101,29 @@ impl Store for Repository {
                 if !matches!(transport.as_str(), "https" | "wss") {
                     return Err(Error::Invalid("无效控制传输".into()));
                 }
-                sqlx::query("INSERT INTO device_control_sessions(device_id,connection_id,transport,credential_generation) VALUES($1,$2,$3,$4) ON CONFLICT(device_id) DO UPDATE SET connection_id=EXCLUDED.connection_id,epoch=device_control_sessions.epoch+1,transport=EXCLUDED.transport,credential_generation=EXCLUDED.credential_generation,connected=true,connected_at=clock_timestamp(),last_heartbeat_at=NULL,readiness='waiting',block_reason=NULL,disconnect_reason=NULL")
+                sqlx::query("INSERT INTO device_control_sessions(device_id,connection_id,transport,credential_generation) VALUES($1,$2,$3,$4) ON CONFLICT(device_id) DO UPDATE SET connection_id=EXCLUDED.connection_id,epoch=device_control_sessions.epoch+1,transport=EXCLUDED.transport,credential_generation=EXCLUDED.credential_generation,connected=true,connected_at=clock_timestamp(),presence_started_at=CASE WHEN device_control_sessions.credential_generation=EXCLUDED.credential_generation THEN device_control_sessions.presence_started_at ELSE clock_timestamp() END,last_heartbeat_at=CASE WHEN device_control_sessions.credential_generation=EXCLUDED.credential_generation THEN device_control_sessions.last_heartbeat_at ELSE NULL END,readiness='waiting',block_reason=NULL,disconnect_reason=NULL")
      .bind(c.device_id).bind(Uuid::new_v4()).bind(transport).bind(c.generation).execute(&mut *tx).await?;
+                sqlx::query("DELETE FROM device_control_pulse_receipts WHERE device_id=$1")
+                    .bind(c.device_id)
+                    .execute(&mut *tx)
+                    .await?;
             }
             Operation::Pulse(p) => {
                 heartbeat_id = p.heartbeat_id;
-                let active:Option<Uuid>=sqlx::query_scalar("UPDATE device_control_sessions SET last_heartbeat_at=clock_timestamp(),connected=true,readiness=$4,block_reason=$5 WHERE device_id=$1 AND connection_id=$2 AND epoch=$3 AND connected RETURNING device_id")
-     .bind(c.device_id).bind(p.connection_id).bind(p.epoch).bind(&p.readiness).bind(&p.block_reason).fetch_optional(&mut *tx).await?;
+                // Lock the current session before deduplicating or renewing presence.
+                let transport: String = sqlx::query_scalar("SELECT transport FROM device_control_sessions WHERE device_id=$1 AND connection_id=$2 AND epoch=$3 AND connected FOR UPDATE")
+                    .bind(c.device_id).bind(p.connection_id).bind(p.epoch)
+                    .fetch_optional(&mut *tx).await?.ok_or(Error::Policy("control_session_changed"))?;
+                let fresh = if p.heartbeat_sequence > 0 {
+                    sqlx::query("INSERT INTO device_control_pulse_receipts(device_id,connection_id,heartbeat_id,heartbeat_sequence) VALUES($1,$2,$3,$4) ON CONFLICT(device_id) DO UPDATE SET connection_id=EXCLUDED.connection_id,heartbeat_id=EXCLUDED.heartbeat_id,heartbeat_sequence=EXCLUDED.heartbeat_sequence WHERE device_control_pulse_receipts.connection_id=EXCLUDED.connection_id AND device_control_pulse_receipts.heartbeat_sequence<EXCLUDED.heartbeat_sequence")
+                        .bind(c.device_id).bind(p.connection_id).bind(p.heartbeat_id.ok_or_else(|| Error::Invalid("缺少心跳标识".into()))?).bind(p.heartbeat_sequence)
+                        .execute(&mut *tx).await?.rows_affected() == 1
+                } else {
+                    false
+                };
+                heartbeat_fresh = fresh;
+                let active:Option<Uuid>=sqlx::query_scalar("UPDATE device_control_sessions SET last_heartbeat_at=CASE WHEN $6 THEN clock_timestamp() ELSE last_heartbeat_at END,connected=true,readiness=$4,block_reason=$5 WHERE device_id=$1 AND connection_id=$2 AND epoch=$3 AND connected RETURNING device_id")
+     .bind(c.device_id).bind(p.connection_id).bind(p.epoch).bind(&p.readiness).bind(&p.block_reason).bind(fresh && (transport == "https" || p.probe_id.is_some())).fetch_optional(&mut *tx).await?;
                 active.ok_or(Error::Policy("control_session_changed"))?;
                 for receipt in p.receipts {
                     let state = match receipt.state {
@@ -118,11 +135,21 @@ impl Store for Repository {
       .bind(c.device_id).bind(receipt.id).bind(state).bind(receipt.result_code).execute(&mut *tx).await?;
                 }
             }
+            Operation::ConfirmHeartbeat {
+                connection_id,
+                epoch,
+                heartbeat_id,
+            } => {
+                // The successful WSS reply completes the exchange. Never confirm an
+                // old/replaced pulse or extend a replacement connection's evidence.
+                sqlx::query("UPDATE device_control_sessions s SET last_heartbeat_at=clock_timestamp() FROM device_control_pulse_receipts r WHERE s.device_id=$1 AND s.connection_id=$2 AND s.epoch=$3 AND s.connected AND r.device_id=s.device_id AND r.connection_id=s.connection_id AND r.heartbeat_id=$4")
+                    .bind(c.device_id).bind(connection_id).bind(epoch).bind(heartbeat_id).execute(&mut *tx).await?;
+            }
             Operation::Poll {
                 connection_id,
                 epoch,
             } => {
-                let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM device_control_sessions s CROSS JOIN device_control_policy p WHERE device_id=$1 AND connection_id=$2 AND epoch=$3 AND connected AND coalesce(last_heartbeat_at,connected_at)>clock_timestamp()-make_interval(secs=>p.offline_after_seconds))")
+                let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM device_control_sessions WHERE device_id=$1 AND connection_id=$2 AND epoch=$3 AND connected)")
      .bind(c.device_id).bind(connection_id).bind(epoch).fetch_one(&mut *tx).await?;
                 if !valid {
                     return Err(Error::Policy("control_session_changed"));
@@ -143,6 +170,7 @@ impl Store for Repository {
         let mut frame: Frame =
             serde_json::from_value(raw).map_err(|e| Error::Database(e.to_string()))?;
         frame.heartbeat_id = heartbeat_id;
+        frame.heartbeat_fresh = heartbeat_fresh;
         if !closing {
             let rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(c) FROM device_control_commands c WHERE device_id=$1 AND state IN ('queued','delivered','accepted') ORDER BY sequence LIMIT 100").bind(c.device_id).fetch_all(&mut *tx).await?;
             for row in rows {
@@ -153,8 +181,10 @@ impl Store for Repository {
             sqlx::query("UPDATE device_control_commands SET state='delivered' WHERE id=ANY($1) AND state='queued'").bind(frame.commands.iter().map(|x|x.id).collect::<Vec<_>>()).execute(&mut *tx).await?;
         }
         tx.commit().await?;
-        tracing::debug!(event, device_id=%c.device_id, connection_id=%frame.connection_id,
-            epoch=frame.epoch, heartbeat_id=?frame.heartbeat_id, "device control committed");
+        if event != "control_heartbeat_received" && event != "control_frame_polled" {
+            tracing::debug!(event, device_id=%c.device_id, connection_id=%frame.connection_id,
+                epoch=frame.epoch, "device control committed");
+        }
         Ok(frame)
     }
     async fn presence(&self, actor: Uuid, device: Uuid) -> Result<Value> {

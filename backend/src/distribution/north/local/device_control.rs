@@ -11,6 +11,17 @@ pub struct Service<R = Repository>(pub R);
 impl<R: Store> Service<R> {
     pub async fn device(&self, c: &Credential, op: Operation) -> Result<Frame> {
         if let Operation::Pulse(p) = &op {
+            if p.heartbeat_id.is_none() {
+                return Err(Error::Invalid("缺少心跳标识".into()));
+            }
+            if p.heartbeat_sequence < 0
+                || (p.heartbeat_sequence == 0 && p.receipts.is_empty())
+                || (p.heartbeat_sequence == 0 && p.probe_id.is_some())
+            {
+                return Err(Error::Invalid(
+                    "心跳序号必须递增；零序号仅用于命令回执".into(),
+                ));
+            }
             text(&p.readiness, 1, 80)?;
             if let Some(reason) = &p.block_reason {
                 text(reason, 0, 120)?;

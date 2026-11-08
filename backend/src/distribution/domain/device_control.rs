@@ -45,6 +45,11 @@ pub struct Pulse {
     pub readiness: String,
     #[serde(default)]
     pub heartbeat_id: Option<Uuid>,
+    /// Increasing within a connection; zero denotes a command receipt, not a heartbeat.
+    #[serde(default)]
+    pub heartbeat_sequence: i64,
+    #[serde(default)]
+    pub probe_id: Option<Uuid>,
     pub block_reason: Option<String>,
     #[serde(default)]
     pub receipts: Vec<Receipt>,
@@ -61,11 +66,15 @@ pub struct Command {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Frame {
+    #[serde(skip)]
+    pub heartbeat_fresh: bool,
     pub id: Uuid,
     pub connection_id: Uuid,
     pub epoch: i64,
     pub protocol_version: u8,
     pub heartbeat_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe_id: Option<Uuid>,
     pub heartbeat_interval_seconds: u16,
     pub offline_after_seconds: u16,
     pub server_time: chrono::DateTime<chrono::Utc>,
@@ -75,12 +84,27 @@ pub struct Frame {
     pub credential_expires_at: chrono::DateTime<chrono::Utc>,
 }
 pub enum Operation {
-    Renew { candidate_hash: String },
+    Renew {
+        candidate_hash: String,
+    },
     Activate,
-    Open { transport: String },
+    Open {
+        transport: String,
+    },
     Pulse(Pulse),
-    Poll { connection_id: Uuid, epoch: i64 },
-    Close { connection_id: Uuid, epoch: i64 },
+    ConfirmHeartbeat {
+        connection_id: Uuid,
+        epoch: i64,
+        heartbeat_id: Uuid,
+    },
+    Poll {
+        connection_id: Uuid,
+        epoch: i64,
+    },
+    Close {
+        connection_id: Uuid,
+        epoch: i64,
+    },
 }
 
 /// The persisted singleton policy is shared by every presence projection.
@@ -92,10 +116,11 @@ pub struct HeartbeatPolicy {
 }
 impl HeartbeatPolicy {
     pub fn valid(&self) -> bool {
-        (10..=60).contains(&self.heartbeat_interval_seconds)
-            && self.suspect_after_seconds > self.heartbeat_interval_seconds + 10
+        (60..=300).contains(&self.heartbeat_interval_seconds)
+            && self.suspect_after_seconds >= 2 * self.heartbeat_interval_seconds + 10
             && self.offline_after_seconds > self.suspect_after_seconds
-            && (45..=300).contains(&self.offline_after_seconds)
+            && self.offline_after_seconds >= 3 * self.heartbeat_interval_seconds + 10
+            && self.offline_after_seconds <= 1810
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -123,6 +148,7 @@ pub struct Presence {
     pub last_disconnected_at: Option<chrono::DateTime<chrono::Utc>>,
     pub disconnect_reason: Option<String>,
     pub server_time: chrono::DateTime<chrono::Utc>,
+    pub transport_connected: bool,
     #[serde(flatten)]
     pub policy: HeartbeatPolicy,
 }
