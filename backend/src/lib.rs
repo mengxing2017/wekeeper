@@ -12,3 +12,5 @@ pub mod media;
 pub mod observability;
 pub mod runtime;
 pub mod system;
+
+pub mod source_access;

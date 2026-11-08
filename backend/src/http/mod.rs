@@ -22,6 +22,7 @@ pub fn app_router(application: Application) -> Router {
         .route("/healthz", get(remote::liveness))
         .route("/readyz", get(remote::readiness))
         .route("/api/v1/system", get(remote::system_info))
+        .merge(crate::source_access::north::remote::router())
         .merge(crate::identity::north::remote::router())
 .merge(crate::distribution::north::remote::groups::router())
 .merge(crate::distribution::north::remote::wecom_workspaces::router())

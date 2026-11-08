@@ -1,0 +1,360 @@
+//! Run only against WEKEEPER_TEST_DATABASE_URL with WEKEEPER_SOURCE_MASTER_KEY_V1 configured.
+use axum::{
+    body::{Body, to_bytes},
+    http::Request,
+};
+use serde_json::{Value, json};
+use sqlx::postgres::PgPoolOptions;
+use tower::ServiceExt;
+use uuid::Uuid;
+use wekeeper_api::{
+    bootstrap::build_application,
+    business::Actor,
+    http::app_router,
+    source_access::{domain::*, north::local::Service, south::adapter::postgres::Repository},
+};
+fn actor(id: Uuid) -> Actor {
+    Actor {
+        id,
+        username: "test".into(),
+        display_name: "test".into(),
+        platform_admin: true,
+        bound_school_id: None,
+        grants: vec![],
+        csrf: String::new(),
+        session_hash: String::new(),
+        request_id: Uuid::new_v4().to_string(),
+        browser: false,
+        wecom_authenticated: false,
+        wecom_binding_revision: 0,
+    }
+}
+fn signed(
+    key: &str,
+    material: &str,
+    path: &str,
+    method: &str,
+    id: Uuid,
+    nonce: Uuid,
+    body: &[u8],
+) -> Request<Body> {
+    let timestamp = chrono::Utc::now().timestamp().to_string();
+    let signature = sign(
+        &secret(material).unwrap(),
+        &canonical(
+            key,
+            method,
+            path,
+            &timestamp,
+            &nonce.to_string(),
+            &id.to_string(),
+            body,
+        ),
+    );
+    Request::builder()
+        .method(method)
+        .uri(path)
+        .header("accept", MEDIA_TYPE)
+        .header("content-type", MEDIA_TYPE)
+        .header("x-source-version", "2")
+        .header("x-source-key-id", key)
+        .header("x-source-timestamp", timestamp)
+        .header("x-source-nonce", nonce.to_string())
+        .header("idempotency-key", id.to_string())
+        .header("x-source-signature", signature)
+        .body(Body::from(body.to_vec()))
+        .unwrap()
+}
+async fn read(r: axum::response::Response) -> (u16, Value) {
+    let status = r.status().as_u16();
+    (
+        status,
+        serde_json::from_slice(&to_bytes(r.into_body(), MAX_BODY).await.unwrap()).unwrap(),
+    )
+}
+#[tokio::test]
+#[ignore = "requires isolated WEKEEPER_TEST_DATABASE_URL and source encryption key"]
+async fn two_instances_replay_scope_lifetime_and_deletion() {
+    let url = std::env::var("WEKEEPER_TEST_DATABASE_URL").expect("isolated test database required");
+    let pool = PgPoolOptions::new()
+        .max_connections(10)
+        .connect(&url)
+        .await
+        .unwrap();
+    wekeeper_api::database::migrate(&pool).await.unwrap();
+    let id = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO accounts(id,username,display_name,platform_admin) VALUES($1,$2,'test',true)",
+    )
+    .bind(id)
+    .bind(id.to_string())
+    .execute(&pool)
+    .await
+    .unwrap();
+    let a = actor(id);
+    let svc = Service(pool.clone());
+    let key=svc.manage(&a,"source-credentials",None,"POST",Some(serde_json::from_value(json!({"unit_name":"unit","remark":"credential remark","status":"active","valid_from":chrono::Utc::now()-chrono::Duration::hours(1),"valid_until":null})).unwrap()),1,"","",None).await.unwrap();
+    assert!(key.get("source_id").is_none());
+    let key = key["id"].as_str().unwrap();
+    let source = Repository(pool.clone())
+        .caller_for_key(key)
+        .await
+        .unwrap()
+        .to_string();
+    // No separate caller/platform creation or host configuration is required.
+    assert!(
+        svc.manage(&a, "source-platforms", None, "GET", None, 1, "", "", None)
+            .await
+            .is_err()
+    );
+    let route=svc.manage(&a,"source-routes",None,"POST",Some(serde_json::from_value(json!({"key_id":key,"route_name":"M1","remark":"route remark","status":"active"})).unwrap()),1,"","",None).await.unwrap();
+    let route = route["id"].as_str().unwrap();
+    Repository(pool.clone())
+        .set_association(&a, key, route, "active", 1)
+        .await
+        .unwrap();
+    let material = Repository(pool.clone())
+        .deliver(key, "isolated-test")
+        .await
+        .unwrap();
+    assert!(
+        Repository(pool.clone())
+            .deliver(key, "isolated-test")
+            .await
+            .is_err()
+    );
+    for _ in 0..2 {
+        let revealed = Repository(pool.clone())
+            .reveal_secret(&a, key)
+            .await
+            .unwrap();
+        assert_eq!(revealed.secret, material);
+        assert_eq!(revealed.key_id, key);
+    }
+    let mut forbidden = a.clone();
+    forbidden.platform_admin = false;
+    assert_eq!(
+        Repository(pool.clone())
+            .reveal_secret(&forbidden, key)
+            .await
+            .err()
+            .unwrap()
+            .0,
+        "forbidden"
+    );
+    let audit: Vec<Value> = sqlx::query_scalar("SELECT detail FROM source_access_audit WHERE key_id=$1 AND action='source.credential.secret_reveal'").bind(key).fetch_all(&pool).await.unwrap();
+    assert_eq!(audit.len(), 2);
+    assert!(!serde_json::to_string(&audit).unwrap().contains(&material));
+    let one = app_router(build_application(pool.clone()));
+    let two = app_router(build_application(pool.clone()));
+    let event = Uuid::now_v7();
+    let body=serde_json::to_vec(&json!({"data":{"type":"source-events","id":event,"attributes":{"event_id":event,"schema_version":2,"route_id":route,"event_type":"content.upsert","external_content_id":"post-1","version":"1","sequence":1,"occurred_at":chrono::Utc::now(),"title":"中文🌸","content":"内容","detail_url":"https://content.example.net/articles/1"}}})).unwrap();
+    let nonce = Uuid::new_v4();
+    let path = "/api/v2/source-events";
+    let (r1, r2) = tokio::join!(
+        one.clone()
+            .oneshot(signed(key, &material, path, "POST", event, nonce, &body)),
+        two.clone()
+            .oneshot(signed(key, &material, path, "POST", event, nonce, &body))
+    );
+    let (s1, v1) = read(r1.unwrap()).await;
+    let (s2, v2) = read(r2.unwrap()).await;
+    assert!(
+        (s1 == 202 && s2 == 409) || (s2 == 202 && s1 == 409),
+        "{s1} {v1} {s2} {v2}"
+    );
+    let receipt = if s1 == 202 {
+        v1["data"]["id"].clone()
+    } else {
+        v2["data"]["id"].clone()
+    };
+    let (status, dup) = read(
+        two.clone()
+            .oneshot(signed(
+                key,
+                &material,
+                path,
+                "POST",
+                event,
+                Uuid::new_v4(),
+                &body,
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(dup["data"]["id"], receipt);
+    let mut changed: Value = serde_json::from_slice(&body).unwrap();
+    changed["data"]["attributes"]["title"] = json!("different");
+    let changed = serde_json::to_vec(&changed).unwrap();
+    assert_eq!(
+        read(
+            one.clone()
+                .oneshot(signed(
+                    key,
+                    &material,
+                    path,
+                    "POST",
+                    event,
+                    Uuid::new_v4(),
+                    &changed
+                ))
+                .await
+                .unwrap()
+        )
+        .await
+        .0,
+        409
+    );
+    // A second independent platform cannot use the first platform's route or receipt.
+    let other_source = Uuid::now_v7();
+    let other_key = Uuid::now_v7().to_string();
+    let other_secret = wekeeper_api::source_access::crypto::random_secret().unwrap();
+    sqlx::query("INSERT INTO source_callers(source_id) VALUES($1)")
+        .bind(other_source)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let cipher = wekeeper_api::source_access::crypto::seal(&other_secret, &other_key).unwrap();
+    sqlx::query("INSERT INTO source_credentials(key_id,source_id,unit_name,encrypted_secret,encryption_version,status,valid_from,valid_until,created_by) VALUES($1,$2,'P2',$3,'v1','active',now()-interval '1 hour',now()+interval '1 day',$4)").bind(&other_key).bind(other_source).bind(cipher).bind(id).execute(&pool).await.unwrap();
+    assert_eq!(
+        read(
+            two.clone()
+                .oneshot(signed(
+                    &other_key,
+                    &other_secret,
+                    path,
+                    "POST",
+                    event,
+                    Uuid::new_v4(),
+                    &body
+                ))
+                .await
+                .unwrap()
+        )
+        .await
+        .0,
+        403
+    );
+    let foreign_get = format!("/api/v2/source-receipts/{}", receipt.as_str().unwrap());
+    assert_eq!(
+        read(
+            two.clone()
+                .oneshot(signed(
+                    &other_key,
+                    &other_secret,
+                    &foreign_get,
+                    "GET",
+                    event,
+                    Uuid::new_v4(),
+                    b""
+                ))
+                .await
+                .unwrap()
+        )
+        .await
+        .0,
+        404
+    );
+    let get = format!("/api/v2/source-receipts/{}", receipt.as_str().unwrap());
+    // A perpetual credential can authenticate and read the receipt.
+    assert_eq!(
+        read(
+            one.clone()
+                .oneshot(signed(
+                    key,
+                    &material,
+                    &get,
+                    "GET",
+                    event,
+                    Uuid::new_v4(),
+                    b""
+                ))
+                .await
+                .unwrap()
+        )
+        .await
+        .0,
+        200
+    );
+    let list = svc
+        .manage(&a, "source-credentials", None, "GET", None, 1, "", "", None)
+        .await
+        .unwrap();
+    assert!(!list.to_string().contains(&material));
+    assert!(!list.to_string().contains("encrypted_secret"));
+    svc.manage(
+        &a,
+        "source-credentials",
+        Some(key),
+        "DELETE",
+        Some(serde_json::from_value(json!({})).unwrap()),
+        1,
+        "",
+        "",
+        None,
+    )
+    .await
+    .unwrap();
+    let remaining: i64 = sqlx::query_scalar("SELECT (SELECT count(*) FROM source_credentials WHERE key_id=$1)+(SELECT count(*) FROM source_key_routes WHERE key_id=$1)+(SELECT count(*) FROM source_routes WHERE route_id=$2)+(SELECT count(*) FROM source_request_nonces WHERE key_id=$1)").bind(key).bind(route).fetch_one(&pool).await.unwrap();
+    assert_eq!(remaining, 0);
+    assert_eq!(
+        Repository(pool.clone())
+            .reveal_secret(&a, key)
+            .await
+            .err()
+            .unwrap()
+            .0,
+        "not_found"
+    );
+    assert_eq!(
+        read(
+            two.clone()
+                .oneshot(signed(
+                    key,
+                    &material,
+                    &get,
+                    "GET",
+                    event,
+                    Uuid::new_v4(),
+                    b""
+                ))
+                .await
+                .unwrap()
+        )
+        .await
+        .0,
+        401
+    );
+    let rows = svc
+        .manage(&a, "source-credentials", None, "GET", None, 1, "", "", None)
+        .await
+        .unwrap();
+    assert!(
+        !rows["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["id"] == key)
+    );
+    let count:i64=sqlx::query_scalar("SELECT count(*) FROM source_inbox i JOIN source_receipts r USING(receipt_id) WHERE r.source_id=$1 AND r.event_id=$2").bind(source.parse::<Uuid>().unwrap()).bind(event).fetch_one(&pool).await.unwrap();
+    assert_eq!(count, 1);
+    let mut unauthorized = a.clone();
+    unauthorized.platform_admin = false;
+    assert!(
+        svc.manage(
+            &unauthorized,
+            "source-credentials",
+            None,
+            "GET",
+            None,
+            1,
+            "",
+            "",
+            None
+        )
+        .await
+        .is_err()
+    );
+}
