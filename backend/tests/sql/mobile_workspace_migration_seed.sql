@@ -1,0 +1,10 @@
+-- Run immediately before the independent-workspace migration in a temporary database.
+INSERT INTO schools(id,name) VALUES('20000000-0000-4000-8000-000000000001','Legacy school');
+INSERT INTO accounts(id,username,display_name) VALUES('20000000-0000-4000-8000-000000000002','legacy-mobile-admin','Legacy mobile admin');
+INSERT INTO school_memberships(school_id,account_id,role) VALUES('20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002','admin');
+INSERT INTO mobile_targets(id,school_id,search_text,created_by,updated_by) VALUES('20000000-0000-4000-8000-000000000003','20000000-0000-4000-8000-000000000001','Legacy target','20000000-0000-4000-8000-000000000002','20000000-0000-4000-8000-000000000002');
+-- Preserve live official tasks and results across both independent-scope migrations.
+INSERT INTO wecom_groups(id,school_id,corp_id,chat_id,name) VALUES('20000000-0000-4000-8000-000000000004','20000000-0000-4000-8000-000000000001','legacy-corp','legacy-chat','Legacy official group');
+INSERT INTO broadcast_tasks(id,school_id,creator_id,content,content_hash,corp_id,generation,content_source,source_namespace,draft_input) VALUES('20000000-0000-4000-8000-000000000005','20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002','Legacy frozen content','legacy-hash','legacy-corp',1,'text','builtin.direct','{}');
+INSERT INTO broadcast_batches(id,school_id,task_id,ordinal,sender,sender_account,binding_revision,state,corp_id,msgid) VALUES('20000000-0000-4000-8000-000000000006','20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000005',1,'legacy-owner','20000000-0000-4000-8000-000000000002',1,'created','legacy-corp','legacy-msgid');
+INSERT INTO broadcast_targets(id,school_id,task_id,batch_id,group_id,chat_id,group_name,group_revision,official_status) VALUES('20000000-0000-4000-8000-000000000007','20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000005','20000000-0000-4000-8000-000000000006','20000000-0000-4000-8000-000000000004','legacy-chat','Legacy official group',1,1);

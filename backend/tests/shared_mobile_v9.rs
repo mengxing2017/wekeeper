@@ -53,13 +53,13 @@ impl Fixture {
         let school = Uuid::new_v4();
         let device = Uuid::new_v4();
         sqlx::query("INSERT INTO accounts(id,username,display_name,platform_admin) VALUES($1,'v9-admin','Admin',true)").bind(actor_id).execute(&pool).await.unwrap();
-        sqlx::query("INSERT INTO schools(id,name) VALUES($1,'V9 test')")
+        sqlx::query("INSERT INTO mobile_workspaces(id,name) VALUES($1,'V9 test')")
             .bind(school)
             .execute(&pool)
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO school_memberships(school_id,account_id,role) VALUES($1,$2,'admin')",
+            "INSERT INTO mobile_workspace_members(workspace_id,account_id,role) VALUES($1,$2,'admin')",
         )
         .bind(school)
         .bind(actor_id)
@@ -526,12 +526,14 @@ async fn business_usage_is_atomic_scoped_idempotent_and_survives_delivery_change
     .execute(&f.pool)
     .await
     .unwrap();
-    sqlx::query("INSERT INTO school_memberships(school_id,account_id,role) VALUES($1,$2,'admin')")
-        .bind(f.school)
-        .bind(school_actor_id)
-        .execute(&f.pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO mobile_workspace_members(workspace_id,account_id,role) VALUES($1,$2,'admin')",
+    )
+    .bind(f.school)
+    .bind(school_actor_id)
+    .execute(&f.pool)
+    .await
+    .unwrap();
     let school_actor:Actor=serde_json::from_value(json!({"id":school_actor_id,"username":"school-only","display_name":"School admin","platform_admin":false,"grants":[],"wecom_authenticated":false})).unwrap();
     assert!(
         r.usage_read(&school_actor, None, None, false)
@@ -3651,5 +3653,55 @@ async fn task_list_status_matches_detail_and_completion_survives_manual_stop() {
     assert_eq!(stopped["status"], "stopped");
     check(&f, &other, "stopped").await;
     check(&f, &task, "completed").await;
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn mobile_membership_is_independent_of_school_membership_and_revocation() {
+    let f = Fixture::with_adapter(false).await;
+    assert!(
+        sqlx::query_scalar::<_, bool>(
+            "SELECT to_regclass('schools') IS NULL AND to_regclass('school_memberships') IS NULL"
+        )
+        .fetch_one(&f.pool)
+        .await
+        .unwrap()
+    );
+    let id = Uuid::new_v4();
+    sqlx::query("INSERT INTO accounts(id,username,display_name) VALUES($1,'mobile-operator','Mobile operator')").bind(id).execute(&f.pool).await.unwrap();
+    sqlx::query("INSERT INTO mobile_workspace_members(workspace_id,account_id,role) VALUES($1,$2,'operator')").bind(f.school).bind(id).execute(&f.pool).await.unwrap();
+    let actor: Actor = serde_json::from_value(json!({"id":id,"username":"mobile-operator","display_name":"Mobile operator","platform_admin":false,"grants":[],"wecom_authenticated":false})).unwrap();
+    let service = wekeeper_api::distribution::north::local::shared_send_v2::Service(Repository(
+        f.pool.clone(),
+    ));
+    assert!(service.school_read(&actor, f.school, None).await.is_ok());
+    assert!(
+        service
+            .school_read(&actor, Uuid::new_v4(), None)
+            .await
+            .is_err()
+    );
+    sqlx::query("DELETE FROM mobile_workspace_members WHERE workspace_id=$1 AND account_id=$2")
+        .bind(f.school)
+        .bind(id)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    // An independent WeCom admin grant cannot restore revoked mobile access.
+    sqlx::query("INSERT INTO wecom_workspaces(id,name) VALUES($1,'Unrelated WeCom workspace')")
+        .bind(f.school)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO wecom_workspace_members(school_id,account_id,role) VALUES($1,$2,'admin')",
+    )
+    .bind(f.school)
+    .bind(id)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    assert!(service.school_read(&actor, f.school, None).await.is_err());
     f.close().await;
 }

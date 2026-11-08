@@ -1,7 +1,7 @@
 -- Synthetic rollback-only regression: run after all migrations in an isolated database.
 BEGIN;
 INSERT INTO accounts(id,username,display_name,platform_admin) VALUES('00000000-0000-4000-8000-000000000001'::uuid,'scope-test','Synthetic',true);
-INSERT INTO schools(id,name) VALUES('00000000-0000-4000-8000-000000000003'::uuid,'Synthetic scope');
+INSERT INTO mobile_workspaces(id,name) VALUES('00000000-0000-4000-8000-000000000003'::uuid,'Synthetic scope');
 INSERT INTO execution_devices(id,name,enabled,credential_generation) VALUES('00000000-0000-4000-8000-000000000004'::uuid,'Synthetic phone',true,1);
 INSERT INTO mobile_targets(id,school_id,search_text,created_by,updated_by) VALUES('00000000-0000-4000-8000-000000000005'::uuid,'00000000-0000-4000-8000-000000000003'::uuid,'Synthetic target','00000000-0000-4000-8000-000000000001'::uuid,'00000000-0000-4000-8000-000000000001'::uuid);
 INSERT INTO mobile_shared_school_access(device_id,school_id,enabled,revision,updated_by) VALUES('00000000-0000-4000-8000-000000000004'::uuid,'00000000-0000-4000-8000-000000000003'::uuid,true,1,'00000000-0000-4000-8000-000000000001'::uuid);

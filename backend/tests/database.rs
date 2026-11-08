@@ -123,30 +123,16 @@ async fn migrations_handle_residual_objects_after_table_only_reset() {
     .await
     .unwrap();
     assert!(definition.contains("directory group identity mismatch"));
-    let next: i64 = sqlx::query_scalar("SELECT nextval('legacy_public_id')")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(
-        next, 1_000_000_000_051,
-        "migration must not reset the counter"
-    );
-    let owned: bool = sqlx::query_scalar(
-        "SELECT pg_get_serial_sequence('legacy_aliases','public_id')::regclass = 'legacy_public_id'::regclass",
+    let removed: bool = sqlx::query_scalar(
+        "SELECT to_regclass('legacy_public_id') IS NULL AND to_regclass('legacy_aliases') IS NULL",
     )
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert!(owned, "sequence must be owned by the alias column");
-    sqlx::query("DROP TABLE legacy_aliases")
-        .execute(&pool)
-        .await
-        .unwrap();
-    let removed: bool = sqlx::query_scalar("SELECT to_regclass('legacy_public_id') IS NULL")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert!(removed, "dropping the table must also remove its sequence");
+    assert!(
+        removed,
+        "final retirement removes the obsolete alias table and owned sequence"
+    );
     sqlx::raw_sql(&format!(
         "SET search_path TO public; DROP SCHEMA {schema} CASCADE;"
     ))

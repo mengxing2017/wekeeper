@@ -290,10 +290,16 @@ async fn asset_snapshots_leases_scope_and_school_boundaries() {
         "wecom_60020"
     );
     fake.0.lock().unwrap().error = None;
-    let school = app.schools.create(&admin, "School A").await.unwrap();
-    let school: Uuid = school["id"].as_str().unwrap().parse().unwrap();
-    let other = app.schools.create(&admin, "School B").await.unwrap();
-    let other: Uuid = other["id"].as_str().unwrap().parse().unwrap();
+    let school = Uuid::new_v4();
+    app.wecom_workspaces()
+        .save(&admin, school, "Workspace A")
+        .await
+        .unwrap();
+    let other = Uuid::new_v4();
+    app.wecom_workspaces()
+        .save(&admin, other, "Workspace B")
+        .await
+        .unwrap();
     let candidates = svc
         .store
         .candidates(&admin, school, &AssetQuery::default(), 1)

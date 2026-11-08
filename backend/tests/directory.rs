@@ -328,13 +328,13 @@ async fn directory_sync_binding_and_identity_boundaries() {
         .await
         .unwrap();
     let school = Uuid::now_v7();
-    sqlx::query("INSERT INTO schools(id,name) VALUES($1,'Rotation school')")
+    sqlx::query("INSERT INTO wecom_workspaces(id,name) VALUES($1,'Rotation school')")
         .bind(school)
         .execute(&pool)
         .await
         .unwrap();
     sqlx::query(
-        "INSERT INTO school_memberships(account_id,school_id,role) VALUES($1,$2,'operator')",
+        "INSERT INTO wecom_workspace_members(account_id,school_id,role) VALUES($1,$2,'operator')",
     )
     .bind(bound)
     .bind(school)
@@ -469,7 +469,7 @@ async fn directory_sync_binding_and_identity_boundaries() {
         "unbind works without upstream"
     );
     assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM school_memberships")
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM wecom_workspace_members")
             .fetch_one(&pool)
             .await
             .unwrap(),

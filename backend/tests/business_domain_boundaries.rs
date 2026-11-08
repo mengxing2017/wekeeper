@@ -10,21 +10,26 @@ fn visit(path: &Path, files: &mut Vec<std::path::PathBuf>) {
     }
 }
 #[test]
-fn distribution_only_the_in_process_adapter_may_depend_on_community() {
+fn distribution_has_no_dependency_on_removed_forum() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/distribution");
     let mut files = Vec::new();
     visit(&root, &mut files);
     for file in files {
         let source = fs::read_to_string(&file).unwrap();
-        if !file.ends_with("adapter/in_process.rs") {
-            assert!(
-                !source.contains("crate::community"),
-                "forum type dependency: {}",
-                file.display()
-            );
-        }
+        assert!(
+            !source.contains("crate::community"),
+            "forum type dependency: {}",
+            file.display()
+        );
         let normalized = source.to_lowercase();
-        for table in ["posts", "comments", "cases", "school_resources"] {
+        for table in [
+            "posts",
+            "comments",
+            "cases",
+            "school_resources",
+            "schools",
+            "school_memberships",
+        ] {
             for keyword in ["from", "join", "update", "into"] {
                 assert!(
                     !normalized.contains(&format!("{keyword} {table} ")),

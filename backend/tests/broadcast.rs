@@ -89,7 +89,7 @@ async fn setup_with_forum(with_forum: bool) -> (PgPool, Actor, Uuid, DraftInput,
     let template = Uuid::new_v4();
     let post = Uuid::new_v4();
     let corp = format!("corp-{s}");
-    sqlx::query("INSERT INTO schools(id,name) VALUES($1,'School')")
+    sqlx::query("INSERT INTO wecom_workspaces(id,name) VALUES($1,'School')")
         .bind(s)
         .execute(&pool)
         .await
@@ -97,7 +97,7 @@ async fn setup_with_forum(with_forum: bool) -> (PgPool, Actor, Uuid, DraftInput,
     sqlx::query("INSERT INTO wecom_directory_state(singleton,corp_id,credential_scope) VALUES(true,$1,'scope')").bind(&corp).execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO wecom_members(id,userid,name,status,verification,checked_at) VALUES($1,'owner','Owner',1,'verified',now())").bind(member).execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO accounts(id,username,display_name,wecom_member_id,platform_admin) VALUES($1,'admin','Admin',$2,true)").bind(actor).bind(member).execute(&pool).await.unwrap();
-    sqlx::query("INSERT INTO school_memberships VALUES($1,$2,'admin')")
+    sqlx::query("INSERT INTO wecom_workspace_members VALUES($1,$2,'admin')")
         .bind(s)
         .bind(actor)
         .execute(&pool)
@@ -111,7 +111,11 @@ async fn setup_with_forum(with_forum: bool) -> (PgPool, Actor, Uuid, DraftInput,
         .unwrap();
     sqlx::query("INSERT INTO template_versions(id,school_id,template_id,body,published) VALUES($1,$2,$3,'{{post.title}}',true)").bind(version).bind(s).bind(template).execute(&pool).await.unwrap();
     if with_forum {
-        sqlx::query("INSERT INTO posts(id,school_id,author_id,title,content,audit_status) VALUES($1,$2,$3,'Notice','Body','approved')").bind(post).bind(s).bind(actor).execute(&pool).await.unwrap();
+        // External/forum data is a distribution-owned projection, with no forum tables.
+        sqlx::query("INSERT INTO distribution_source_organizations(namespace,external_organization_id,school_id) VALUES('builtin.forum',$1,$2),('builtin.direct',$1,$2)")
+            .bind(s.to_string()).bind(s).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO distribution_materials(namespace,external_organization_id,external_content_id,school_id,version,title,content,allowed) VALUES('builtin.forum',$1,$2,$3,'1','Notice','Body',true)")
+            .bind(s.to_string()).bind(post.to_string()).bind(s).execute(&pool).await.unwrap();
     }
     sqlx::query("INSERT INTO official_channel_health(corp_id,generation,credential_scope,available,checked_at,last_success_at) VALUES($1,1,'scope',true,now(),now())").bind(&corp).execute(&pool).await.unwrap();
     let mut groups = Vec::new();
@@ -262,13 +266,13 @@ async fn broadcast_once_partial_results_and_school_boundaries() {
         )
         .await
         .unwrap();
-    // Platform administration alone is never a school sending grant.
-    sqlx::query("DELETE FROM school_memberships WHERE account_id=$1")
+    // Platform administration may inspect independent workspaces, but a revoked sender cannot execute.
+    sqlx::query("DELETE FROM wecom_workspace_members WHERE account_id=$1")
         .bind(a.id)
         .execute(&pool)
         .await
         .unwrap();
-    assert!(service.list(&a, s, Page::default()).await.is_err());
+    assert!(service.list(&a, s, Page::default()).await.is_ok());
     service.run_once().await.unwrap();
     assert_eq!(fake.calls.load(Ordering::SeqCst), 2);
 }
@@ -350,7 +354,7 @@ async fn drafts_are_revisioned_and_preflight_rechecks_content() {
     let updated = service.save(&a, s, Some(t.id), edit.clone()).await.unwrap();
     assert_eq!(updated.revision, 2);
     assert!(service.save(&a, s, Some(t.id), edit).await.is_err());
-    sqlx::query("UPDATE posts SET revision=revision+1 WHERE id=$1")
+    sqlx::query("UPDATE distribution_materials SET version=(version::bigint+1)::text WHERE namespace='builtin.forum' AND external_content_id=$1::uuid::text")
         .bind(input.post_ids[0])
         .execute(&pool)
         .await
@@ -510,7 +514,10 @@ async fn http_scope_csrf_retirement_and_real_task_contract() {
         .await
         .unwrap();
     let app = wekeeper_api::http::app_router(application);
-    let path = format!("/api/v1/schools/{s}/broadcast-tasks/{}", t.id);
+    let path = format!(
+        "/api/v1/wecom-distribution/workspaces/{s}/broadcast-tasks/{}",
+        t.id
+    );
     let request = |method: &str, path: &str, csrf: bool, body: Value| {
         let mut builder = Request::builder()
             .method(method)
@@ -576,7 +583,7 @@ async fn http_scope_csrf_retirement_and_real_task_contract() {
             .status(),
         404
     );
-    sqlx::query("DELETE FROM school_memberships WHERE account_id=$1")
+    sqlx::query("DELETE FROM wecom_workspace_members WHERE account_id=$1")
         .bind(a.id)
         .execute(&pool)
         .await
@@ -587,8 +594,8 @@ async fn http_scope_csrf_retirement_and_real_task_contract() {
             .await
             .unwrap()
             .status(),
-        403,
-        "platform privilege does not bypass school grant"
+        200,
+        "platform privilege can inspect independent workspaces"
     );
 }
 
@@ -697,8 +704,14 @@ async fn reminders_are_limited_and_stop_unknown_requires_evidence() {
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn direct_text_without_posts_admin_confirmation_and_revocation() {
-    let (pool, a, s, mut input, fake) = setup().await;
-    sqlx::query("DELETE FROM posts")
+    let (pool, mut a, s, mut input, fake) = setup().await;
+    sqlx::query("UPDATE accounts SET platform_admin=false WHERE id=$1")
+        .bind(a.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    a.platform_admin = false;
+    sqlx::query("DELETE FROM distribution_materials WHERE namespace='builtin.forum'")
         .execute(&pool)
         .await
         .unwrap();
@@ -721,7 +734,7 @@ async fn direct_text_without_posts_admin_confirmation_and_revocation() {
     input.template_version_id = None;
     input.post_ids.clear();
     input.text_content = Some("直接通知\r\n第二行😀".into());
-    sqlx::query("UPDATE school_memberships SET role='operator' WHERE account_id=$1")
+    sqlx::query("UPDATE wecom_workspace_members SET role='operator' WHERE account_id=$1")
         .bind(a.id)
         .execute(&pool)
         .await
@@ -762,7 +775,7 @@ async fn direct_text_without_posts_admin_confirmation_and_revocation() {
             .await
             .is_err()
     );
-    sqlx::query("UPDATE school_memberships SET role='admin' WHERE account_id=$1")
+    sqlx::query("UPDATE wecom_workspace_members SET role='admin' WHERE account_id=$1")
         .bind(a.id)
         .execute(&pool)
         .await
@@ -780,13 +793,13 @@ async fn direct_text_without_posts_admin_confirmation_and_revocation() {
         .unwrap();
     let work = service.store.work(Some(t.id)).await.unwrap();
     assert_eq!(work[0].content, t.content);
-    sqlx::query("UPDATE school_memberships SET role='operator' WHERE account_id=$1")
+    sqlx::query("UPDATE wecom_workspace_members SET role='operator' WHERE account_id=$1")
         .bind(a.id)
         .execute(&pool)
         .await
         .unwrap();
     assert!(service.store.claim(&work[0]).await.is_err());
-    sqlx::query("UPDATE school_memberships SET role='admin' WHERE account_id=$1")
+    sqlx::query("UPDATE wecom_workspace_members SET role='admin' WHERE account_id=$1")
         .bind(a.id)
         .execute(&pool)
         .await
@@ -1030,10 +1043,12 @@ async fn non_forum_source_replacement_idempotency_and_frozen_confirmation() {
     );
     assert_eq!(task.materials, vec![reference]);
     assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM posts")
-            .fetch_one(&pool)
-            .await
-            .unwrap(),
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM distribution_materials WHERE namespace='builtin.forum'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
         0
     );
     let mut changed = input.clone();
@@ -1154,7 +1169,7 @@ async fn forum_withdrawal_is_transactional_and_preserves_snapshot_and_history() 
         .action(&a, s, task.id, "confirm", "confirm", body)
         .await
         .unwrap();
-    sqlx::query("UPDATE posts SET visibility='deleted',revision=revision+1 WHERE id=$1")
+    sqlx::query("WITH changed AS (UPDATE distribution_materials SET allowed=false,version=(version::bigint+1)::text WHERE namespace='builtin.forum' AND external_content_id=$1::uuid::text RETURNING *) INSERT INTO distribution_source_events(namespace,external_organization_id,external_content_id,version,allowed) SELECT namespace,external_organization_id,external_content_id,version,allowed FROM changed")
         .bind(input.post_ids[0])
         .execute(&pool)
         .await
@@ -1369,65 +1384,6 @@ async fn product_template_confirmation_is_one_time_and_draft_preserves_published
             .await
             .is_err()
     );
-}
-
-#[tokio::test]
-#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn product_private_media_and_expired_school_override_keep_scope() {
-    use wekeeper_api::schools::domain::{ImageRef, ResourceAction, ResourceInput};
-    use wekeeper_api::schools::{
-        north::resources::Service as M,
-        south::{adapter::postgres::Repository as R, port::resources::Command as C},
-    };
-    let (pool, a, s, _, _) = setup().await;
-    let service = M(R(pool.clone()));
-    let art = service
-        .qr(&a, None, "https://school.test/help")
-        .await
-        .unwrap();
-    let asset: Uuid = art["id"].as_str().unwrap().parse().unwrap();
-    let input = ResourceInput {
-        id: None,
-        revision: 0,
-        kind: "banner".into(),
-        title: "平台默认".into(),
-        content: "说明".into(),
-        image_ref: Some(ImageRef::Asset { id: asset }),
-        action: ResourceAction::None {},
-        active: true,
-        sort_order: 0,
-        starts_at: None,
-        ends_at: None,
-    };
-    assert!(
-        service
-            .command(&a, Some(s), C::Preview(input.clone()))
-            .await
-            .is_err(),
-        "school cannot steal a platform draft"
-    );
-    let p = service.command(&a, None, C::Preview(input)).await.unwrap();
-    let command = C::Confirm {
-        preview_id: p["id"].as_str().unwrap().parse().unwrap(),
-        digest: p["digest"].as_str().unwrap().into(),
-    };
-    let result = service.command(&a, None, command.clone()).await.unwrap();
-    assert_eq!(result, service.command(&a, None, command).await.unwrap());
-    let id: Uuid = result["id"].as_str().unwrap().parse().unwrap();
-    assert!(service.media(&a, Some(s), asset, false).await.is_err());
-    assert!(service.media(&a, Some(s), id, true).await.is_ok());
-    sqlx::query("INSERT INTO school_resources(id,school_id,kind,title,active,ends_at) VALUES($1,$2,'banner','过期覆盖',true,now()-interval '1 second')").bind(Uuid::new_v4()).bind(s).execute(&pool).await.unwrap();
-    let list = R(pool.clone()).resources(s, false).await.unwrap();
-    assert!(
-        list.iter().any(|v| v["id"] == json!(id)),
-        "expired override falls back to platform"
-    );
-    sqlx::query("UPDATE school_resources SET active=false WHERE id=$1")
-        .bind(id)
-        .execute(&pool)
-        .await
-        .unwrap();
-    assert!(service.media(&a, Some(s), id, true).await.is_err());
 }
 
 #[tokio::test]

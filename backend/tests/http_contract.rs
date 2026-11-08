@@ -31,18 +31,18 @@ async fn removed_compatibility_routes_are_absent() {
         ),
         (
             "GET",
-            format!("/api/v1/schools/{school}/mobile-execution/shared-tasks"),
+            format!("/api/v1/mobile-execution/workspaces/{school}/shared-tasks"),
             StatusCode::NOT_FOUND,
         ),
         (
             "POST",
-            format!("/api/v1/schools/{school}/templates"),
+            format!("/api/v1/wecom-distribution/workspaces/{school}/templates"),
             StatusCode::METHOD_NOT_ALLOWED,
         ),
         (
             "POST",
             format!("/api/v1/schools/{school}/resources"),
-            StatusCode::METHOD_NOT_ALLOWED,
+            StatusCode::NOT_FOUND,
         ),
         (
             "POST",
@@ -223,7 +223,7 @@ async fn errors_use_cairnkit_documents_for_business_and_axum_rejections() {
         ),
         (
             "GET",
-            "/api/v1/wecom/oauth/start?school=invalid",
+            "/api/v1/wecom/oauth/start?workspace=invalid",
             "application/vnd.api+json",
             "",
             400,
@@ -654,7 +654,7 @@ async fn retired_phone_task_routes_are_removed() {
         ),
     ] {
         let response = app().oneshot(Request::builder().method(method)
-            .uri(format!("/api/v1/schools/00000000-0000-0000-0000-000000000001/mobile-execution/{path}"))
+            .uri(format!("/api/v1/mobile-execution/workspaces/00000000-0000-0000-0000-000000000001/{path}"))
             .header("content-type", "application/vnd.api+json")
             .body(Body::from("{\"data\":{\"type\":\"mobile-execution-tasks\",\"attributes\":{}}}")).unwrap()).await.unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
@@ -666,8 +666,8 @@ async fn removed_v8_delegation_and_school_pool_writes_are_absent() {
     for path in [
         "/api/v8/device-execution/send-delegation-decisions",
         "/api/v1/platform/mobile-execution/shared-device-access",
-        "/api/v1/schools/00000000-0000-0000-0000-000000000001/mobile-execution/shared-bindings",
-        "/api/v1/schools/00000000-0000-0000-0000-000000000001/mobile-execution/shared-bindings/00000000-0000-0000-0000-000000000002/revocations",
+        "/api/v1/mobile-execution/workspaces/00000000-0000-0000-0000-000000000001/shared-bindings",
+        "/api/v1/mobile-execution/workspaces/00000000-0000-0000-0000-000000000001/shared-bindings/00000000-0000-0000-0000-000000000002/revocations",
     ] {
         let response = app()
             .oneshot(
@@ -808,7 +808,7 @@ async fn mobile_research_management_routes_are_gone() {
 
 #[test]
 fn product_workflows_share_strict_typed_inputs_with_both_clients() {
-    use wekeeper_api::{distribution::domain::workflows::*, schools::domain::ResourceInput};
+    use wekeeper_api::distribution::domain::workflows::*;
     let fixture: Value = serde_json::from_str(include_str!(
         "../../api-contract/fixtures/product-workflows.json"
     ))
@@ -822,17 +822,12 @@ fn product_workflows_share_strict_typed_inputs_with_both_clients() {
             assert!(serde_json::from_value::<$t>(bad).is_err());
         }};
     }
-    roundtrip!("resource", ResourceInput);
     roundtrip!("template", TemplateInput);
     roundtrip!("usage", UsageInput);
     roundtrip!("policy", MemberPolicyInput);
     roundtrip!("request", RequestInput);
     roundtrip!("decision", RequestDecision);
     roundtrip!("confirmation", Confirmation);
-    serde_json::from_value::<ResourceInput>(fixture["resource"].clone())
-        .unwrap()
-        .validate()
-        .unwrap();
     Command::UsagePreview(serde_json::from_value(fixture["usage"].clone()).unwrap())
         .validate()
         .unwrap();
@@ -843,26 +838,17 @@ async fn product_workflow_routes_require_identity_before_any_database_access() {
     for (method, path) in [
         (
             "POST",
-            "/api/v1/schools/00000000-0000-4000-8000-000000000001/broadcast-task-previews",
+            "/api/v1/wecom-distribution/workspaces/00000000-0000-4000-8000-000000000001/broadcast-task-previews",
         ),
         (
             "POST",
-            "/api/v1/schools/00000000-0000-4000-8000-000000000001/template-previews",
+            "/api/v1/wecom-distribution/workspaces/00000000-0000-4000-8000-000000000001/template-previews",
         ),
-        (
-            "POST",
-            "/api/v1/schools/00000000-0000-4000-8000-000000000001/resource-publications",
-        ),
-        ("POST", "/api/v1/platform/resource-artwork"),
         ("POST", "/api/v1/platform/member-policy-previews"),
         ("GET", "/api/v1/platform/business-requests"),
         (
             "POST",
             "/api/v1/platform/business-requests/00000000-0000-4000-8000-000000000001/decisions",
-        ),
-        (
-            "GET",
-            "/api/v1/schools/00000000-0000-4000-8000-000000000001/published-resources",
         ),
     ] {
         let response = app()
@@ -1039,4 +1025,135 @@ async fn task_delivery_is_a_device_authenticated_jsonapi_endpoint() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn forum_and_miniapp_routes_are_removed_while_materials_require_login() {
+    let school = "00000000-0000-4000-8000-000000000001";
+    let id = "00000000-0000-4000-8000-000000000002";
+    let paths = [
+        format!("/api/v1/schools/{school}/posts"),
+        format!("/api/v1/schools/{school}/posts/{id}"),
+        format!("/api/v1/schools/{school}/posts/{id}/moderation-decisions"),
+        format!("/api/v1/schools/{school}/comments"),
+        format!("/api/v1/schools/{school}/comments/{id}/moderation-decisions"),
+        format!("/api/v1/schools/{school}/cases"),
+        format!("/api/v1/schools/{school}/resources"),
+        format!("/api/v1/schools/{school}/published-resources"),
+        format!("/api/v1/schools/{school}/resource-previews"),
+        format!("/api/v1/schools/{school}/resource-publications"),
+        format!("/api/v1/schools/{school}/resource-artwork"),
+        format!("/api/v1/schools/{school}/resource-media/{id}"),
+        format!("/api/v1/schools/{school}/resource-qrcodes"),
+        format!("/api/v1/schools/{school}/notifications"),
+        format!("/api/v1/schools/{school}/reactions"),
+        format!("/api/v1/schools/{school}/follows"),
+        "/api/v1/platform/resources".into(),
+        "/api/v1/platform/resource-artwork".into(),
+        "/api/v1/platform/resource-previews".into(),
+        "/api/v1/platform/resource-publications".into(),
+        "/api/v1/auth/miniapp".into(),
+    ];
+    for path in paths {
+        for method in ["GET", "POST", "PUT", "DELETE"] {
+            let response = app()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(&path)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method} {path}");
+        }
+    }
+    for path in [
+        format!("/api/v1/wecom-distribution/workspaces/{school}/distribution-materials"),
+        "/api/v1/auth/session".into(),
+    ] {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .uri(&path)
+                    .header("authorization", "Bearer retired-miniapp-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
+    }
+}
+
+#[tokio::test]
+async fn schools_and_login_account_management_are_removed() {
+    let id = "00000000-0000-4000-8000-000000000001";
+    for path in [
+        "/api/v1/schools".into(),
+        "/api/v1/school-directory".into(),
+        format!("/api/v1/schools/{id}"),
+        format!("/api/v1/schools/{id}/members"),
+        format!("/api/v1/schools/{id}/members/{id}"),
+        format!("/api/v1/schools/{id}/bind"),
+        format!("/api/v1/schools/{id}/groups"),
+        "/api/v1/accounts".into(),
+        format!("/api/v1/accounts/{id}"),
+        format!("/api/v1/accounts/{id}/password"),
+        format!("/api/v1/accounts/{id}/wecom-binding"),
+    ] {
+        for method in ["GET", "POST", "PUT", "DELETE"] {
+            let response = app()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(&path)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method} {path}");
+        }
+    }
+    for path in [
+        "/api/v1/wecom-distribution/workspaces".into(),
+        format!("/api/v1/wecom-distribution/workspaces/{id}/groups"),
+        format!("/api/v1/wecom-distribution/workspaces/{id}/members"),
+        "/api/v1/platform/administrators".into(),
+        "/api/v1/audit-events".into(),
+    ] {
+        let response = app()
+            .oneshot(Request::builder().uri(&path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
+    }
+}
+
+#[tokio::test]
+async fn workspace_audit_route_is_removed() {
+    let response = app().oneshot(Request::builder()
+        .uri("/api/v1/wecom-distribution/workspaces/00000000-0000-4000-8000-000000000001/audit")
+        .body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn system_audit_rejects_workspace_members_before_database_access() {
+    let pool = PgPoolOptions::new()
+        .connect_lazy("postgres://unused:unused@127.0.0.1:1/unused")
+        .unwrap();
+    let actor = serde_json::from_value(json!({"id":"00000000-0000-4000-8000-000000000001", "username":"operator", "display_name":"operator", "platform_admin":false, "bound_school_id":null, "grants":[{"school_id":"00000000-0000-4000-8000-000000000002","role":"admin"}], "wecom_authenticated":false})).unwrap();
+    let result = wekeeper_api::audit::list(
+        axum::extract::State(bootstrap::build_application(pool)),
+        actor,
+        axum::extract::Query(Default::default()),
+    )
+    .await;
+    assert!(matches!(
+        result,
+        Err(wekeeper_api::business::Error::Forbidden)
+    ));
 }

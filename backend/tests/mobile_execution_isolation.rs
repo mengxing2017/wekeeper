@@ -38,18 +38,20 @@ async fn setup() -> (PgPool, Actor, Uuid, Uuid) {
     let school = Uuid::new_v4();
     let actor = Uuid::new_v4();
     let device = Uuid::new_v4();
-    sqlx::query("INSERT INTO schools(id,name) VALUES($1,'School')")
+    sqlx::query("INSERT INTO mobile_workspaces(id,name) VALUES($1,'School')")
         .bind(school)
         .execute(&pool)
         .await
         .unwrap();
     sqlx::query("INSERT INTO accounts(id,username,display_name,platform_admin) VALUES($1,'admin','Admin',true)").bind(actor).execute(&pool).await.unwrap();
-    sqlx::query("INSERT INTO school_memberships(school_id,account_id,role) VALUES($1,$2,'admin')")
-        .bind(school)
-        .bind(actor)
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO mobile_workspace_members(workspace_id,account_id,role) VALUES($1,$2,'admin')",
+    )
+    .bind(school)
+    .bind(actor)
+    .execute(&pool)
+    .await
+    .unwrap();
     sqlx::query("INSERT INTO execution_devices(id,name,enabled) VALUES($1,'Phone',true)")
         .bind(device)
         .execute(&pool)
@@ -175,17 +177,19 @@ async fn shared_bindings_require_platform_authority_and_follow_business_group_na
 async fn one_shared_device_serves_two_schools_without_leaking_global_notes() {
     let (pool, a, school, device) = setup().await;
     let other = Uuid::now_v7();
-    sqlx::query("INSERT INTO schools(id,name) VALUES($1,'Other')")
+    sqlx::query("INSERT INTO mobile_workspaces(id,name) VALUES($1,'Other')")
         .bind(other)
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO school_memberships(school_id,account_id,role) VALUES($1,$2,'admin')")
-        .bind(other)
-        .bind(a.id)
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO mobile_workspace_members(workspace_id,account_id,role) VALUES($1,$2,'admin')",
+    )
+    .bind(other)
+    .bind(a.id)
+    .execute(&pool)
+    .await
+    .unwrap();
     sqlx::query("UPDATE execution_devices SET remark='private-account-hint' WHERE id=$1")
         .bind(device)
         .execute(&pool)

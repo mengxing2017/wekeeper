@@ -1,7 +1,7 @@
 -- Rollback-only regression for a single business group name and budget lineage.
 BEGIN;
 INSERT INTO accounts(id,username,display_name,platform_admin) VALUES('10000000-0000-4000-8000-000000000001','locator-version-test','Synthetic',true);
-INSERT INTO schools(id,name) VALUES('10000000-0000-4000-8000-000000000002','Synthetic locator school');
+INSERT INTO mobile_workspaces(id,name) VALUES('10000000-0000-4000-8000-000000000002','Synthetic locator school');
 INSERT INTO execution_devices(id,name) VALUES('10000000-0000-4000-8000-000000000003','Phone A'),('10000000-0000-4000-8000-000000000004','Phone B');
 INSERT INTO mobile_targets(id,school_id,search_text,created_by,updated_by) VALUES('10000000-0000-4000-8000-000000000005','10000000-0000-4000-8000-000000000002','业务群名','10000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001');
 INSERT INTO mobile_device_target_bindings(id,school_id,device_id,target_id,created_by,updated_by) SELECT id,'10000000-0000-4000-8000-000000000002',device,'10000000-0000-4000-8000-000000000005','10000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001' FROM (VALUES ('10000000-0000-4000-8000-000000000006'::uuid,'10000000-0000-4000-8000-000000000003'::uuid),('10000000-0000-4000-8000-000000000007'::uuid,'10000000-0000-4000-8000-000000000004'::uuid)) v(id,device);

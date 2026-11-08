@@ -10,7 +10,7 @@ DECLARE
  claim uuid:=gen_random_uuid(); invocation uuid:=gen_random_uuid(); allowed boolean;
 BEGIN
  INSERT INTO accounts(id,username,display_name) VALUES(actor,'budget-attribution-test','Synthetic');
- INSERT INTO schools(id,name) VALUES(school,'Synthetic');
+ INSERT INTO mobile_workspaces(id,name) VALUES(school,'Synthetic');
  INSERT INTO execution_devices(id,name) VALUES(device,'Synthetic');
  INSERT INTO mobile_targets(id,school_id,search_text,created_by,updated_by) VALUES(target,school,'Synthetic',actor,actor);
  INSERT INTO mobile_usages(id,school_id,actor_id,approved_by,approval,body,confirmed_until,expires_at,budget_root)
