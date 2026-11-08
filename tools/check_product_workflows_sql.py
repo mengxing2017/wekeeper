@@ -129,10 +129,31 @@ DO $$ DECLARE result jsonb; removed uuid; BEGIN
  IF EXISTS({search_sql}) THEN RAISE EXCEPTION 'deleted administrator remains listed'; END IF;
 END $$;
 """
+# Execute the real control-session mutations, as well as checking the projection.
+control_open=next(q for q in queries if q.startswith("INSERT INTO device_control_sessions(device_id,connection_id,transport,credential_generation)"))
+control_pulse=next(q for q in queries if q.startswith("UPDATE device_control_sessions SET last_heartbeat_at=CASE WHEN $6"))
+control_device="'00000000-0000-4000-8000-000000000201'"
+control_connection="'00000000-0000-4000-8000-000000000202'"
+control_epoch=f"(SELECT epoch FROM device_control_sessions WHERE device_id={control_device})"
+control_checks=(r/'backend/tests/sql/control_presence.sql').read_text()
+control_receipt=next(q for q in queries if q.startswith("INSERT INTO device_control_pulse_receipts"))
+control_candidate=next(q for q in queries if q.startswith("SELECT EXISTS(SELECT 1 FROM device_control_presence cp JOIN execution_devices"))
+control_checks=control_checks.replace('__CONTROL_CANDIDATE__',bound_sql(control_candidate,control_device,'1'))
+control_checks=control_checks.replace('__CONTROL_RECEIPT__',bound_sql(control_receipt,control_device,control_connection,"'00000000-0000-4000-8000-000000000203'",'1'))
+control_checks=control_checks.replace('__CONTROL_RECEIPT_NEWER__',bound_sql(control_receipt,control_device,control_connection,"'00000000-0000-4000-8000-000000000204'",'2'))
+control_checks=control_checks.replace('__CONTROL_RECEIPT_OLDER__',bound_sql(control_receipt,control_device,control_connection,"'00000000-0000-4000-8000-000000000205'",'1'))
+control_confirm=next(q for q in queries if q.startswith("UPDATE device_control_sessions s SET last_heartbeat_at=clock_timestamp() FROM device_control_pulse_receipts"))
+control_checks=control_checks.replace('__CONTROL_CONFIRM__',bound_sql(control_confirm,control_device,control_connection,control_epoch,"'00000000-0000-4000-8000-000000000204'"))
+control_checks=control_checks.replace('__CONTROL_CONFIRM_OLD__',bound_sql(control_confirm,control_device,control_connection,control_epoch,"'00000000-0000-4000-8000-000000000203'"))
+control_checks=control_checks.replace('__CONTROL_OPEN__',bound_sql(control_open,control_device,control_connection,"'wss'",'1'))
+control_checks=control_checks.replace('__CONTROL_OPEN_GENERATION__',bound_sql(control_open,control_device,control_connection,"'https'",'2'))
+control_checks=control_checks.replace('__CONTROL_PULSE__',bound_sql(control_pulse,control_device,control_connection,control_epoch,"'blocked'","'device_locked'",'true'))
+control_checks=control_checks.replace('__CONTROL_DUPLICATE_PULSE__',bound_sql(control_pulse,control_device,control_connection,control_epoch,"'blocked'","'device_locked'",'false'))
+checks += control_checks
 with tempfile.TemporaryDirectory(prefix='keeper67-effects-') as tmp:
  db=Path(tmp)/'db';subprocess.run([str(pg/'initdb'),'-D',str(db),'-U','keeper67_test','--auth=trust','--no-locale','--encoding=UTF8'],check=True,capture_output=True)
  script='\n\n'.join([schema,seed,checks,(r/'backend/tests/sql/retired_tables_assertions.sql').read_text()]+[f'PREPARE product_query_{i} AS {q};' for i,q in enumerate(queries)])+'\n\n'
  result=subprocess.run([str(pg/'postgres'),'--single','-j','-D',str(db),'template1'],input=script,text=True,capture_output=True)
  
  if result.returncode or 'ERROR:' in result.stderr or 'FATAL:' in result.stderr:raise SystemExit(result.stdout+'\n'+result.stderr)
- print(f'Applied {len(files)} forward migrations and prepared {len(queries)} literal repository queries; isolated assertions passed for no fabricated delivery, no legacy schema, one-time preview, open-request uniqueness, immutable events, system audit search/projection/pagination, administrator create/edit/delete/search, final unused-table retirement and preserved live data. No sockets, production database or external send.')
+ print(f'Applied {len(files)} forward migrations and prepared {len(queries)} literal repository queries; isolated assertions passed for no fabricated delivery, no legacy schema, one-time preview, open-request uniqueness, immutable events, system audit search/projection/pagination, administrator create/edit/delete/search, final unused-table retirement, preserved live data and three-cycle control presence across reconnects. No sockets, production database or external send.')
