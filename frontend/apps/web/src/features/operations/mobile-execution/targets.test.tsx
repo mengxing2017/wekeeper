@@ -26,7 +26,7 @@ it('school admins create targets without a device grant or binding form', async 
   expect(screen.queryByLabelText('企业微信完整群名')).toBeNull()
   expect(screen.queryByLabelText('搜索词')).toBeNull()
   expect(screen.queryByLabelText('平台别名（不用于搜索）')).toBeNull()
-  expect(screen.queryByText('同时绑定本校授权设备')).toBeNull()
+  expect(screen.queryByText('同时绑定当前工作空间授权设备')).toBeNull()
   expect(screen.queryByRole('button', { name: '绑定设备' })).toBeNull()
   expect(api.devices).not.toHaveBeenCalled()
 })

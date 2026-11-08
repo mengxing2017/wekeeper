@@ -7,7 +7,7 @@ vi.mock('./api',()=>({sharedSend:{usageOptions:vi.fn(),usages:vi.fn(),usagePrevi
 afterEach(cleanup)
 beforeEach(()=>{
  vi.resetAllMocks()
- vi.mocked(sharedSend.usageOptions).mockResolvedValue({id:'options',schools:[{id:'school',name:'测试学校'}],devices:[{id:'phone',name:'离线候选手机',revision:1,online:false}],targets:[],scheme:null})
+ vi.mocked(sharedSend.usageOptions).mockResolvedValue({id:'options',schools:[{id:'school',name:'测试工作空间'}],devices:[{id:'phone',name:'离线候选手机',revision:1,online:false}],targets:[],scheme:null})
  vi.mocked(sharedSend.usages).mockResolvedValue({id:'usages',items:[]})
  vi.mocked(sharedSend.usagePreview).mockImplementation(async(_s,input)=>({id:'summary',digest:'summary-digest',body:{...input,scheme:null}}))
  vi.mocked(sharedSend.usageConfirm).mockResolvedValue({id:'usages',items:[]})
@@ -16,8 +16,8 @@ function mount(school?:string,admin=true){render(<QueryClientProvider client={ne
 it('平台开通只有范围与摘要两步，离线手机及同页新增群无需研发表单',async()=>{
  mount()
  fireEvent.click(screen.getByRole('button',{name:'开通使用'}))
- fireEvent.mouseDown(screen.getByLabelText('使用学校'))
- fireEvent.click(await screen.findByText('测试学校'))
+ fireEvent.mouseDown(screen.getByLabelText('使用工作空间'))
+ fireEvent.click(await screen.findByText('测试工作空间'))
  fireEvent.mouseDown(screen.getByLabelText('候选手机'))
  fireEvent.click(await screen.findByText('离线候选手机（离线，恢复后执行）'))
  fireEvent.change(screen.getByLabelText('同页新增群'),{target:{value:'  通知群  '}})
@@ -31,17 +31,17 @@ it('平台开通只有范围与摘要两步，离线手机及同页新增群无�
  expect(vi.mocked(sharedSend.usageConfirm).mock.calls[0][1]).toEqual({preview_id:'summary',digest:'summary-digest'})
  expect(screen.queryByText('通用能力办理')).toBeNull()
 },60000)
-it('学校运营只查看本校使用进度，无开通或审批按钮',async()=>{
+it('工作空间运营只查看当前工作空间使用进度，无开通或审批按钮',async()=>{
  mount('school',false)
  await waitFor(()=>expect(sharedSend.usages).toHaveBeenCalledWith('school'))
  expect(screen.queryByRole('button',{name:'开通使用'})).toBeNull()
  expect(screen.queryByRole('button',{name:'批准'})).toBeNull()
 })
 it('开通摘要展示统一业务群名，主列表折叠历史且待审批重新申请保留来源',async()=>{
- const base={id:'old',budget_root:'family',supersedes:null,created_at:'2026-11-01T00:00:00Z',school_id:'school',school_name:'测试学校',revision:1,approval:'approved' as const,state:'active' as const,body:{device_ids:['phone'],targets:[{id:'group',name:'通知群',search_text:'默认群'}],max_calls:100,expires_at:'2099-01-01T00:00:00Z',auto_targets:false},expires_at:'2099-01-01T00:00:00Z',confirmed_until:'2099-01-01T00:00:00Z',delivery:'available' as const,progress:'已关联',events:[],issues:[]}
+ const base={id:'old',budget_root:'family',supersedes:null,created_at:'2026-11-01T00:00:00Z',school_id:'school',school_name:'测试工作空间',revision:1,approval:'approved' as const,state:'active' as const,body:{device_ids:['phone'],targets:[{id:'group',name:'通知群',search_text:'默认群'}],max_calls:100,expires_at:'2099-01-01T00:00:00Z',auto_targets:false},expires_at:'2099-01-01T00:00:00Z',confirmed_until:'2099-01-01T00:00:00Z',delivery:'available' as const,progress:'已关联',events:[],issues:[]}
  const next={...base,id:'next',supersedes:'old',created_at:'2026-11-02T00:00:00Z',approval:'pending' as const,revision:2}
  vi.mocked(sharedSend.usages).mockResolvedValue({id:'usages',items:[base,next]})
- vi.mocked(sharedSend.usageOptions).mockResolvedValue({id:'options',schools:[{id:'school',name:'测试学校'}],devices:[{id:'phone',name:'测试手机',revision:1,online:false}],targets:[{id:'group',name:'通知群',search_text:'默认群',revision:1}],scheme:null})
+ vi.mocked(sharedSend.usageOptions).mockResolvedValue({id:'options',schools:[{id:'school',name:'测试工作空间'}],devices:[{id:'phone',name:'测试手机',revision:1,online:false}],targets:[{id:'group',name:'通知群',search_text:'默认群',revision:1}],scheme:null})
  vi.mocked(sharedSend.usagePreview).mockImplementation(async(_s,input)=>({id:'summary',digest:'digest',body:{...input,scheme:null,locators:[{device_id:'phone',device_name:'测试手机',target_id:'group',target_index:0,target_name:'通知群',search_text:'通知群',binding_locator_revision:2,target_locator_revision:null}]}}))
  mount('school')
  fireEvent.click(await screen.findByRole('button',{name:'修改并重新申请'}))

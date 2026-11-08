@@ -31,11 +31,12 @@ function show(platformAdmin = false) {
   render(
     <MemoryRouter>
       <AppShell
-        active="posts"
+        active="groups"
         onNavigate={onNavigate}
         username="测试运营"
         platformAdmin={platformAdmin}
-        allowedKeys={visibleNavigationKeys(platformAdmin, 'operator')}
+        mobileRole="operator"
+        allowedKeys={visibleNavigationKeys(platformAdmin, 'operator', 'operator')}
         onLogout={onLogout}
       >
         <p>学校内容</p>
@@ -47,7 +48,7 @@ function show(platformAdmin = false) {
 it('shows role-appropriate navigation and routes business selections', () => {
   const { onNavigate } = show()
   expect(screen.queryByRole('menuitem', { name: '学校管理' })).toBeNull()
-  expect(screen.getByRole('menuitem', { name: '内容审核' }).getAttribute('aria-current')).toBe(
+  expect(screen.getByRole('menuitem', { name: '客户群' }).getAttribute('aria-current')).toBe(
     'page',
   )
   fireEvent.click(screen.getByRole('menuitem', { name: '群发任务' }))
@@ -55,12 +56,12 @@ it('shows role-appropriate navigation and routes business selections', () => {
   expect(screen.queryByRole('menuitem', { name: '历史手机发送任务' })).toBeNull()
   fireEvent.click(screen.getByRole('menuitem', { name: '手机任务' }))
   expect(onNavigate).toHaveBeenCalledWith('mobile-execution-tasks')
-  expect(screen.getByRole('menuitem', { name: '手机设备' })).toBeTruthy()
+  expect(screen.queryByRole('menuitem', { name: '手机设备' })).toBeNull()
   expect(screen.getByRole('menuitem', { name: '发送账号' })).toBeTruthy()
 })
 it('provides platform management and logout for an administrator', async () => {
   const { onLogout } = show(true)
-  expect(screen.getByRole('menuitem', { name: '学校管理' })).toBeTruthy()
+  expect(screen.queryByRole('menuitem', { name: '学校管理' })).toBeNull()
   expect(screen.getByRole('menuitem', { name: '手机设备' })).toBeTruthy()
   fireEvent.click(screen.getByRole('button', { name: '账号菜单' }))
   fireEvent.click(await screen.findByRole('menuitem', { name: '退出登录' }))
@@ -79,7 +80,7 @@ it('collapses the desktop sidebar while keeping the active page and account acce
   show()
   fireEvent.click(screen.getByRole('button', { name: '收起侧栏' }))
   expect(document.querySelector('.workspace-shell')?.classList.contains('is-collapsed')).toBe(true)
-  expect(screen.getByRole('menuitem', { name: '内容审核' }).getAttribute('aria-current')).toBe(
+  expect(screen.getByRole('menuitem', { name: '客户群' }).getAttribute('aria-current')).toBe(
     'page',
   )
   expect(screen.getByRole('button', { name: '账号菜单' })).toBeTruthy()
@@ -91,7 +92,7 @@ it('opens static help without routing or changing the school selection', () => {
   const { onNavigate } = show()
   expect(screen.getByRole('link', { name: '帮助中心' }).getAttribute('href')).toBe('/docs/')
   const help = screen.getByRole('link', { name: '使用说明' })
-  expect(help.getAttribute('href')).toBe('/docs/guide/operator/moderation')
+  expect(help.getAttribute('href')).toBe('/docs/guide/operator/groups-and-templates')
   help.addEventListener('click', (event) => event.preventDefault(), { once: true })
   fireEvent.click(help)
   expect(onNavigate).not.toHaveBeenCalled()

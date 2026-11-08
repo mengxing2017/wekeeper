@@ -17,11 +17,11 @@ const sender={id:'account',school_id:'school',userid:'verified-official',display
 function show(global:boolean){vi.mocked(officialSenders.list).mockResolvedValue({items:[sender]});render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><OfficialSenders school="school" global={global}/></QueryClientProvider>)}
 it('school summary is isolated and has no platform qualification or phone pairing actions',async()=>{
  show(false);await screen.findByText('verified-official');expect(officialSenders.list).toHaveBeenCalledWith('school',1)
- expect(screen.queryByRole('button',{name:'停用学校资格'})).toBeNull();expect(screen.queryByText('登记旧模式发送账号')).toBeNull();expect(screen.queryByText('手机配对')).toBeNull()
+ expect(screen.queryByRole('button',{name:'停用分发工作空间资格'})).toBeNull();expect(screen.queryByText('登记旧模式发送账号')).toBeNull();expect(screen.queryByText('手机配对')).toBeNull()
 })
 it('platform qualification uses school, official identity and optimistic version',async()=>{
  vi.mocked(officialSenders.qualify).mockResolvedValue({updated:true});show(true)
- fireEvent.click(await screen.findByRole('button',{name:'停用学校资格'}))
+ fireEvent.click(await screen.findByRole('button',{name:'停用分发工作空间资格'}))
  await waitFor(()=>expect(officialSenders.qualify).toHaveBeenCalledWith('school','account',{enabled:false,revision:0}))
  expect(officialSenders.list).toHaveBeenCalledWith(undefined,1)
 })

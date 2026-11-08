@@ -21,12 +21,12 @@ async function compose(admin = true) {
   fireEvent.click(await screen.findByText('实际搜索文字'))
   fireEvent.change(screen.getByLabelText('发送文字'), { target: { value: message } })
 }
-it('本校管理员可点击确认，预览检查问题由提交接口明确反馈', async () => {
+it('当前工作空间管理员可点击确认，预览检查问题由提交接口明确反馈', async () => {
   vi.mocked(sharedSend.confirm).mockRejectedValue(new Error('请选择已绑定手机'))
   await compose()
   expect(screen.queryByRole('button',{name:'保存草稿'})).toBeNull();expect(screen.queryByLabelText('发送阶段')).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: '预览逐群执行计划' }))
-  await screen.findByText('没有可选绑定，请核对本校目标群与手机的关联')
+  await screen.findByText('没有可选绑定，请核对当前工作空间目标群与手机的关联')
   const button=screen.getByRole('button', { name: '确认发送' }) as HTMLButtonElement
   expect(button.disabled).toBe(false)
   fireEvent.click(button)
@@ -60,7 +60,7 @@ it('手机授权状态未知与状态过期不阻止确认，也不要求重新�
 it('无手机候选仍显示群名和搜索文字，重新预览生成新操作并清除确认',async()=>{
  await compose()
  fireEvent.click(screen.getByRole('button',{name:'预览逐群执行计划'}))
- await screen.findByText('没有可选绑定，请核对本校目标群与手机的关联')
+ await screen.findByText('没有可选绑定，请核对当前工作空间目标群与手机的关联')
  expect(screen.getAllByText('实际搜索文字').length).toBeGreaterThanOrEqual(2)
  expect(screen.getByRole('cell',{name:'实际搜索文字'})).toBeTruthy()
  expect(screen.queryByRole('cell',{name:'target'})).toBeNull()
@@ -81,7 +81,7 @@ it('预览响应不明保持原键，成功后的主动预览使用新键',async
  fireEvent.click(screen.getByRole('button',{name:'预览逐群执行计划'}))
  await screen.findByText('预览响应不明')
  fireEvent.click(screen.getByRole('button',{name:'预览逐群执行计划'}))
- await screen.findByText('没有可选绑定，请核对本校目标群与手机的关联')
+ await screen.findByText('没有可选绑定，请核对当前工作空间目标群与手机的关联')
  const calls=vi.mocked(sharedSend.taskPreview).mock.calls
  expect(calls[0][2]).toBe(calls[1][2])
  fireEvent.click(screen.getByRole('button',{name:'预览逐群执行计划'}))
@@ -121,11 +121,11 @@ it('确认时才发现配置损坏由服务端明确拒绝，并保留输入',as
  expect(screen.queryByText('平台已创建，等待手机同步')).toBeNull()
 },120000)
 
-it('缺少本校管理员角色时明确说明权限原因，而不是无说明置灰',async()=>{
+it('缺少当前工作空间管理员角色时明确说明权限原因，而不是无说明置灰',async()=>{
  await compose(false)
  fireEvent.click(screen.getByRole('button',{name:'预览逐群执行计划'}))
- expect(await screen.findByText('没有本校管理员发送权限')).toBeTruthy()
- expect(screen.getByText('当前账号没有本校管理员发送权限；平台管理员也需在学校成员管理中获得本校管理员角色')).toBeTruthy()
+ expect(await screen.findByText('没有工作空间管理员发送权限')).toBeTruthy()
+ expect(screen.getByText('当前账号没有当前工作空间管理员发送权限')).toBeTruthy()
  expect((screen.getByRole('button',{name:'确认发送'}) as HTMLButtonElement).disabled).toBe(true)
  expect(sharedSend.confirm).not.toHaveBeenCalled()
 },60000)
@@ -204,7 +204,7 @@ it('群名变化必须重新预览，手机配置不是受理条件',async()=>{
  await compose();fireEvent.click(screen.getByRole('button',{name:'预览逐群执行计划'}))
  expect(await screen.findByText(`受理检查：${text}`)).toBeTruthy()
  expect(screen.queryByText(`受理条件：${text}`)).toBeNull()
- expect(screen.queryByRole('button',{name:'查看本校使用范围'})).toBeNull()
+ expect(screen.queryByRole('button',{name:'查看当前工作空间使用范围'})).toBeNull()
  expect(screen.getByText('业务资源已变化，请重新预览后确认')).toBeTruthy()
  expect((screen.getByRole('button',{name:'确认发送'}) as HTMLButtonElement).disabled).toBe(true)
  expect(sharedSend.confirm).not.toHaveBeenCalled()
