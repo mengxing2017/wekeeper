@@ -11,7 +11,7 @@ make docs-install
 make docs-build
 ```
 
-`check-web` 检查 contract、Web/小程序类型、导入边界、lint、测试与构建；后端检查格式、锁文件构建、Clippy 和普通测试。数据库集成测试需提供隔离 URL 后运行 `make test-integration`；无需 Docker 的临时 PostgreSQL 生命周期用 `devbox run -- make test-embedded`。
+`check-web` 检查 contract、Web 类型、导入边界、lint、测试与构建；后端检查格式、锁文件构建、Clippy 和普通测试。数据库集成测试需提供隔离 URL 后运行 `make test-integration`；无需 Docker 的临时 PostgreSQL 生命周期用 `devbox run -- make test-embedded`。
 
 ## 文档及同镜像检查
 

@@ -4,7 +4,7 @@
 
 ## 分层与事务
 
-`backend/` 按业务模块划分 `domain/`、`north/local/`、`north/remote/`、`south/port/` 和 `south/adapter/postgres/`。HTTP 负责解析、认证接入与序列化，不写 SQL；领域规则不依赖 Axum 或 SQLx。跨对象一致性在业务用例与仓储事务边界维护，授权必须覆盖身份、学校范围与具体用例。
+`backend/` 按业务模块划分 `domain/`、`north/local/`、`north/remote/`、`south/port/` 和 `south/adapter/postgres/`。HTTP 负责解析、认证接入与序列化，不写 SQL；领域规则不依赖 Axum 或 SQLx。跨对象一致性在业务用例与仓储事务边界维护，授权必须覆盖身份、独立分发工作空间与具体用例。
 
 新增能力先明确领域状态和失败语义，再扩展端口、PostgreSQL adapter 与 north 用例，最后接 HTTP。参考已有 system 模块及相关业务模块，不向通用 shared 挤入业务规则。
 
@@ -25,3 +25,5 @@ SQLx migration 放在 `backend/migrations/`，版本递增且 forward-only，普
 生产 Caddy 的 `/api/*` reverse proxy 自动转发 WebSocket 升级，文档路由不能覆盖它。验收需合法隔离设备的 101 握手与双向帧；401 或普通 GET 200 都不能证明连接成功。日志不打印令牌。
 
 完成改动后执行[测试与验收](testing.md)，接口变更同时更新[契约](contracts-and-auth.md)。
+
+当前业务边界及授权见[独立分发工作空间](../guide/workspaces.md)。
