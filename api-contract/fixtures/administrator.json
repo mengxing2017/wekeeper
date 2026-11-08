@@ -1,0 +1,12 @@
+{
+  "data": {
+    "type": "administrators",
+    "id": "00000000-0000-4000-8000-000000000002",
+    "attributes": {
+      "username": "admin",
+      "display_name": "维护员",
+      "active": true,
+      "platform_admin": true
+    }
+  }
+}

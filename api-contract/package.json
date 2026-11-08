@@ -11,8 +11,6 @@
     "./business": "./src/modules/business/index.ts",
     "./client": "./src/http/client.ts",
     "./identity": "./src/modules/identity/index.ts",
-    "./schools": "./src/modules/schools/index.ts",
-    "./community": "./src/modules/community/index.ts",
     "./media": "./src/modules/media/index.ts",
     "./mobile-execution": "./src/modules/mobile-execution/index.ts",
     "./wecom-distribution": "./src/modules/wecom-distribution/index.ts",

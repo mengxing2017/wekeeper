@@ -22,23 +22,5 @@ export interface Session {
     user: User;
     csrf: string;
 }
-export interface School extends Row {
-    name: string;
-    active: boolean;
-    revision: number;
-    config: {
-        [key: string]: Json;
-    };
-}
-export interface Post extends Row {
-    school_id: string;
-    author_id: string;
-    title: string;
-    content: string;
-    images: string[];
-    tags: string[];
-    audit_status: 'pending' | 'approved' | 'rejected';
-    visibility: 'visible' | 'hidden' | 'deleted';
-    revision: number;
-}
-export type Resource = 'posts' | 'comments' | 'cases' | 'resources' | 'groups' | 'templates' | 'audit' | 'members' | 'follows' | 'notifications' | 'reactions';
+export interface DistributionMaterial extends Row { title: string; content: string; version: string }
+export type Resource = 'distribution-materials' | 'groups' | 'templates';

@@ -33,7 +33,7 @@ export interface TargetBinding {
   enabled: boolean; revision: number;
   school_name?: string; device_name?: string; search_text?: string; available?: boolean;
 }
-const base = (school: string) => `/api/v1/schools/${encodeURIComponent(school)}/mobile-execution`
+const base = (school: string) => `/api/v1/mobile-execution/workspaces/${encodeURIComponent(school)}`
 function write<T>(path: string, method: string, attributes: unknown, key: string): Promise<T> {
   if (!key.trim() || [...key].length > 128) throw new Error('请提供有效的幂等键')
   return requestResource<T>(path, method, attributes, undefined, { 'Idempotency-Key': key })
@@ -55,4 +55,14 @@ export const mobileExecutionApi = {
   bind: (input: SharedBindingInput, key: string) => write<{ id: string; school_id: string; target_id: string; bindings: TargetBinding[] }>('/api/v1/platform/mobile-execution/target-bindings', 'POST', input, key),
   updateBinding: (id: string, input: { expected_revision: number; enabled: boolean }, key: string) => write<TargetBinding>(`/api/v1/platform/mobile-execution/target-bindings/${encodeURIComponent(id)}`, 'PATCH', input, key),
   unbind: (id: string, expected_revision: number, reason: string, key: string) => write<TargetBinding>(`/api/v1/platform/mobile-execution/target-bindings/${encodeURIComponent(id)}/revocations`, 'POST', { expected_revision, reason }, key),
+}
+
+/** Mobile permissions are independent of school memberships. */
+export interface MobileWorkspace { id: string; name: string; role: 'admin' | 'operator' }
+export interface MobileWorkspaceMember { id: string; username: string; display_name: string; role: 'admin' | 'operator' }
+export const mobileWorkspaces = {
+  list: () => requestCollection<MobileWorkspace>('/api/v1/mobile-execution/workspaces'),
+  save: (id: string, name: string) => requestResource<MobileWorkspace>(`/api/v1/mobile-execution/workspaces/${encodeURIComponent(id)}`, 'PUT', { name }),
+  members: (id: string) => requestCollection<MobileWorkspaceMember>(`/api/v1/mobile-execution/workspaces/${encodeURIComponent(id)}/members`),
+  grant: (id: string, username: string, role: 'admin' | 'operator' | 'revoked') => requestResource<{id:string;role:string}>(`/api/v1/mobile-execution/workspaces/${encodeURIComponent(id)}/members`, 'PUT', { username, role }),
 }

@@ -1,35 +1,25 @@
 import { requestResource, requestCollection, setCsrf } from '../../http';
 export { ApiError } from '../../http';
 export * from './types'
-import type { Row, Session, School, Post, Resource } from './types'
+import type { Row, Session, Resource } from './types'
 const part = (s: string) => encodeURIComponent(s);
-export const scope = (school: string, path: string) => `/api/v1/schools/${part(school)}/${path}`;
+export const scope = (school: string, path: string) => `/api/v1/wecom-distribution/workspaces/${part(school)}/${path}`;
+export interface Administrator { id: string; username: string; display_name: string; active: boolean; platform_admin: boolean }
 export const identity = {
     async session() { const v = await requestResource<Session>('/api/v1/auth/session'); setCsrf(v.csrf); return v; },
     async login(username: string, password: string) { const v = await requestResource<Session>('/api/v1/auth/sessions', 'POST', { username, password }); setCsrf(v.csrf); return v; },
     async logout() { await requestResource('/api/v1/auth/session', 'DELETE'); setCsrf(''); },
     profile: (display_name: string) => requestResource('/api/v1/profile', 'PUT', { display_name }),
-    accounts: () => requestResource<Row[]>('/api/v1/accounts'),
-    create: (body: {
-        username: string;
-        display_name: string;
-        password: string;
-    }) => requestResource<Row>('/api/v1/accounts', 'POST', body),
-    update: (id: string, body: {display_name: string; active: boolean}) => requestResource(`/api/v1/accounts/${part(id)}`, 'PUT', body),
-    reset: (id: string, password: string) => requestResource(`/api/v1/accounts/${part(id)}/password`, 'POST', { username: '', password }),
+    administrators: (search = '') => requestResource<Administrator[]>(`/api/v1/platform/administrators${search ? `?${new URLSearchParams({search})}` : ''}`),
+    createAdministrator: (input: {username: string; display_name: string; password: string}) => requestResource<Administrator>('/api/v1/platform/administrators', 'POST', input),
+    updateAdministrator: (id: string, input: {display_name: string; active: boolean}) => requestResource<Administrator>(`/api/v1/platform/administrators/${part(id)}`, 'PUT', input),
+    deleteAdministrator: (id: string) => requestResource<null>(`/api/v1/platform/administrators/${part(id)}`, 'DELETE'),
+    resetAdministrator: (id: string, password: string) => requestResource(`/api/v1/platform/administrators/${part(id)}/password`, 'POST', { password }),
 };
 export interface WecomStatus { server_configured: boolean; client_configured: boolean; oauth_available: boolean; share_available: boolean }
 export const workspace = {
     wecomStatus: () => requestResource<WecomStatus>('/api/v1/wecom/status'),
-    globalResources: () => requestResource<Row[]>('/api/v1/platform/resources'),
-    schools: () => requestResource<School[]>('/api/v1/schools'),
-    directory: () => requestResource<Pick<School, 'id' | 'name'>[]>('/api/v1/school-directory'),
-    createSchool: (name: string) => requestResource<School>('/api/v1/schools', 'POST', { name }),
-    updateSchool: (s: string, body: unknown) => requestResource<School>(`/api/v1/schools/${part(s)}`, 'PUT', body),
-    bind: (s: string) => requestResource(scope(s, 'bind'), 'POST'),
     list: <T extends Row = Row>(s: string, resource: Resource, query = '', signal?: AbortSignal) => requestCollection<T>(scope(s, resource) + query, signal),
-    getPost: (s: string, id: string) => requestResource<Post>(scope(s, `posts/${part(id)}`)),
-    comments: (s: string, id: string, page = 1) => requestCollection<Row>(scope(s, `posts/${part(id)}/comments`) + `?page[number]=${page}&page[size]=30`),
     mutate: <T = Row>(s: string, path: string, body?: unknown, method = 'POST') => requestResource<T>(scope(s, path), method, body),
     upload: (s: string, file: Blob) => requestResource<{
         url: string;
@@ -38,9 +28,9 @@ export const workspace = {
 };
 
 /** OAuth only accepts UUID selections; arbitrary return URLs are not supported. */
-export function wecomOAuthUrl(selection: { school?: string } = {}): string {
+export function wecomOAuthUrl(selection: { workspace?: string } = {}): string {
     const params = new URLSearchParams();
-    if (selection.school) params.set('school', selection.school);
+    if (selection.workspace) params.set('workspace', selection.workspace);
     return `/api/v1/wecom/oauth/start${params.size ? `?${params}` : ''}`;
 }
 
@@ -81,8 +71,8 @@ export const directory = {
     rotate: (expected_generation: number) => requestResource(`${directoryPath}/credential-rotations`, 'POST', {expected_generation}),
     sync: () => requestResource<DirectoryRun>(`${directoryPath}/sync-runs`, 'POST'),
     run: (id: string) => requestResource<DirectoryRun>(`${directoryPath}/sync-runs/${part(id)}`),
-    bind: (account: string, member_id: string, revision: number) => requestResource(`/api/v1/accounts/${part(account)}/wecom-binding`, 'PUT', {member_id, revision}),
-    unbind: (account: string, revision: number) => requestResource(`/api/v1/accounts/${part(account)}/wecom-binding`, 'DELETE', undefined, undefined, {'If-Match': `"${revision}"`}),
+    bind: (account: string, member_id: string, revision: number) => requestResource(`/api/v1/platform/wecom-distribution/operators/${part(account)}/wecom-binding`, 'PUT', {member_id, revision}),
+    unbind: (account: string, revision: number) => requestResource(`/api/v1/platform/wecom-distribution/operators/${part(account)}/wecom-binding`, 'DELETE', undefined, undefined, {'If-Match': `"${revision}"`}),
 };
 
 export type AssetDataset = 'groups';
@@ -114,3 +104,16 @@ export const assets = {
 export * from '../wecom-distribution'
 
 export * from '../product-workflows'
+
+export interface AuditEvent {
+    id: string;
+    actor_id: string | null;
+    action: string;
+    object_id: string | null;
+    request_id: string | null;
+    detail: unknown;
+    created_at: string;
+}
+export const auditEvents = {
+    list: (query = '', signal?: AbortSignal) => requestCollection<AuditEvent>('/api/v1/audit-events' + query, signal),
+};

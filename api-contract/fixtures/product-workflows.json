@@ -1,24 +1,4 @@
 {
-  "resource": {
-    "id": null,
-    "revision": 0,
-    "kind": "banner",
-    "title": "校园活动",
-    "content": "本周活动",
-    "image_ref": {
-      "kind": "asset",
-      "id": "00000000-0000-4000-8000-000000000001"
-    },
-    "action": {
-      "kind": "internal_page",
-      "page": "post",
-      "object_id": "00000000-0000-4000-8000-000000000002"
-    },
-    "active": true,
-    "sort_order": 1,
-    "starts_at": null,
-    "ends_at": null
-  },
   "template": {
     "id": null,
     "revision": 0,

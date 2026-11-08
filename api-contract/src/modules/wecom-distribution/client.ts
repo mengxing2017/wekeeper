@@ -1,7 +1,7 @@
 import type { Client } from '../../http/client';
 import type { SourceReference } from '../distribution-content';
 const part=(s:string)=>encodeURIComponent(s);
-const scope=(school:string,path:string)=>`/api/v1/schools/${part(school)}/${path}`;
+const scope=(school:string,path:string)=>`/api/v1/wecom-distribution/workspaces/${part(school)}/${path}`;
 export interface BroadcastTask {
     id: string; school_id: string; creator_id: string; template_version_id: string|null; content_source: 'posts'|'text'|'materials'; source_namespace: string; materials: SourceReference[]; content: string;
     revision: number; state: 'draft'|'confirmed'|'abandoned'; stopped: boolean; created_at: string;
@@ -60,7 +60,7 @@ const broadcast = {
 };
 const officialSenders={
     list:(school:string|undefined,page=1)=>requestCollection<OfficialSender>(`${school ? scope(school,'wecom-senders') : '/api/v1/platform/wecom-senders'}?page[number]=${page}&page[size]=30`),
-    qualify:(school:string,id:string,input:{enabled:boolean;revision:number})=>requestResource<{updated:boolean}>(`/api/v1/platform/schools/${part(school)}/wecom-senders/${part(id)}/qualification`,'POST',input),
+    qualify:(school:string,id:string,input:{enabled:boolean;revision:number})=>requestResource<{updated:boolean}>(`/api/v1/platform/wecom-distribution/workspaces/${part(school)}/wecom-senders/${part(id)}/qualification`,'POST',input),
 };
 const distributionPolicies={
     get:()=>requestResource<DistributionPolicies>('/api/v1/platform/distribution-policies'),

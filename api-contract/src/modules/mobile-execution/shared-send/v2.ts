@@ -34,7 +34,7 @@ export interface SharedDevicePreparation {observed_at?:string|null;wake_diagnost
 export interface SharedScreenConditions extends Record<string,boolean> {interactive:boolean;keyguard_locked:boolean;device_locked:boolean;keyguard_secure:boolean;unlocked:boolean;accessibility:boolean;notification:boolean}
 export interface SharedRuntimeReport {schema:typeof SHARED_SEND_SCHEMA;runtime_epoch:string;ready_reason?:string|null;ui_ready:boolean;paused:boolean;quiescent:boolean;ui_context_epoch:string;apk_sha256:string;conditions:SharedScreenConditions;preparation?:SharedDevicePreparation|null}
 export function createSharedSendV2Client(client:Pick<Client,'requestResource'>) {
- const root=(s:string)=>`/api/v1/schools/${encodeURIComponent(s)}/mobile-execution`
+ const root=(s:string)=>`/api/v1/mobile-execution/workspaces/${encodeURIComponent(s)}`
  const one=client.requestResource
  const post=<T>(path:string,input:unknown,key:string,method='POST')=>one<T>(path,method,input,undefined,{'Idempotency-Key':key})
  return {

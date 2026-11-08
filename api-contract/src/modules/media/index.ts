@@ -1,5 +1,5 @@
 import type { Client, Cancellation } from '../../http/client'
-import { schoolPath } from '../schools'
+const workspacePath = (id: string) => `/api/v1/wecom-distribution/workspaces/${encodeURIComponent(id)}`
 export interface UploadedMedia {
   id: string
   url: string
@@ -7,9 +7,9 @@ export interface UploadedMedia {
 export function createMediaClient(client: Client) {
   return {
     upload: (school: string, bytes: ArrayBuffer) =>
-      client.requestResource<UploadedMedia>(`${schoolPath(school)}/media`, 'POST', bytes),
+      client.requestResource<UploadedMedia>(`${workspacePath(school)}/media`, 'POST', bytes),
     download(school: string, path: string, signal?: Cancellation) {
-      const prefix = [ 'media', 'resource-media', 'resource-artwork' ].map(kind=>`${schoolPath(school)}/${kind}/`).find(prefix=>path.startsWith(prefix)) ?? `${schoolPath(school)}/media/`
+      const prefix = `${workspacePath(school)}/media/`
       if (!path.startsWith(prefix) || !/^[0-9a-f-]{36}$/i.test(path.slice(prefix.length)))
         throw new Error('图片必须属于当前学校')
       return client.requestBinary(path, signal)
