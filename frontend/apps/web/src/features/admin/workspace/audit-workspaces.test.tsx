@@ -8,8 +8,10 @@ import { workspace } from './api'
 import { wecomWorkspaces } from '../../operations/wecom-senders/api'
 import { mobileWorkspaces } from '../../operations/mobile-execution/api'
 import { sourceRouting, sourceReceipts } from '../../operations/source-access/api'
+import {advertising} from '../../operations/advertising/api'
 import { auditEvents } from '../audit/api'
 
+vi.mock('../../operations/advertising/api',()=>({advertising:{directory:vi.fn(),list:vi.fn()}}))
 vi.mock('../../identity/api', () => ({ identity: { session: vi.fn() }, subscribeUnauthorized: () => () => {} }))
 vi.mock('./api', () => ({ workspace: { list: vi.fn() } }))
 vi.mock('../../operations/wecom-senders', () => ({ OfficialSenders: ({school}:{school:string}) => <p>发送账号范围：{school}</p> }))
@@ -21,6 +23,8 @@ vi.mock('../../operations/mobile-execution/api', () => ({ mobileWorkspaces: { li
 vi.mock('../../operations/source-access/api', () => ({ sourceRouting: { entities: vi.fn(), assigned: vi.fn() }, sourceReceipts: {list:vi.fn()}, receiptStatusLabels:{},receiptStageLabels:{},receiptReasonLabels:{},routingIssueLabels:{} }))
 afterEach(() => { cleanup(); vi.resetAllMocks() })
 beforeEach(() => {
+  vi.mocked(advertising.directory).mockResolvedValue({units:[],scopes:[],workspaces:[],routes:[],system_admin:false})
+  vi.mocked(advertising.list).mockResolvedValue({items:[],has_more:false})
   vi.mocked(sourceRouting.entities).mockResolvedValue({items:[]})
   vi.mocked(sourceRouting.assigned).mockResolvedValue({items:[]})
   vi.mocked(identity.session).mockResolvedValue({csrf:'csrf',user:{id:'admin',username:'admin',display_name:'管理员',platform_admin:true,bound_school_id:null,grants:[],wecom_authenticated:false}})
@@ -154,4 +158,16 @@ it('opens scoped receipts from the direct sidebar entry through the route row',a
  await waitFor(()=>expect(sourceReceipts.list).toHaveBeenCalledWith('route-1',1))
  expect(await screen.findByRole('button',{name:'刷新收件'})).toBeTruthy()
  expect(screen.queryByRole('button',{name:'执行配置'})).toBeNull()
+})
+
+it('opens the actual advertising page from its sidebar without a workspace dependency',async()=>{
+ const session=await vi.mocked(identity.session)()
+ vi.mocked(identity.session).mockResolvedValue({...session,user:{...session.user,platform_admin:false}})
+ vi.mocked(wecomWorkspaces.list).mockResolvedValue({items:[]})
+ vi.mocked(advertising.directory).mockResolvedValue({units:[{id:'ad-unit',name:'广告单位',can_edit:true,can_share:false}],scopes:[],workspaces:[],routes:[],system_admin:false})
+ show('advertisements')
+ expect(await screen.findByRole('button',{name:'新增广告'}, {timeout:5000})).toBeTruthy()
+ expect(await screen.findByRole('menuitem',{name:'广告素材与共享'}, {timeout:5000})).toBeTruthy()
+ expect(screen.queryByLabelText('企业微信分发工作空间')).toBeNull()
+ expect(screen.queryByLabelText('移动分发工作空间')).toBeNull()
 })

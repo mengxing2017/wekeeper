@@ -1,3 +1,4 @@
+import {AdCompositions} from '../advertising'
 import {KeywordChecks} from './keyword-checks'
 import {useState} from 'react'
 import {useQuery} from '@tanstack/react-query'
@@ -35,6 +36,7 @@ export function SourceReceipts({route}:{route:string}){
     {detail.data.can_recheck&&<Button disabled={!['keyword_blocked','workspace_keyword_blocked','final_keyword_blocked'].includes(detail.data.reason_code??'')} onClick={()=>{setNote('');setConfirm(true)}}>按当前规则重检</Button>}
     <Typography.Title level={5}>处理时间线（最近 100 条）</Typography.Title>
     <Table rowKey="revision" dataSource={detail.data.history} pagination={false} columns={[{title:'处理修订',dataIndex:'revision'},{title:'状态',render:(_,h)=>status(h.status)},{title:'阶段',render:(_,h)=>stage(h.stage)},{title:'原因',render:(_,h)=>reason(h.reason_code)},{title:'时间',dataIndex:'created_at'}]}/>
+    <AdCompositions key={detail.data.id} route={route} receipt={detail.data.id}/>
     <KeywordChecks key={detail.data.id} route={route} receipt={detail.data.id}/>
     <Typography.Title level={5}>历史检查记录（旧算法，最近 100 条）</Typography.Title>
     <Table rowKey={r=>`${r.rule_revision}:${r.fingerprint}`} dataSource={detail.data.checks} pagination={false} columns={[{title:'规则修订',dataIndex:'rule_revision'},{title:'结论',render:(_,r)=>r.outcome==='passed'?'通过':'拦截'},{title:'时间',dataIndex:'created_at'}]}/>

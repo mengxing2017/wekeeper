@@ -1,3 +1,4 @@
+import {RouteAdvertising} from '../advertising'
 import {useState} from 'react'
 import {useQuery} from '@tanstack/react-query'
 import {Alert,Button,Card,Drawer,Space,Table} from 'antd'
@@ -16,7 +17,7 @@ export function AssignedRoutes({platformAdmin=false,receiptsOnly=false}:{platfor
    {title:'状态',render:(_,r)=>r.retired_at?'已退役':({draft:'配置草稿',running:'运行中',paused:'已暂停'}[r.execution_state])},
    {title:'操作',render:(_,r)=><Space>{!receiptsOnly&&<Button onClick={()=>setRoute(r.id)}>执行配置</Button>}<Button onClick={()=>setReceipts(r.id)}>{receiptsOnly?'查看收件与回执':'收件与回执'}</Button></Space>}
   ]}/>
-  <Drawer open={!!route} title="路由执行配置" onClose={()=>setRoute(null)} size="large">{route&&<RouteConfigurationEditor key={route} route={route} manageAuthorizations={platformAdmin} onChanged={async()=>{await q.refetch()}}/>}</Drawer>
+  <Drawer open={!!route} title="路由执行配置" onClose={()=>setRoute(null)} size="large">{route&&<Space orientation="vertical" style={{width:'100%'}}><RouteConfigurationEditor key={route} route={route} manageAuthorizations={platformAdmin} onChanged={async()=>{await q.refetch()}}/><RouteAdvertising route={route}/></Space>}</Drawer>
   <Drawer open={!!receipts} title="收件与回执" onClose={()=>setReceipts(null)} size="large">{receipts&&<SourceReceipts key={receipts} route={receipts}/>}</Drawer>
  </Card>
 }

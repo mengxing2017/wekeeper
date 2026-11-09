@@ -1,8 +1,10 @@
+import {AdManagers} from '../advertising'
 import {useState} from 'react'
 import {useQuery} from '@tanstack/react-query'
 import {Alert,Button,Checkbox,Form,Input,Modal,Select,Space,Table,Tabs,Tag} from 'antd'
 import {sourceRouting,type RoutingEntity,type RoutingEntityInput,type RoutingChannel,type RoutingTarget,type RoutingEntityKind} from './api'
 export function RoutingDirectory(){
+ const [adUnit,setAdUnit]=useState<string>()
  const [targetGroup,setTargetGroup]=useState<RoutingEntity|null>(null)
  const [kind,setKind]=useState<RoutingEntityKind>('routing-units'),[editing,setEditing]=useState<RoutingEntity|null>(),[error,setError]=useState(''),[busy,setBusy]=useState(false)
  const [form]=Form.useForm<RoutingEntityInput>()
@@ -19,7 +21,7 @@ export function RoutingDirectory(){
    {title:'名称',dataIndex:'name'},{title:'标识',dataIndex:'id'},
    ...(kind==='routing-groups'?[{title:'所属单位',render:(_:unknown,r:RoutingEntity)=>units.data?.items.find(u=>u.id===r.unit_id)?.name??r.unit_id}]:[]),
    {title:'说明',dataIndex:'description'},{title:'状态',render:(_,r)=><Tag>{r.active?'启用':'停用'}</Tag>},
-   {title:'操作',render:(_,r)=><Space><Button onClick={()=>open(r)}>编辑{kind==='routing-units'?'单位':'分组'}</Button>{kind==='routing-groups'&&<Button onClick={()=>setTargetGroup(r)}>分组目标目录</Button>}</Space>}
+   {title:'操作',render:(_,r)=><Space><Button onClick={()=>open(r)}>编辑{kind==='routing-units'?'单位':'分组'}</Button>{kind==='routing-units'&&<Button onClick={()=>setAdUnit(r.id)}>广告管理授权</Button>}{kind==='routing-groups'&&<Button onClick={()=>setTargetGroup(r)}>分组目标目录</Button>}</Space>}
   ]}/>
   <Modal open={editing!==undefined} title={`${editing?'编辑':'新增'}${kind==='routing-units'?'单位':'分组'}`} onCancel={()=>setEditing(undefined)} onOk={save} confirmLoading={busy} okText="保存" cancelText="取消">
    <Space orientation="vertical" style={{width:'100%'}}>
@@ -32,6 +34,7 @@ export function RoutingDirectory(){
     </Form>
    </Space>
   </Modal>
+ <Modal open={!!adUnit} title="广告管理授权" footer={null} destroyOnHidden onCancel={()=>setAdUnit(undefined)}>{adUnit&&<AdManagers key={adUnit} unit={adUnit}/>}</Modal>
  <Modal open={!!targetGroup} title="分组目标目录" onCancel={()=>setTargetGroup(null)} footer={null} destroyOnHidden>{targetGroup&&<GroupTargets key={targetGroup.id} group={targetGroup} onSaved={async()=>{await groups.refetch()}}/>}</Modal>
  </>
 }

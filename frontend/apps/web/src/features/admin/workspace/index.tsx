@@ -1,3 +1,5 @@
+import {Advertising} from '../../operations/advertising'
+import {advertising} from '../../operations/advertising/api'
 import { KeywordRules } from '../../operations/source-access/keywords'
 import { AssignedRoutes } from '../../operations/source-access/assigned'
 import { RoutingDirectory } from '../../operations/source-access/directory'
@@ -71,7 +73,9 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
   const wecom = official.data?.items.find(w => w.id === params.get('wecom_workspace')) ?? official.data?.items[0]
   const phone = mobile.data?.items.find(w => w.id === params.get('workspace')) ?? mobile.data?.items[0]
   const routingAdmin = [...(official.data?.items ?? []), ...(mobile.data?.items ?? [])].some(w => w.role === 'admin')
-  const allowedKeys = visibleNavigationKeys(user.platform_admin, wecom?.role, phone?.role, routingAdmin)
+  const advertisingGrants=useQuery({queryKey:['advertisement-navigation'],queryFn:advertising.directory,refetchInterval:10000,enabled:!user.platform_admin&&params.get('view')!=='audit'})
+  const advertisingAdmin=advertisingGrants.data?.units.some(u=>u.can_edit||u.can_share)??false
+  const allowedKeys = visibleNavigationKeys(user.platform_admin, wecom?.role, phone?.role, routingAdmin, advertisingAdmin)
   const tab = params.get('view') ?? allowedKeys[0] ?? ''
   const knownPage = navigation.find(n => n.key === tab)
   const navigate = (view: string) => setParams(previous => { const next = new URLSearchParams(previous); next.set('view',view); next.delete('subview'); next.delete('school'); return next })
@@ -79,7 +83,7 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
   const refresh = async () => { await cache.invalidateQueries({queryKey:['business']}) }
   const setSubview = (view: string) => setParams(previous => { const next = new URLSearchParams(previous); next.set('subview',view); return next })
   let page
-  if ((knownPage?.scope !== 'global' || knownPage?.capability === 'resources.read' || knownPage?.capability === 'routing.configure') && (official.isPending || mobile.isPending) && (!knownPage || !allowedKeys.includes(tab))) page = <Empty description="正在加载分发权限…" />
+  if ((knownPage?.scope !== 'global' || knownPage?.capability === 'resources.read' || knownPage?.capability === 'routing.configure' || knownPage?.capability === 'advertising.manage') && (official.isPending || mobile.isPending || (tab==='advertisements'&&advertisingGrants.isPending&&!user.platform_admin)) && (!knownPage || !allowedKeys.includes(tab))) page = <Empty description="正在加载分发权限…" />
   else if (!tab) page = <Alert type="info" title="当前账号暂无分发授权，请联系系统管理员。" />
   else if (!knownPage) page = <Alert type="warning" title="页面不存在" />
   else if (knownPage.scope === 'mobile' && mobile.error) page = <Alert type="error" title={mobile.error.message} />
@@ -90,6 +94,7 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
   </WecomWorkspacePanel>
   else if (tab === 'source-credentials') page = <SourceAccess platformAdmin={user.platform_admin} />
   else if (tab === 'source-routing-directory') page = <RoutingDirectory />
+  else if (tab === 'advertisements') page = <Advertising />
   else if (tab === 'keyword-rules') page = <KeywordRules />
   else if (tab === 'source-receipts') page = <AssignedRoutes key="source-receipts" receiptsOnly platformAdmin={user.platform_admin} />
   else if (tab === 'source-route-configurations') page = <AssignedRoutes platformAdmin={user.platform_admin} />

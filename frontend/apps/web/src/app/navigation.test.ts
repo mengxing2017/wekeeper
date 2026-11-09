@@ -99,3 +99,12 @@ test('关键字规则提供独立消息接收管理入口，工作空间管理�
  expect(canNavigate(item,false,undefined,'admin')).toBe(true)
  expect(canNavigate(item,false,'operator','operator')).toBe(false)
 })
+
+test('广告素材有直接入口，单位专项管理不依赖分发工作空间角色',()=>{
+ const item=navigation.find(item=>item.key==='advertisements')!
+ expect(item.label).toBe('广告素材与共享');expect(item.domain).toBe('source')
+ expect(canNavigate(item,false,undefined,undefined,false,true)).toBe(true)
+ expect(canNavigate(item,false,undefined,undefined,false,false)).toBe(false)
+ expect(canNavigate(item,false,undefined,'admin')).toBe(true)
+ expect(visibleNavigationKeys(false,undefined,undefined,false,true)).toContain('advertisements')
+})
