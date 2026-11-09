@@ -1,0 +1,116 @@
+[
+  {
+    "event_id": "00000000-0000-0000-0000-000000000001",
+    "status": "received",
+    "reason_code": null,
+    "processing_stage": "recheck_pending",
+    "received_at": "2026-11-08T00:00:00Z",
+    "updated_at": "2026-11-08T00:00:01Z",
+    "retryable": false,
+    "sending": null,
+    "observed_sequence": 7
+  },
+  {
+    "event_id": "00000000-0000-0000-0000-000000000001",
+    "status": "applied",
+    "reason_code": null,
+    "processing_stage": "configuration_wait",
+    "received_at": "2026-11-08T00:00:00Z",
+    "updated_at": "2026-11-08T00:00:01Z",
+    "retryable": false,
+    "sending": null,
+    "observed_sequence": 7
+  },
+  {
+    "event_id": "00000000-0000-0000-0000-000000000001",
+    "status": "applied",
+    "reason_code": null,
+    "processing_stage": "task_created",
+    "received_at": "2026-11-08T00:00:00Z",
+    "updated_at": "2026-11-08T00:00:01Z",
+    "retryable": false,
+    "sending": {
+      "pending": 1,
+      "sent": 2,
+      "failed": 3,
+      "unknown": 4
+    },
+    "observed_sequence": 7
+  },
+  {
+    "event_id": "00000000-0000-0000-0000-000000000001",
+    "status": "applied",
+    "reason_code": null,
+    "processing_stage": "withdrawn",
+    "received_at": "2026-11-08T00:00:00Z",
+    "updated_at": "2026-11-08T00:00:01Z",
+    "retryable": false,
+    "sending": {
+      "pending": 1,
+      "sent": 2,
+      "failed": 3,
+      "unknown": 4
+    },
+    "observed_sequence": 7
+  },
+  {
+    "event_id": "00000000-0000-0000-0000-000000000001",
+    "status": "applied",
+    "reason_code": null,
+    "processing_stage": "no_resend",
+    "received_at": "2026-11-08T00:00:00Z",
+    "updated_at": "2026-11-08T00:00:01Z",
+    "retryable": false,
+    "sending": null,
+    "observed_sequence": 7
+  },
+  {
+    "event_id": "00000000-0000-0000-0000-000000000001",
+    "status": "applied",
+    "reason_code": null,
+    "processing_stage": "projection_duplicate",
+    "received_at": "2026-11-08T00:00:00Z",
+    "updated_at": "2026-11-08T00:00:01Z",
+    "retryable": false,
+    "sending": {
+      "pending": 1,
+      "sent": 2,
+      "failed": 3,
+      "unknown": 4
+    },
+    "observed_sequence": 7
+  },
+  {
+    "event_id": "00000000-0000-0000-0000-000000000001",
+    "status": "ignored_stale",
+    "reason_code": "content_version_superseded",
+    "processing_stage": "ignored_stale",
+    "received_at": "2026-11-08T00:00:00Z",
+    "updated_at": "2026-11-08T00:00:01Z",
+    "retryable": false,
+    "sending": null,
+    "observed_sequence": 7
+  },
+  {
+    "event_id": "00000000-0000-0000-0000-000000000001",
+    "status": "rejected",
+    "reason_code": "content_version_conflict",
+    "processing_stage": "rejected",
+    "received_at": "2026-11-08T00:00:00Z",
+    "updated_at": "2026-11-08T00:00:01Z",
+    "retryable": false,
+    "sending": null,
+    "observed_sequence": 7
+  },
+  {
+    "event_id": "00000000-0000-0000-0000-000000000001",
+    "status": "rejected",
+    "reason_code": "keyword_blocked",
+    "processing_stage": "rejected",
+    "received_at": "2026-11-08T00:00:00Z",
+    "updated_at": "2026-11-08T00:00:01Z",
+    "retryable": false,
+    "sending": null,
+    "observed_sequence": 7
+  }
+]

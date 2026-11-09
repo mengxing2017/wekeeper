@@ -6,7 +6,7 @@ export interface RoutingEntityInput {name:string;description:string;active:boole
 export interface RoutingExecution {channel:RoutingChannel;workspace_id:string;target_ids:string[]}
 export interface RoutingTarget {id:string;name:string;identity:Record<string,unknown>;resource_available:boolean}
 export interface RoutingSnapshot {route_id:string;revision:number;source_id:string;unit_id:string;unit_name:string;group_id:string;group_name:string;execution:RoutingExecution|null;targets:RoutingTarget[];configured_by:string}
-export interface RouteManager {id:string;username:string;revision:number}
+export interface RouteManager {id:string;username:string;revision:number;can_recheck:boolean}
 export interface RouteConfiguration {id:string;revision:number;config_revision:number;unit_id:string|null;group_id:string|null;status:string;execution_state:'draft'|'running'|'paused';retired_at:string|null;snapshot:RoutingSnapshot|null;managers:RouteManager[]}
 export interface RouteConfigurationInput {revision:number;unit_id:string;group_id:string;execution:RoutingExecution|null}
 export interface RoutingCheck {ready:boolean;issues:string[]}
@@ -25,7 +25,7 @@ export function createSourceRoutingClient({requestResource}:Pick<Client,'request
  check:(route:string)=>requestResource<RoutingCheck>(`${routePath(route)}/checks`),
  lifecycle:(route:string,revision:number,action:RoutingAction,reason:string)=>requestResource<RoutingMutation>(`${routePath(route)}/lifecycle`,'POST',{revision,action,reason}),
  revisions:(route:string,page=1)=>requestResource<{items:RoutingRevision[];has_more:boolean}>(`${routePath(route)}/revisions?page=${page}`),
- manager:(route:string,revision:number,username:string,granted:boolean)=>requestResource<RoutingMutation>(`${routePath(route)}/managers`,'PUT',{revision,username,granted}),
+ manager:(route:string,revision:number,username:string,granted:boolean,canRecheck=false)=>requestResource<RoutingMutation>(`${routePath(route)}/managers`,'PUT',{revision,username,granted,can_recheck:canRecheck}),
  workspaces:(channel:RoutingChannel)=>requestResource<{items:{id:string;name:string}[]}>(`/api/v2/admin/source-route-resources?channel=${channel}`),
  targets:(channel:RoutingChannel,workspace:string)=>requestResource<{items:RoutingTarget[]}>(`/api/v2/admin/source-route-resources?channel=${channel}&workspace_id=${encodeURIComponent(workspace)}`),
  groupTargets:(group:string)=>requestResource<{items:RoutingGroupTarget[]}>(`/api/v2/admin/routing-groups/${encodeURIComponent(group)}/targets`),

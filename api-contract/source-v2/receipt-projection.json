@@ -1,0 +1,50 @@
+{
+  "contract_version": "source-v2-2",
+  "statuses": [
+    "received",
+    "applied",
+    "ignored_stale",
+    "rejected"
+  ],
+  "processing_stages": [
+    "received",
+    "filter_pending",
+    "processing_retry",
+    "recheck_pending",
+    "projection_applied",
+    "configuration_wait",
+    "task_created",
+    "no_resend",
+    "withdrawn",
+    "ignored_stale",
+    "projection_duplicate",
+    "rejected",
+    "execution_stopped"
+  ],
+  "reason_codes": [
+    "content_version_conflict",
+    "content_version_superseded",
+    "keyword_blocked",
+    "content_check_pending",
+    "recheck_not_allowed",
+    "channel_content_invalid"
+  ],
+  "fingerprint_algorithm": "source-payload/1",
+  "summary_algorithm": "targets/1",
+  "retryable_semantics": "Whether the original request should be resubmitted; false does not end polling.",
+  "poll_after_header": "X-Source-Poll-After",
+  "poll_after_seconds": 5,
+  "source_query_budget_per_minute": 600,
+  "management": {
+    "list": "GET /api/v2/admin/source-routes/{route}/receipts?page=1",
+    "detail": "GET /api/v2/admin/source-routes/{route}/receipts/{receipt}",
+    "recheck": "POST /api/v2/admin/source-routes/{route}/receipts/{receipt}/rechecks",
+    "recheck_type": "source-receipt-rechecks",
+    "recheck_attributes": [
+      "revision",
+      "reason"
+    ],
+    "page_size": 30,
+    "history_limit": 100
+  }
+}

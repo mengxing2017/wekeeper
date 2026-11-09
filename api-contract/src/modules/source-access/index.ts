@@ -15,3 +15,5 @@ export const sourceAccess={
 
 export type {SourceEventV2,SourceReceiptV2,SourceCheckV2,SourceCapabilitiesV2,SourceDocument} from './protocol'
 export * from './routing'
+
+export * from './receipts'
