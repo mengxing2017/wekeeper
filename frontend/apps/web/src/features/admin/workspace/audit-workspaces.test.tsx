@@ -7,6 +7,7 @@ import { identity } from '../../identity/api'
 import { workspace } from './api'
 import { wecomWorkspaces } from '../../operations/wecom-senders/api'
 import { mobileWorkspaces } from '../../operations/mobile-execution/api'
+import { sourceRouting } from '../../operations/source-access/api'
 import { auditEvents } from '../audit/api'
 
 vi.mock('../../identity/api', () => ({ identity: { session: vi.fn() }, subscribeUnauthorized: () => () => {} }))
@@ -17,8 +18,11 @@ vi.mock('./template-manager', () => ({ TemplateManager: ({school}:{school:string
 vi.mock('../audit/api', () => ({ auditEvents: { list: vi.fn() } }))
 vi.mock('../../operations/wecom-senders/api', () => ({ wecomWorkspaces: { list: vi.fn(), save: vi.fn(), members: vi.fn(), grant: vi.fn() } }))
 vi.mock('../../operations/mobile-execution/api', () => ({ mobileWorkspaces: { list: vi.fn() } }))
+vi.mock('../../operations/source-access/api', () => ({ sourceRouting: { entities: vi.fn(), assigned: vi.fn() } }))
 afterEach(() => { cleanup(); vi.resetAllMocks() })
 beforeEach(() => {
+  vi.mocked(sourceRouting.entities).mockResolvedValue({items:[]})
+  vi.mocked(sourceRouting.assigned).mockResolvedValue({items:[]})
   vi.mocked(identity.session).mockResolvedValue({csrf:'csrf',user:{id:'admin',username:'admin',display_name:'管理员',platform_admin:true,bound_school_id:null,grants:[],wecom_authenticated:false}})
   vi.mocked(wecomWorkspaces.list).mockResolvedValue({items:[{id:'one',name:'分发一',role:'admin'},{id:'two',name:'分发二',role:'admin'}]})
   vi.mocked(mobileWorkspaces.list).mockResolvedValue({items:[]})
@@ -110,4 +114,31 @@ it('authorized operators can switch their workspaces without creation or permiss
   await waitFor(() => expect(within(second).getByText('当前工作空间')).toBeTruthy())
   expect(wecomWorkspaces.grant).not.toHaveBeenCalled()
   expect(wecomWorkspaces.save).not.toHaveBeenCalled()
+})
+
+
+it.each([
+  ['业务单位与分组', '新增单位'],
+  ['路由执行配置', '路由执行配置'],
+])('opens the actual %s page from the sidebar', async (entry, content) => {
+  show('audit')
+  await screen.findByText('identity.password.reset')
+  fireEvent.click(screen.getByRole('menuitem', {name: entry}))
+  if (entry === '业务单位与分组') {
+    expect(await screen.findByRole('button', {name: content})).toBeTruthy()
+    expect(sourceRouting.entities).toHaveBeenCalledWith('routing-units')
+  } else {
+    expect(await screen.findByText(content, {selector: '.ant-card-head-title'})).toBeTruthy()
+    await waitFor(() => expect(sourceRouting.assigned).toHaveBeenCalled())
+  }
+})
+it('opens route configuration for an admin of another workspace without exposing credentials', async () => {
+  const session = await vi.mocked(identity.session)()
+  vi.mocked(identity.session).mockResolvedValue({...session,user:{...session.user,platform_admin:false}})
+  vi.mocked(wecomWorkspaces.list).mockResolvedValue({items:[{id:'one',name:'分发一',role:'operator'},{id:'two',name:'分发二',role:'admin'}]})
+  show('source-route-configurations')
+  expect(await screen.findByText('路由执行配置', {selector: '.ant-card-head-title'})).toBeTruthy()
+  await waitFor(() => expect(sourceRouting.assigned).toHaveBeenCalled())
+  expect(screen.queryByRole('menuitem', {name:'调用方凭据'})).toBeNull()
+  expect(screen.queryByRole('menuitem', {name:'业务单位与分组'})).toBeNull()
 })

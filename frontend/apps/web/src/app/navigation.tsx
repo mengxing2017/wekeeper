@@ -20,7 +20,7 @@ export interface NavigationItem {
   description: string
   domain: NavigationDomain
   scope: 'wecom' | 'global' | 'selectable' | 'mobile'
-  capability: 'mobile.operate' | 'wecom.operate' | 'wecom.read' | 'wecom.admin' | 'global.manage' | 'resources.read'
+  capability: 'routing.configure' | 'mobile.operate' | 'wecom.operate' | 'wecom.read' | 'wecom.admin' | 'global.manage' | 'resources.read'
   icon: ReactNode
   hidden?: boolean
 }
@@ -103,10 +103,13 @@ export const navigation: NavigationItem[] = [
     capability: 'global.manage',
   },
   {key:'source-credentials',label:'调用方凭据',description:'签发下游消息推送凭据，维护消息分发路由。',domain:'source',scope:'global',capability:'global.manage',icon:<SafetyCertificateOutlined/>},
+  {key:'source-routing-directory',label:'业务单位与分组',description:'维护消息路由使用的业务单位、受众分组及目标目录。',domain:'source',scope:'global',capability:'global.manage',icon:<ApartmentOutlined/>},
+  {key:'source-route-configurations',label:'路由执行配置',description:'配置获授权路由的发送通道、工作空间、目标群及自动运行状态。',domain:'source',scope:'global',capability:'routing.configure',icon:<SendOutlined/>},
 ]
 
-export function canNavigate(item: NavigationItem, platformAdmin: boolean, schoolRole?: string, mobileRole?: string): boolean {
+export function canNavigate(item: NavigationItem, platformAdmin: boolean, schoolRole?: string, mobileRole?: string, routingAdmin = false): boolean {
   switch (item.capability) {
+    case 'routing.configure': return platformAdmin || routingAdmin || schoolRole === 'admin' || mobileRole === 'admin'
     case 'mobile.operate': return platformAdmin || mobileRole === 'admin' || mobileRole === 'operator'
     case 'wecom.operate': return schoolRole === 'admin' || schoolRole === 'operator'
     case 'global.manage': return platformAdmin
@@ -115,6 +118,6 @@ export function canNavigate(item: NavigationItem, platformAdmin: boolean, school
     case 'wecom.read': return platformAdmin || schoolRole === 'admin' || schoolRole === 'operator'
   }
 }
-export function visibleNavigationKeys(platformAdmin: boolean, schoolRole?: string, mobileRole?: string) {
-  return navigation.filter(item => canNavigate(item, platformAdmin, schoolRole, mobileRole)).map(item => item.key)
+export function visibleNavigationKeys(platformAdmin: boolean, schoolRole?: string, mobileRole?: string, routingAdmin = false) {
+  return navigation.filter(item => canNavigate(item, platformAdmin, schoolRole, mobileRole, routingAdmin)).map(item => item.key)
 }

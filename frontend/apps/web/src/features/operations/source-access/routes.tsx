@@ -1,9 +1,11 @@
 import {useState} from 'react'
 import {useQuery} from '@tanstack/react-query'
-import {Alert,Button,Form,Input,Modal,Select,Space,Table,Tag} from 'antd'
+import {Alert,Button,Drawer,Form,Input,Modal,Select,Space,Table,Tag} from 'antd'
+import {RouteConfigurationEditor} from './configuration'
 import {sourceAccess,type Association,type SourceInput,type SourceRow} from './api'
 
 export function CallerRoutes({caller,onChanged}:{caller:SourceRow;onChanged:()=>Promise<void>}) {
+ const [configuring,setConfiguring]=useState<string|null>(null)
  const [page,setPage]=useState(1),[search,setSearch]=useState(''),[status,setStatus]=useState('')
  const [editing,setEditing]=useState<SourceRow|null>(),[busy,setBusy]=useState(false),[error,setError]=useState('')
  const [form]=Form.useForm<SourceInput>()
@@ -48,8 +50,9 @@ export function CallerRoutes({caller,onChanged}:{caller:SourceRow;onChanged:()=>
   <Table<SourceRow> rowKey="id" loading={q.isFetching||links.isFetching} dataSource={q.data?.items??[]} pagination={false} columns={[
    {title:'路由名称',dataIndex:'route_name'},{title:'消息路由 ID（route_id）',dataIndex:'id'},{title:'路由备注',dataIndex:'remark'},
    {title:'状态',render:(_,r)=><Tag>{r.status==='active'?'启用':'停用'}</Tag>},
+   {title:'自动运行',render:(_,r)=>r.retired_at?'已退役':({draft:'配置草稿',running:'运行中',paused:'已暂停'}[r.execution_state??'draft'])},
    {title:'当前凭据授权',render:(_,r)=>links.data?.some(a=>a.route_id===r.id&&a.status==='active')?'已授权':'未授权'},
-   {title:'操作',render:(_,r)=>{const active=links.data?.some(a=>a.route_id===r.id&&a.status==='active');return <Space><Button disabled={busy} onClick={()=>open(r)}>编辑路由</Button><Button disabled={busy||!links.data} onClick={()=>toggle(r.id,active?'revoked':'active')}>{active?'撤销授权':'授权'}</Button></Space>}}
+   {title:'操作',render:(_,r)=>{const active=links.data?.some(a=>a.route_id===r.id&&a.status==='active');return <Space><Button onClick={()=>setConfiguring(r.id)}>执行配置</Button><Button disabled={busy||!!r.retired_at} onClick={()=>open(r)}>编辑路由</Button><Button disabled={busy||!links.data} onClick={()=>toggle(r.id,active?'revoked':'active')}>{active?'撤销授权':'授权'}</Button></Space>}}
   ]}/>
   <Space><Button disabled={page===1} onClick={()=>setPage(page-1)}>上一页</Button><span>{page}</span><Button disabled={!q.data?.has_more} onClick={()=>setPage(page+1)}>下一页</Button></Space>
   <Modal open={editing!==undefined} title={editing?'编辑路由':'新增路由'} onCancel={()=>setEditing(undefined)} onOk={save} confirmLoading={busy} okText="保存" cancelText="取消">
@@ -59,5 +62,6 @@ export function CallerRoutes({caller,onChanged}:{caller:SourceRow;onChanged:()=>
     <Form.Item name="status" label="路由状态"><Select options={[{value:'active',label:'启用'},{value:'disabled',label:'停用'}]}/></Form.Item>
    </Form>
   </Modal>
+ <Drawer open={configuring!==null} title="路由执行配置" onClose={()=>setConfiguring(null)} size="large">{configuring&&<RouteConfigurationEditor key={configuring} route={configuring} onChanged={refresh}/>}</Drawer>
  </>
 }

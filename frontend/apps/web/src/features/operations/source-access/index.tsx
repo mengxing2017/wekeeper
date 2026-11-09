@@ -3,9 +3,13 @@ import {useQuery} from '@tanstack/react-query'
 import {Alert,Button,Card,Checkbox,Descriptions,Drawer,Form,Input,Popconfirm,Select,Space,Table,Tag,Typography} from 'antd'
 import {sourceAccess,type SourceRow,type SourceInput,type Association} from './api'
 import {CallerRoutes} from './routes'
+import {AssignedRoutes} from './assigned'
+import {RoutingDirectory} from './directory'
 import {CallerSecret} from './secret'
-export function SourceAccess() {
+export function SourceAccess({platformAdmin=true}:{platformAdmin?:boolean}) {return platformAdmin?<CallerCredentials/>:<AssignedRoutes/>}
+function CallerCredentials() {
  const kind='source-credentials' as const
+ const [directory,setDirectory]=useState(false)
  const [routeCaller,setRouteCaller]=useState<SourceRow|null>(null)
  const [page,setPage]=useState(1),[search,setSearch]=useState(''),[status,setStatus]=useState(''),[source,setSource]=useState(''),[expiry,setExpiry]=useState('')
  const [editing,setEditing]=useState<SourceRow|null>(),[error,setError]=useState(''),[busy,setBusy]=useState(false),[links,setLinks]=useState<Association[]>([])
@@ -24,7 +28,7 @@ export function SourceAccess() {
  await sourceAccess.save(kind,input,editing?.id);setEditing(undefined);await q.refetch()
  }catch(e){setError((e as Error).message??'请核对输入')}finally{setBusy(false)}}
  const act=async(action:()=>Promise<unknown>)=>{setError('');try{await action();await q.refetch()}catch(e){setError((e as Error).message)}}
- return <Card title="调用方凭据" extra={<Button onClick={()=>open(null)}>新增</Button>}>
+ return <Card title="调用方凭据" extra={<Space><Button onClick={()=>setDirectory(true)}>业务单位与分组</Button><Button onClick={()=>open(null)}>新增</Button></Space>}>
  {(error||q.error)&&<Alert type="error" title={error||q.error?.message}/>}
  <Alert type="info" title="每个下游对应一条凭据：key_id 是唯一的调用方凭据 ID，secret 是配套签名密钥。下游只需填写 WeKeeper 地址、key_id 和 secret。"/>
  <Space wrap><Input.Search aria-label="搜索调用方" onSearch={s=>{setSearch(s);setPage(1)}}/><Input aria-label="凭据 ID 筛选" placeholder="调用方凭据 ID（key_id）" value={source} onChange={e=>{setSource(e.target.value);setPage(1)}}/><Input aria-label="有效期截止筛选" placeholder="失效时间不晚于（UTC）" onBlur={e=>{setExpiry(e.target.value);setPage(1)}}/><Select aria-label="状态筛选" value={status} onChange={s=>{setStatus(s);setPage(1)}} options={['','active','disabled','revoked'].map(value=>({value,label:value||'全部状态'}))}/></Space>
@@ -54,5 +58,6 @@ export function SourceAccess() {
  <Drawer open={routeCaller!==null} title={`消息分发路由 · ${routeCaller?.unit_name??''}`} onClose={()=>setRouteCaller(null)} size="large">
  {routeCaller&&<CallerRoutes key={routeCaller.id} caller={routeCaller} onChanged={async()=>{await q.refetch()}}/>}
  </Drawer>
+ <Drawer open={directory} title="业务单位与分组" onClose={()=>setDirectory(false)} size="large">{directory&&<RoutingDirectory/>}</Drawer>
  </Card>
 }

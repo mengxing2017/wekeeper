@@ -1,6 +1,8 @@
 // Static help URLs contain no business identifiers or credentials.
 export const pageHelp: Record<string, string> = {
   'source-credentials': 'operator/source-access',
+  'source-routing-directory': 'operator/source-access',
+  'source-route-configurations': 'operator/source-access',
 
   'wecom-workspaces': 'workspaces',
   groups: 'operator/groups-and-templates',

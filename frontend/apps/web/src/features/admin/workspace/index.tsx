@@ -1,3 +1,5 @@
+import { AssignedRoutes } from '../../operations/source-access/assigned'
+import { RoutingDirectory } from '../../operations/source-access/directory'
 import { SourceAccess } from '../../operations/source-access'
 import { TemplateManager } from './template-manager'
 import { OfficialSenders } from '../../operations/wecom-senders'
@@ -67,7 +69,8 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
   const mobile = useQuery({ queryKey: ['mobile-workspaces'], queryFn: mobileWorkspaces.list, enabled: params.get('view') !== 'audit' })
   const wecom = official.data?.items.find(w => w.id === params.get('wecom_workspace')) ?? official.data?.items[0]
   const phone = mobile.data?.items.find(w => w.id === params.get('workspace')) ?? mobile.data?.items[0]
-  const allowedKeys = visibleNavigationKeys(user.platform_admin, wecom?.role, phone?.role)
+  const routingAdmin = [...(official.data?.items ?? []), ...(mobile.data?.items ?? [])].some(w => w.role === 'admin')
+  const allowedKeys = visibleNavigationKeys(user.platform_admin, wecom?.role, phone?.role, routingAdmin)
   const tab = params.get('view') ?? allowedKeys[0] ?? ''
   const knownPage = navigation.find(n => n.key === tab)
   const navigate = (view: string) => setParams(previous => { const next = new URLSearchParams(previous); next.set('view',view); next.delete('subview'); next.delete('school'); return next })
@@ -75,7 +78,7 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
   const refresh = async () => { await cache.invalidateQueries({queryKey:['business']}) }
   const setSubview = (view: string) => setParams(previous => { const next = new URLSearchParams(previous); next.set('subview',view); return next })
   let page
-  if ((knownPage?.scope !== 'global' || knownPage?.capability === 'resources.read') && (official.isPending || mobile.isPending) && (!knownPage || !allowedKeys.includes(tab))) page = <Empty description="正在加载分发权限…" />
+  if ((knownPage?.scope !== 'global' || knownPage?.capability === 'resources.read' || knownPage?.capability === 'routing.configure') && (official.isPending || mobile.isPending) && (!knownPage || !allowedKeys.includes(tab))) page = <Empty description="正在加载分发权限…" />
   else if (!tab) page = <Alert type="info" title="当前账号暂无分发授权，请联系系统管理员。" />
   else if (!knownPage) page = <Alert type="warning" title="页面不存在" />
   else if (knownPage.scope === 'mobile' && mobile.error) page = <Alert type="error" title={mobile.error.message} />
@@ -84,7 +87,9 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
   else if (tab === 'wecom-workspaces') page = <WecomWorkspacePanel manage platformAdmin={user.platform_admin} workspaces={official.data?.items ?? []} selected={wecom} loading={official.isPending} error={official.error} onSelect={id=>selectWorkspace('wecom_workspace',id)}>
     <p>管理当前企业微信分发工作空间及成员授权。客户群、消息模板和群发任务在对应业务页面操作。</p>
   </WecomWorkspacePanel>
-  else if (tab === 'source-credentials') page = <SourceAccess />
+  else if (tab === 'source-credentials') page = <SourceAccess platformAdmin={user.platform_admin} />
+  else if (tab === 'source-routing-directory') page = <RoutingDirectory />
+  else if (tab === 'source-route-configurations') page = <AssignedRoutes platformAdmin={user.platform_admin} />
   else if (tab === 'audit') page = <AuditEvents />
   else if (knownPage.scope === 'mobile') page = <MobileWorkspacePanel platformAdmin={user.platform_admin} workspaces={mobile.data?.items ?? []} selected={phone} loading={mobile.isPending} error={mobile.error} onSelect={id=>selectWorkspace('workspace',id)}>
     {phone && (tab === 'mobile-execution-tasks' ? <MobileExecutionTasks key={phone.id} school={phone.id} admin={phone.role==='admin'} onNavigate={navigate} /> : <MobileTargets key={phone.id} school={phone.id} admin={phone.role==='admin'} />)}

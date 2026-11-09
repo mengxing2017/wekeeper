@@ -60,12 +60,18 @@ it('shows role-appropriate navigation and routes business selections', () => {
   expect(screen.getByRole('menuitem', { name: '发送账号' })).toBeTruthy()
 })
 it('provides platform management and logout for an administrator', async () => {
-  const { onLogout } = show(true)
+  const { onLogout, onNavigate } = show(true)
   expect(screen.queryByRole('menuitem', { name: '学校管理' })).toBeNull()
   expect(screen.getByRole('menuitem', { name: '手机设备' })).toBeTruthy()
   const callers = screen.getByRole('menuitem', { name: '调用方凭据' })
   expect(callers.closest('.ant-menu-item-group')?.textContent).toContain('消息接收管理')
   expect(callers.closest('.ant-menu-item-group')?.textContent).not.toContain('系统管理')
+  for (const [name, key] of [['业务单位与分组', 'source-routing-directory'], ['路由执行配置', 'source-route-configurations']]) {
+    const entry = screen.getByRole('menuitem', { name })
+    expect(entry.closest('.ant-menu-item-group')?.textContent).toContain('消息接收管理')
+    fireEvent.click(entry)
+    expect(onNavigate).toHaveBeenLastCalledWith(key)
+  }
   fireEvent.click(screen.getByRole('button', { name: '账号菜单' }))
   fireEvent.click(await screen.findByRole('menuitem', { name: '退出登录' }))
   expect(onLogout).toHaveBeenCalledTimes(1)

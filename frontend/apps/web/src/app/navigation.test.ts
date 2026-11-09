@@ -59,5 +59,23 @@ test('消息分发路由是调用方凭据的子项，不注册独立导航', ()
   expect(credential.scope).toBe('global')
   expect(canNavigate(credential, true)).toBe(true)
   expect(canNavigate(credential, false, 'admin', 'admin')).toBe(false)
+  expect(canNavigate(credential, false, 'operator', 'operator')).toBe(false)
   expect(navigation.find(item => item.key === 'source-routes')).toBeUndefined()
+})
+
+
+test('消息接收管理提供独立目录与路由执行配置入口，按权限展示', () => {
+  const directory = navigation.find(item => item.key === 'source-routing-directory')!
+  const configuration = navigation.find(item => item.key === 'source-route-configurations')!
+  expect(directory.label).toBe('业务单位与分组')
+  expect(configuration.label).toBe('路由执行配置')
+  for (const item of [directory, configuration]) {
+    expect(item.domain).toBe('source')
+    expect(canNavigate(item, true)).toBe(true)
+    expect(canNavigate(item, false, 'operator', 'operator')).toBe(false)
+  }
+  expect(canNavigate(directory, false, 'admin', 'admin')).toBe(false)
+  expect(canNavigate(configuration, false, 'admin')).toBe(true)
+  expect(canNavigate(configuration, false, undefined, 'admin')).toBe(true)
+  expect(visibleNavigationKeys(false, 'operator', 'operator', true)).toContain(configuration.key)
 })
