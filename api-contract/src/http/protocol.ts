@@ -109,6 +109,7 @@ export function resourceType(path: string): string {
     if (parts[3] === 'routing-groups' && parts[5] === 'targets') return 'routing-group-targets';
     if (parts[3] === 'keyword-rule-scopes' && parts[5] === 'publications') return 'keyword-rule-publications';
     if (parts[3] === 'source-routes' && parts[5] === 'receipts' && parts[7] === 'rechecks') return 'source-receipt-rechecks';
+    if (parts[3] === 'source-routes' && parts[5] === 'advertisement-pool') return parts[6] ? `advertisement-pool-${parts[6]}` : 'advertisement-pool';
     if (parts[3] === 'source-routes' && parts[5]) {
       const types:Record<string,string>={'advertisement-configuration':'advertisement-configurations','composition-previews':'composition-previews',configuration:'source-route-configurations',lifecycle:'source-route-lifecycle',managers:'source-route-managers',handoff:'source-route-handoffs'};
       if (types[parts[5]]) return types[parts[5]];

@@ -83,5 +83,111 @@
         "exclusion": null
       }
     ]
+  },
+  "pool_publication": {
+    "expected_revision": 0,
+    "reason": "发布重复序列",
+    "slots": [
+      {
+        "slot_id": null,
+        "ad_id": "00000000-0000-0000-0000-000000000001"
+      },
+      {
+        "slot_id": null,
+        "ad_id": "00000000-0000-0000-0000-000000000002"
+      },
+      {
+        "slot_id": null,
+        "ad_id": "00000000-0000-0000-0000-000000000002"
+      },
+      {
+        "slot_id": null,
+        "ad_id": "00000000-0000-0000-0000-000000000001"
+      }
+    ]
+  },
+  "pool_reset": {
+    "expected_revision": 1,
+    "expected_cursor_version": 2,
+    "reason": "活动从头开始"
+  },
+  "pool_copy": {
+    "target_route_id": "route-copy",
+    "expected_revision": 0,
+    "reason": "复制规则并从头开始"
+  },
+  "pool_configuration": {
+    "expected_revision": 1,
+    "reason": "启用广告序列",
+    "config": {
+      "mode": "pool",
+      "fixed_ad_id": null,
+      "insertion_position": "after",
+      "unavailable_policy": "without_ad",
+      "auto_recover": true
+    }
+  },
+  "pool_selection": {
+    "config": {
+      "mode": "pool",
+      "fixed_ad_id": null,
+      "insertion_position": "after",
+      "unavailable_policy": "without_ad",
+      "auto_recover": true
+    },
+    "config_revision": 1,
+    "ad_id": "00000000-0000-0000-0000-000000000003",
+    "content_version": "00000000-0000-0000-0000-000000000004",
+    "policy_version": "00000000-0000-0000-0000-000000000005",
+    "composer": "source-ad-text/1",
+    "exclusions": [],
+    "measurement": {
+      "bytes": 100,
+      "scalars": 60,
+      "max_bytes": 8000,
+      "max_scalars": 2000,
+      "valid": true
+    },
+    "candidates": [
+      {
+        "ad_id": "00000000-0000-0000-0000-000000000003",
+        "content_version": "00000000-0000-0000-0000-000000000004",
+        "policy_version": "00000000-0000-0000-0000-000000000005",
+        "exclusion": null
+      }
+    ],
+    "pool": {
+      "pool_id": "00000000-0000-0000-0000-000000000010",
+      "before": {
+        "pool_revision": 1,
+        "cursor_version": 0,
+        "reset_epoch": 0,
+        "next_slot_id": "00000000-0000-0000-0000-000000000011",
+        "last_consumed_slot_id": null,
+        "cycle": 0,
+        "selection_order": 0
+      },
+      "after": {
+        "pool_revision": 1,
+        "cursor_version": 1,
+        "reset_epoch": 0,
+        "next_slot_id": "00000000-0000-0000-0000-000000000012",
+        "last_consumed_slot_id": "00000000-0000-0000-0000-000000000011",
+        "cycle": 0,
+        "selection_order": 1
+      },
+      "selected_slot_id": "00000000-0000-0000-0000-000000000011",
+      "selected_position": 1,
+      "receive_order": 1,
+      "rule_fingerprint": "frozen-rule-fingerprint",
+      "scans": [
+        {
+          "slot_id": "00000000-0000-0000-0000-000000000011",
+          "position": 1,
+          "ad_id": "00000000-0000-0000-0000-000000000003",
+          "exclusion": null
+        }
+      ]
+    }
   }
 }

@@ -1,5 +1,5 @@
 {
-  "release": "source-v2-4",
+  "release": "source-v2-5",
   "signature_versions": [
     2
   ],
@@ -42,7 +42,7 @@
     "fixtures/source-receipt-projection.json": "22dbb8da0ca9c8ae8b1f09d30313b7b1db04c165ee16718c2503269bce536780",
     "fixtures/source-keywords.json": "a8b033a96ea2f5b8426b12edb172c0b2ab462abfdbadf8e8ac9faa7a8220c135",
     "source-v2/keyword-filter.json": "5e5ad40a36762eaf07456b12c0ad0665374e6a3cd3af705eddd9ffbd384583ea",
-    "fixtures/source-advertising.json": "e6aa6b1105621ab2bbcd7a14b6c052936499d3ccfeb78f994c7ef201f8a9dab5",
-    "source-v2/advertising.json": "b84507368ed4672ef536f8abaa063f76279acc721887bf389b6551e87de76516"
+    "fixtures/source-advertising.json": "79ae98286dc3c83bf6124c783fb237e4eea6d895a81a12ad4fe81e6e562001f5",
+    "source-v2/advertising.json": "5b030d64645eccc02525ba916bff296e1783affb6f23dc2ef5ddf6c1ab649146"
   }
 }

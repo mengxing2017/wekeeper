@@ -31,3 +31,28 @@ it('requests archived advertisements explicitly instead of filtering a paginated
  await ads.list(2,'archived')
  expect(requestResource).toHaveBeenCalledWith('/api/v2/admin/advertisements?page=2&filter=archived')
 })
+
+it('publishes duplicate ordered slots and fences resets with both expected versions',async()=>{
+ const requestResource=vi.fn().mockResolvedValue({revision:1})
+ const ads=createAdvertisingClient({requestResource})
+ await ads.publishPool('route a',fixture.pool_publication)
+ expect(requestResource).toHaveBeenLastCalledWith('/api/v2/admin/source-routes/route%20a/advertisement-pool/publications','POST',fixture.pool_publication)
+ expect(fixture.pool_publication.slots[1].ad_id).toBe(fixture.pool_publication.slots[2].ad_id)
+ await ads.resetPool('route a',fixture.pool_reset)
+ expect(requestResource).toHaveBeenLastCalledWith('/api/v2/admin/source-routes/route%20a/advertisement-pool/resets','POST',fixture.pool_reset)
+ await ads.copyPool('route a',fixture.pool_copy)
+ expect(requestResource).toHaveBeenLastCalledWith('/api/v2/admin/source-routes/route%20a/advertisement-pool/copies','POST',fixture.pool_copy)
+})
+
+it('sends pool action resource types accepted by the real Rust HTTP decoder',async()=>{
+ const transport=vi.fn().mockResolvedValue({status:200,headers:{'content-type':'application/vnd.api+json'},body:{data:{type:'advertisement-pool',id:'route a',attributes:{revision:1}}}})
+ const c=createClient(transport);c.setCsrf('csrf-pool');const ads=createAdvertisingClient(c)
+ await ads.publishPool('route a',fixture.pool_publication)
+ expect(JSON.parse(transport.mock.calls[0][0].body).data.type).toBe('advertisement-pool-publications')
+ await ads.resetPool('route a',fixture.pool_reset)
+ expect(JSON.parse(transport.mock.calls[1][0].body).data.type).toBe('advertisement-pool-resets')
+ await ads.copyPool('route a',fixture.pool_copy)
+ expect(JSON.parse(transport.mock.calls[2][0].body).data.type).toBe('advertisement-pool-copies')
+ const selection:AdSelection=fixture.pool_selection as AdSelection
+ expect(selection.pool?.after.selection_order).toBe(1)
+})

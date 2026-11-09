@@ -1,11 +1,11 @@
 {
-  "contract_version": "source-v2-4",
+  "contract_version": "source-v2-5",
   "composer": "source-ad-text/1",
   "modes": [
     "none",
-    "fixed"
+    "fixed",
+    "pool"
   ],
-  "deferred_mode": "pool (volume 08)",
   "source": "title_or_empty + LF + body_or_empty + LF + detail_url",
   "advertisement": "【广告】 + LF + body + optional(LF + https_link)",
   "separator": "LF LF",
@@ -23,5 +23,34 @@
     "shared",
     "archived"
   ],
-  "deletion": "archive with expected_revision and reason; excluded from active lists; history retained"
+  "deletion": "archive with expected_revision and reason; excluded from active lists; history retained",
+  "pool": {
+    "max_slots": 1000,
+    "identity": "stable per route; copies create new pool and slot IDs, start from first slot; existing destination pools are rejected",
+    "ordering": "receive_order then receipt_id among non-deferred events; same-route durable intake counter; technical retries retain head",
+    "sequence": "ordered slot IDs, duplicate advertisement IDs allowed; at most one complete scan",
+    "consumption": "one per receipt and stable chain decision, atomic with task/targets/snapshot; no candidate does not advance",
+    "retry": "reuse frozen pool selection and body, including no-ad fallback; no replacement after task commit",
+    "editing": "last consumed slot survives: its new successor; deleted: first slot; revision cycle resets, lifetime selection_order remains",
+    "reset": "expected rule/cursor revision and reason required; increments reset epoch, only future decisions",
+    "resources": {
+      "detail": "GET /api/v2/admin/source-routes/{id}/advertisement-pool",
+      "publish": "POST /api/v2/admin/source-routes/{id}/advertisement-pool/publications",
+      "reset": "POST /api/v2/admin/source-routes/{id}/advertisement-pool/resets",
+      "copy": "POST /api/v2/admin/source-routes/{id}/advertisement-pool/copies",
+      "consumptions": "GET /api/v2/admin/source-routes/{id}/advertisement-pool/consumptions"
+    },
+    "statistics": "selections per independent slot and per advertisement across repeated slots; logical target sent/failed/unknown/pending and device attempts remain separate"
+  },
+  "errors": [
+    "ad_pool_missing",
+    "ad_pool_wrong_route",
+    "ad_pool_invalid_slot",
+    "ad_pool_duplicate_slot",
+    "ad_pool_slot_limit",
+    "ad_pool_copy_target_exists",
+    "revision_conflict",
+    "ad_pool_no_candidate",
+    "ad_not_allowed"
+  ]
 }
