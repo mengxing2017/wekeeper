@@ -110,6 +110,8 @@ pub struct ManagerInput {
     pub revision: i64,
     pub username: String,
     pub granted: bool,
+    #[serde(default)]
+    pub can_recheck: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

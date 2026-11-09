@@ -159,7 +159,11 @@ impl Repository {
             if let Some((id, old_hash)) = previous {
                 self.route(&mut tx, source, &s.key_id, &e.route_id, false)
                     .await?;
-                ensure(old_hash == hash, "event_conflict")?;
+                if old_hash != hash {
+                    audit(&mut tx,source,Some(&s.key_id),None,"source.event.conflict",&s.request_id,json!({"event_id":s.identity,"first_digest":old_hash,"conflicting_digest":hash})).await?;
+                    tx.commit().await?;
+                    return Err(Fault("event_conflict"));
+                }
                 let value = self.receipt(&mut tx, source, id).await?;
                 audit(
                     &mut tx,
@@ -222,6 +226,8 @@ impl Repository {
                 r.get::<Uuid, _>("event_id") == s.identity,
                 "event_identity_mismatch",
             )?;
+            let queries:i64=sqlx::query_scalar("INSERT INTO source_query_usage(source_id,minute,queries) VALUES($1,date_trunc('minute',now()),1) ON CONFLICT(source_id,minute) DO UPDATE SET queries=source_query_usage.queries+1,last_queried_at=clock_timestamp() RETURNING queries").bind(source).fetch_one(&mut *tx).await?;
+            ensure(queries <= 600, "rate_limited")?;
             (false, self.receipt(&mut tx, source, id).await?)
         };
         sqlx::query("UPDATE source_credentials SET last_used_at=now() WHERE key_id=$1")
@@ -249,7 +255,9 @@ impl Repository {
         source: Uuid,
         id: Uuid,
     ) -> Result<Value> {
-        let value:Value=sqlx::query_scalar("SELECT jsonb_build_object('event_id',event_id,'status',status,'reason_code',reason_code,'processing_stage',processing_stage,'received_at',received_at,'updated_at',updated_at,'retryable',false,'sending',sending) FROM source_receipts WHERE source_id=$1 AND receipt_id=$2").bind(source).bind(id).fetch_one(&mut **tx).await?;
+        let value:Value=sqlx::query_scalar("SELECT jsonb_build_object('event_id',r.event_id,'status',COALESCE(c.status,r.status),'reason_code',CASE WHEN c.receipt_id IS NOT NULL THEN c.reason_code ELSE r.reason_code END,'processing_stage',r.processing_stage,'received_at',r.received_at,'updated_at',greatest(r.updated_at,c.updated_at,w.updated_at),'retryable',false,'sending',COALESCE(c.sending,r.sending,w.sending),'observed_sequence',r.observed_sequence) FROM source_receipts r LEFT JOIN source_receipts c ON c.receipt_id=r.canonical_receipt_id LEFT JOIN LATERAL (SELECT linked.sending,linked.updated_at FROM source_receipt_relations l JOIN source_receipts linked ON linked.receipt_id=l.related_receipt_id JOIN source_execution_tasks t ON t.receipt_id=linked.receipt_id WHERE l.receipt_id=COALESCE(r.canonical_receipt_id,r.receipt_id) AND l.kind='withdrawal' ORDER BY linked.received_at DESC LIMIT 1) w ON true WHERE r.source_id=$1 AND r.receipt_id=$2").bind(source).bind(id).fetch_one(&mut **tx).await?;
+        let value: crate::source_access::domain::projection::Receipt =
+            serde_json::from_value(value)?;
         Ok(json!({"data":{"type":"source-receipts","id":id,"attributes":value}}))
     }
     #[allow(clippy::too_many_arguments)]
@@ -618,6 +626,9 @@ impl Repository {
 }
 
 impl crate::source_access::south::port::MachineStore for Repository {
+    async fn record_failure(&self, key: &str, request_id: &str, code: &str) -> Result<()> {
+        self.failure(key, request_id, code).await
+    }
     async fn accept(&self, signed: Signed, body: Vec<u8>) -> Result<(bool, Value)> {
         self.machine(signed, body).await
     }
@@ -692,3 +703,5 @@ impl Repository {
 
 pub mod routing;
 pub mod routing_worker;
+
+pub mod projection;

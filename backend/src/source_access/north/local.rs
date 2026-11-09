@@ -4,17 +4,20 @@ use serde_json::Value;
 use sqlx::PgPool;
 #[derive(Clone)]
 pub struct Service(pub PgPool);
-impl Service {
+pub struct MachineService<S>(pub S);
+impl<S: MachineStore> MachineService<S> {
     pub async fn machine(&self, signed: Signed, body: Vec<u8>) -> Result<(bool, Value)> {
-        let repo = Repository(self.0.clone());
+        let repo = &self.0;
         let key = signed.key_id.clone();
         let request_id = signed.request_id.clone();
         let result = repo.accept(signed, body).await;
         if let Err(e) = &result {
-            let _ = repo.failure(&key, &request_id, e.0).await;
+            let _ = repo.record_failure(&key, &request_id, e.0).await;
         }
         result
     }
+}
+impl Service {
     #[allow(clippy::too_many_arguments)]
     pub async fn manage(
         &self,
@@ -83,3 +86,5 @@ impl Service {
 }
 
 pub mod routing;
+
+pub mod projection;

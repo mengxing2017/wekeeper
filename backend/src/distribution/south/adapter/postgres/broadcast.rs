@@ -796,7 +796,7 @@ impl Store for Repository {
                 if error.0 == "temporarily_unavailable" {
                     return Err(Error::Unavailable);
                 }
-                sqlx::query("UPDATE broadcast_batches SET next_sync_at=now()+interval '30 seconds',error_code=$2,state=CASE WHEN $2 IN ('route_retired','target_removed','target_identity_changed','not_found') THEN 'cancelled' ELSE state END WHERE id=$1 AND state='queued'").bind(w.id).bind(error.0).execute(&mut *tx).await?;
+                sqlx::query("UPDATE broadcast_batches SET next_sync_at=now()+interval '30 seconds',error_code=$2,state=CASE WHEN $2 IN ('content_version_superseded','route_retired','target_removed','target_identity_changed','not_found') THEN 'cancelled' ELSE state END WHERE id=$1 AND state='queued'").bind(w.id).bind(error.0).execute(&mut *tx).await?;
                 tx.commit().await?;
                 return Ok(false);
             }

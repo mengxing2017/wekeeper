@@ -398,3 +398,5 @@ pub struct AssociationInput {
 }
 
 pub mod routing;
+
+pub mod projection;

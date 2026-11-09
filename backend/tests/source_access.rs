@@ -278,6 +278,175 @@ async fn two_instances_replay_scope_lifetime_and_deletion() {
         .0,
         200
     );
+    // Exercise the actual signed POST -> durable inbox -> worker -> signed GET path.
+    use wekeeper_api::source_access::south::adapter::postgres::routing::RoutingRepository;
+    let worker = RoutingRepository(pool.clone());
+    worker.run_once().await.unwrap();
+    let (_, state) = read(
+        one.clone()
+            .oneshot(signed(
+                key,
+                &material,
+                &get,
+                "GET",
+                event,
+                Uuid::new_v4(),
+                b"",
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(state["data"]["attributes"]["status"], "applied");
+    assert_eq!(
+        state["data"]["attributes"]["processing_stage"],
+        "configuration_wait"
+    );
+    assert_eq!(state["data"]["attributes"]["retryable"], false);
+    assert_eq!(state["data"]["attributes"]["observed_sequence"], 1);
+    let conflicts:Value=sqlx::query_scalar("SELECT detail FROM source_access_audit WHERE source_id=$1 AND action='source.event.conflict' LIMIT 1").bind(source.parse::<Uuid>().unwrap()).fetch_one(&pool).await.unwrap();
+    assert_ne!(conflicts["first_digest"], conflicts["conflicting_digest"]);
+    for (seq, title, expected) in [
+        (1, "中文🌸", "applied"),
+        (1, "另一份正文", "rejected"),
+        (6, "更高版本", "applied"),
+        (5, "迟到旧版", "ignored_stale"),
+    ] {
+        let eid = Uuid::new_v4();
+        let mut payload: Value = serde_json::from_slice(&body).unwrap();
+        payload["data"]["id"] = json!(eid);
+        payload["data"]["attributes"]["event_id"] = json!(eid);
+        payload["data"]["attributes"]["sequence"] = json!(seq);
+        payload["data"]["attributes"]["title"] = json!(title);
+        let bytes = serde_json::to_vec(&payload).unwrap();
+        let (status, accepted) = read(
+            two.clone()
+                .oneshot(signed(
+                    key,
+                    &material,
+                    path,
+                    "POST",
+                    eid,
+                    Uuid::new_v4(),
+                    &bytes,
+                ))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, 202, "{accepted}");
+        worker.run_once().await.unwrap();
+        let getpath = format!(
+            "/api/v2/source-receipts/{}",
+            accepted["data"]["id"].as_str().unwrap()
+        );
+        let response = one
+            .clone()
+            .oneshot(signed(
+                key,
+                &material,
+                &getpath,
+                "GET",
+                eid,
+                Uuid::new_v4(),
+                b"",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.headers()["x-source-poll-after"], "5");
+        let (status, projected) = read(response).await;
+        assert_eq!(status, 200);
+        assert_eq!(
+            projected["data"]["attributes"]["status"], expected,
+            "{projected}"
+        );
+    }
+    // SQL failure between receipt and inbox insertion must roll back the complete acceptance.
+    sqlx::query("CREATE FUNCTION source_test_fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'isolated failure'; END $$").execute(&pool).await.unwrap();
+    sqlx::query("CREATE TRIGGER source_test_fail BEFORE INSERT ON source_inbox FOR EACH ROW EXECUTE FUNCTION source_test_fail()").execute(&pool).await.unwrap();
+    let failed_event = Uuid::new_v4();
+    let mut payload: Value = serde_json::from_slice(&body).unwrap();
+    payload["data"]["id"] = json!(failed_event);
+    payload["data"]["attributes"]["event_id"] = json!(failed_event);
+    let bytes = serde_json::to_vec(&payload).unwrap();
+    let (status, _) = read(
+        one.clone()
+            .oneshot(signed(
+                key,
+                &material,
+                path,
+                "POST",
+                failed_event,
+                Uuid::new_v4(),
+                &bytes,
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, 503);
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM source_receipts WHERE source_id=$1 AND event_id=$2",
+    )
+    .bind(source.parse::<Uuid>().unwrap())
+    .bind(failed_event)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(count, 0);
+    sqlx::query("DROP TRIGGER source_test_fail ON source_inbox")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DROP FUNCTION source_test_fail()")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, recovered) = read(
+        one.clone()
+            .oneshot(signed(
+                key,
+                &material,
+                path,
+                "POST",
+                failed_event,
+                Uuid::new_v4(),
+                &bytes,
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, 202, "{recovered}");
+    let usage: i64 = sqlx::query_scalar(
+        "SELECT sum(queries)::bigint FROM source_query_usage WHERE source_id=$1",
+    )
+    .bind(source.parse::<Uuid>().unwrap())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(usage >= 6);
+    sqlx::query("UPDATE source_query_usage SET queries=600 WHERE source_id=$1")
+        .bind(source.parse::<Uuid>().unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+    let limited = one
+        .clone()
+        .oneshot(signed(
+            key,
+            &material,
+            &get,
+            "GET",
+            event,
+            Uuid::new_v4(),
+            b"",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(limited.status().as_u16(), 429);
+    assert_eq!(limited.headers()["retry-after"], "60");
+
     let list = svc
         .manage(&a, "source-credentials", None, "GET", None, 1, "", "", None)
         .await

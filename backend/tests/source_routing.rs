@@ -420,6 +420,7 @@ async fn direct_requests_require_route_and_current_workspace_permission() {
                     revision: f.revision().await,
                     username: "operator".into(),
                     granted: true,
+                    can_recheck: false,
                 },
             },
         )
@@ -717,5 +718,399 @@ async fn accepted_inbox_creates_only_configured_official_targets_and_withdraws_u
             .await
             .unwrap();
     assert_eq!(cancelled, 3);
+    f.close().await;
+}
+
+async fn receipt_value(f: &Fixture, receipt: Uuid) -> Value {
+    sqlx::query_scalar("SELECT to_jsonb(r) FROM source_receipts r WHERE receipt_id=$1")
+        .bind(receipt)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap()
+}
+async fn change_title(f: &Fixture, receipt: Uuid, title: &str) {
+    sqlx::query("UPDATE source_inbox SET request_body=convert_to(jsonb_set(convert_from(request_body,'UTF8')::jsonb,'{data,attributes,title}',to_jsonb($2::text))::text,'UTF8') WHERE receipt_id=$1")
+        .bind(receipt).bind(title).execute(&f.pool).await.unwrap();
+}
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn projection_equivalence_conflict_stale_tombstone_and_default_no_resend() {
+    let f = Fixture::new().await;
+    f.configure(vec![f.targets[0], f.targets[1]]).await;
+    f.lifecycle(LifecycleAction::Enable).await;
+    let worker = RoutingRepository(f.pool.clone());
+    let original = inbox(&f, "versions", 2, "content.upsert").await;
+    worker.run_once().await.unwrap();
+    let duplicate = inbox(&f, "versions", 2, "content.upsert").await;
+    let conflict = inbox(&f, "versions", 2, "content.upsert").await;
+    change_title(&f, conflict, "冲突正文").await;
+    let stale = inbox(&f, "versions", 1, "content.upsert").await;
+    let concurrent = RoutingRepository(f.pool.clone());
+    let (a, b) = tokio::join!(worker.run_once(), concurrent.run_once());
+    a.unwrap();
+    b.unwrap();
+    let d = receipt_value(&f, duplicate).await;
+    assert_eq!(d["canonical_receipt_id"], json!(original));
+    assert_eq!(d["processing_stage"], "projection_duplicate");
+    assert_eq!(
+        receipt_value(&f, conflict).await["reason_code"],
+        "content_version_conflict"
+    );
+    assert_eq!(receipt_value(&f, stale).await["observed_sequence"], 2);
+    assert_eq!(receipt_value(&f, stale).await["status"], "ignored_stale");
+    let tasks: i64 = sqlx::query_scalar("SELECT count(*) FROM source_execution_tasks")
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(tasks, 1);
+    // Unknown facts survive replacement; an update cannot create a second task.
+    sqlx::query("UPDATE mobile_v9_attempts SET state='unknown' WHERE item_id IN (SELECT i.id FROM mobile_v9_task_items i JOIN source_execution_tasks l ON l.task_id=i.task_id WHERE l.receipt_id=$1)").bind(original).execute(&f.pool).await.unwrap();
+    worker.run_once().await.unwrap();
+    assert_eq!(receipt_value(&f, original).await["sending"]["unknown"], 2);
+    let updated = inbox(&f, "versions", 7, "content.upsert").await;
+    worker.run_once().await.unwrap();
+    assert_eq!(
+        receipt_value(&f, updated).await["processing_stage"],
+        "no_resend"
+    );
+    assert!(receipt_value(&f, updated).await["sending"].is_null());
+    let withdrawn = inbox(&f, "versions", 8, "content.withdrawn").await;
+    worker.run_once().await.unwrap();
+    assert_eq!(
+        receipt_value(&f, withdrawn).await["processing_stage"],
+        "withdrawn"
+    );
+    // Late success is counted once per target, even after withdrawal.
+    sqlx::query("UPDATE mobile_v9_attempts SET state='observed_sent' WHERE item_id IN (SELECT i.id FROM mobile_v9_task_items i JOIN source_execution_tasks l ON l.task_id=i.task_id WHERE l.receipt_id=$1)").bind(original).execute(&f.pool).await.unwrap();
+    worker.run_once().await.unwrap();
+    let sent = receipt_value(&f, original).await;
+    assert_eq!(
+        sent["sending"],
+        json!({"sent":2,"unknown":0,"failed":0,"pending":0})
+    );
+    assert_eq!(sent["summary_total"], 2);
+    use wekeeper_api::source_access::{
+        domain::projection::Command as P, north::local::projection::Service as PS,
+        south::adapter::postgres::projection::ReceiptsRepository,
+    };
+    let receipts = PS(ReceiptsRepository(f.pool.clone()));
+    let detail = receipts
+        .execute(
+            &f.actor,
+            P::Detail {
+                route: f.route.clone(),
+                receipt: withdrawn,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(detail["sending"], sent["sending"]);
+    assert_eq!(detail["summary_revision"], sent["summary_revision"]);
+    let duplicate_withdrawal = inbox(&f, "versions", 8, "content.withdrawn").await;
+    worker.run_once().await.unwrap();
+    let detail = receipts
+        .execute(
+            &f.actor,
+            P::Detail {
+                route: f.route.clone(),
+                receipt: duplicate_withdrawal,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(detail["sending"], sent["sending"]);
+    assert_eq!(detail["summary_revision"], sent["summary_revision"]);
+
+    let revision = sent["summary_revision"].clone();
+    worker.run_once().await.unwrap();
+    assert_eq!(
+        receipt_value(&f, original).await["summary_revision"],
+        revision
+    );
+    let tombstone = inbox(&f, "first-withdrawal", 6, "content.withdrawn").await;
+    worker.run_once().await.unwrap();
+    let late = inbox(&f, "first-withdrawal", 5, "content.upsert").await;
+    worker.run_once().await.unwrap();
+    assert_eq!(receipt_value(&f, late).await["status"], "ignored_stale");
+    assert_eq!(receipt_value(&f, tombstone).await["status"], "applied");
+    let tasks: i64 = sqlx::query_scalar("SELECT count(*) FROM source_execution_tasks")
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(tasks, 1);
+    f.close().await;
+}
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn real_policy_recheck_keeps_identity_history_and_fails_closed() {
+    use wekeeper_api::source_access::{
+        domain::projection::{Command as P, RecheckInput},
+        north::local::projection::Service as PS,
+        south::adapter::postgres::projection::ReceiptsRepository,
+    };
+    let f = Fixture::new().await;
+    f.configure(vec![f.targets[0]]).await;
+    f.lifecycle(LifecycleAction::Enable).await;
+    sqlx::query("UPDATE source_check_policy SET terms=ARRAY['正文']")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let worker = RoutingRepository(f.pool.clone());
+    let receipt = inbox(&f, "recheck", 1, "content.upsert").await;
+    worker.run_once().await.unwrap();
+    assert_eq!(
+        receipt_value(&f, receipt).await["reason_code"],
+        "keyword_blocked"
+    );
+    let service = PS(ReceiptsRepository(f.pool.clone()));
+    let detail = service
+        .execute(
+            &f.actor,
+            P::Detail {
+                route: f.route.clone(),
+                receipt,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(detail["checks"][0]["outcome"], "blocked");
+    let operator_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO accounts(id,username,display_name) VALUES($1,'receipt-operator','Operator')",
+    )
+    .bind(operator_id)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    let mut operator = f.actor.clone();
+    operator.id = operator_id;
+    operator.platform_admin = false;
+    let read = || P::Detail {
+        route: f.route.clone(),
+        receipt,
+    };
+    assert_eq!(
+        service.execute(&operator, read()).await.unwrap_err().0,
+        "forbidden"
+    );
+    sqlx::query(
+        "INSERT INTO source_route_managers(route_id,account_id,granted_by) VALUES($1,$2,$3)",
+    )
+    .bind(&f.route)
+    .bind(operator_id)
+    .bind(f.actor.id)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO mobile_workspace_members(workspace_id,account_id,role) VALUES($1,$2,'admin')",
+    )
+    .bind(f.workspace)
+    .bind(operator_id)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        service.execute(&operator, read()).await.unwrap()["can_recheck"],
+        false
+    );
+    let denied = P::Recheck {
+        route: f.route.clone(),
+        receipt,
+        input: RecheckInput {
+            revision: detail["revision"].as_i64().unwrap(),
+            reason: "正常理由".into(),
+        },
+    };
+    assert_eq!(
+        service.execute(&operator, denied).await.unwrap_err().0,
+        "forbidden"
+    );
+    sqlx::query("UPDATE source_route_managers SET can_recheck=true WHERE account_id=$1")
+        .bind(operator_id)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        service.execute(&operator, read()).await.unwrap()["can_recheck"],
+        true
+    );
+    sqlx::query("DELETE FROM mobile_workspace_members WHERE account_id=$1")
+        .bind(operator_id)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        service.execute(&operator, read()).await.unwrap_err().0,
+        "forbidden"
+    );
+    let recheck = |revision| P::Recheck {
+        route: f.route.clone(),
+        receipt,
+        input: RecheckInput {
+            revision,
+            reason: "复核原内容".into(),
+        },
+    };
+    assert_eq!(
+        service.execute(&f.actor, recheck(-1)).await.unwrap_err().0,
+        "invalid_request"
+    );
+    service
+        .execute(&f.actor, recheck(detail["revision"].as_i64().unwrap()))
+        .await
+        .unwrap();
+    // A second operator using a stale revision cannot enqueue another plan.
+    assert_eq!(
+        service
+            .execute(&f.actor, recheck(detail["revision"].as_i64().unwrap()))
+            .await
+            .unwrap_err()
+            .0,
+        "revision_conflict"
+    );
+    worker.run_once().await.unwrap();
+    assert_eq!(receipt_value(&f, receipt).await["status"], "rejected");
+    let plans: i64 = sqlx::query_scalar("SELECT count(*) FROM source_recheck_requests")
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(plans, 0);
+    // Removing the persisted policy is a storage failure, never a fabricated empty pass.
+    sqlx::query("DELETE FROM source_check_policy")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let revision = receipt_value(&f, receipt).await["processing_revision"]
+        .as_i64()
+        .unwrap();
+    service.execute(&f.actor, recheck(revision)).await.unwrap();
+    worker.run_once().await.unwrap();
+    assert_eq!(receipt_value(&f, receipt).await["status"], "received");
+    assert_eq!(
+        receipt_value(&f, receipt).await["processing_stage"],
+        "processing_retry"
+    );
+    let tasks: i64 = sqlx::query_scalar("SELECT count(*) FROM source_execution_tasks")
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(tasks, 0);
+    sqlx::query("INSERT INTO source_check_policy(singleton,revision,terms) VALUES(true,3,'{}')")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    // Recovery after a new process requires no source resubmission.
+    RoutingRepository(f.pool.clone()).run_once().await.unwrap();
+    let detail = service
+        .execute(
+            &f.actor,
+            P::Detail {
+                route: f.route.clone(),
+                receipt,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(detail["status"], "applied");
+    assert_eq!(detail["processing_stage"], "task_created");
+    assert_eq!(detail["checks"].as_array().unwrap().len(), 2);
+    assert!(
+        detail["history"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|h| h["reason_code"] == "keyword_blocked")
+    );
+    let tasks: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM source_execution_tasks WHERE receipt_id=$1")
+            .bind(receipt)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(tasks, 1);
+    // A rule revision invalidates old qualification immediately, before the next worker tick.
+    sqlx::query("UPDATE source_check_policy SET terms=ARRAY['正文']")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let mut tx = f.pool.begin().await.unwrap();
+    assert_eq!(
+        wekeeper_api::source_access::south::adapter::postgres::routing::guard_submission(
+            &mut tx,
+            receipt,
+            f.targets[0]
+        )
+        .await
+        .unwrap_err()
+        .0,
+        "content_check_pending"
+    );
+    tx.rollback().await.unwrap();
+    worker.run_once().await.unwrap();
+    assert_eq!(receipt_value(&f, receipt).await["status"], "rejected");
+    let newer = inbox(&f, "recheck", 2, "content.upsert").await;
+    worker.run_once().await.unwrap();
+    assert_eq!(
+        receipt_value(&f, newer).await["reason_code"],
+        "keyword_blocked"
+    );
+    let revision = receipt_value(&f, receipt).await["processing_revision"]
+        .as_i64()
+        .unwrap();
+    assert_eq!(
+        service
+            .execute(&f.actor, recheck(revision))
+            .await
+            .unwrap_err()
+            .0,
+        "content_version_superseded"
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn policy_revision_recovery_uses_persistent_bounded_pages() {
+    let f = Fixture::new().await;
+    let worker = RoutingRepository(f.pool.clone());
+    for n in 0..80 {
+        inbox(&f, &format!("page-{n}"), 1, "content.upsert").await;
+    }
+    worker.run_once().await.unwrap();
+    worker.run_once().await.unwrap();
+    let checked: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM source_content_versions WHERE check_state='passed'",
+    )
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(checked, 80);
+    sqlx::query("UPDATE source_check_policy SET terms=ARRAY['正文']")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    worker.run_once().await.unwrap();
+    let first: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM source_content_versions WHERE check_state='blocked'",
+    )
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(first, 50);
+    RoutingRepository(f.pool.clone()).run_once().await.unwrap();
+    let all: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM source_content_versions WHERE check_state='blocked'",
+    )
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(all, 80);
+    let complete: bool =
+        sqlx::query_scalar("SELECT complete FROM source_check_scan WHERE singleton")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert!(complete);
     f.close().await;
 }

@@ -78,7 +78,11 @@ pub(super) async fn reconcile(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
             item,
             if matches!(
                 error.0,
-                "route_retired" | "target_removed" | "target_identity_changed" | "not_found"
+                "content_version_superseded"
+                    | "route_retired"
+                    | "target_removed"
+                    | "target_identity_changed"
+                    | "not_found"
             ) {
                 "stopped"
             } else {

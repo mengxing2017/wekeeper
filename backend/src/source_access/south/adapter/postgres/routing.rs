@@ -13,7 +13,7 @@ fn resource_error(e: crate::business::Error) -> Fault {
         _ => Fault("temporarily_unavailable"),
     }
 }
-async fn administrator(tx: &mut Tx<'_>, actor: Uuid) -> Result<bool> {
+pub(super) async fn administrator(tx: &mut Tx<'_>, actor: Uuid) -> Result<bool> {
     sqlx::query_scalar("SELECT platform_admin FROM accounts WHERE id=$1 AND active FOR SHARE")
         .bind(actor)
         .fetch_optional(&mut **tx)
@@ -43,7 +43,7 @@ async fn latest(tx: &mut Tx<'_>, route: &str) -> Result<Option<RouteSnapshot>> {
         .transpose()
         .map_err(Into::into)
 }
-async fn access(tx: &mut Tx<'_>, actor: Uuid, route: &str, admin: bool) -> Result<()> {
+pub(super) async fn access(tx: &mut Tx<'_>, actor: Uuid, route: &str, admin: bool) -> Result<()> {
     if admin {
         return Ok(());
     }
@@ -66,7 +66,7 @@ async fn access(tx: &mut Tx<'_>, actor: Uuid, route: &str, admin: bool) -> Resul
 async fn view(tx: &mut Tx<'_>, row: &sqlx::postgres::PgRow) -> Result<Value> {
     let route: String = row.get("route_id");
     let mut value = json!({"id":route,"revision":row.get::<i64,_>("revision"),"config_revision":row.get::<i64,_>("config_revision"),"unit_id":row.get::<Option<Uuid>,_>("unit_id"),"group_id":row.get::<Option<Uuid>,_>("group_id"),"status":row.get::<String,_>("status"),"execution_state":row.get::<String,_>("execution_state"),"retired_at":row.get::<Option<chrono::DateTime<chrono::Utc>>,_>("retired_at"),"snapshot":latest(tx,&route).await?});
-    value["managers"]=json!(sqlx::query_scalar::<_,Value>("SELECT jsonb_build_object('id',m.account_id,'username',a.username,'revision',m.revision) FROM source_route_managers m JOIN accounts a ON a.id=m.account_id WHERE route_id=$1 ORDER BY a.username").bind(&route).fetch_all(&mut **tx).await?);
+    value["managers"]=json!(sqlx::query_scalar::<_,Value>("SELECT jsonb_build_object('id',m.account_id,'username',a.username,'revision',m.revision,'can_recheck',m.can_recheck) FROM source_route_managers m JOIN accounts a ON a.id=m.account_id WHERE route_id=$1 ORDER BY a.username").bind(&route).fetch_all(&mut **tx).await?);
     Ok(value)
 }
 async fn current_targets(
@@ -600,7 +600,7 @@ impl RoutingRepository {
                         .await?
                         .ok_or(Fault("not_found"))?;
                         if input.granted {
-                            sqlx::query("INSERT INTO source_route_managers(route_id,account_id,granted_by) VALUES($1,$2,$3) ON CONFLICT(route_id,account_id) DO UPDATE SET revision=source_route_managers.revision+1,granted_by=$3").bind(&route).bind(account).bind(actor.id).execute(&mut *tx).await?;
+                            sqlx::query("INSERT INTO source_route_managers(route_id,account_id,granted_by,can_recheck) VALUES($1,$2,$3,$4) ON CONFLICT(route_id,account_id) DO UPDATE SET revision=source_route_managers.revision+1,granted_by=$3,can_recheck=$4").bind(&route).bind(account).bind(actor.id).bind(input.can_recheck).execute(&mut *tx).await?;
                         } else {
                             sqlx::query("DELETE FROM source_route_managers WHERE route_id=$1 AND account_id=$2").bind(&route).bind(account).execute(&mut *tx).await?;
                         }
@@ -617,8 +617,8 @@ impl RoutingRepository {
                     }
                     Command::Handoff { .. } => {
                         ensure(admin, "forbidden")?;
-                        record(&mut tx,actor,Some(&route),"routing.handoff",json!({"contract_version":"source-v2-1","config_revision":row.get::<i64,_>("config_revision")})).await?;
-                        json!({"id":route,"route_id":route,"receiver_path":"/api/v2/source-events","authentication":"HMAC-SHA256","signature_versions":[2],"schema_versions":[2],"contract_version":"source-v2-1","config_revision":row.get::<i64,_>("config_revision")})
+                        record(&mut tx,actor,Some(&route),"routing.handoff",json!({"contract_version":"source-v2-2","config_revision":row.get::<i64,_>("config_revision")})).await?;
+                        json!({"id":route,"route_id":route,"receiver_path":"/api/v2/source-events","authentication":"HMAC-SHA256","signature_versions":[2],"schema_versions":[2],"contract_version":"source-v2-2","config_revision":row.get::<i64,_>("config_revision")})
                     }
                     _ => unreachable!(),
                 };
@@ -773,6 +773,25 @@ pub async fn guard_submission(
             .await?
             .ok_or(Fault("not_found"))?;
     let frozen: RouteSnapshot = serde_json::from_value(decision)?;
+    sqlx::query("SELECT source_id FROM source_callers WHERE source_id=$1 FOR UPDATE")
+        .bind(frozen.source_id)
+        .fetch_one(&mut **tx)
+        .await?;
+    let current=sqlx::query("SELECT v.receipt_id,v.withdrawn,v.check_state,v.check_revision,p.revision FROM source_receipts r JOIN source_content_versions v ON v.source_id=r.source_id AND v.route_id=r.route_id JOIN source_inbox i ON i.receipt_id=r.receipt_id AND convert_from(i.request_body,'UTF8')::jsonb #>> '{data,attributes,external_content_id}'=v.external_content_id CROSS JOIN source_check_policy p WHERE r.receipt_id=$1 AND p.singleton FOR SHARE OF v,p").bind(receipt).fetch_optional(&mut **tx).await?;
+    {
+        let current = current.ok_or(Fault("content_check_pending"))?;
+        ensure(
+            current.get::<Uuid, _>("receipt_id") == receipt && !current.get::<bool, _>("withdrawn"),
+            "content_version_superseded",
+        )?;
+        ensure(
+            current.get::<String, _>("check_state") == "passed"
+                && current.get::<Option<String>, _>("check_revision")
+                    == Some(current.get::<i64, _>("revision").to_string()),
+            "content_check_pending",
+        )?;
+    }
+
     let config = frozen
         .execution
         .as_ref()

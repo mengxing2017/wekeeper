@@ -11,6 +11,7 @@ use axum::{
     routing::{get, post},
 };
 use serde_json::json;
+pub mod projection;
 pub mod routing;
 fn header<'a>(h: &'a HeaderMap, name: &str) -> Result<&'a str> {
     ensure(h.get_all(name).iter().count() == 1, "invalid_request")?;
@@ -33,7 +34,9 @@ impl Fault {
             | "scope_immutable"
             | "invalid_transition"
             | "route_configuration_required"
-            | "target_unavailable" => 409,
+            | "target_unavailable"
+            | "content_version_superseded"
+            | "recheck_not_allowed" => 409,
             "temporarily_unavailable" | "source_key_configuration_required" => 503,
             "unsupported_media_type" => 415,
             "payload_too_large" => 413,
@@ -55,6 +58,11 @@ impl Fault {
             && (matches!(status, 429 | 500 | 503)
                 || matches!(self.0, "replay_detected" | "timestamp_expired"));
         let mut response=(StatusCode::from_u16(status).unwrap(),[("content-type",MEDIA_TYPE)],Json(json!({"errors":[{"status":status.to_string(),"code":code,"title":title,"meta":{"retryable":retryable,"supported_versions":[2],"request_id":request_id}}]}))).into_response();
+        if status == 503 {
+            response
+                .headers_mut()
+                .insert("retry-after", axum::http::HeaderValue::from_static("5"));
+        }
         if status == 429 {
             response
                 .headers_mut()
@@ -141,7 +149,11 @@ async fn machine(State(a): State<Application>, req: Request) -> Response {
         let body = axum::body::to_bytes(req.into_body(), MAX_BODY)
             .await
             .map_err(|_| Fault("payload_too_large"))?;
-        let (fresh, value) = Service(a.pool).machine(signed, body.to_vec()).await?;
+        let (fresh, value) = super::local::MachineService(
+            crate::source_access::south::adapter::postgres::Repository(a.pool),
+        )
+        .machine(signed, body.to_vec())
+        .await?;
         Ok::<_, Fault>(
             (
                 if fresh {
@@ -149,7 +161,7 @@ async fn machine(State(a): State<Application>, req: Request) -> Response {
                 } else {
                     StatusCode::OK
                 },
-                [("content-type", MEDIA_TYPE)],
+                [("content-type", MEDIA_TYPE), ("x-source-poll-after", "5")],
                 Json(value),
             )
                 .into_response(),
@@ -288,6 +300,7 @@ async fn association(
 }
 pub fn router() -> Router<Application> {
     Router::new()
+        .merge(projection::router())
         .merge(routing::router())
         .route(
             "/api/v2/admin/source-credentials/{key}/secret-reveals",

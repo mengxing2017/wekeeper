@@ -175,8 +175,10 @@ async fn serve_inner(
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         }
     });
-    let routing = crate::source_access::south::adapter::postgres::routing::RoutingRepository(
-        application.pool.clone(),
+    let routing = crate::source_access::north::local::projection::Worker(
+        crate::source_access::south::adapter::postgres::routing::RoutingRepository(
+            application.pool.clone(),
+        ),
     );
     let routing_worker = tokio::spawn(async move {
         loop {
