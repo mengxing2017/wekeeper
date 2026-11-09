@@ -1,5 +1,5 @@
 import {requestResource} from '../../http'
-export interface SourceRow {id:string;unit_name?:string;route_name?:string;remark?:string;status:string;revision:number;key_id?:string;valid_from?:string;valid_until?:string|null;last_used_at?:string|null;created_at:string;updated_at:string}
+export interface SourceRow {id:string;unit_name?:string;route_name?:string;remark?:string;status:string;revision:number;key_id?:string;execution_state?:'draft'|'running'|'paused';retired_at?:string|null;config_revision?:number;valid_from?:string;valid_until?:string|null;last_used_at?:string|null;created_at:string;updated_at:string}
 export interface Association {route_id:string;route_name:string;remark:string;status:string;revision:number}
 export interface SourceInput {key_id?:string;unit_name?:string;route_name?:string;remark?:string;status?:string;revision?:number;valid_from?:string;valid_until?:string|null;route_ids?:string[]}
 export interface CredentialSecret {id:string;key_id:string;secret:string}
@@ -14,3 +14,4 @@ export const sourceAccess={
 }
 
 export type {SourceEventV2,SourceReceiptV2,SourceCheckV2,SourceCapabilitiesV2,SourceDocument} from './protocol'
+export * from './routing'

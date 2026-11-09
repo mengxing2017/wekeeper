@@ -1,0 +1,47 @@
+{
+  "input": {
+    "revision": 7,
+    "unit_id": "00000000-0000-0000-0000-000000000001",
+    "group_id": "00000000-0000-0000-0000-000000000002",
+    "execution": {
+      "channel": "mobile",
+      "workspace_id": "00000000-0000-0000-0000-000000000003",
+      "target_ids": [
+        "00000000-0000-0000-0000-000000000004"
+      ]
+    }
+  },
+  "snapshot": {
+    "route_id": "fixture-route",
+    "revision": 2,
+    "source_id": "00000000-0000-0000-0000-000000000006",
+    "unit_id": "00000000-0000-0000-0000-000000000001",
+    "unit_name": "商户",
+    "group_id": "00000000-0000-0000-0000-000000000002",
+    "group_name": "通知受众",
+    "execution": {
+      "channel": "mobile",
+      "workspace_id": "00000000-0000-0000-0000-000000000003",
+      "target_ids": [
+        "00000000-0000-0000-0000-000000000004"
+      ]
+    },
+    "targets": [
+      {
+        "id": "00000000-0000-0000-0000-000000000004",
+        "name": "客户通知群",
+        "identity": {
+          "candidates": []
+        },
+        "resource_available": false
+      }
+    ],
+    "configured_by": "00000000-0000-0000-0000-000000000005"
+  },
+  "check": {
+    "ready": false,
+    "issues": [
+      "mobile_candidates_missing"
+    ]
+  }
+}

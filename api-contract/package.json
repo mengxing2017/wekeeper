@@ -19,7 +19,8 @@
     "./mobile-execution/shared-send": "./src/modules/mobile-execution/shared-send/index.ts",
     "./mobile-execution/shared-send/v2": "./src/modules/mobile-execution/shared-send/v2.ts",
     "./device-registry": "./src/modules/device-registry/index.ts",
-    "./source-access": "./src/modules/source-access/index.ts"
+    "./source-access": "./src/modules/source-access/index.ts",
+    "./source-access/routing-client": "./src/modules/source-access/routing-client.ts"
   },
   "scripts": {
     "build": "tsc --noEmit && tsc -p tsconfig.platform.json",

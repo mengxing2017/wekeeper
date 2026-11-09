@@ -1,0 +1,29 @@
+{
+  "resources": {
+    "/api/v2/admin/routing/{kind}": [
+      "routing-units",
+      "routing-groups"
+    ],
+    "/api/v2/admin/source-routes/{route}/configuration": "source-route-configurations",
+    "/api/v2/admin/source-routes/{route}/lifecycle": "source-route-lifecycle",
+    "/api/v2/admin/source-routes/{route}/managers": "source-route-managers",
+    "/api/v2/admin/source-routes/{route}/handoff": "source-route-handoffs",
+    "/api/v2/admin/routing-groups/{group}/targets": "routing-group-targets"
+  },
+  "conflict_errors": [
+    "revision_conflict",
+    "route_retired",
+    "group_in_use",
+    "scope_immutable",
+    "invalid_transition",
+    "route_configuration_required",
+    "target_unavailable"
+  ],
+  "authentication": "session+csrf",
+  "lifecycle": [
+    "enable",
+    "pause",
+    "resume",
+    "retire"
+  ]
+}

@@ -29,11 +29,13 @@
   ],
   "fixtures_sha256": "2265c1496fc64d2360328cb822e8bbd02d24abe6e5e1663e002262e85241496e",
   "files_sha256": {
-    "fixtures/source-authentication-v2.json": "520b19c02e70db962d4c066aeaa520afe5acf11bd9ffc1d59a546763deb9b054",
+    "fixtures/source-authentication-v2.json": "7770052f2e1d940965eb463d944239e37cee280c0f211bf9b0da61dcbdc270ce",
     "fixtures/source-errors-v2.json": "9663ee0d3e1ac0734a9532b28805fba9f58479076772349e53ae1366d88a2471",
     "fixtures/source-receipt-v2.json": "f642da5c011a31b5d40b915c91ce5460fa52202cafcb10e70aac1b50f06a080c",
     "fixtures/source-v2.json": "2265c1496fc64d2360328cb822e8bbd02d24abe6e5e1663e002262e85241496e",
     "source-v2/errors.json": "da286daf20347cd0fde98e327495725d703517e6ba5673acd54e3ff1c0b923f7",
-    "source-v2/event.schema.json": "3f2585b302a1ac54f209226e20cccd145104ec5c1571f45e3c15d86187d10657"
+    "source-v2/event.schema.json": "3f2585b302a1ac54f209226e20cccd145104ec5c1571f45e3c15d86187d10657",
+    "fixtures/source-routing.json": "080d775cac41783638c744132e7197bbd2d5ab2168e5f08a38cbc7e9fb1aef0a",
+    "source-v2/routing-management.json": "04939d41f5c061ed41f51ba758d5bbf4ce60951dd67ff0eaef0bf1f81e7b443e"
   }
 }

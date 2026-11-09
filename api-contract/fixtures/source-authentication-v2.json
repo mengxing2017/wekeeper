@@ -21,7 +21,9 @@
       "routes": [
         {
           "route_id": "fixture-route",
-          "available": true
+          "available": true,
+          "display_name": "通知路由",
+          "execution_state": "paused"
         }
       ],
       "next_cursor": null

@@ -13,6 +13,7 @@
     "src/modules/media/index.ts",
     "src/modules/distribution-content/index.ts",
     "src/modules/wecom-distribution/client.ts",
-    "src/modules/mobile-execution/shared-send/client.ts"
+    "src/modules/mobile-execution/shared-send/client.ts",
+    "src/modules/source-access/routing-client.ts"
   ]
 }
