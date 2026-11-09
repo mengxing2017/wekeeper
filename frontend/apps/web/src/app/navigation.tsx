@@ -104,6 +104,7 @@ export const navigation: NavigationItem[] = [
   },
   {key:'source-credentials',label:'调用方凭据',description:'签发下游消息推送凭据，维护消息分发路由。',domain:'source',scope:'global',capability:'global.manage',icon:<SafetyCertificateOutlined/>},
   {key:'source-routing-directory',label:'业务单位与分组',description:'维护消息路由使用的业务单位、受众分组及目标目录。',domain:'source',scope:'global',capability:'global.manage',icon:<ApartmentOutlined/>},
+  {key:'source-receipts',label:'收件与回执',description:'按获授权路由查看消息收件、版本处理、检查记录及实际发送结果。',domain:'source',scope:'global',capability:'routing.configure',icon:<MessageOutlined/>},
   {key:'source-route-configurations',label:'路由执行配置',description:'配置获授权路由的发送通道、工作空间、目标群及自动运行状态。',domain:'source',scope:'global',capability:'routing.configure',icon:<SendOutlined/>},
 ]
 

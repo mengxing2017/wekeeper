@@ -1,6 +1,6 @@
 import {useEffect,useState} from 'react'
 import {useQuery} from '@tanstack/react-query'
-import {Alert,Button,Descriptions,Form,Input,Modal,Popconfirm,Select,Space,Table,Tag,Typography} from 'antd'
+import {Alert,Button,Checkbox,Descriptions,Form,Input,Modal,Popconfirm,Select,Space,Table,Tag,Typography} from 'antd'
 import {sourceRouting,routingIssueLabels,type RouteConfiguration,type RouteConfigurationInput,type RoutingAction,type RoutingChannel,type RoutingHandoff,type RoutingCheck} from './api'
 
 export function RouteConfigurationEditor({route,onChanged,manageAuthorizations=true}:{route:string;onChanged:()=>Promise<void>;manageAuthorizations?:boolean}) {
@@ -8,6 +8,7 @@ export function RouteConfigurationEditor({route,onChanged,manageAuthorizations=t
  const [base,setBase]=useState<RouteConfiguration|null>(null),[conflict,setConflict]=useState<RouteConfiguration|null>(null)
  const [error,setError]=useState(''),[busy,setBusy]=useState(false),[check,setCheck]=useState<RoutingCheck|null>(null)
  const [action,setAction]=useState<RoutingAction|null>(null),[reason,setReason]=useState(''),[username,setUsername]=useState('')
+ const [canRecheck,setCanRecheck]=useState(false)
  const [handoff,setHandoff]=useState<RoutingHandoff|null>(null),[historyPage,setHistoryPage]=useState(1)
  const q=useQuery({queryKey:['route-configuration',route],queryFn:()=>sourceRouting.configuration(route)})
  const units=useQuery({queryKey:['routing-units'],queryFn:()=>sourceRouting.entities('routing-units')})
@@ -70,8 +71,8 @@ export function RouteConfigurationEditor({route,onChanged,manageAuthorizations=t
   {check&&<Alert type={check.ready?'success':'warning'} title={check.ready?'业务配置完整，可启用':check.issues.map(i=>routingIssueLabels[i]??i).join('；')}/>}
   {manageAuthorizations&&<>
   <Typography.Title level={5}>路由配置管理员</Typography.Title>
-  <Space><Input aria-label="路由配置管理员用户名" value={username} onChange={e=>setUsername(e.target.value)}/><Button disabled={!username.trim()||busy||!base||readonly} onClick={()=>perform(()=>sourceRouting.manager(route,base!.revision,username,true))}>授权配置管理</Button></Space>
-  <Table rowKey="id" dataSource={base?.managers??[]} pagination={false} columns={[{title:'用户名',dataIndex:'username'},{title:'操作',render:(_,m)=><Popconfirm title="撤销此路由配置管理授权？" onConfirm={()=>perform(()=>sourceRouting.manager(route,base!.revision,m.username,false))}><Button disabled={busy||readonly}>撤销配置管理</Button></Popconfirm>}]}/>
+  <Space><Input aria-label="路由配置管理员用户名" value={username} onChange={e=>setUsername(e.target.value)}/><Button disabled={!username.trim()||busy||!base||readonly} onClick={()=>perform(()=>sourceRouting.manager(route,base!.revision,username,true,canRecheck))}>授权配置管理</Button><Checkbox checked={canRecheck} onChange={e=>setCanRecheck(e.target.checked)}>允许重检收件</Checkbox></Space>
+  <Table rowKey="id" dataSource={base?.managers??[]} pagination={false} columns={[{title:'用户名',dataIndex:'username'},{title:'收件重检',render:(_,m)=>m.can_recheck?'允许':'未授权'},{title:'操作',render:(_,m)=><Popconfirm title="撤销此路由配置管理授权？" onConfirm={()=>perform(()=>sourceRouting.manager(route,base!.revision,m.username,false))}><Button disabled={busy||readonly}>撤销配置管理</Button></Popconfirm>}]}/>
   </>}
   <Typography.Title level={5}>配置历史</Typography.Title>
   <Table rowKey="revision" dataSource={history.data?.items??[]} pagination={false} columns={[{title:'修订',dataIndex:'revision'},{title:'通道',render:(_,r)=>r.snapshot.execution?.channel??'未配置'},{title:'目标群',render:(_,r)=>r.snapshot.targets.map(t=>t.name).join('、')},{title:'保存时间',dataIndex:'created_at'}]}/>

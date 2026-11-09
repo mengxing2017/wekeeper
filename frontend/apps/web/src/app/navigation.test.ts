@@ -79,3 +79,14 @@ test('消息接收管理提供独立目录与路由执行配置入口，按权�
   expect(canNavigate(configuration, false, undefined, 'admin')).toBe(true)
   expect(visibleNavigationKeys(false, 'operator', 'operator', true)).toContain(configuration.key)
 })
+
+
+test('收件与回执提供直接菜单，沿用路由工作空间管理授权',()=>{
+ const receipts=navigation.find(item=>item.key==='source-receipts')!
+ expect(receipts.label).toBe('收件与回执')
+ expect(receipts.domain).toBe('source')
+ expect(canNavigate(receipts,true)).toBe(true)
+ expect(canNavigate(receipts,false,undefined,'admin')).toBe(true)
+ expect(canNavigate(receipts,false,'operator','operator')).toBe(false)
+ expect(visibleNavigationKeys(false,'operator','operator',true)).toContain('source-receipts')
+})

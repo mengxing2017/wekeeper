@@ -7,7 +7,7 @@ import { identity } from '../../identity/api'
 import { workspace } from './api'
 import { wecomWorkspaces } from '../../operations/wecom-senders/api'
 import { mobileWorkspaces } from '../../operations/mobile-execution/api'
-import { sourceRouting } from '../../operations/source-access/api'
+import { sourceRouting, sourceReceipts } from '../../operations/source-access/api'
 import { auditEvents } from '../audit/api'
 
 vi.mock('../../identity/api', () => ({ identity: { session: vi.fn() }, subscribeUnauthorized: () => () => {} }))
@@ -18,7 +18,7 @@ vi.mock('./template-manager', () => ({ TemplateManager: ({school}:{school:string
 vi.mock('../audit/api', () => ({ auditEvents: { list: vi.fn() } }))
 vi.mock('../../operations/wecom-senders/api', () => ({ wecomWorkspaces: { list: vi.fn(), save: vi.fn(), members: vi.fn(), grant: vi.fn() } }))
 vi.mock('../../operations/mobile-execution/api', () => ({ mobileWorkspaces: { list: vi.fn() } }))
-vi.mock('../../operations/source-access/api', () => ({ sourceRouting: { entities: vi.fn(), assigned: vi.fn() } }))
+vi.mock('../../operations/source-access/api', () => ({ sourceRouting: { entities: vi.fn(), assigned: vi.fn() }, sourceReceipts: {list:vi.fn()}, receiptStatusLabels:{},receiptStageLabels:{},receiptReasonLabels:{},routingIssueLabels:{} }))
 afterEach(() => { cleanup(); vi.resetAllMocks() })
 beforeEach(() => {
   vi.mocked(sourceRouting.entities).mockResolvedValue({items:[]})
@@ -120,6 +120,7 @@ it('authorized operators can switch their workspaces without creation or permiss
 it.each([
   ['业务单位与分组', '新增单位'],
   ['路由执行配置', '路由执行配置'],
+  ['收件与回执', '收件与回执'],
 ])('opens the actual %s page from the sidebar', async (entry, content) => {
   show('audit')
   await screen.findByText('identity.password.reset')
@@ -141,4 +142,16 @@ it('opens route configuration for an admin of another workspace without exposing
   await waitFor(() => expect(sourceRouting.assigned).toHaveBeenCalled())
   expect(screen.queryByRole('menuitem', {name:'调用方凭据'})).toBeNull()
   expect(screen.queryByRole('menuitem', {name:'业务单位与分组'})).toBeNull()
+})
+
+it('opens scoped receipts from the direct sidebar entry through the route row',async()=>{
+ vi.mocked(sourceRouting.assigned).mockResolvedValue({items:[{id:'route-1',route_name:'通知路由',caller_name:'调用方一',execution_state:'draft',retired_at:null}]})
+ vi.mocked(sourceReceipts.list).mockResolvedValue({items:[],has_more:false,can_recheck:true})
+ show('audit')
+ await screen.findByText('identity.password.reset')
+ fireEvent.click(screen.getByRole('menuitem',{name:'收件与回执'}))
+ fireEvent.click(await screen.findByRole('button',{name:'查看收件与回执'}))
+ await waitFor(()=>expect(sourceReceipts.list).toHaveBeenCalledWith('route-1',1))
+ expect(await screen.findByRole('button',{name:'刷新收件'})).toBeTruthy()
+ expect(screen.queryByRole('button',{name:'执行配置'})).toBeNull()
 })

@@ -89,6 +89,7 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
   </WecomWorkspacePanel>
   else if (tab === 'source-credentials') page = <SourceAccess platformAdmin={user.platform_admin} />
   else if (tab === 'source-routing-directory') page = <RoutingDirectory />
+  else if (tab === 'source-receipts') page = <AssignedRoutes key="source-receipts" receiptsOnly platformAdmin={user.platform_admin} />
   else if (tab === 'source-route-configurations') page = <AssignedRoutes platformAdmin={user.platform_admin} />
   else if (tab === 'audit') page = <AuditEvents />
   else if (knownPage.scope === 'mobile') page = <MobileWorkspacePanel platformAdmin={user.platform_admin} workspaces={mobile.data?.items ?? []} selected={phone} loading={mobile.isPending} error={mobile.error} onSelect={id=>selectWorkspace('workspace',id)}>
