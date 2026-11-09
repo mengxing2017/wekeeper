@@ -62,43 +62,6 @@ async fn ready(tx: &mut Tx<'_>, candidate: &Value) -> Result<bool> {
     Ok(!sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM mobile_execution_grants WHERE device_id=$1 AND NOT session_closed)").bind(uid(candidate,"device_id")?).fetch_one(&mut **tx).await?)
 }
 pub(super) async fn reconcile(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
-    let source:Option<(Uuid,Uuid)>=sqlx::query_as("SELECT l.receipt_id,i.target_id FROM mobile_v9_task_items i JOIN source_execution_generations l ON l.task_id=i.task_id WHERE i.id=$1 AND NOT EXISTS(SELECT 1 FROM mobile_v9_attempts a JOIN mobile_execution_grants g ON g.attempt_id=a.id WHERE a.item_id=i.id AND a.current)").bind(item).fetch_optional(&mut **tx).await?;
-    if let Some((receipt, _)) = source {
-        let current:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_execution_tasks l JOIN mobile_v9_task_items i ON i.task_id=l.task_id WHERE l.receipt_id=$1 AND i.id=$2)").bind(receipt).bind(item).fetch_one(&mut **tx).await?;
-        if !current {
-            return status(tx, item, "stopped", "composition_superseded").await;
-        }
-    }
-    if let Some((receipt, target)) = source
-        && let Err(error) =
-            crate::source_access::south::adapter::postgres::routing::guard_submission(
-                tx, receipt, target,
-            )
-            .await
-    {
-        if error.0 == "temporarily_unavailable" {
-            return Err(Error::Unavailable);
-        }
-        return status(
-            tx,
-            item,
-            if matches!(
-                error.0,
-                "content_version_superseded"
-                    | "route_retired"
-                    | "target_removed"
-                    | "target_identity_changed"
-                    | "not_found"
-            ) {
-                "stopped"
-            } else {
-                "scheduling"
-            },
-            error.0,
-        )
-        .await;
-    }
-
     let row:Value=sqlx::query_scalar("SELECT to_jsonb(a)||jsonb_build_object('plan',p.plan,'snapshot_id',p.snapshot_id,'target_id',i.target_id,'task_id',t.id,'stopped',t.stopped,'expired',t.confirmed_until<=clock_timestamp(),'candidates',sc.candidates,'candidate_cursor',ds.candidate_cursor,'dispatch_state',ds.state,'completed_rounds',ds.completed_rounds,'round_origin',ds.round_origin,'due',ds.next_retry_at<=clock_timestamp(),'eligible',a.not_before<=clock_timestamp() AND t.next_eligible_at<=clock_timestamp() AND (t.dispatch_mode<>'legacy_sequence' OR NOT EXISTS(SELECT 1 FROM mobile_v9_task_items prev WHERE prev.task_id=t.id AND prev.position<i.position AND NOT EXISTS(SELECT 1 FROM mobile_v9_attempts sent WHERE sent.item_id=prev.id AND sent.state IN ('observed_sent','manually_confirmed_sent')))),'delivery_expired',ds.assigned_at+interval '5 minutes'<=clock_timestamp()) FROM mobile_v9_task_items i JOIN mobile_v9_tasks t ON t.id=i.task_id JOIN mobile_v9_attempts a ON a.item_id=i.id AND a.current JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_v9_dispatch_scopes sc ON sc.item_id=i.id JOIN mobile_v9_dispatch_state ds ON ds.item_id=i.id WHERE i.id=$1 FOR UPDATE OF a,ds").bind(item).fetch_one(&mut **tx).await?;
     if dispatch_terminal(row["dispatch_state"].as_str().unwrap_or("")) || row["due"] != true {
         return Ok(());
@@ -123,6 +86,48 @@ pub(super) async fn reconcile(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
         sqlx::query("UPDATE mobile_execution_grants g SET state='superseded' FROM mobile_v9_attempts a WHERE a.item_id=$1 AND g.attempt_id=a.id AND g.state='active'").bind(item).execute(&mut **tx).await?;
         return status(tx, item, "completed", "result_recorded").await;
     }
+    let source:Option<(Uuid,Uuid)>=sqlx::query_as("SELECT l.receipt_id,i.target_id FROM mobile_v9_task_items i JOIN source_execution_generations l ON l.task_id=i.task_id WHERE i.id=$1 AND NOT EXISTS(SELECT 1 FROM mobile_v9_attempts a JOIN mobile_execution_grants g ON g.attempt_id=a.id WHERE a.item_id=i.id AND a.current)").bind(item).fetch_optional(&mut **tx).await?;
+    if let Some((receipt, _)) = source {
+        let current:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_execution_tasks l JOIN mobile_v9_task_items i ON i.task_id=l.task_id WHERE l.receipt_id=$1 AND i.id=$2)").bind(receipt).bind(item).fetch_one(&mut **tx).await?;
+        if !current {
+            return status(tx, item, "stopped", "composition_superseded").await;
+        }
+    }
+    if let Some((receipt, target)) = source
+        && let Err(error) =
+            crate::source_access::south::adapter::postgres::routing::guard_submission(
+                tx, receipt, target,
+            )
+            .await
+    {
+        if error.0 == "temporarily_unavailable" {
+            return Err(Error::Unavailable);
+        }
+        // An unavailable target must still reach the frozen-candidate lifecycle:
+        // it can exhaust its budget or retire an obsolete scope, never wait forever.
+        // Delivery independently rechecks source authorization before issuing a packet.
+        if error.0 != "target_unavailable" {
+            return status(
+                tx,
+                item,
+                if matches!(
+                    error.0,
+                    "content_version_superseded"
+                        | "route_retired"
+                        | "target_removed"
+                        | "target_identity_changed"
+                        | "not_found"
+                ) {
+                    "stopped"
+                } else {
+                    "scheduling"
+                },
+                error.0,
+            )
+            .await;
+        }
+    }
+
     let issued: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM mobile_execution_grants WHERE attempt_id=$1)",
     )

@@ -743,11 +743,29 @@ impl Store for Repository {
         // A stop requested while creation was in flight must also cover its late msgid.
         sqlx::query("INSERT INTO broadcast_operations(id,school_id,task_id,batch_id,actor_id,operation,idempotency_key,request_hash) SELECT gen_random_uuid(),b.school_id,b.task_id,b.id,o.actor_id,'stop','auto-stop:'||b.id::text,'late-created-stop' FROM broadcast_batches b JOIN broadcast_tasks t ON t.id=b.task_id JOIN LATERAL (SELECT actor_id FROM broadcast_operations WHERE task_id=t.id AND operation='stop' AND batch_id IS NULL ORDER BY created_at DESC LIMIT 1) o ON true WHERE t.stopped AND b.state='created' AND b.stop_state='none' ON CONFLICT(actor_id,school_id,operation,idempotency_key) DO NOTHING").execute(&self.0).await?;
         sqlx::query("UPDATE broadcast_batches b SET stop_state='requested' WHERE b.stop_state='none' AND EXISTS(SELECT 1 FROM broadcast_operations o WHERE o.batch_id=b.id AND o.operation='stop' AND o.state='pending')").execute(&self.0).await?;
+        // Interleave creates and unresolved reads so each gets ten slots when busy,
+        // borrowing unused slots from the other lane. Within each lane, offer each
+        // workspace a turn before returning to its backlog. Successful targets are
+        // immutable; fully successful batches need no recurring official reads.
         let sql = if task.is_some() {
             format!("{WORK} WHERE t.id=$1 ORDER BY b.ordinal")
         } else {
             format!(
-                "{WORK} WHERE t.state='confirmed' AND ((b.state='queued' AND b.next_sync_at<=now() AND NOT t.stopped) OR (b.msgid IS NOT NULL AND b.next_sync_at<=now())) ORDER BY CASE WHEN b.msgid IS NOT NULL THEN 0 ELSE 1 END,coalesce((SELECT last_claimed_at FROM distribution_source_turns st WHERE st.source_namespace=t.source_namespace),'-infinity'::timestamptz),row_number() OVER(PARTITION BY t.source_namespace,t.school_id ORDER BY b.next_sync_at,b.id),b.next_sync_at,b.id LIMIT 20"
+                "WITH eligible AS (
+                    SELECT b.id,b.msgid IS NOT NULL AS reading,b.next_sync_at,
+                        coalesce(st.last_claimed_at,'-infinity'::timestamptz) AS source_turn,
+                        row_number() OVER(PARTITION BY (b.msgid IS NOT NULL),t.source_namespace,t.school_id ORDER BY b.next_sync_at,b.id) AS workspace_turn
+                    FROM broadcast_batches b JOIN broadcast_tasks t ON t.id=b.task_id
+                    LEFT JOIN distribution_source_turns st ON st.source_namespace=t.source_namespace
+                    WHERE t.state='confirmed' AND b.next_sync_at<=now() AND (
+                        (b.state='queued' AND NOT t.stopped AND b.msgid IS NULL) OR
+                        (b.msgid IS NOT NULL AND EXISTS(SELECT 1 FROM broadcast_targets x WHERE x.batch_id=b.id AND x.official_status IS DISTINCT FROM 1))
+                    )
+                ), ranked AS (
+                    SELECT id,reading,row_number() OVER(PARTITION BY reading ORDER BY workspace_turn,source_turn,next_sync_at,id) AS lane_turn
+                    FROM eligible
+                )
+                {WORK} JOIN ranked r ON r.id=b.id ORDER BY r.lane_turn,r.reading LIMIT 20"
             )
         };
         let rows: Vec<Value> = if let Some(task) = task {

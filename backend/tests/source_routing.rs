@@ -3573,3 +3573,132 @@ async fn automatic_official_execution_needs_no_platform_confirmation_and_preserv
     assert!(!stored.is_empty());
     f.close().await;
 }
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn automatic_mobile_expiration_precedes_lost_candidate_resources() {
+    use wekeeper_api::distribution::south::adapter::postgres::shared_send_v2::Repository as Mobile;
+    for remove_binding in [false, true] {
+        let f = Fixture::new().await;
+        f.configure(vec![f.targets[0]]).await;
+        f.lifecycle(LifecycleAction::Enable).await;
+        let receipt = inbox(&f, "expired-resource", 1, "content.upsert").await;
+        RoutingRepository(f.pool.clone()).run_once().await.unwrap();
+        let task: Uuid =
+            sqlx::query_scalar("SELECT task_id FROM source_execution_tasks WHERE receipt_id=$1")
+                .bind(receipt)
+                .fetch_one(&f.pool)
+                .await
+                .unwrap();
+        if remove_binding {
+            sqlx::query("DELETE FROM mobile_device_target_bindings")
+                .execute(&f.pool)
+                .await
+                .unwrap();
+        } else {
+            sqlx::query("UPDATE execution_devices SET enabled=false")
+                .execute(&f.pool)
+                .await
+                .unwrap();
+        }
+        sqlx::query("UPDATE mobile_v9_tasks SET confirmed_until=clock_timestamp()-interval '1 second' WHERE id=$1")
+            .bind(task).execute(&f.pool).await.unwrap();
+        for _ in 0..3 {
+            // Even an already selected or explicitly woken item must retain its terminal state.
+            sqlx::query("UPDATE mobile_v9_dispatch_state SET next_retry_at=clock_timestamp()-interval '1 second'")
+                .execute(&f.pool).await.unwrap();
+            Mobile(f.pool.clone()).reconcile_dispatch().await.unwrap();
+            let result: Value = sqlx::query_scalar("SELECT to_jsonb(ds) FROM mobile_v9_dispatch_state ds JOIN mobile_v9_task_items i ON i.id=ds.item_id WHERE i.task_id=$1")
+                .bind(task).fetch_one(&f.pool).await.unwrap();
+            assert_eq!(result["state"], "confirmation_expired");
+            assert!(!result["finished_at"].is_null());
+        }
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_execution_grants")
+                .fetch_one(&f.pool)
+                .await
+                .unwrap(),
+            0
+        );
+        f.close().await;
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn automatic_mobile_obsolete_candidate_scope_stops_without_waiting_for_expiry() {
+    use wekeeper_api::distribution::south::adapter::postgres::shared_send_v2::Repository as Mobile;
+    let f = Fixture::new().await;
+    f.configure(vec![f.targets[0]]).await;
+    f.lifecycle(LifecycleAction::Enable).await;
+    inbox(&f, "obsolete-resource", 1, "content.upsert").await;
+    RoutingRepository(f.pool.clone()).run_once().await.unwrap();
+    sqlx::query("DELETE FROM mobile_device_target_bindings")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE mobile_v9_dispatch_state SET next_retry_at=clock_timestamp()-interval '1 second'",
+    )
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    Mobile(f.pool.clone()).reconcile_dispatch().await.unwrap();
+    let result: Value = sqlx::query_scalar("SELECT to_jsonb(ds) FROM mobile_v9_dispatch_state ds")
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(result["state"], "stopped");
+    assert_eq!(result["reason"], "plan_dependency_changed");
+    assert!(result["next_retry_at"].is_null());
+    assert!(!result["finished_at"].is_null());
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn automatic_official_completed_batches_do_not_starve_creates_or_unresolved_reads() {
+    use wekeeper_api::distribution::south::{
+        adapter::postgres::broadcast::Repository as Broadcast, port::broadcast::Store,
+    };
+    let f = Fixture::new().await;
+    configure_official(&f).await;
+    f.lifecycle(LifecycleAction::Enable).await;
+    let worker = RoutingRepository(f.pool.clone());
+    for n in 0..7 {
+        inbox(&f, &format!("old-official-{n}"), 1, "content.upsert").await;
+    }
+    worker.run_once().await.unwrap();
+    sqlx::query("UPDATE broadcast_batches SET state='created',msgid='test-'||id::text,next_sync_at=clock_timestamp()-interval '1 second',member_status=2")
+        .execute(&f.pool).await.unwrap();
+    sqlx::query("UPDATE broadcast_targets SET official_status=1")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    inbox(&f, "new-official", 1, "content.upsert").await;
+    worker.run_once().await.unwrap();
+    let store = Broadcast(f.pool.clone());
+    let work = store.work(None).await.unwrap();
+    assert_eq!(work.len(), 3);
+    assert!(work.iter().all(|w| w.operation == "create"));
+
+    // Reclassify the history as pending, unknown and missing results.
+    // Every unresolved kind must retain a result-read opportunity.
+    sqlx::query("UPDATE broadcast_targets x SET official_status=CASE b.ordinal WHEN 0 THEN 0 WHEN 1 THEN 99 ELSE NULL END FROM broadcast_batches b WHERE b.id=x.batch_id AND b.msgid IS NOT NULL")
+        .execute(&f.pool).await.unwrap();
+    let work = store.work(None).await.unwrap();
+    assert_eq!(work.len(), 20);
+    assert_eq!(work.iter().filter(|w| w.operation == "create").count(), 3);
+    assert_eq!(work.iter().filter(|w| w.operation == "read").count(), 17);
+    for n in 0..6 {
+        inbox(&f, &format!("new-more-{n}"), 1, "content.upsert").await;
+    }
+    worker.run_once().await.unwrap();
+    let work = store.work(None).await.unwrap();
+    assert_eq!(work.len(), 20);
+    assert_eq!(work.iter().filter(|w| w.operation == "create").count(), 10);
+    assert_eq!(work.iter().filter(|w| w.operation == "read").count(), 10);
+    assert_eq!(work[0].operation, "create");
+    assert_eq!(work[1].operation, "read");
+    f.close().await;
+}
