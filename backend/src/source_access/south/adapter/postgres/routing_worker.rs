@@ -35,7 +35,11 @@ async fn finish(
 }
 async fn wait(pool: &PgPool, receipt: Uuid, reason: &str) -> Result<()> {
     let mut tx = pool.begin().await?;
-    sqlx::query("WITH waiting AS (UPDATE source_inbox SET state='waiting',failures=failures+1,last_error=$2,next_attempt_at=now()+interval '30 seconds' WHERE receipt_id=$1 AND state IN ('received','waiting') RETURNING receipt_id) UPDATE source_receipts SET reason_code=$2,processing_stage=CASE WHEN status='received' THEN 'processing_retry' ELSE 'configuration_wait' END,updated_at=clock_timestamp() WHERE receipt_id IN (SELECT receipt_id FROM waiting)").bind(receipt).bind(reason).execute(&mut *tx).await?;
+    let technical = matches!(
+        reason,
+        "temporarily_unavailable" | "ad_selection_stale" | "ad_configuration_unavailable"
+    );
+    sqlx::query("WITH waiting AS (UPDATE source_inbox SET state='waiting',job_state=$3,reason_class=$4,failures=failures+CASE WHEN $5 THEN 1 ELSE 0 END,last_error=$2,next_attempt_at=now()+make_interval(secs=>CASE WHEN $5 THEN LEAST(300,5*power(2,LEAST(failures,6)))+random()*2 ELSE 30 END) WHERE receipt_id=$1 AND state IN ('received','waiting') RETURNING receipt_id) UPDATE source_receipts SET reason_code=$2,processing_stage=CASE WHEN $5 THEN 'processing_retry' ELSE 'configuration_wait' END,updated_at=clock_timestamp() WHERE receipt_id IN (SELECT receipt_id FROM waiting)").bind(receipt).bind(reason).bind(if technical {"retry_wait"}else{"configuration_error"}).bind(if technical {"technical"}else{"configuration"}).bind(technical).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -45,34 +49,55 @@ pub(super) async fn halt(
     reason: &str,
 ) -> Result<bool> {
     // Return whether a submission may already exist; such content updates never auto-resend.
-    let task =
-        sqlx::query("SELECT task_id,channel FROM source_execution_tasks WHERE receipt_id=$1")
-            .bind(old)
-            .fetch_optional(&mut **tx)
-            .await?;
-    let Some(task) = task else { return Ok(false) };
-    let id: Uuid = task.get("task_id");
-    let channel: String = task.get("channel");
-    let submitted = if channel == "mobile" {
-        let submitted:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_task_items i JOIN mobile_v9_attempts a ON a.item_id=i.id LEFT JOIN mobile_execution_grants g ON g.attempt_id=a.id WHERE i.task_id=$1 AND (g.id IS NOT NULL OR a.state IN ('unknown','observed_sent','manually_confirmed_sent')))").bind(id).fetch_one(&mut **tx).await?;
-        sqlx::query("UPDATE mobile_v9_tasks SET stopped=true WHERE id=$1")
-            .bind(id)
+    let tasks=sqlx::query("SELECT task_id,channel FROM source_execution_generations WHERE receipt_id=$1 AND ($2<>'composition_superseded' OR task_id=(SELECT task_id FROM source_execution_tasks WHERE receipt_id=$1)) ORDER BY generation").bind(old).bind(reason).fetch_all(&mut **tx).await?;
+    if tasks.is_empty() {
+        return Ok(false);
+    }
+    if reason != "composition_superseded" {
+        sqlx::query("UPDATE source_automation_tasks SET stopped=true,stop_reason=COALESCE(stop_reason,$2),revision=revision+1 WHERE id=$1 AND NOT stopped").bind(old).bind(reason).execute(&mut **tx).await?;
+    }
+    if reason == "composition_superseded" {
+        sqlx::query("SELECT set_config('wekeeper.composition_replacement','on',true)")
             .execute(&mut **tx)
             .await?;
-        submitted
-    } else {
-        let submitted:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM broadcast_batches WHERE task_id=$1 AND state NOT IN ('queued','cancelled'))").bind(id).fetch_one(&mut **tx).await?;
-        sqlx::query("UPDATE broadcast_tasks SET stopped=true WHERE id=$1")
-            .bind(id)
-            .execute(&mut **tx)
-            .await?;
-        sqlx::query("UPDATE broadcast_batches SET state='cancelled',error_code=$2 WHERE task_id=$1 AND state='queued'").bind(id).bind(reason).execute(&mut **tx).await?;
-        submitted
-    };
-    Ok(submitted)
+    }
+
+    let mut any_submitted = false;
+    for task in tasks {
+        let id: Uuid = task.get("task_id");
+        let channel: String = task.get("channel");
+        let submitted = if channel == "mobile" {
+            let submitted:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_task_items i JOIN mobile_v9_attempts a ON a.item_id=i.id LEFT JOIN mobile_execution_grants g ON g.attempt_id=a.id WHERE i.task_id=$1 AND (g.id IS NOT NULL OR a.state IN ('unknown','observed_sent','manually_confirmed_sent')))").bind(id).fetch_one(&mut **tx).await?;
+            sqlx::query("UPDATE mobile_v9_tasks SET stopped=true WHERE id=$1")
+                .bind(id)
+                .execute(&mut **tx)
+                .await?;
+            submitted
+        } else {
+            let submitted:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM broadcast_batches WHERE task_id=$1 AND state NOT IN ('queued','cancelled'))").bind(id).fetch_one(&mut **tx).await?;
+            sqlx::query("UPDATE broadcast_tasks SET stopped=true WHERE id=$1")
+                .bind(id)
+                .execute(&mut **tx)
+                .await?;
+            sqlx::query("UPDATE broadcast_batches SET state='cancelled',error_code=$2 WHERE task_id=$1 AND state='queued'").bind(id).bind(reason).execute(&mut **tx).await?;
+            if reason != "operator_stopped" && reason != "composition_superseded" {
+                sqlx::query("INSERT INTO broadcast_operations(id,school_id,task_id,actor_id,operation,idempotency_key,request_hash,state) SELECT gen_random_uuid(),workspace_id,$2,authorization_actor_id,'stop','source-stop:'||$2::text,$3,'done' FROM source_execution_tasks WHERE receipt_id=$1 ON CONFLICT DO NOTHING").bind(old).bind(id).bind(reason).execute(&mut **tx).await?;
+            }
+            submitted
+        };
+        any_submitted |= submitted;
+    }
+    Ok(any_submitted)
 }
 impl RoutingRepository {
     pub async fn run_once(&self) -> Result<()> {
+        if let Err(error) = self.recover_orchestration().await {
+            tracing::warn!(
+                code = error.0,
+                "source orchestration recovery deferred; intake and withdrawals continue"
+            );
+        }
+
         let withdrawals:Vec<Uuid>=sqlx::query_scalar("SELECT receipt_id FROM source_inbox WHERE event_type='content.withdrawn' AND state IN ('received','waiting') AND next_attempt_at<=now() ORDER BY next_attempt_at,receipt_id LIMIT 50").fetch_all(&self.0).await?;
         for id in withdrawals {
             if let Err(e) = self.process(id).await {
@@ -118,7 +143,9 @@ impl RoutingRepository {
             let Some(result) = jobs.join_next().await else {
                 break;
             };
-            result.map_err(|_| Fault("temporarily_unavailable"))??;
+            if !matches!(result, Ok(Ok(()))) {
+                tracing::warn!("source route batch failed; independent routes continue");
+            }
         }
         self.retry_waiting().await?;
         self.aggregate().await
@@ -217,6 +244,28 @@ impl RoutingRepository {
         .bind(receipt)
         .fetch_one(&mut *tx)
         .await?;
+        if !exists {
+            let current_revision: Option<i64> =
+                sqlx::query_scalar("SELECT config_revision FROM source_routes WHERE route_id=$1")
+                    .bind(&route)
+                    .fetch_optional(&mut *tx)
+                    .await?;
+            ensure(
+                current_revision == Some(snapshot.revision),
+                "ad_selection_stale",
+            )?;
+        }
+        let stopped: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM source_automation_tasks WHERE id=$1 AND stopped)",
+        )
+        .bind(receipt)
+        .fetch_one(&mut *tx)
+        .await?;
+        if stopped {
+            finish(&mut tx, receipt, "stopped", Some("message_stopped")).await?;
+            tx.commit().await?;
+            return Ok(());
+        }
         crate::advertising::south::adapter::postgres::pipeline::validate(
             &mut tx, receipt, &snapshot, &prepared,
         )
@@ -245,6 +294,9 @@ impl RoutingRepository {
         for target in &mut snapshot.targets {
             *target = guard_submission(&mut tx, receipt, target.id).await?;
         }
+        if !exists {
+            sqlx::query("UPDATE source_routing_proposals SET snapshot=$2,target_digest=$3 WHERE receipt_id=$1").bind(receipt).bind(json!(snapshot)).bind(digest(json!(snapshot.targets).to_string().as_bytes())).execute(&mut *tx).await?;
+        }
         let authorizer:Uuid=sqlx::query_scalar("SELECT authorized_by FROM source_routes WHERE route_id=$1 AND authorized_by IS NOT NULL").bind(&route).fetch_one(&mut *tx).await?;
         let config = snapshot
             .execution
@@ -270,7 +322,7 @@ impl RoutingRepository {
         tx.commit().await?;
         Ok(())
     }
-    async fn aggregate(&self) -> Result<()> {
+    pub async fn aggregate(&self) -> Result<()> {
         let mut tx = self.0.begin().await?;
         execution::source_guard(&mut tx)
             .await

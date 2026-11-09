@@ -246,12 +246,13 @@ async fn precise_expansion_concurrent_resolution_and_recovery() {
     assert_eq!(a.targets.len(), 3);
     assert!(a.targets.iter().all(|t| t.id != f.targets[3]));
     assert!(matches!(b.unwrap(), Resolution::Ready { .. }));
-    let count: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM source_routing_decisions WHERE receipt_id=$1")
-            .bind(receipt)
-            .fetch_one(&f.pool)
-            .await
-            .unwrap();
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM source_current_routing_decisions WHERE receipt_id=$1",
+    )
+    .bind(receipt)
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
     assert_eq!(count, 1);
     f.lifecycle(LifecycleAction::Pause).await;
     let paused = f.receipt().await;
@@ -281,10 +282,13 @@ async fn precise_expansion_concurrent_resolution_and_recovery() {
         f.service().resolve(empty).await.unwrap(),
         Resolution::Ready { .. }
     ));
-    // A later configuration never rewrites a prior immutable decision.
+    // Until an executable task commits, repair must replace the provisional check.
     f.configure(vec![f.targets[3]]).await;
     match f.service().resolve(receipt).await.unwrap() {
-        Resolution::Ready { snapshot } => assert_eq!(snapshot.targets, a.targets),
+        Resolution::Ready { snapshot } => {
+            assert_eq!(snapshot.targets.len(), 1);
+            assert_eq!(snapshot.targets[0].id, f.targets[3]);
+        }
         _ => panic!("lost frozen decision"),
     }
     let immutable =
@@ -667,56 +671,7 @@ async fn paused_empty_route_recovers_and_deleted_credentials_preserve_existing_t
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn accepted_inbox_creates_only_configured_official_targets_and_withdraws_unsent_work() {
     let f = Fixture::new().await;
-    let workspace = Uuid::new_v4();
-    let member = Uuid::new_v4();
-    let corp = "source-corp";
-    sqlx::query("INSERT INTO wecom_workspaces(id,name) VALUES($1,'Official')")
-        .bind(workspace)
-        .execute(&f.pool)
-        .await
-        .unwrap();
-    sqlx::query("INSERT INTO wecom_directory_state(singleton,corp_id,credential_scope) VALUES(true,$1,'scope')").bind(corp).execute(&f.pool).await.unwrap();
-    sqlx::query("INSERT INTO wecom_members(id,userid,name,status,verification,checked_at) VALUES($1,'owner','Owner',1,'verified',now())").bind(member).execute(&f.pool).await.unwrap();
-    sqlx::query("UPDATE accounts SET wecom_member_id=$2 WHERE id=$1")
-        .bind(f.actor.id)
-        .bind(member)
-        .execute(&f.pool)
-        .await
-        .unwrap();
-    sqlx::query("INSERT INTO wecom_workspace_members VALUES($1,$2,'admin')")
-        .bind(workspace)
-        .bind(f.actor.id)
-        .execute(&f.pool)
-        .await
-        .unwrap();
-    let mut groups = Vec::new();
-    for n in 0..4 {
-        let id = Uuid::new_v4();
-        let directory = Uuid::new_v4();
-        let chat = format!("chat-{n}");
-        sqlx::query("INSERT INTO wecom_asset_objects(id,kind,corp_id,key,data,checked_at,credential_generation,visibility,verification) VALUES($1,'groups',$2,$3,$4,now(),1,'visible','verified')").bind(directory).bind(corp).bind(&chat).bind(json!({"owner":"owner"})).execute(&f.pool).await.unwrap();
-        sqlx::query("INSERT INTO wecom_groups(id,school_id,corp_id,chat_id,name,directory_group_id) VALUES($1,$2,$3,$4,$4,$5)").bind(id).bind(workspace).bind(corp).bind(chat).bind(directory).execute(&f.pool).await.unwrap();
-        groups.push(id);
-    }
-    f.service()
-        .execute(
-            &f.actor,
-            Command::Configure {
-                route: f.route.clone(),
-                input: ConfigurationInput {
-                    revision: f.revision().await,
-                    unit_id: f.unit,
-                    group_id: f.group,
-                    execution: Some(ExecutionConfig {
-                        channel: Channel::Wecom,
-                        workspace_id: workspace,
-                        target_ids: groups[..3].to_vec(),
-                    }),
-                },
-            },
-        )
-        .await
-        .unwrap();
+    let (workspace, _) = configure_official(&f).await;
     f.lifecycle(LifecycleAction::Enable).await;
     select_ad(&f, "wecom", workspace).await;
     let receipt = inbox(&f, "official", 1, "content.upsert").await;
@@ -1280,7 +1235,7 @@ async fn keyword_scopes_final_text_recovery_and_immutable_evidence() {
     );
     assert_eq!(
         sqlx::query_scalar::<_, i64>(
-            "SELECT count(*) FROM source_routing_decisions WHERE receipt_id=$1"
+            "SELECT count(*) FROM source_current_routing_decisions WHERE receipt_id=$1"
         )
         .bind(raw)
         .fetch_one(&f.pool)
@@ -3104,5 +3059,383 @@ async fn ordered_pool_copy_has_new_progress_and_management_rejects_foreign_slots
             "forbidden"
         );
     }
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn automation_tasks_freeze_subset_authorize_stop_and_never_resurrect() {
+    use wekeeper_api::source_access::{
+        domain::orchestration::{Command as Auto, Control, Filter},
+        north::local::orchestration::Service as AutoService,
+        south::adapter::postgres::orchestration::Repository,
+    };
+    let f = Fixture::new().await;
+    f.configure(f.targets.clone()).await;
+    f.lifecycle(LifecycleAction::Enable).await;
+    // One business-disabled target must not block three valid targets with offline phones.
+    sqlx::query("UPDATE mobile_targets SET enabled=false WHERE id=$1")
+        .bind(f.targets[3])
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let receipt = inbox(&f, "automation", 1, "content.upsert").await;
+    let worker = RoutingRepository(f.pool.clone());
+    worker.run_once().await.unwrap();
+    let service = AutoService(Repository(f.pool.clone()));
+    let list = service
+        .execute(&f.actor, Auto::List(Filter::default()))
+        .await
+        .unwrap();
+    assert_eq!(list["items"].as_array().unwrap().len(), 1, "{list}");
+    assert_eq!(list["items"][0]["counts"]["total"], 3);
+    let detail = service
+        .execute(&f.actor, Auto::Detail(receipt))
+        .await
+        .unwrap();
+    assert_eq!(detail["frozen"]["executed_by"], "source-routing");
+    let targets = service
+        .execute(&f.actor, Auto::Targets(receipt))
+        .await
+        .unwrap();
+    assert_eq!(targets["excluded"].as_array().unwrap().len(), 1);
+    let attempts = service
+        .execute(&f.actor, Auto::Attempts(receipt, f.targets[0]))
+        .await
+        .unwrap();
+    assert!(!attempts["items"].as_array().unwrap().is_empty());
+    let outsider = Uuid::new_v4();
+    sqlx::query("INSERT INTO accounts(id,username,display_name) VALUES($1,'outsider','outsider')")
+        .bind(outsider)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let mut actor = f.actor.clone();
+    actor.id = outsider;
+    actor.platform_admin = false;
+    assert!(
+        service
+            .execute(&actor, Auto::Detail(receipt))
+            .await
+            .is_err()
+    );
+    sqlx::query("INSERT INTO mobile_workspace_members(workspace_id,account_id,role) VALUES($1,$2,'operator')").bind(f.workspace).bind(outsider).execute(&f.pool).await.unwrap();
+    assert!(service.execute(&actor, Auto::Detail(receipt)).await.is_ok());
+    let cmd = || Control {
+        expected_revision: 1,
+        idempotency_key: Uuid::new_v4(),
+        reason: "停止业务".into(),
+        target_ids: vec![],
+    };
+    assert!(
+        service
+            .execute(&actor, Auto::Stop(receipt, cmd()))
+            .await
+            .is_err()
+    );
+    let key = Uuid::new_v4();
+    for _ in 0..2 {
+        service
+            .execute(
+                &f.actor,
+                Auto::Stop(
+                    receipt,
+                    Control {
+                        expected_revision: 1,
+                        idempotency_key: key,
+                        reason: "停止业务".into(),
+                        target_ids: vec![],
+                    },
+                ),
+            )
+            .await
+            .unwrap();
+    }
+    worker.run_once().await.unwrap();
+    let stopped = service
+        .execute(&f.actor, Auto::Detail(receipt))
+        .await
+        .unwrap();
+    assert_eq!(stopped["task"]["stopped"], true);
+    assert_eq!(stopped["task"]["state"], "stopped");
+    assert!(
+        service
+            .execute(&f.actor, Auto::Retry(receipt, cmd()))
+            .await
+            .is_err()
+    );
+    f.configure(vec![f.targets[1]]).await;
+    worker.run_once().await.unwrap();
+    let frozen = service
+        .execute(&f.actor, Auto::Detail(receipt))
+        .await
+        .unwrap();
+    assert_eq!(frozen["frozen"]["snapshot"], detail["frozen"]["snapshot"]);
+    let events = service
+        .execute(&f.actor, Auto::Events(receipt, 0))
+        .await
+        .unwrap();
+    assert!(
+        events["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["kind"] == "task.stop_requested")
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn automation_version_policy_only_resends_changed_future_versions_with_known_results() {
+    use wekeeper_api::source_access::{
+        domain::orchestration::{Command as Auto, PolicyInput, VersionPolicy},
+        north::local::orchestration::Service as AutoService,
+        south::adapter::postgres::orchestration::Repository,
+    };
+    let f = Fixture::new().await;
+    f.configure(vec![f.targets[0]]).await;
+    f.lifecycle(LifecycleAction::Enable).await;
+    let service = AutoService(Repository(f.pool.clone()));
+    service
+        .execute(
+            &f.actor,
+            Auto::Policy(
+                f.route.clone(),
+                Some(PolicyInput {
+                    revision: 0,
+                    policy: VersionPolicy::ResendNewVersion,
+                    reason: "明确授权新版本".into(),
+                }),
+            ),
+        )
+        .await
+        .unwrap();
+    let r1 = inbox(&f, "version-policy", 1, "content.upsert").await;
+    let worker = RoutingRepository(f.pool.clone());
+    worker.run_once().await.unwrap();
+    sqlx::query("UPDATE mobile_v9_attempts SET state='observed_sent' WHERE item_id IN (SELECT i.id FROM mobile_v9_task_items i JOIN source_execution_tasks e ON e.task_id=i.task_id WHERE e.receipt_id=$1)").bind(r1).execute(&f.pool).await.unwrap();
+    let r2 = inbox(&f, "version-policy", 2, "content.upsert").await;
+    change_title(&f, r2, "第二版新内容").await;
+    worker.run_once().await.unwrap();
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_automation_tasks WHERE id=$1)")
+            .bind(r2)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert!(exists, "explicit policy must create a new version task");
+    // Unknown second-version evidence cannot be bypassed by a third content edit.
+    sqlx::query("UPDATE mobile_v9_attempts a SET state='unknown' FROM mobile_v9_task_items i JOIN source_execution_tasks e ON e.task_id=i.task_id WHERE a.item_id=i.id AND e.receipt_id=$1").bind(r2).execute(&f.pool).await.unwrap();
+    sqlx::query("UPDATE mobile_v9_dispatch_state d SET state='dispatch_failed',completed_rounds=3 FROM mobile_v9_task_items i JOIN source_execution_tasks e ON e.task_id=i.task_id WHERE d.item_id=i.id AND e.receipt_id=$1").bind(r2).execute(&f.pool).await.unwrap();
+    let r3 = inbox(&f, "version-policy", 3, "content.upsert").await;
+    change_title(&f, r3, "第三版内容").await;
+    worker.run_once().await.unwrap();
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM source_automation_tasks WHERE id=$1")
+        .bind(r3)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0, "unknown version must not be bypassed");
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn automation_aggregate_preserves_partial_unknown_and_late_results() {
+    use wekeeper_api::source_access::{
+        domain::orchestration::Command as Auto,
+        north::local::orchestration::Service as AutoService,
+        south::adapter::postgres::orchestration::Repository,
+    };
+    let f = Fixture::new().await;
+    f.configure(f.targets[..3].to_vec()).await;
+    f.lifecycle(LifecycleAction::Enable).await;
+    let receipt = inbox(&f, "aggregate", 1, "content.upsert").await;
+    let worker = RoutingRepository(f.pool.clone());
+    worker.run_once().await.unwrap();
+    let service = AutoService(Repository(f.pool.clone()));
+    for (target, state) in [
+        (f.targets[0], "observed_sent"),
+        (f.targets[1], "unknown"),
+        (f.targets[2], "failed_before_call"),
+    ] {
+        sqlx::query("UPDATE mobile_v9_attempts a SET state=$3 FROM mobile_v9_task_items i JOIN source_execution_tasks e ON e.task_id=i.task_id WHERE a.item_id=i.id AND e.receipt_id=$1 AND i.target_id=$2").bind(receipt).bind(target).bind(state).execute(&f.pool).await.unwrap();
+    }
+    sqlx::query("UPDATE mobile_v9_dispatch_state d SET state='dispatch_failed',completed_rounds=3 FROM mobile_v9_task_items i JOIN source_execution_tasks e ON e.task_id=i.task_id WHERE d.item_id=i.id AND e.receipt_id=$1").bind(receipt).execute(&f.pool).await.unwrap();
+    let detail = service
+        .execute(&f.actor, Auto::Detail(receipt))
+        .await
+        .unwrap();
+    assert_eq!(detail["task"]["state"], "unknown");
+    assert_eq!(detail["task"]["counts"]["sent"], 1);
+    assert_eq!(detail["task"]["counts"]["unknown"], 1);
+    sqlx::query("UPDATE mobile_v9_attempts a SET state='verified_not_sent' FROM mobile_v9_task_items i JOIN source_execution_tasks e ON e.task_id=i.task_id WHERE a.item_id=i.id AND e.receipt_id=$1 AND i.target_id=$2").bind(receipt).bind(f.targets[1]).execute(&f.pool).await.unwrap();
+    let detail = service
+        .execute(&f.actor, Auto::Detail(receipt))
+        .await
+        .unwrap();
+    assert_eq!(detail["task"]["state"], "partially_succeeded");
+    for t in &f.targets[..3] {
+        sqlx::query("UPDATE mobile_v9_attempts a SET state='observed_sent' FROM mobile_v9_task_items i JOIN source_execution_tasks e ON e.task_id=i.task_id WHERE a.item_id=i.id AND e.receipt_id=$1 AND i.target_id=$2").bind(receipt).bind(t).execute(&f.pool).await.unwrap();
+    }
+    worker.aggregate().await.unwrap();
+    let detail = service
+        .execute(&f.actor, Auto::Detail(receipt))
+        .await
+        .unwrap();
+    assert_eq!(detail["task"]["state"], "succeeded");
+    assert_eq!(detail["task"]["counts"]["total"], 3);
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn automation_recovery_pages_are_durable_scoped_and_exclude_stopped() {
+    let f = Fixture::new().await;
+    f.configure(vec![f.targets[0]]).await;
+    sqlx::query("DELETE FROM source_orchestration_recovery_jobs")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let mut receipts = Vec::new();
+    for n in 0..111 {
+        let id = inbox(&f, &format!("waiting-{n}"), 1, "content.upsert").await;
+        sqlx::query("UPDATE source_inbox SET state='waiting',next_attempt_at=now()+interval '1 day' WHERE receipt_id=$1").bind(id).execute(&f.pool).await.unwrap();
+        sqlx::query("INSERT INTO source_content_versions(source_id,route_id,external_content_id,sequence,version,receipt_id,withdrawn) VALUES($1,$2,$3,1,'1',$4,false)").bind(f.source).bind(&f.route).bind(format!("waiting-{n}")).bind(id).execute(&f.pool).await.unwrap();
+        receipts.push(id);
+    }
+    sqlx::query("INSERT INTO source_routing_waits(receipt_id,route_id,reason_code,wake_key,stopped) VALUES($1,$2,'message_stopped',$2,true)").bind(receipts[0]).bind(&f.route).execute(&f.pool).await.unwrap();
+    sqlx::query("INSERT INTO source_orchestration_recovery_jobs(route_id) VALUES($1)")
+        .bind(&f.route)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    RoutingRepository(f.pool.clone())
+        .recover_orchestration()
+        .await
+        .unwrap();
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM source_inbox WHERE next_attempt_at<=now()")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 50);
+    RoutingRepository(f.pool.clone())
+        .recover_orchestration()
+        .await
+        .unwrap();
+    RoutingRepository(f.pool.clone())
+        .recover_orchestration()
+        .await
+        .unwrap();
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM source_inbox WHERE next_attempt_at<=now()")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 110);
+    let complete: bool =
+        sqlx::query_scalar("SELECT bool_and(complete) FROM source_orchestration_recovery_jobs")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert!(complete);
+    f.close().await;
+}
+
+async fn configure_official(f: &Fixture) -> (Uuid, Vec<Uuid>) {
+    let workspace = Uuid::new_v4();
+    let member = Uuid::new_v4();
+    let corp = "source-corp";
+    sqlx::query("INSERT INTO wecom_workspaces(id,name) VALUES($1,'Official')")
+        .bind(workspace)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO wecom_directory_state(singleton,corp_id,credential_scope) VALUES(true,$1,'scope')").bind(corp).execute(&f.pool).await.unwrap();
+    sqlx::query("INSERT INTO wecom_members(id,userid,name,status,verification,checked_at) VALUES($1,'owner','Owner',1,'verified',now())").bind(member).execute(&f.pool).await.unwrap();
+    sqlx::query("UPDATE accounts SET wecom_member_id=$2 WHERE id=$1")
+        .bind(f.actor.id)
+        .bind(member)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO wecom_workspace_members VALUES($1,$2,'admin')")
+        .bind(workspace)
+        .bind(f.actor.id)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let mut groups = Vec::new();
+    for n in 0..4 {
+        let id = Uuid::new_v4();
+        let directory = Uuid::new_v4();
+        let chat = format!("chat-{n}");
+        sqlx::query("INSERT INTO wecom_asset_objects(id,kind,corp_id,key,data,checked_at,credential_generation,visibility,verification) VALUES($1,'groups',$2,$3,$4,now(),1,'visible','verified')").bind(directory).bind(corp).bind(&chat).bind(json!({"owner":"owner"})).execute(&f.pool).await.unwrap();
+        sqlx::query("INSERT INTO wecom_groups(id,school_id,corp_id,chat_id,name,directory_group_id) VALUES($1,$2,$3,$4,$4,$5)").bind(id).bind(workspace).bind(corp).bind(chat).bind(directory).execute(&f.pool).await.unwrap();
+        groups.push(id);
+    }
+    f.service()
+        .execute(
+            &f.actor,
+            Command::Configure {
+                route: f.route.clone(),
+                input: ConfigurationInput {
+                    revision: f.revision().await,
+                    unit_id: f.unit,
+                    group_id: f.group,
+                    execution: Some(ExecutionConfig {
+                        channel: Channel::Wecom,
+                        workspace_id: workspace,
+                        target_ids: groups[..3].to_vec(),
+                    }),
+                },
+            },
+        )
+        .await
+        .unwrap();
+    (workspace, groups)
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn automation_official_stop_persists_existing_executor_operation_and_preserves_unknown() {
+    use wekeeper_api::source_access::{
+        domain::orchestration::{Command as Auto, Control},
+        north::local::orchestration::Service as AutoService,
+        south::adapter::postgres::orchestration::Repository,
+    };
+    let f = Fixture::new().await;
+    configure_official(&f).await;
+    f.lifecycle(LifecycleAction::Enable).await;
+    let id = inbox(&f, "official-stop", 1, "content.upsert").await;
+    RoutingRepository(f.pool.clone()).run_once().await.unwrap();
+    sqlx::query("UPDATE broadcast_batches b SET state='created',msgid='existing-external-message' FROM source_execution_tasks e WHERE b.task_id=e.task_id AND e.receipt_id=$1 AND b.ordinal=0").bind(id).execute(&f.pool).await.unwrap();
+    sqlx::query("UPDATE broadcast_batches b SET state='unknown',invocation_id=$2 FROM source_execution_tasks e WHERE b.task_id=e.task_id AND e.receipt_id=$1 AND b.ordinal=1").bind(id).bind(Uuid::new_v4()).execute(&f.pool).await.unwrap();
+    let service = AutoService(Repository(f.pool.clone()));
+    service
+        .execute(
+            &f.actor,
+            Auto::Stop(
+                id,
+                Control {
+                    expected_revision: 1,
+                    idempotency_key: Uuid::new_v4(),
+                    reason: "停止后续提交".into(),
+                    target_ids: vec![],
+                },
+            ),
+        )
+        .await
+        .unwrap();
+    let states:Vec<String>=sqlx::query_scalar("SELECT b.state FROM broadcast_batches b JOIN source_execution_tasks e ON e.task_id=b.task_id WHERE e.receipt_id=$1 ORDER BY ordinal").bind(id).fetch_all(&f.pool).await.unwrap();
+    assert_eq!(states, vec!["created", "unknown", "cancelled"]);
+    let operations:i64=sqlx::query_scalar("SELECT count(*) FROM broadcast_operations o JOIN source_execution_tasks e ON e.task_id=o.task_id WHERE e.receipt_id=$1 AND o.operation='stop' AND o.batch_id IS NULL AND o.state='done'").bind(id).fetch_one(&f.pool).await.unwrap();
+    assert_eq!(operations, 1);
+    let detail = service.execute(&f.actor, Auto::Detail(id)).await.unwrap();
+    assert_eq!(detail["task"]["stopped"], true);
+    assert_eq!(detail["task"]["counts"]["unknown"], 1);
+    assert_eq!(detail["task"]["counts"]["cancelled"], 1);
     f.close().await;
 }

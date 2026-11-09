@@ -143,7 +143,9 @@ impl RoutingRepository {
             if let Some((old_sequence, _, old_receipt)) = previous
                 && old_receipt != receipt
             {
-                no_resend |= super::routing_worker::halt(
+                // An explicitly authorized future-version policy never bypasses unresolved submission evidence.
+                let resend:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_route_version_policies p JOIN source_receipts r ON r.receipt_id=$2 JOIN source_automation_summaries t ON t.id=$3 JOIN source_inbox old ON old.receipt_id=$3 WHERE p.route_id=$1 AND p.policy='resend_new_version' AND r.received_at>=p.effective_at AND t.state IN ('succeeded','partially_succeeded','failed','stopped') AND NOT t.has_unknown AND ((convert_from(old.request_body,'UTF8')::jsonb #> '{data,attributes}') - 'event_id' - 'occurred_at' - 'sequence' - 'version') IS DISTINCT FROM ($4::jsonb - 'event_id' - 'occurred_at' - 'sequence' - 'version'))").bind(&event.route_id).bind(receipt).bind(old_receipt).bind(json!(event)).fetch_one(&mut *tx).await?;
+                let may_have_submitted = super::routing_worker::halt(
                     &mut tx,
                     old_receipt,
                     if event.event_type == "content.withdrawn" {
@@ -153,6 +155,11 @@ impl RoutingRepository {
                     },
                 )
                 .await?;
+                no_resend = if resend && event.event_type == "content.upsert" {
+                    false
+                } else {
+                    no_resend || may_have_submitted
+                };
                 sqlx::query("DELETE FROM source_recheck_requests WHERE receipt_id=$1")
                     .bind(old_receipt)
                     .execute(&mut *tx)
@@ -265,7 +272,7 @@ impl crate::source_access::south::port::ProjectionStore for ReceiptsRepository {
         };
         super::routing::access(&mut tx, actor.id, route, admin).await?;
         let can_recheck=admin||sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM source_route_managers WHERE route_id=$1 AND account_id=$2 AND can_recheck)").bind(route).bind(actor.id).fetch_one(&mut *tx).await?;
-        let fields = "jsonb_build_object('id',r.receipt_id,'event_id',r.event_id,'status',COALESCE(c.status,r.status),'reason_code',CASE WHEN c.receipt_id IS NOT NULL THEN c.reason_code ELSE r.reason_code END,'processing_stage',r.processing_stage,'received_at',r.received_at,'updated_at',greatest(r.updated_at,c.updated_at,w.updated_at),'revision',r.processing_revision,'observed_sequence',r.observed_sequence,'sending',COALESCE(c.sending,r.sending,w.sending),'summary_version',COALESCE(c.summary_version,r.summary_version,w.summary_version),'summary_revision',CASE WHEN c.summary_version IS NOT NULL THEN c.summary_revision WHEN w.summary_version IS NOT NULL THEN w.summary_revision ELSE r.summary_revision END,'summary_total',COALESCE(c.summary_total,r.summary_total,w.summary_total),'external_content_id',convert_from(i.request_body,'UTF8')::jsonb #>> '{data,attributes,external_content_id}','sequence',(convert_from(i.request_body,'UTF8')::jsonb #>> '{data,attributes,sequence}')::bigint)";
+        let fields = "jsonb_build_object('id',r.receipt_id,'automation_task_id',(SELECT t.id FROM source_automation_tasks t WHERE t.id=COALESCE(r.canonical_receipt_id,r.receipt_id)),'event_id',r.event_id,'status',COALESCE(c.status,r.status),'reason_code',CASE WHEN c.receipt_id IS NOT NULL THEN c.reason_code ELSE r.reason_code END,'processing_stage',r.processing_stage,'received_at',r.received_at,'updated_at',greatest(r.updated_at,c.updated_at,w.updated_at),'revision',r.processing_revision,'observed_sequence',r.observed_sequence,'sending',COALESCE(c.sending,r.sending,w.sending),'summary_version',COALESCE(c.summary_version,r.summary_version,w.summary_version),'summary_revision',CASE WHEN c.summary_version IS NOT NULL THEN c.summary_revision WHEN w.summary_version IS NOT NULL THEN w.summary_revision ELSE r.summary_revision END,'summary_total',COALESCE(c.summary_total,r.summary_total,w.summary_total),'external_content_id',convert_from(i.request_body,'UTF8')::jsonb #>> '{data,attributes,external_content_id}','sequence',(convert_from(i.request_body,'UTF8')::jsonb #>> '{data,attributes,sequence}')::bigint)";
         let value = match &command {
             projection::Command::List { page, .. } => {
                 let query = format!(

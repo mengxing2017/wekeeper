@@ -175,6 +175,17 @@ async fn serve_inner(
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         }
     });
+    let summaries = crate::source_access::south::adapter::postgres::routing::RoutingRepository(
+        application.pool.clone(),
+    );
+    let summary_worker = tokio::spawn(async move {
+        loop {
+            if summaries.aggregate().await.is_err() {
+                tracing::warn!("source result projection will retry");
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
+    });
     let routing = crate::source_access::north::local::projection::Worker(
         crate::source_access::south::adapter::postgres::routing::RoutingRepository(
             application.pool.clone(),
@@ -191,6 +202,8 @@ async fn serve_inner(
     let result = axum::serve(listener, http::app_router(application))
         .with_graceful_shutdown(shutdown_signal())
         .await;
+    summary_worker.abort();
+    let _ = summary_worker.await;
     routing_worker.abort();
     let _ = routing_worker.await;
     health_worker.abort();

@@ -168,7 +168,7 @@ pub(crate) async fn validate(tx: &mut Tx<'_>, receipt: Uuid, p: &Prepared) -> Re
     }
     let snapshot: crate::source_access::domain::routing::RouteSnapshot = serde_json::from_value(
         sqlx::query_scalar::<_, Value>(
-            "SELECT snapshot FROM source_routing_decisions WHERE receipt_id=$1",
+            "SELECT snapshot FROM source_current_routing_decisions WHERE receipt_id=$1",
         )
         .bind(receipt)
         .fetch_one(&mut **tx)

@@ -22,7 +22,7 @@ pub(crate) async fn context(
     receipt: Uuid,
     workspace: Option<(&str, Uuid)>,
 ) -> Result<(k::Context, Vec<k::Rule>)> {
-    let row=sqlx::query("SELECT r.source_id,r.route_id,CASE WHEN d.receipt_id IS NOT NULL THEN (d.snapshot->>'unit_id')::uuid ELSE s.unit_id END AS unit_id FROM source_receipts r LEFT JOIN source_routes s USING(route_id) LEFT JOIN source_routing_decisions d USING(receipt_id) WHERE r.receipt_id=$1").bind(receipt).fetch_one(&mut **tx).await?;
+    let row=sqlx::query("SELECT r.source_id,r.route_id,CASE WHEN d.receipt_id IS NOT NULL THEN (d.snapshot->>'unit_id')::uuid ELSE s.unit_id END AS unit_id FROM source_receipts r LEFT JOIN source_routes s USING(route_id) LEFT JOIN source_current_routing_decisions d USING(receipt_id) WHERE r.receipt_id=$1").bind(receipt).fetch_one(&mut **tx).await?;
     let source: Uuid = row.get("source_id");
     let route: String = row.get("route_id");
     let unit: Option<Uuid> = row.get("unit_id");
@@ -365,7 +365,7 @@ impl KeywordRepository {
             let scope: Option<String> = b.get("kind");
             let object: Option<String> = b.get("object_id");
             let channel: Option<String> = b.get("channel");
-            let ids:Vec<Uuid>=sqlx::query_scalar("SELECT v.receipt_id FROM source_content_versions v JOIN source_receipts r USING(receipt_id) LEFT JOIN source_routes s ON s.route_id=v.route_id LEFT JOIN source_routing_decisions d ON d.receipt_id=v.receipt_id WHERE ($1::uuid IS NULL OR v.receipt_id>$1) AND ($2::text IS NULL OR $2='global' OR ($2='source' AND v.source_id::text=$3) OR ($2='route' AND v.route_id=$3) OR ($2='unit' AND CASE WHEN d.receipt_id IS NOT NULL THEN d.snapshot->>'unit_id' ELSE s.unit_id::text END=$3) OR ($2='workspace' AND d.snapshot #>> '{execution,workspace_id}'=$3 AND d.snapshot #>> '{execution,channel}'=$4)) ORDER BY v.receipt_id LIMIT 50").bind(cursor).bind(scope).bind(object).bind(channel).fetch_all(&mut *tx).await?;
+            let ids:Vec<Uuid>=sqlx::query_scalar("SELECT v.receipt_id FROM source_content_versions v JOIN source_receipts r USING(receipt_id) LEFT JOIN source_routes s ON s.route_id=v.route_id LEFT JOIN source_current_routing_decisions d ON d.receipt_id=v.receipt_id WHERE ($1::uuid IS NULL OR v.receipt_id>$1) AND ($2::text IS NULL OR $2='global' OR ($2='source' AND v.source_id::text=$3) OR ($2='route' AND v.route_id=$3) OR ($2='unit' AND CASE WHEN d.receipt_id IS NOT NULL THEN d.snapshot->>'unit_id' ELSE s.unit_id::text END=$3) OR ($2='workspace' AND d.snapshot #>> '{execution,workspace_id}'=$3 AND d.snapshot #>> '{execution,channel}'=$4)) ORDER BY v.receipt_id LIMIT 50").bind(cursor).bind(scope).bind(object).bind(channel).fetch_all(&mut *tx).await?;
             sqlx::query("SELECT source_id FROM source_callers WHERE source_id IN (SELECT source_id FROM source_content_versions WHERE receipt_id=ANY($1)) ORDER BY source_id FOR UPDATE").bind(&ids).fetch_all(&mut *tx).await?;
             sqlx::query("UPDATE source_inbox i SET state='waiting',next_attempt_at=now() FROM source_content_versions v WHERE v.receipt_id=i.receipt_id AND v.receipt_id=ANY($1) AND NOT v.withdrawn AND NOT v.no_resend AND i.state NOT IN ('stopped','superseded')").bind(&ids).execute(&mut *tx).await?;
             sqlx::query(

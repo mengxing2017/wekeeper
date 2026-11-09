@@ -86,6 +86,10 @@ impl Fault {
                 }
                 "duplicate_keyword" => "存在规范化后重复的关键字，请合并条目",
                 "keyword_limit_exceeded" => "关键字数量超限，每个范围最多 2000 条",
+                "invalid_transition" => {
+                    "任务当前不可执行此操作；请核对停止状态、目标结果与剩余重试预算"
+                }
+                "target_unavailable" => "目标不属于任务或当前不可用，请核对冻结目标集合",
                 "revision_conflict" => "记录已被修改，请保留输入并刷新最新修订后核对",
                 "keyword_rules_unavailable"
                 | "keyword_engine_unavailable"
@@ -340,6 +344,7 @@ async fn association(
 pub fn router() -> Router<Application> {
     Router::new()
         .merge(projection::router())
+        .merge(orchestration::router())
         .merge(keyword_filter::router())
         .merge(routing::router())
         .route(
@@ -502,3 +507,5 @@ mod response_tests {
 }
 
 pub mod keyword_filter;
+
+pub mod orchestration;

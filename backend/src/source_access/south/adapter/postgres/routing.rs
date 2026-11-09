@@ -20,7 +20,7 @@ pub(crate) async fn administrator(tx: &mut Tx<'_>, actor: Uuid) -> Result<bool> 
         .await?
         .ok_or(Fault("forbidden"))
 }
-async fn lock_route_mode(
+pub(crate) async fn lock_route_mode(
     tx: &mut Tx<'_>,
     route: &str,
     control: bool,
@@ -148,7 +148,7 @@ async fn check(
                 if chosen.is_empty() {
                     issues.push("route_no_targets".into());
                 }
-                if chosen.iter().any(|t| !t.resource_available) {
+                if !chosen.is_empty() && chosen.iter().all(|t| !t.resource_available) {
                     issues.push(
                         match c.channel {
                             Channel::Mobile => "mobile_candidates_missing",
@@ -201,8 +201,10 @@ async fn record(
     Ok(())
 }
 async fn wake(tx: &mut Tx<'_>, route: Option<&str>) -> Result<()> {
-    sqlx::query("UPDATE source_inbox i SET next_attempt_at=now() FROM source_receipts r WHERE r.receipt_id=i.receipt_id AND i.state='waiting' AND ($1::text IS NULL OR r.route_id=$1)").bind(route).execute(&mut **tx).await?;
-    sqlx::query("UPDATE source_routing_waits SET next_attempt_at=now(),updated_at=now() WHERE NOT stopped AND ($1::text IS NULL OR route_id=$1)").bind(route).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO source_orchestration_recovery_jobs(route_id) VALUES($1)")
+        .bind(route)
+        .execute(&mut **tx)
+        .await?;
     Ok(())
 }
 async fn entity(
@@ -291,7 +293,13 @@ async fn entity(
         json!({"kind":kind,"snapshot":value}),
     )
     .await?;
-    wake(tx, None).await?;
+    sqlx::query(
+        "INSERT INTO source_orchestration_recovery_jobs(scope_kind,scope_id) VALUES($1,$2)",
+    )
+    .bind(if group { "group" } else { "unit" })
+    .bind(object)
+    .execute(&mut **tx)
+    .await?;
     Ok(value)
 }
 async fn configure(
@@ -684,7 +692,7 @@ impl RoutingStore for RoutingRepository {
             .fetch_one(&mut *tx)
             .await?;
         let existing: Option<Value> =
-            sqlx::query_scalar("SELECT snapshot FROM source_routing_decisions WHERE receipt_id=$1")
+            sqlx::query_scalar("SELECT snapshot FROM source_current_routing_decisions WHERE receipt_id=$1 AND EXISTS(SELECT 1 FROM source_execution_tasks WHERE receipt_id=$1)")
                 .bind(receipt)
                 .fetch_optional(&mut *tx)
                 .await?;
@@ -741,10 +749,10 @@ impl RoutingStore for RoutingRepository {
             s.targets = current_targets(&mut tx, c)
                 .await?
                 .into_iter()
-                .filter(|t| c.target_ids.contains(&t.id))
+                .filter(|t| c.target_ids.contains(&t.id) && t.resource_available)
                 .collect();
         }
-        sqlx::query("INSERT INTO source_routing_decisions(receipt_id,source_id,route_id,config_revision,snapshot,target_digest) VALUES($1,$2,$3,$4,$5,$6)").bind(receipt).bind(s.source_id).bind(&route).bind(s.revision).bind(json!(s)).bind(digest(json!(s.targets).to_string().as_bytes())).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO source_routing_proposals(receipt_id,source_id,route_id,config_revision,snapshot,target_digest) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(receipt_id) DO UPDATE SET config_revision=$4,snapshot=$5,target_digest=$6").bind(receipt).bind(s.source_id).bind(&route).bind(s.revision).bind(json!(s)).bind(digest(json!(s.targets).to_string().as_bytes())).execute(&mut *tx).await?;
         sqlx::query("DELETE FROM source_routing_waits WHERE receipt_id=$1")
             .bind(receipt)
             .execute(&mut *tx)
@@ -777,18 +785,26 @@ pub async fn guard_submission(
     receipt: Uuid,
     target: Uuid,
 ) -> Result<TargetSnapshot> {
-    let decision: Value =
-        sqlx::query_scalar("SELECT snapshot FROM source_routing_decisions WHERE receipt_id=$1")
-            .bind(receipt)
-            .fetch_optional(&mut **tx)
-            .await?
-            .ok_or(Fault("not_found"))?;
+    let decision: Value = sqlx::query_scalar(
+        "SELECT snapshot FROM source_current_routing_decisions WHERE receipt_id=$1",
+    )
+    .bind(receipt)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(Fault("not_found"))?;
     let frozen: RouteSnapshot = serde_json::from_value(decision)?;
     sqlx::query("SELECT source_id FROM source_callers WHERE source_id=$1 FOR SHARE")
         .bind(frozen.source_id)
         .fetch_one(&mut **tx)
         .await?;
     let live_route = lock_route_mode(tx, &frozen.route_id, false).await;
+    let stopped: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM source_automation_tasks WHERE id=$1 AND stopped)",
+    )
+    .bind(receipt)
+    .fetch_one(&mut **tx)
+    .await?;
+    ensure(!stopped, "message_stopped")?;
     let current:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_receipts r JOIN source_inbox i USING(receipt_id) JOIN source_content_versions v ON v.source_id=r.source_id AND v.route_id=r.route_id AND v.external_content_id=convert_from(i.request_body,'UTF8')::jsonb #>> '{data,attributes,external_content_id}' WHERE r.receipt_id=$1 AND v.receipt_id=$1 AND NOT v.withdrawn)").bind(receipt).fetch_one(&mut **tx).await?;
     ensure(current, "content_version_superseded")?;
     crate::advertising::south::adapter::postgres::pipeline::current_guard(tx, receipt, &frozen)
