@@ -4,3 +4,5 @@ export type { BroadcastTask, BroadcastTarget, BroadcastDraftInput, BroadcastActi
 export type { DistributionMaterial, Row } from '@wekeeper/api-contract/business'
 
 export {product} from '@wekeeper/api-contract/business'
+
+export { executionEvidenceLabels } from '@wekeeper/api-contract/wecom-distribution'

@@ -3,7 +3,7 @@ import {configure,cleanup,fireEvent,render,screen,waitFor,within} from '@testing
 import {QueryClient,QueryClientProvider} from '@tanstack/react-query'
 import BroadcastTasks,{targetLabel} from './index'
 import {broadcast,workspace,type BroadcastTask,type BroadcastTarget} from './api'
-vi.mock('./api',()=>({broadcast:{preview:vi.fn(),list:vi.fn(),task:vi.fn(),capability:vi.fn(),targets:vi.fn(),events:vi.fn(),action:vi.fn(),save:vi.fn(),savePreview:vi.fn()},workspace:{list:vi.fn()}}))
+vi.mock('./api',()=>({executionEvidenceLabels:{},broadcast:{preview:vi.fn(),list:vi.fn(),task:vi.fn(),capability:vi.fn(),targets:vi.fn(),events:vi.fn(),observations:vi.fn().mockResolvedValue({items:[]}),action:vi.fn(),save:vi.fn(),savePreview:vi.fn()},workspace:{list:vi.fn()}}))
 vi.mock('../../../shared/use-dialogs',()=>({useDialogs:()=>({confirm:async()=>true,prompt:async()=>'原因',contextHolder:null})}))
 vi.mock('../wecom-senders/business-requests',()=>({BusinessRequests:()=>null}))
 class Resize {observe(){}unobserve(){}disconnect(){}}
@@ -28,7 +28,7 @@ it('does not equate member execution or absent results with group success',()=>{
 it('double click claims once; retry after a lost response retains its idempotency key',async()=>{
  let reject:(e:Error)=>void=()=>{}
  vi.mocked(broadcast.action).mockImplementationOnce(()=>new Promise((_,r)=>{reject=r})).mockResolvedValue(task)
- show();fireEvent.click(await screen.findByRole('button',{name:'查看任务 123456'}))
+ show();expect(screen.getByRole('link',{name:'自动链路执行与证据'}).getAttribute('href')).toBe('/admin?view=source-automation-tasks&channel=wecom&workspace_id=school');fireEvent.click(await screen.findByRole('button',{name:'查看任务 123456'}))
  // Wait for the task payload before scanning the drawer's accessible controls.
  const detail=within(await screen.findByRole('dialog'))
  await detail.findByText('冻结通知')

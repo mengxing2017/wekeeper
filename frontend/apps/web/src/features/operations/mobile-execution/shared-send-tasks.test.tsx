@@ -17,6 +17,7 @@ beforeEach(() => {
 })
 async function compose(admin = true) {
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SharedSendTasks school="school" admin={admin} /></QueryClientProvider>)
+  expect(screen.getByRole('link',{name:'自动链路执行与证据'}).getAttribute('href')).toBe('/admin?view=source-automation-tasks&channel=mobile&workspace_id=school')
   fireEvent.mouseDown(screen.getByLabelText('手机目标群'))
   fireEvent.click(await screen.findByText('实际搜索文字'))
   fireEvent.change(screen.getByLabelText('发送文字'), { target: { value: message } })
@@ -151,7 +152,7 @@ it('打开详情持续轮询，失败保留快照与输入，关闭和切校停�
  const running=structuredClone(task);running.items![0].attempts[0].state='prepared';running.revision=2
  vi.mocked(sharedSend.task).mockResolvedValue(running)
  await act(async()=>{await vi.advanceTimersByTimeAsync(5_000)})
- await waitFor(()=>expect(screen.getByText(/文字准备完成/)).toBeTruthy(),{timeout:10_000})
+ await waitFor(()=>expect(screen.getByText(/手机正在本地准备执行/)).toBeTruthy(),{timeout:10_000})
  expect((screen.getByLabelText('核对依据与操作理由') as HTMLTextAreaElement).value).toBe('保留待提交理由')
  expect(sharedSend.confirm).not.toHaveBeenCalled()
  fireEvent.click(within(screen.getByLabelText('核对依据与操作理由').closest('[role=dialog]') as HTMLElement).getByRole('button',{name:'Cancel'}))
@@ -161,7 +162,7 @@ it('打开详情持续轮询，失败保留快照与输入，关闭和切校停�
  await act(async()=>{await vi.advanceTimersByTimeAsync(5_100)})
  expect(sharedSend.task).toHaveBeenCalledTimes(closedCount)
  fireEvent.click(screen.getByRole('button',{name:'查看计划与结果'}))
- await screen.findByText(/文字准备完成/,{},{timeout:10_000})
+ await screen.findByText(/手机正在本地准备执行/,{},{timeout:10_000})
  fireEvent.click(screen.getByRole('button',{name:'停止尚未发放许可的任务'}))
  fireEvent.change(screen.getByLabelText('核对依据与操作理由'),{target:{value:'切校前的理由'}})
  // Switch school while both dialogs are open; old details and local action state are gone.

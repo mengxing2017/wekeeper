@@ -3,7 +3,7 @@ import {configure,cleanup,fireEvent,render,screen,waitFor} from '@testing-librar
 import {QueryClient,QueryClientProvider} from '@tanstack/react-query'
 import BroadcastTasks from './index'
 import {broadcast,type BroadcastTask} from './api'
-vi.mock('./api',()=>({broadcast:{preview:vi.fn(),list:vi.fn(),task:vi.fn(),capability:vi.fn(),targets:vi.fn(),events:vi.fn(),action:vi.fn()},workspace:{list:vi.fn()}}))
+vi.mock('./api',()=>({executionEvidenceLabels:{},broadcast:{preview:vi.fn(),list:vi.fn(),task:vi.fn(),capability:vi.fn(),targets:vi.fn(),events:vi.fn(),observations:vi.fn().mockResolvedValue({items:[]}),action:vi.fn()},workspace:{list:vi.fn()}}))
 vi.mock('../wecom-senders/business-requests',()=>({BusinessRequests:()=>null}))
 class Resize {observe(){}unobserve(){}disconnect(){}}
 vi.stubGlobal('ResizeObserver',Resize)

@@ -42,6 +42,7 @@ export function RouteConfigurationEditor({route,onChanged,manageAuthorizations=t
  const readonly=!!base?.retired_at
  return <Space orientation="vertical" style={{width:'100%'}}>
   {(error||q.error||units.error||groups.error||targets.error||spaces.error||history.error)&&<Alert type="error" title={error||q.error?.message||units.error?.message||groups.error?.message||targets.error?.message||spaces.error?.message||history.error?.message}/>}
+  {base?.execution_capability&&<Alert type="info" title="企业微信客户群由平台自动创建任务，成员在微信侧确认；无需在本平台逐条确认。逐群发送结果由官方接口同步。"/>}
   <Descriptions column={1} items={[
    {key:'route',label:'消息路由 ID',children:<Typography.Text copyable>{route}</Typography.Text>},
    {key:'status',label:'接收状态',children:base?.status==='active'?'启用':'停用'},

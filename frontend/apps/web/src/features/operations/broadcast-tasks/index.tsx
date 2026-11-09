@@ -21,6 +21,7 @@ import { useDialogs } from '../../../shared/use-dialogs'
 import { formatDate } from '../../../shared/format-date'
 import {
   broadcast,
+  executionEvidenceLabels,
   workspace,
   product,
   type BroadcastTask,
@@ -40,7 +41,7 @@ const creation: Record<string, string> = {
   cancelled: '已取消',
 }
 export function targetLabel(t: BroadcastTarget) {
-  if (t.official_status === 1) return '平台报告已发送（非已读）'
+  if (t.official_status === 1) return '官方报告已发送（非已读）'
   if (t.rejected) return '平台拒绝此目标'
   if (t.official_status === 2) return '平台报告非好友失败（需核对）'
   if (t.official_status === 3) return '平台报告群发接收额度限制'
@@ -93,12 +94,14 @@ export default function BroadcastTasks({
   }
   return (
     <section>
+      <Button href={`/admin?view=source-automation-tasks&channel=wecom&workspace_id=${encodeURIComponent(school)}`}>自动链路执行与证据</Button>
       <Alert type="info" title="企业微信分发管理 · 官方接口" description="客户群、模板、官方发送身份和结果属于官方渠道；失败不会自动改用手机。" />
       {capability.data && !capability.data.broadcast_available && (
         <Alert type="warning" title={capability.data.reason} />
       )}
       {capability.data&&!capability.data.broadcast_available&&<Space orientation="vertical"><p>负责人：{capability.data.request?.owner_name??'待平台分派'} · {capability.data.request?.response??'可保留草稿；开通后仍需本人确认'}</p><Input aria-label="渠道开通用途" placeholder="填写开通用途或当前问题" value={channelReason} onChange={e=>setChannelReason(e.target.value)}/><Button loading={channelBusy} disabled={!channelReason.trim()} onClick={()=>{setChannelBusy(true);setChannelError('');void product.requests.channel(school,{reason:channelReason}).then(()=>{setChannelReason('');return refresh()}).catch(e=>setChannelError(e instanceof Error?e.message:'提交失败')).finally(()=>setChannelBusy(false))}}>确认提交开通申请</Button></Space>}
       {channelError&&<Alert type="error" title={channelError}/>}
+      {capability.data?.execution&&<Alert type="info" title="官方客户群通道：成员在企业微信客户端确认属于外部流程；来源自动任务无需平台逐条确认。创建任务不等于逐群发送成功。"/>}
       {capability.error && <Alert type="error" title={capability.error.message} />}
           <div className="query-filter">
             <Space wrap>
@@ -540,6 +543,7 @@ function Detail({
 }) {
   const [page, setPage] = useState(1),
     [eventPage, setEventPage] = useState(1),
+    [observationPage,setObservationPage] = useState(1),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false)
   const [batch, setBatch] = useState(''),
@@ -566,6 +570,7 @@ function Detail({
     queryKey: ['business', school, 'broadcast-events', id, eventPage],
     queryFn: () => broadcast.events(school, id, eventPage),
   })
+  const observations = useQuery({queryKey:['business',school,'broadcast-observations',id,observationPage],queryFn:()=>broadcast.observations(school,id,observationPage),refetchInterval:15000})
   async function run(job: () => Promise<unknown>) {
     if (lock.current) return
     lock.current = true
@@ -757,6 +762,8 @@ function Detail({
               · 最后同步：{x.last_synced_at ? formatDate(x.last_synced_at) : '尚未同步'}
             </p>
           )}
+          {x.evidence&&<p>证据：{executionEvidenceLabels[x.evidence.evidence_type]??x.evidence.evidence_type} · 观察时间：{formatDate(x.evidence.observed_at)}</p>}
+          {!!x.sync_failures&&<p>同步连续失败 {x.sync_failures} 次；下次自动查询：{x.next_sync_at?formatDate(x.next_sync_at):'待安排'}</p>}
           {x.sync_error && <p>同步未完成，保留上次结果</p>}
           {x.error_code && <p>创建原因：{x.error_code}</p>}
           {x.stop_state !== 'none' && <p>停止状态：{({none:'无停止请求',requested:'已申请停止',stopped:'已停止',unknown:'停止结果待核对',rejected:'停止未受理'}[x.stop_state])}</p>}
@@ -776,6 +783,11 @@ function Detail({
         change={setPage}
         subject="目标群"
       />
+      <Card size="small" title="执行观察记录">
+       {observations.error&&<Alert type="error" title={observations.error.message}/>}
+       {observations.data?.items.map(o=><p key={o.id}>{executionEvidenceLabels[o.evidence_type]??o.evidence_type} · {formatDate(o.observed_at)} · {o.target_id??o.batch_id??'平台任务'}</p>)}
+       <PaginationControls page={observationPage} more={observations.data?.page?.has_more} busy={observations.isFetching} change={setObservationPage} subject="执行证据"/>
+      </Card>
       {admin && batch && (
         <Card title="核对未决操作">
           <p>没有查到记录不能证明未创建。请结合企业微信管理端证据，未核对前禁止再次发送。</p>

@@ -10,3 +10,5 @@ export type { UsageInput, UsagePreview, UsageOptions, MobileUsage, UsageOperatio
 
 export { mobileWorkspaces } from '@wekeeper/api-contract/mobile-execution'
 export type { MobileWorkspace, MobileWorkspaceMember } from '@wekeeper/api-contract/mobile-execution'
+
+export { executionEvidenceLabels } from '@wekeeper/api-contract/mobile-execution/shared-send/v2'
