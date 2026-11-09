@@ -181,8 +181,8 @@ async fn directory_sync_binding_and_identity_boundaries() {
         let response=router.clone().oneshot(axum::http::Request::builder().method("PUT").uri(format!("/api/v1/accounts/{user}")).header("cookie",format!("wekeeper_session={admin_token}")).header("origin","http://localhost:5173").header("x-csrf-token",&admin.csrf).header("content-type","application/vnd.api+json").body(axum::body::Body::from(serde_json::json!({"data":{"type":"accounts","attributes":{"display_name":"本地昵称","active":true,"wecom_userid":"bypass"}}}).to_string())).unwrap()).await.unwrap();
         assert_eq!(
             response.status(),
-            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
-            "manual UserID writes must not bypass verification"
+            axum::http::StatusCode::NOT_FOUND,
+            "retired login-account routes must not allow manual UserID writes"
         );
     }
 
