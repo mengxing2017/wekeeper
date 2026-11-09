@@ -108,3 +108,13 @@ test('广告素材有直接入口，单位专项管理不依赖分发工作空�
  expect(canNavigate(item,false,undefined,'admin')).toBe(true)
  expect(visibleNavigationKeys(false,undefined,undefined,false,true)).toContain('advertisements')
 })
+
+test('广告序列轮询提供独立入口并要求路由配置权限',()=>{
+ const item=navigation.find(item=>item.key==='advertisement-rotations')!
+ expect(item.label).toBe('广告序列轮询')
+ expect(item.domain).toBe('source')
+ expect(canNavigate(item,true)).toBe(true)
+ expect(canNavigate(item,false,undefined,'admin')).toBe(true)
+ expect(canNavigate(item,false,'operator','operator')).toBe(false)
+ expect(canNavigate(item,false,undefined,undefined,false,true)).toBe(false)
+})

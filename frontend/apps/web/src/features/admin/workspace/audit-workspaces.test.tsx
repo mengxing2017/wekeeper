@@ -1,3 +1,4 @@
+import {configure} from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -11,7 +12,7 @@ import { sourceRouting, sourceReceipts } from '../../operations/source-access/ap
 import {advertising} from '../../operations/advertising/api'
 import { auditEvents } from '../audit/api'
 
-vi.mock('../../operations/advertising/api',()=>({advertising:{directory:vi.fn(),list:vi.fn()}}))
+vi.mock('../../operations/advertising/api',()=>({advertising:{directory:vi.fn(),list:vi.fn(),config:vi.fn(),pool:vi.fn(),candidates:vi.fn()},advertisementReasonLabels:{}}))
 vi.mock('../../identity/api', () => ({ identity: { session: vi.fn() }, subscribeUnauthorized: () => () => {} }))
 vi.mock('./api', () => ({ workspace: { list: vi.fn() } }))
 vi.mock('../../operations/wecom-senders', () => ({ OfficialSenders: ({school}:{school:string}) => <p>发送账号范围：{school}</p> }))
@@ -22,6 +23,8 @@ vi.mock('../../operations/wecom-senders/api', () => ({ wecomWorkspaces: { list: 
 vi.mock('../../operations/mobile-execution/api', () => ({ mobileWorkspaces: { list: vi.fn() } }))
 vi.mock('../../operations/source-access/api', () => ({ sourceRouting: { entities: vi.fn(), assigned: vi.fn() }, sourceReceipts: {list:vi.fn()}, receiptStatusLabels:{},receiptStageLabels:{},receiptReasonLabels:{},routingIssueLabels:{} }))
 afterEach(() => { cleanup(); vi.resetAllMocks() })
+// Async React Query renders need the same allowance as other form-heavy suites.
+configure({asyncUtilTimeout:5000})
 beforeEach(() => {
   vi.mocked(advertising.directory).mockResolvedValue({units:[],scopes:[],workspaces:[],routes:[],system_admin:false})
   vi.mocked(advertising.list).mockResolvedValue({items:[],has_more:false})
@@ -158,6 +161,22 @@ it('opens scoped receipts from the direct sidebar entry through the route row',a
  await waitFor(()=>expect(sourceReceipts.list).toHaveBeenCalledWith('route-1',1))
  expect(await screen.findByRole('button',{name:'刷新收件'})).toBeTruthy()
  expect(screen.queryByRole('button',{name:'执行配置'})).toBeNull()
+})
+
+it('opens automatic advertisement rotation from the sidebar through an authorized route',async()=>{
+ vi.mocked(sourceRouting.assigned).mockResolvedValue({items:[{id:'route-1',route_name:'通知路由',caller_name:'调用方一',execution_state:'draft',retired_at:null}]})
+ vi.mocked(advertising.config).mockResolvedValue({id:'route-1',revision:0,config:{mode:'none',fixed_ad_id:null,insertion_position:'after',unavailable_policy:'without_ad',auto_recover:true}})
+ vi.mocked(advertising.pool).mockResolvedValue({id:'route-1',pool_id:null,revision:0,slots:[],cursor:null,transitions:[]})
+ vi.mocked(advertising.candidates).mockResolvedValue({items:[],has_more:false})
+ show('audit')
+ await screen.findByText('identity.password.reset')
+ fireEvent.click(screen.getByRole('menuitem',{name:'广告序列轮询'}))
+ fireEvent.click(await screen.findByRole('button',{name:'配置广告序列轮询'}))
+ expect(await screen.findByRole('button',{name:'发布序列'})).toBeTruthy()
+ expect(screen.getByLabelText('广告模式')).toBeTruthy()
+ expect(advertising.pool).toHaveBeenCalledWith('route-1')
+ expect(advertising.config).toHaveBeenCalledWith('route-1')
+ expect(screen.queryByRole('button',{name:'保存执行配置'})).toBeNull()
 })
 
 it('opens the actual advertising page from its sidebar without a workspace dependency',async()=>{

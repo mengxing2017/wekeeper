@@ -95,6 +95,7 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
   else if (tab === 'source-credentials') page = <SourceAccess platformAdmin={user.platform_admin} />
   else if (tab === 'source-routing-directory') page = <RoutingDirectory />
   else if (tab === 'advertisements') page = <Advertising />
+  else if (tab === 'advertisement-rotations') page = <AssignedRoutes key="advertisement-rotations" advertisingOnly platformAdmin={user.platform_admin} />
   else if (tab === 'keyword-rules') page = <KeywordRules />
   else if (tab === 'source-receipts') page = <AssignedRoutes key="source-receipts" receiptsOnly platformAdmin={user.platform_admin} />
   else if (tab === 'source-route-configurations') page = <AssignedRoutes platformAdmin={user.platform_admin} />

@@ -1,12 +1,17 @@
+import {configure} from '@testing-library/react'
 import {cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react'
 import {QueryClient,QueryClientProvider} from '@tanstack/react-query'
 import {afterEach,beforeEach,expect,it,vi} from 'vitest'
 import {Advertising,RouteAdvertising} from './index'
-const api=vi.hoisted(()=>({directory:vi.fn(),list:vi.fn(),detail:vi.fn(),versions:vi.fn(),create:vi.fn(),content:vi.fn(),archive:vi.fn(),policy:vi.fn(),config:vi.fn(),candidates:vi.fn(),configure:vi.fn(),preview:vi.fn()}))
+const api=vi.hoisted(()=>({pool:vi.fn(),publishPool:vi.fn(),resetPool:vi.fn(),copyPool:vi.fn(),consumptions:vi.fn(),directory:vi.fn(),list:vi.fn(),detail:vi.fn(),versions:vi.fn(),create:vi.fn(),content:vi.fn(),archive:vi.fn(),policy:vi.fn(),config:vi.fn(),candidates:vi.fn(),configure:vi.fn(),preview:vi.fn()}))
 vi.mock('./api',()=>({advertising:api,advertisementReasonLabels:{}}))
 const config={mode:'fixed',fixed_ad_id:'ad1',insertion_position:'after',unavailable_policy:'without_ad',auto_recover:true}
 const ad={id:'ad1',owner_unit_id:'u1',owner_name:'单位一',revision:2,content_version:'c1',policy_version:'p1',archived:false,content:{name:'共享素材',body:'保留原文的广告',link:null},policy:null,can_edit:false,can_manage_sharing:false,can_use:true}
+// Async React Query renders need the same allowance as other form-heavy suites.
+configure({asyncUtilTimeout:5000})
 beforeEach(()=>{
+ api.pool.mockResolvedValue({id:'r1',pool_id:null,revision:0,slots:[],cursor:null,transitions:[]})
+ api.consumptions.mockResolvedValue({items:[],has_more:false})
  api.directory.mockResolvedValue({units:[],scopes:[],workspaces:[],routes:[],system_admin:false})
  api.list.mockResolvedValue({items:[ad],has_more:false});api.detail.mockResolvedValue(ad)
  api.config.mockResolvedValue({id:'r1',revision:4,config});api.candidates.mockResolvedValue({items:[ad],has_more:false});api.configure.mockResolvedValue({revision:5})
@@ -41,6 +46,7 @@ it('keeps the create entry visible for a system administrator without units and 
  expect(create.hasAttribute('disabled')).toBe(true)
  expect(screen.getByText('请先创建或启用一个业务单位，再新增广告。')).toBeTruthy()
  expect(screen.getByRole('link',{name:'管理业务单位'}).getAttribute('href')).toBe('/admin?view=source-routing-directory')
+ expect(screen.getByRole('link',{name:'配置广告自动序列轮询'}).getAttribute('href')).toBe('/admin?view=advertisement-rotations')
 })
 it('creates an advertisement from the page entry and opens the new detail',async()=>{
  api.directory.mockResolvedValue({units:[{id:'u1',name:'单位一',can_edit:true,can_share:false}],scopes:[],workspaces:[],routes:[],system_admin:false})
@@ -62,4 +68,20 @@ it('deletes from the list with a reason and refreshes the active advertisements'
  await waitFor(()=>expect(api.archive).toHaveBeenCalledWith('ad1',2,'停止使用这条广告'))
  await waitFor(()=>expect(screen.queryByRole('button',{name:'确认删除'})).toBeNull())
  await waitFor(()=>expect(screen.queryByText('共享素材')).toBeNull())
+})
+
+it('preserves independent duplicate slots, reorder identity and edit input after a pool conflict',async()=>{
+ api.pool.mockResolvedValue({id:'r1',pool_id:'pool1',revision:2,slots:[{slot_id:'s1',ad_id:'ad1'},{slot_id:'s2',ad_id:'ad1'}],cursor:{pool_revision:2,cursor_version:4,reset_epoch:0,next_slot_id:'s2',last_consumed_slot_id:'s1',cycle:0,selection_order:1},transitions:[]})
+ api.consumptions.mockResolvedValue({items:[],has_more:false,statistics:{selections:20,valid_targets:40,device_attempts:3,sent_targets:2,failed_targets:1,unknown_targets:1,pending_targets:36},slot_statistics:[{slot_id:'s1',ad_id:'ad1',selections:5},{slot_id:'s2',ad_id:'ad1',selections:5}],ad_statistics:[{ad_id:'ad1',selections:10}]})
+ api.publishPool.mockRejectedValue(new Error('序列修订冲突'))
+ show(<RouteAdvertising route="r1"/>);await screen.findByText('1 · s1')
+ expect(await screen.findByText('广告累计选用（合并重复槽）')).toBeTruthy()
+ expect(screen.getByText(/有效目标 40；设备尝试 3；实际送达 2；失败 1；不确定 1/)).toBeTruthy()
+ fireEvent.click(screen.getAllByRole('button',{name:'下移'})[0])
+ fireEvent.change(screen.getByLabelText('序列操作原因'),{target:{value:'移动重复广告的第二槽'}})
+ fireEvent.click(screen.getByRole('button',{name:'发布序列'}))
+ await waitFor(()=>expect(api.publishPool).toHaveBeenCalledWith('r1',{expected_revision:2,reason:'移动重复广告的第二槽',slots:[{slot_id:'s2',ad_id:'ad1'},{slot_id:'s1',ad_id:'ad1'}]}))
+ expect(await screen.findByText('序列修订冲突')).toBeTruthy()
+ expect((screen.getByLabelText('序列操作原因') as HTMLTextAreaElement).value).toBe('移动重复广告的第二槽')
+ expect(api.resetPool).not.toHaveBeenCalled()
 })
