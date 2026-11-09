@@ -1,6 +1,6 @@
 import type {Client} from '../../http/client'
 import type {SourceReceiptV2} from './protocol'
-export interface ReceiptRow extends Omit<SourceReceiptV2,'retryable'|'observed_sequence'> {id:string;observed_sequence:number|null;revision:number;external_content_id:string;sequence:number;summary_version:string|null;summary_revision:number;summary_total:number|null}
+export interface ReceiptRow extends Omit<SourceReceiptV2,'retryable'|'observed_sequence'> {id:string;automation_task_id?:string|null;observed_sequence:number|null;revision:number;external_content_id:string;sequence:number;summary_version:string|null;summary_revision:number;summary_total:number|null}
 export interface ReceiptHistory {revision:number;status:string;stage:string;reason_code:string|null;observed_sequence:number|null;created_at:string}
 export interface ReceiptCheck {rule_revision:number;fingerprint:string;outcome:'passed'|'blocked';created_at:string}
 export interface ReceiptDetail extends ReceiptRow {history:ReceiptHistory[];checks:ReceiptCheck[];relations:{related_receipt_id:string;kind:'duplicate'|'update'|'withdrawal'}[];can_recheck:boolean}

@@ -19,3 +19,5 @@ export * from './routing'
 export * from './receipts'
 
 export * from './keywords'
+
+export * from './automation'

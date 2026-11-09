@@ -103,6 +103,7 @@ export function decodeResource(value: unknown): Record<string, unknown> {
 export function resourceType(path: string): string {
   const parts = path.split("?")[0].split("/").filter(Boolean);
   if (parts[1] === 'v2' && parts[2] === 'admin') {
+    if (parts[3] === 'source-automation-tasks') return parts[5] === 'stop' ? 'source-automation-task-stops' : parts[5] === 'retry-requests' ? 'source-automation-task-retry-requests' : 'source-automation-tasks';
     if (parts[3] === 'advertisements') return parts[5] ? `advertisement-${parts[5]}` : 'advertisements';
     if (parts[3] === 'routing-units' && parts[5] === 'advertisement-managers') return 'advertisement-managers';
     if (parts[3] === 'routing') return parts[4];
@@ -111,7 +112,7 @@ export function resourceType(path: string): string {
     if (parts[3] === 'source-routes' && parts[5] === 'receipts' && parts[7] === 'rechecks') return 'source-receipt-rechecks';
     if (parts[3] === 'source-routes' && parts[5] === 'advertisement-pool') return parts[6] ? `advertisement-pool-${parts[6]}` : 'advertisement-pool';
     if (parts[3] === 'source-routes' && parts[5]) {
-      const types:Record<string,string>={'advertisement-configuration':'advertisement-configurations','composition-previews':'composition-previews',configuration:'source-route-configurations',lifecycle:'source-route-lifecycle',managers:'source-route-managers',handoff:'source-route-handoffs'};
+      const types:Record<string,string>={'version-policy':'source-route-version-policies','advertisement-configuration':'advertisement-configurations','composition-previews':'composition-previews',configuration:'source-route-configurations',lifecycle:'source-route-lifecycle',managers:'source-route-managers',handoff:'source-route-handoffs'};
       if (types[parts[5]]) return types[parts[5]];
     }
     if (['source-routes','source-credentials'].includes(parts[3])) return parts[5] === 'routes' ? 'source-key-routes' : parts[5] === 'secret-reveals' ? 'source-credential-secret-reveals' : parts[3];

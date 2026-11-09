@@ -21,6 +21,7 @@
     "./device-registry": "./src/modules/device-registry/index.ts",
     "./source-access": "./src/modules/source-access/index.ts",
     "./source-access/routing-client": "./src/modules/source-access/routing-client.ts",
+    "./source-access/automation-client": "./src/modules/source-access/automation-client.ts",
     "./source-access/receipts-client": "./src/modules/source-access/receipts-client.ts",
     "./advertising": "./src/modules/advertising/index.ts",
     "./advertising/client": "./src/modules/advertising/client.ts"
