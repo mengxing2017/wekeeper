@@ -1,0 +1,22 @@
+{
+  "id": 1,
+  "channel": "wecom",
+  "workspace_id": "00000000-0000-0000-0000-000000000001",
+  "task_id": "00000000-0000-0000-0000-000000000002",
+  "target_id": null,
+  "attempt_id": null,
+  "batch_id": "00000000-0000-0000-0000-000000000003",
+  "execution_id": null,
+  "invocation_id": "00000000-0000-0000-0000-000000000004",
+  "evidence_type": "official_task_created",
+  "observation_source": "wecom_api",
+  "observed_at": "2026-11-10T01:00:00Z",
+  "device_occurred_at": null,
+  "external_status": null,
+  "normalized_result": "pending",
+  "detail": {
+    "msgid": "external-task-1",
+    "state": "created"
+  },
+  "reconstructed": false
+}

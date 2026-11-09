@@ -1,3 +1,5 @@
+import type {ChannelObservation} from '../../execution-evidence'
+export {executionEvidenceLabels} from '../../execution-evidence'
 import type { Client } from '../../../http/client'
 import type { Json } from '../../business/types'
 export const SHARED_SEND_SCHEMA = 'shared_mobile_send/2' as const
@@ -20,7 +22,7 @@ export type SharedAttemptState='queued'|'leased'|'prepared'|'invocation_issued'|
 export interface SharedExecutionCondition {waiting_since?:string|null;reason_changed_at?:string|null;code:string;category:string;affected_action:string;scope_type:string;scope_id:string;owner:string;message:string;automatic:boolean;next_action:string;observed_at:string;valid_until:string|null;retry_at:string|null}
 export interface SharedExecutionStatus {phase:'waiting'|'ready'|'executing'|'completed'|'blocked'|'unknown';observed_at:string;conditions:SharedExecutionCondition[];consent_observed_at:string|null;device_state_observed_at:string|null}
 export interface SharedDelegationContext {runtime_report_version:2;id:string;device_id:string;credential_generation:number;authorization_schema:typeof SHARED_DELEGATION_SCHEMA;delegation:{id:string;scope_digest:string;scope:SharedDelegationScope;decision:{accepted:boolean;revision:number}|null};observed_at:string}
-export interface SharedAttempt {invalidated_at?:string|null;device_received_at?:string|null;execution_status?:SharedExecutionStatus;invalidation_reason?:string|null;result_reason?:string|null;id:string;state:SharedAttemptState;revision:number;plan:SharedPlan;plan_digest:string;attempt_no:number;current:boolean}
+export interface SharedAttempt {evidence?:ChannelObservation|null;invalidated_at?:string|null;device_received_at?:string|null;execution_status?:SharedExecutionStatus;invalidation_reason?:string|null;result_reason?:string|null;id:string;state:SharedAttemptState;revision:number;plan:SharedPlan;plan_digest:string;attempt_no:number;current:boolean}
 export interface SharedDispatchAssignment {id:string;school_id:string;old_attempt_id:string;new_attempt_id:string;actor_id:string;source:'manual'|'automatic';reason:string;created_at:string;from_device_name:string|null;to_device_name:string|null}
 export interface SharedDispatchSnapshot {item_id:string;state:'scheduling'|'assigned'|'waiting_resources'|'executing'|'completed'|'needs_review'|'stopped'|'confirmation_expired'|'dispatch_failed';reason:string;revision:number;max_rounds:number;completed_rounds:number;finished_at:string|null;next_retry_at:string|null;updated_at:string;last_failed_attempt_id:string|null;candidates:SharedCandidate[];assignments:SharedDispatchAssignment[]}
 export type SharedTaskStatus = 'dispatching'|'completed'|'stopped'|'dispatch_failed'|'confirmation_expired'|'needs_review'
@@ -99,6 +101,8 @@ export type ExecutionGrant = ExecutionGrantBase & (
  | {kind:'inspection';max_calls:0;inspection_id:string;plan:SharedCandidate & {target:GroupTarget;execution:DeviceExecutionIntent;search_text?:never;flow?:never;flow_digest?:never}}
 )
 export interface ExecutionCompletion {
+ /** Device timestamps are optional, untrusted observations; they never drive platform deadlines. */
+ device_started_at?:string;device_finished_at?:string;
  result_id:string;execution_id:string;result_credential:string;outcome:'observed_sent'|'not_called'|'failed'|'unknown'|'inspection_passed'|'inspection_failed';
  reason:string;evidence:string;consumed:boolean;calling_marked:boolean;
 }

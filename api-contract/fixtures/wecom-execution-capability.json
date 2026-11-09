@@ -1,0 +1,11 @@
+{
+  "execution_mode": "official_customer_group_broadcast",
+  "target_kind": "customer_group",
+  "platform_interaction": "none",
+  "external_confirmation": "member_required",
+  "result_semantics": "official_group_send_result",
+  "limits": {
+    "max_batch_targets": 2000,
+    "max_content_bytes": 4000
+  }
+}

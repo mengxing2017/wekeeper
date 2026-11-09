@@ -19,7 +19,11 @@
       "stop_state": "none",
       "reconciliation": null,
       "operation_unknown": false,
-      "msgid": "official-task"
+      "msgid": "official-task",
+      "execution_mode": "official_customer_group_broadcast",
+      "sync_failures": 0,
+      "next_sync_at": null,
+      "evidence": null
     }
   }
 }

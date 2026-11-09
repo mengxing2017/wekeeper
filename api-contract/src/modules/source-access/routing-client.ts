@@ -1,3 +1,4 @@
+import type {ExecutionCapability} from '../execution-evidence'
 import type {Client} from '../../http/client'
 export type RoutingChannel='wecom'|'mobile'
 export type RoutingEntityKind='routing-units'|'routing-groups'
@@ -7,7 +8,7 @@ export interface RoutingExecution {channel:RoutingChannel;workspace_id:string;ta
 export interface RoutingTarget {id:string;name:string;identity:Record<string,unknown>;resource_available:boolean}
 export interface RoutingSnapshot {route_id:string;revision:number;source_id:string;unit_id:string;unit_name:string;group_id:string;group_name:string;execution:RoutingExecution|null;targets:RoutingTarget[];configured_by:string}
 export interface RouteManager {id:string;username:string;revision:number;can_recheck:boolean}
-export interface RouteConfiguration {id:string;revision:number;config_revision:number;unit_id:string|null;group_id:string|null;status:string;execution_state:'draft'|'running'|'paused';retired_at:string|null;snapshot:RoutingSnapshot|null;managers:RouteManager[]}
+export interface RouteConfiguration {execution_capability?:ExecutionCapability;id:string;revision:number;config_revision:number;unit_id:string|null;group_id:string|null;status:string;execution_state:'draft'|'running'|'paused';retired_at:string|null;snapshot:RoutingSnapshot|null;managers:RouteManager[]}
 export interface RouteConfigurationInput {revision:number;unit_id:string;group_id:string;execution:RoutingExecution|null}
 export interface RoutingCheck {ready:boolean;issues:string[]}
 export interface RoutingRevision {revision:number;snapshot:RoutingSnapshot;actor_id:string;created_at:string}
