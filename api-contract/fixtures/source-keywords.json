@@ -1,0 +1,55 @@
+{
+  "publication": {
+    "expected_revision": 1,
+    "reason": "增加限制词",
+    "entries": [
+      {
+        "word": "Ｓtraße",
+        "enabled": true
+      }
+    ]
+  },
+  "normalization": [
+    {
+      "input": "ＳＴＲＡＳＳＥ Straße K Σς",
+      "normalized": "strasse strasse k σσ"
+    },
+    {
+      "input": "é",
+      "normalized": "é"
+    },
+    {
+      "input": "A  B\nC​",
+      "normalized": "a  b\nc​"
+    }
+  ],
+  "check": {
+    "id": "00000000-0000-0000-0000-000000000001",
+    "receipt_id": "00000000-0000-0000-0000-000000000001",
+    "stage": "final",
+    "payload_fingerprint": "payload-hash",
+    "context": {
+      "source_id": "00000000-0000-0000-0000-000000000001",
+      "route_id": "route-one",
+      "unit_id": null,
+      "channel": "mobile",
+      "workspace_id": "00000000-0000-0000-0000-000000000001",
+      "versions": [
+        {
+          "scope_id": "global",
+          "revision": 2,
+          "version_id": "00000000-0000-0000-0000-000000000001"
+        }
+      ]
+    },
+    "effective_fingerprint": "effective-hash",
+    "input_digest": "input-hash",
+    "normalized_digest": "normalized-hash",
+    "algorithm": "nfkc-fullfold/1",
+    "unicode_version": "18.0.0",
+    "outcome": "blocked",
+    "total_hits": 101,
+    "truncated": true,
+    "created_at": "2026-11-09T00:00:00+00:00"
+  }
+}

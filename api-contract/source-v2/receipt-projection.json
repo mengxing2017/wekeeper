@@ -1,5 +1,5 @@
 {
-  "contract_version": "source-v2-2",
+  "contract_version": "source-v2-3",
   "statuses": [
     "received",
     "applied",
@@ -19,7 +19,8 @@
     "ignored_stale",
     "projection_duplicate",
     "rejected",
-    "execution_stopped"
+    "execution_stopped",
+    "execution_blocked"
   ],
   "reason_codes": [
     "content_version_conflict",
@@ -27,7 +28,12 @@
     "keyword_blocked",
     "content_check_pending",
     "recheck_not_allowed",
-    "channel_content_invalid"
+    "channel_content_invalid",
+    "workspace_keyword_blocked",
+    "final_keyword_blocked",
+    "keyword_rules_unavailable",
+    "keyword_engine_unavailable",
+    "keyword_engine_budget_exceeded"
   ],
   "fingerprint_algorithm": "source-payload/1",
   "summary_algorithm": "targets/1",

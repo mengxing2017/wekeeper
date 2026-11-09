@@ -1,5 +1,5 @@
 {
-  "release": "source-v2-2",
+  "release": "source-v2-3",
   "signature_versions": [
     2
   ],
@@ -33,12 +33,14 @@
     "fixtures/source-errors-v2.json": "9663ee0d3e1ac0734a9532b28805fba9f58479076772349e53ae1366d88a2471",
     "fixtures/source-receipt-v2.json": "f642da5c011a31b5d40b915c91ce5460fa52202cafcb10e70aac1b50f06a080c",
     "fixtures/source-v2.json": "2265c1496fc64d2360328cb822e8bbd02d24abe6e5e1663e002262e85241496e",
-    "source-v2/errors.json": "da286daf20347cd0fde98e327495725d703517e6ba5673acd54e3ff1c0b923f7",
+    "source-v2/errors.json": "053f7710c1e43e6438aba6afb600b3856fe40469cfde81d9e45593688192020f",
     "source-v2/event.schema.json": "3f2585b302a1ac54f209226e20cccd145104ec5c1571f45e3c15d86187d10657",
     "fixtures/source-routing.json": "080d775cac41783638c744132e7197bbd2d5ab2168e5f08a38cbc7e9fb1aef0a",
     "source-v2/routing-management.json": "04939d41f5c061ed41f51ba758d5bbf4ce60951dd67ff0eaef0bf1f81e7b443e",
     "fixtures/source-projection.json": "8c761f216e95047f182960e4e505286cf8142d0b977e3c86a058069ba438c3c9",
-    "source-v2/receipt-projection.json": "bcc3cde2a14bb42af5adbff712cc0165683686501533a4ca713eb05da3aa6d89",
-    "fixtures/source-receipt-projection.json": "22dbb8da0ca9c8ae8b1f09d30313b7b1db04c165ee16718c2503269bce536780"
+    "source-v2/receipt-projection.json": "95cfd6473efbb2abc7ce4bbc91999a4e2154b5b4e1e26a9e36be64483887a471",
+    "fixtures/source-receipt-projection.json": "22dbb8da0ca9c8ae8b1f09d30313b7b1db04c165ee16718c2503269bce536780",
+    "fixtures/source-keywords.json": "a8b033a96ea2f5b8426b12edb172c0b2ab462abfdbadf8e8ac9faa7a8220c135",
+    "source-v2/keyword-filter.json": "5e5ad40a36762eaf07456b12c0ad0665374e6a3cd3af705eddd9ffbd384583ea"
   }
 }

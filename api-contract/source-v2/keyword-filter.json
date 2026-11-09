@@ -1,0 +1,25 @@
+{
+  "contract_version": "source-v2-3",
+  "algorithm": "nfkc-fullfold/1",
+  "unicode_version": "18.0.0",
+  "composer": "source-text/1",
+  "scopes": [
+    "global",
+    "source",
+    "unit",
+    "route",
+    "workspace"
+  ],
+  "stages": [
+    "original_common",
+    "original_workspace",
+    "final"
+  ],
+  "sample_offsets": "normalized Unicode scalar offsets, [start,end)",
+  "page_size": 30,
+  "sample_limit": 100,
+  "publication_type": "keyword-rule-publications",
+  "empty_scope": "persisted head and immutable empty version required",
+  "sending_boundary": "platform signing or official submission; delivered device packages execute locally",
+  "advertisement_integration": "candidate exclusion port only; real sequence/cursor integration belongs to 07/08"
+}

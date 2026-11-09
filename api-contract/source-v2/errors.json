@@ -3,7 +3,11 @@
     "invalid_request",
     "forbidden_field",
     "event_identity_mismatch",
-    "unsupported_version"
+    "unsupported_version",
+    "invalid_keyword",
+    "duplicate_keyword",
+    "keyword_limit_exceeded",
+    "keyword_input_too_large"
   ],
   "401": [
     "authentication_failed",
@@ -33,6 +37,9 @@
     "rate_limited"
   ],
   "503": [
-    "temporarily_unavailable"
+    "temporarily_unavailable",
+    "keyword_rules_unavailable",
+    "keyword_engine_unavailable",
+    "keyword_engine_budget_exceeded"
   ]
 }

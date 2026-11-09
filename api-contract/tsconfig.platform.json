@@ -15,6 +15,7 @@
     "src/modules/wecom-distribution/client.ts",
     "src/modules/mobile-execution/shared-send/client.ts",
     "src/modules/source-access/routing-client.ts",
-    "src/modules/source-access/receipts-client.ts"
+    "src/modules/source-access/receipts-client.ts",
+    "src/modules/source-access/keywords-client.ts"
   ]
 }
