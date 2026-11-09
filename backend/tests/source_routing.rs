@@ -10,6 +10,7 @@ use wekeeper_api::{
     },
 };
 struct Fixture {
+    test_guard: Option<sqlx::Transaction<'static, sqlx::Postgres>>,
     pool: PgPool,
     base: PgPool,
     schema: String,
@@ -24,9 +25,24 @@ struct Fixture {
 }
 impl Fixture {
     async fn new() -> Self {
+        Self::new_with_guard(true).await
+    }
+    async fn new_with_guard(ordinary: bool) -> Self {
         let url = std::env::var("WEKEEPER_TEST_DATABASE_URL")
             .expect("explicit isolated database required");
         let base = PgPool::connect(&url).await.unwrap();
+        // The cross-pool test holds a full transaction deliberately. Exclude unrelated
+        // tests that mutate the legacy global device barrier while that test runs.
+        let test_guard = if ordinary {
+            let mut guard = base.begin().await.unwrap();
+            sqlx::query("SELECT pg_advisory_xact_lock_shared(74182318)")
+                .execute(&mut *guard)
+                .await
+                .unwrap();
+            Some(guard)
+        } else {
+            None
+        };
         let schema = format!("source_routing_{}", Uuid::new_v4().simple());
         sqlx::query(&format!("CREATE SCHEMA {schema}"))
             .execute(&base)
@@ -113,6 +129,7 @@ impl Fixture {
             .unwrap();
         let group = serde_json::from_value(g["id"].clone()).unwrap();
         Self {
+            test_guard,
             pool,
             base,
             schema,
@@ -184,6 +201,9 @@ impl Fixture {
             .execute(&self.base)
             .await
             .unwrap();
+        if let Some(guard) = self.test_guard {
+            guard.rollback().await.unwrap();
+        }
         self.base.close().await;
     }
 }
@@ -2406,5 +2426,683 @@ async fn advertisement_deletion_removes_active_listing_and_retains_version_histo
         .await
         .unwrap();
     assert!(candidates["items"].as_array().unwrap().is_empty());
+    f.close().await;
+}
+
+async fn ordered_pool(f: &Fixture) -> (Uuid, Uuid, Value) {
+    use wekeeper_api::advertising::domain as a;
+    let one = select_ad(f, "mobile", f.workspace).await;
+    let second = ads(f)
+        .execute(
+            &f.actor,
+            a::Command::Create(a::Create {
+                owner_unit_id: f.unit,
+                content: a::Content {
+                    name: "第二广告".into(),
+                    body: "第二条广告正文".into(),
+                    link: None,
+                },
+                workspaces: vec![a::Scope {
+                    kind: "unit".into(),
+                    id: f.unit.to_string(),
+                    channel: Some("mobile".into()),
+                    workspace_id: Some(f.workspace),
+                }],
+                reason: "第二素材".into(),
+            }),
+        )
+        .await
+        .unwrap();
+    let two: Uuid = serde_json::from_value(second["id"].clone()).unwrap();
+    let pool = ads(f)
+        .execute(
+            &f.actor,
+            a::Command::PublishPool(
+                f.route.clone(),
+                a::pool::Publication {
+                    expected_revision: 0,
+                    reason: "重复序列".into(),
+                    slots: [one, two, two, one]
+                        .into_iter()
+                        .map(|ad_id| a::pool::SlotInput {
+                            slot_id: None,
+                            ad_id,
+                        })
+                        .collect(),
+                },
+            ),
+        )
+        .await
+        .unwrap();
+    ads(f)
+        .execute(
+            &f.actor,
+            a::Command::Configure(
+                f.route.clone(),
+                a::Configuration {
+                    expected_revision: 1,
+                    reason: "启用池".into(),
+                    config: a::Config {
+                        mode: "pool".into(),
+                        ..Default::default()
+                    },
+                },
+            ),
+        )
+        .await
+        .unwrap();
+    (one, two, pool)
+}
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn ordered_pool_exact_repeats_concurrent_workers_restarts_edits_and_reset() {
+    use wekeeper_api::advertising::domain as a;
+    let f = Fixture::new().await;
+    f.configure(vec![f.targets[0]]).await;
+    let (one, two, initial) = ordered_pool(&f).await;
+    assert_ne!(
+        initial["slots"][1]["slot_id"],
+        initial["slots"][2]["slot_id"]
+    );
+    f.lifecycle(LifecycleAction::Enable).await;
+    let mut receipts = vec![];
+    for n in 0..20 {
+        receipts.push(inbox(&f, &format!("pool-{n}"), 1, "content.upsert").await);
+    }
+    let w = RoutingRepository(f.pool.clone());
+    let other = RoutingRepository(f.pool.clone());
+    for _ in 0..3 {
+        let (x, y) = tokio::join!(w.run_once(), other.run_once());
+        x.unwrap();
+        y.unwrap();
+    }
+    let chosen:Vec<Uuid>=sqlx::query_scalar("SELECT (selection->>'ad_id')::uuid FROM advertisement_pool_consumptions ORDER BY selection_order").fetch_all(&f.pool).await.unwrap();
+    assert_eq!(
+        chosen,
+        (0..5)
+            .flat_map(|_| [one, two, two, one])
+            .collect::<Vec<_>>()
+    );
+    let cursor: Value = ads(&f)
+        .execute(&f.actor, a::Command::Pool(f.route.clone()))
+        .await
+        .unwrap();
+    assert_eq!(cursor["cursor"]["selection_order"], 20);
+    assert_eq!(cursor["cursor"]["cycle"], 5);
+    let counts = ads(&f)
+        .execute(&f.actor, a::Command::Consumptions(f.route.clone(), 1))
+        .await
+        .unwrap();
+    assert_eq!(counts["statistics"]["selections"], 20);
+    assert_eq!(counts["statistics"]["valid_targets"], 20);
+    assert_eq!(counts["statistics"]["device_attempts"], 20);
+    assert_eq!(counts["statistics"]["sent_targets"], 0);
+    assert_eq!(counts["statistics"]["pending_targets"], 20);
+    assert_eq!(counts["slot_statistics"].as_array().unwrap().len(), 4);
+    assert!(
+        counts["slot_statistics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|c| c["selections"] == 5)
+    );
+    assert_eq!(counts["ad_statistics"].as_array().unwrap().len(), 2);
+    assert!(
+        counts["ad_statistics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|c| c["selections"] == 10)
+    );
+    // A restarted worker cannot consume the existing 20 events again.
+    RoutingRepository(f.pool.clone()).run_once().await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM advertisement_pool_consumptions")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        20
+    );
+    let before = composition(&f, receipts[0]).await;
+    let reset = ads(&f)
+        .execute(
+            &f.actor,
+            a::Command::ResetPool(
+                f.route.clone(),
+                a::pool::Reset {
+                    expected_revision: 1,
+                    expected_cursor_version: 21,
+                    reason: "重新开始".into(),
+                },
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(reset["cursor"]["selection_order"], 20);
+    assert_eq!(reset["cursor"]["reset_epoch"], 1);
+    let conflict = ads(&f)
+        .execute(
+            &f.actor,
+            a::Command::ResetPool(
+                f.route.clone(),
+                a::pool::Reset {
+                    expected_revision: 1,
+                    expected_cursor_version: 21,
+                    reason: "过时重置".into(),
+                },
+            ),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(conflict.0, "revision_conflict");
+    let new = inbox(&f, "after-reset", 1, "content.upsert").await;
+    w.run_once().await.unwrap();
+    assert_eq!(composition(&f, new).await["selection"]["ad_id"], json!(one));
+    assert_eq!(composition(&f, receipts[0]).await, before);
+    // Moving the consumed slot keeps its identity and continues from its new successor.
+    let slots: Vec<a::pool::Slot> = serde_json::from_value(initial["slots"].clone()).unwrap();
+    let order = [
+        slots[1].clone(),
+        slots[0].clone(),
+        slots[2].clone(),
+        slots[3].clone(),
+    ];
+    let published = ads(&f)
+        .execute(
+            &f.actor,
+            a::Command::PublishPool(
+                f.route.clone(),
+                a::pool::Publication {
+                    expected_revision: 1,
+                    reason: "移动首槽".into(),
+                    slots: order
+                        .into_iter()
+                        .map(|s| a::pool::SlotInput {
+                            slot_id: Some(s.slot_id),
+                            ad_id: s.ad_id,
+                        })
+                        .collect(),
+                },
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(published["pool_id"], initial["pool_id"]);
+    assert_eq!(published["cursor"]["next_slot_id"], json!(slots[2].slot_id));
+    f.close().await;
+}
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn ordered_pool_bounded_skips_no_candidate_no_consumption_and_preview() {
+    use wekeeper_api::advertising::domain as a;
+    let f = Fixture::new().await;
+    f.configure(vec![f.targets[0]]).await;
+    let (one, two, _) = ordered_pool(&f).await;
+    f.lifecycle(LifecycleAction::Enable).await;
+    disable_ad(&f, two).await;
+    for _ in 0..10 {
+        ads(&f)
+            .execute(
+                &f.actor,
+                a::Command::Preview(
+                    f.route.clone(),
+                    a::Preview {
+                        title: Some("通知".into()),
+                        content: Some("正文".into()),
+                        detail_url: "https://example.com".into(),
+                    },
+                ),
+            )
+            .await
+            .unwrap();
+    }
+    let first = inbox(&f, "skip-1", 1, "content.upsert").await;
+    let second = inbox(&f, "skip-2", 1, "content.upsert").await;
+    RoutingRepository(f.pool.clone()).run_once().await.unwrap();
+    assert_eq!(
+        composition(&f, first).await["selection"]["ad_id"],
+        json!(one)
+    );
+    let c = composition(&f, second).await;
+    assert_eq!(c["selection"]["pool"]["selected_position"], 4);
+    assert_eq!(c["selection"]["pool"]["scans"].as_array().unwrap().len(), 3);
+    disable_ad(&f, one).await;
+    let none = inbox(&f, "all-disabled", 1, "content.upsert").await;
+    RoutingRepository(f.pool.clone()).run_once().await.unwrap();
+    let c = composition(&f, none).await;
+    assert!(c["selection"]["ad_id"].is_null());
+    assert!(c["selection"]["pool"]["selected_slot_id"].is_null());
+    assert_eq!(
+        c["selection"]["pool"]["before"],
+        c["selection"]["pool"]["after"]
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM advertisement_pool_consumptions")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        2
+    );
+    f.close().await;
+}
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn ordered_pool_reservation_survives_restart_without_later_events_overtaking() {
+    let f = Fixture::new().await;
+    f.configure(vec![f.targets[0]]).await;
+    let (one, two, _) = ordered_pool(&f).await;
+    f.lifecycle(LifecycleAction::Enable).await;
+    let first = inbox(&f, "reserved-first", 1, "content.upsert").await;
+    let second = inbox(&f, "reserved-second", 1, "content.upsert").await;
+    sqlx::query("UPDATE advertisement_pool_queue SET reservation_version=10,reservation_expiry=now()+interval '2 minutes' WHERE receipt_id=$1")
+        .bind(first).execute(&f.pool).await.unwrap();
+    RoutingRepository(f.pool.clone()).run_once().await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM advertisement_pool_consumptions")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        0
+    );
+    // Simulate a crashed owner's expiration without waiting on wall-clock sleeps.
+    sqlx::query("UPDATE advertisement_pool_queue SET reservation_expiry=now()-interval '1 second' WHERE receipt_id=$1")
+        .bind(first).execute(&f.pool).await.unwrap();
+    RoutingRepository(f.pool.clone()).run_once().await.unwrap();
+    assert_eq!(
+        composition(&f, first).await["selection"]["ad_id"],
+        json!(one)
+    );
+    assert_eq!(
+        composition(&f, second).await["selection"]["ad_id"],
+        json!(two)
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT reservation_version FROM advertisement_pool_queue WHERE receipt_id=$1"
+        )
+        .bind(first)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap(),
+        11
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn ordered_pool_task_failure_rolls_back_cursor_and_decision() {
+    use wekeeper_api::advertising::domain as a;
+    let f = Fixture::new().await;
+    f.configure(vec![f.targets[0]]).await;
+    let (one, _, _) = ordered_pool(&f).await;
+    f.lifecycle(LifecycleAction::Enable).await;
+    let r = inbox(&f, "fault", 1, "content.upsert").await;
+    sqlx::query("CREATE FUNCTION fail_pool_task() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected task failure'; END $$").execute(&f.pool).await.unwrap();
+    let w = RoutingRepository(f.pool.clone());
+    for table in [
+        "distribution_message_snapshots",
+        "source_message_compositions",
+        "advertisement_pool_consumptions",
+        "mobile_v9_task_items",
+        "source_execution_tasks",
+        "source_access_audit",
+    ] {
+        let condition = if table == "source_access_audit" {
+            "WHEN (NEW.action='source.task.created')"
+        } else {
+            ""
+        };
+        sqlx::query(&format!("CREATE TRIGGER fail_pool_task BEFORE INSERT ON {table} FOR EACH ROW {condition} EXECUTE FUNCTION fail_pool_task()"))
+            .execute(&f.pool).await.unwrap();
+        sqlx::query("UPDATE source_inbox SET next_attempt_at=now() WHERE receipt_id=$1")
+            .bind(r)
+            .execute(&f.pool)
+            .await
+            .unwrap();
+        w.run_once().await.unwrap();
+        let p = ads(&f)
+            .execute(&f.actor, a::Command::Pool(f.route.clone()))
+            .await
+            .unwrap();
+        assert_eq!(p["cursor"]["selection_order"], 0, "{table}");
+        let leftovers: i64 = sqlx::query_scalar("SELECT (SELECT count(*) FROM source_message_compositions)+(SELECT count(*) FROM advertisement_pool_consumptions)+(SELECT count(*) FROM source_execution_tasks)+(SELECT count(*) FROM distribution_message_snapshots)+(SELECT count(*) FROM mobile_v9_task_items)")
+            .fetch_one(&f.pool).await.unwrap();
+        assert_eq!(leftovers, 0, "partial commit after failure on {table}");
+        sqlx::query(&format!("DROP TRIGGER fail_pool_task ON {table}"))
+            .execute(&f.pool)
+            .await
+            .unwrap();
+    }
+    sqlx::query("UPDATE source_inbox SET next_attempt_at=now() WHERE receipt_id=$1")
+        .bind(r)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    w.run_once().await.unwrap();
+    assert_eq!(composition(&f, r).await["selection"]["ad_id"], json!(one));
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM advertisement_pool_consumptions")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        1
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn ordered_pools_commit_independently_while_another_full_task_transaction_is_blocked() {
+    let test_base = PgPool::connect(
+        &std::env::var("WEKEEPER_TEST_DATABASE_URL").expect("isolated database required"),
+    )
+    .await
+    .unwrap();
+    let mut isolation = test_base.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(74182318)")
+        .execute(&mut *isolation)
+        .await
+        .unwrap();
+    let a = Fixture::new_with_guard(false).await;
+    let b = Fixture::new_with_guard(false).await;
+    a.configure(vec![a.targets[0]]).await;
+    b.configure(vec![b.targets[0]]).await;
+    ordered_pool(&a).await;
+    ordered_pool(&b).await;
+    a.lifecycle(LifecycleAction::Enable).await;
+    b.lifecycle(LifecycleAction::Enable).await;
+    let ar = inbox(&a, "pool-a", 1, "content.upsert").await;
+    let br = inbox(&b, "pool-b", 1, "content.upsert").await;
+    let gate = 74182319_i64;
+    let mut blocker = a.pool.acquire().await.unwrap();
+    sqlx::query("SELECT pg_advisory_lock($1)")
+        .bind(gate)
+        .execute(&mut *blocker)
+        .await
+        .unwrap();
+    sqlx::query("CREATE FUNCTION pause_pool_commit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_xact_lock(74182319::bigint); RETURN NEW; END $$").execute(&a.pool).await.unwrap();
+    sqlx::query("CREATE TRIGGER pause_pool_commit BEFORE INSERT ON source_execution_tasks FOR EACH ROW EXECUTE FUNCTION pause_pool_commit()").execute(&a.pool).await.unwrap();
+    let aw = RoutingRepository(a.pool.clone());
+    let worker = tokio::spawn(async move { aw.run_once().await });
+    // Observe the actual blocked task insert, rather than relying on a timing sleep.
+    tokio::time::timeout(std::time::Duration::from_secs(15),async {
+        loop {
+            let waiting:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND objid=74182319 AND NOT granted)").fetch_one(&a.pool).await.unwrap();
+            if waiting {break} tokio::task::yield_now().await;
+        }
+    }).await.unwrap();
+    let independent = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        RoutingRepository(b.pool.clone()).run_once(),
+    )
+    .await;
+    sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(gate)
+        .execute(&mut *blocker)
+        .await
+        .unwrap();
+    drop(blocker);
+    worker.await.unwrap().unwrap();
+    independent
+        .expect("unrelated pool must not wait on global source transaction lock")
+        .unwrap();
+    assert!(composition(&a, ar).await["selection"]["ad_id"].is_string());
+    assert!(composition(&b, br).await["selection"]["ad_id"].is_string());
+    a.close().await;
+    b.close().await;
+    isolation.rollback().await.unwrap();
+    test_base.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn ordered_pool_final_filter_skips_and_frozen_tasks_never_reselect() {
+    use wekeeper_api::advertising::domain as a;
+    use wekeeper_api::source_access::{
+        domain::keyword_filter as k, north::local::keyword_filter::Service as KeywordService,
+        south::adapter::postgres::keyword_filter::KeywordRepository,
+    };
+    let f = Fixture::new().await;
+    f.configure(vec![f.targets[0]]).await;
+    let (one, _two, _) = ordered_pool(&f).await;
+    f.lifecycle(LifecycleAction::Enable).await;
+    let frozen = inbox(&f, "frozen", 1, "content.upsert").await;
+    let w = RoutingRepository(f.pool.clone());
+    w.run_once().await.unwrap();
+    let original = composition(&f, frozen).await;
+    disable_ad(&f, one).await;
+    // This original task is wholly unstarted: fixed would replace it, pool must not.
+    for _ in 0..3 {
+        w.run_once().await.unwrap();
+    }
+    assert_eq!(composition(&f, frozen).await, original);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM advertisement_pool_consumptions")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        1
+    );
+    let scope = format!("mobile:{}", f.workspace);
+    let revision: i64 = sqlx::query_scalar("SELECT revision FROM keyword_scope_heads WHERE id=$1")
+        .bind(&scope)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    KeywordService(KeywordRepository(f.pool.clone()))
+        .execute(
+            &f.actor,
+            k::Command::Publish {
+                scope,
+                input: k::Publication {
+                    expected_revision: revision,
+                    reason: "拦截第二广告".into(),
+                    entries: vec![k::Entry {
+                        word: "第二条广告".into(),
+                        enabled: true,
+                    }],
+                },
+            },
+        )
+        .await
+        .unwrap();
+    let no_ad = inbox(&f, "final-filter", 1, "content.upsert").await;
+    for _ in 0..3 {
+        w.run_once().await.unwrap();
+    }
+    let c = composition(&f, no_ad).await;
+    assert!(c["selection"]["ad_id"].is_null());
+    let scans = c["selection"]["pool"]["scans"].as_array().unwrap();
+    assert_eq!(scans.len(), 4);
+    assert_eq!(scans[0]["exclusion"], "ad_final_keyword_blocked");
+    assert_eq!(scans[1]["exclusion"], "ad_final_keyword_blocked");
+    let pool = ads(&f)
+        .execute(&f.actor, a::Command::Pool(f.route.clone()))
+        .await
+        .unwrap();
+    assert_eq!(pool["cursor"]["selection_order"], 1);
+    // Restoring advertising does not turn a frozen no-ad task into a fresh pool selection.
+    let detail = ads(&f)
+        .execute(&f.actor, a::Command::Detail(one))
+        .await
+        .unwrap();
+    let mut policy: a::Policy = serde_json::from_value(detail["policy"].clone()).unwrap();
+    policy.enabled = true;
+    ads(&f)
+        .execute(
+            &f.actor,
+            a::Command::Policy(
+                one,
+                a::PolicyPublication {
+                    expected_revision: detail["revision"].as_i64().unwrap(),
+                    reason: "恢复投放".into(),
+                    policy,
+                },
+            ),
+        )
+        .await
+        .unwrap();
+    for _ in 0..3 {
+        w.run_once().await.unwrap();
+    }
+    assert_eq!(composition(&f, no_ad).await, c);
+    assert_eq!(composition(&f, frozen).await, original);
+    // A final-only cross-field match also blocks the no-ad fallback as a business
+    // outcome; it must not become an endless stale-proposal retry at the queue head.
+    let scope = format!("mobile:{}", f.workspace);
+    let revision: i64 = sqlx::query_scalar("SELECT revision FROM keyword_scope_heads WHERE id=$1")
+        .bind(&scope)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    KeywordService(KeywordRepository(f.pool.clone()))
+        .execute(
+            &f.actor,
+            k::Command::Publish {
+                scope,
+                input: k::Publication {
+                    expected_revision: revision,
+                    reason: "阻止最终跨字段正文".into(),
+                    entries: vec![k::Entry {
+                        word: "通知\n正文".into(),
+                        enabled: true,
+                    }],
+                },
+            },
+        )
+        .await
+        .unwrap();
+    let blocked = inbox(&f, "no-ad-final-blocked", 1, "content.upsert").await;
+    w.run_once().await.unwrap();
+    assert_eq!(
+        receipt_value(&f, blocked).await["reason_code"],
+        "final_keyword_blocked"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM source_execution_tasks WHERE receipt_id=$1"
+        )
+        .bind(blocked)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM advertisement_pool_consumptions")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        1
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn ordered_pool_copy_has_new_progress_and_management_rejects_foreign_slots() {
+    use wekeeper_api::advertising::domain as a;
+    let f = Fixture::new().await;
+    f.configure(vec![f.targets[0]]).await;
+    let (_, _, original) = ordered_pool(&f).await;
+    let target = Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO source_routes(route_id,source_id,route_name,status) VALUES($1,$2,'Copy','active')").bind(&target).bind(f.source).execute(&f.pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO source_key_routes(key_id,route_id,source_id,status) VALUES($1,$2,$3,'active')",
+    )
+    .bind(&f.key)
+    .bind(&target)
+    .bind(f.source)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    f.service()
+        .execute(
+            &f.actor,
+            Command::Configure {
+                route: target.clone(),
+                input: ConfigurationInput {
+                    revision: 1,
+                    unit_id: f.unit,
+                    group_id: f.group,
+                    execution: Some(ExecutionConfig {
+                        channel: Channel::Mobile,
+                        workspace_id: f.workspace,
+                        target_ids: vec![f.targets[0]],
+                    }),
+                },
+            },
+        )
+        .await
+        .unwrap();
+    let copied = ads(&f)
+        .execute(
+            &f.actor,
+            a::Command::CopyPool(
+                f.route.clone(),
+                a::pool::Copy {
+                    target_route_id: target.clone(),
+                    expected_revision: 0,
+                    reason: "复制从头开始".into(),
+                },
+            ),
+        )
+        .await
+        .unwrap();
+    assert_ne!(copied["pool_id"], original["pool_id"]);
+    assert_eq!(copied["cursor"]["selection_order"], 0);
+    for i in 0..4 {
+        assert_eq!(copied["slots"][i]["ad_id"], original["slots"][i]["ad_id"]);
+        assert_ne!(
+            copied["slots"][i]["slot_id"],
+            original["slots"][i]["slot_id"]
+        );
+    }
+    let foreign: a::pool::Slot = serde_json::from_value(original["slots"][0].clone()).unwrap();
+    let error = ads(&f)
+        .execute(
+            &f.actor,
+            a::Command::PublishPool(
+                target.clone(),
+                a::pool::Publication {
+                    expected_revision: 1,
+                    reason: "不允许外池槽位".into(),
+                    slots: vec![a::pool::SlotInput {
+                        slot_id: Some(foreign.slot_id),
+                        ad_id: foreign.ad_id,
+                    }],
+                },
+            ),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.0, "ad_pool_invalid_slot");
+    let uid = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO accounts(id,username,display_name) VALUES($1,'pool-outsider','Outsider')",
+    )
+    .bind(uid)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    let outsider:Actor=serde_json::from_value(json!({"id":uid,"username":"pool-outsider","display_name":"Outsider","platform_admin":false,"grants":[],"wecom_authenticated":false})).unwrap();
+    for command in [
+        a::Command::Pool(target.clone()),
+        a::Command::Consumptions(target.clone(), 1),
+        a::Command::ResetPool(
+            target,
+            a::pool::Reset {
+                expected_revision: 1,
+                expected_cursor_version: 1,
+                reason: "越权重置".into(),
+            },
+        ),
+    ] {
+        assert_eq!(
+            ads(&f).execute(&outsider, command).await.unwrap_err().0,
+            "forbidden"
+        );
+    }
     f.close().await;
 }

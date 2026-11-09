@@ -185,6 +185,40 @@ async fn two_instances_replay_scope_lifetime_and_deletion() {
     .await;
     assert_eq!(status, 200);
     assert_eq!(dup["data"]["id"], receipt);
+    // Distinct nonces must still converge on one receipt across server instances.
+    let concurrent_event = Uuid::now_v7();
+    let mut concurrent_body: Value = serde_json::from_slice(&body).unwrap();
+    concurrent_body["data"]["id"] = json!(concurrent_event);
+    concurrent_body["data"]["attributes"]["event_id"] = json!(concurrent_event);
+    concurrent_body["data"]["attributes"]["external_content_id"] = json!("parallel-event");
+    let concurrent_body = serde_json::to_vec(&concurrent_body).unwrap();
+    let (left, right) = tokio::join!(
+        one.clone().oneshot(signed(
+            key,
+            &material,
+            path,
+            "POST",
+            concurrent_event,
+            Uuid::new_v4(),
+            &concurrent_body
+        )),
+        two.clone().oneshot(signed(
+            key,
+            &material,
+            path,
+            "POST",
+            concurrent_event,
+            Uuid::new_v4(),
+            &concurrent_body
+        ))
+    );
+    let (left_status, left) = read(left.unwrap()).await;
+    let (right_status, right) = read(right.unwrap()).await;
+    assert!(
+        (left_status == 202 && right_status == 200) || (left_status == 200 && right_status == 202),
+        "{left_status} {left} {right_status} {right}"
+    );
+    assert_eq!(left["data"]["id"], right["data"]["id"]);
     let mut changed: Value = serde_json::from_slice(&body).unwrap();
     changed["data"]["attributes"]["title"] = json!("different");
     let changed = serde_json::to_vec(&changed).unwrap();

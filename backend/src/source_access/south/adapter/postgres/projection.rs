@@ -37,9 +37,13 @@ impl RoutingRepository {
         crate::distribution::south::adapter::postgres::routing::source_guard(&mut tx)
             .await
             .map_err(|_| Fault("temporarily_unavailable"))?;
-        sqlx::query("SELECT source_id FROM source_callers WHERE source_id=$1 FOR UPDATE")
+        sqlx::query("SELECT source_id FROM source_callers WHERE source_id=$1 FOR SHARE")
             .bind(source)
             .fetch_one(&mut *tx)
+            .await?;
+        sqlx::query("SELECT route_id FROM source_routes WHERE route_id=$1 FOR UPDATE")
+            .bind(&event.route_id)
+            .fetch_optional(&mut *tx)
             .await?;
         let row =
             sqlx::query("SELECT state,projected FROM source_inbox WHERE receipt_id=$1 FOR UPDATE")

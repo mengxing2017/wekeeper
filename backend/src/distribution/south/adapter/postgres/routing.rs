@@ -132,6 +132,10 @@ pub async fn create_official_task(
 }
 
 pub async fn source_guard(tx: &mut Transaction<'_, Postgres>) -> Result<()> {
-    super::broadcast::guard(tx).await?;
+    // Source tasks mutate their own route/task/target rows. Shared barriers retain
+    // compatibility with channel control writes without serializing unrelated pools.
+    sqlx::query("SELECT pg_advisory_xact_lock_shared(78234610242)")
+        .execute(&mut **tx)
+        .await?;
     super::shared_send_v2::source_guard(tx).await
 }

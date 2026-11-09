@@ -13,6 +13,8 @@ type Tx<'a> = Transaction<'a, Postgres>;
 #[derive(Clone)]
 pub struct Repository(pub PgPool);
 pub mod pipeline;
+pub(crate) mod pools;
+pub(crate) mod queue;
 pub(crate) async fn guard(tx: &mut Tx<'_>) -> Result<()> {
     crate::distribution::south::adapter::postgres::routing::source_guard(tx)
         .await
@@ -27,7 +29,7 @@ async fn capabilities(
     if admin {
         return Ok((true, true));
     }
-    Ok(sqlx::query_as("SELECT can_edit,can_share FROM advertisement_unit_managers WHERE unit_id=$1 AND account_id=$2").bind(unit).bind(actor).fetch_optional(&mut **tx).await?.unwrap_or((false,false)))
+    Ok(sqlx::query_as("SELECT can_edit,can_share FROM advertisement_unit_managers WHERE unit_id=$1 AND account_id=$2 FOR SHARE").bind(unit).bind(actor).fetch_optional(&mut **tx).await?.unwrap_or((false,false)))
 }
 async fn route_snapshot(
     tx: &mut Tx<'_>,
@@ -218,6 +220,15 @@ impl AdvertisingStore for Repository {
         }
         let mut tx = self.0.begin().await?;
         guard(&mut tx).await?;
+        // Mutations take their final row lock before reading the asset, avoiding SHARE upgrades.
+        if let Command::Content(id, _) | Command::Policy(id, _) | Command::Archive(id, _) = &command
+        {
+            sqlx::query("SELECT id FROM advertisements WHERE id=$1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .ok_or(Fault("not_found"))?;
+        }
         let admin = routes::administrator(&mut tx, actor.id).await?;
         let action = match &command {
             Command::Create(_) => "create",
@@ -226,6 +237,9 @@ impl AdvertisingStore for Repository {
             Command::Archive(..) => "archive",
             Command::Manager(..) => "manager",
             Command::Configure(..) => "configure",
+            Command::PublishPool(..) => "publish_pool",
+            Command::ResetPool(..) => "reset_pool",
+            Command::CopyPool(..) => "copy_pool",
             Command::Preview(..) => "preview",
             _ => "read",
         };
@@ -331,7 +345,7 @@ impl AdvertisingStore for Repository {
                 let r = ad_row(&mut tx, id).await?;
                 let (e, s, u) = visible(&mut tx, actor.id, admin, &r).await?;
                 let mut v = view(&r, e, s, u);
-                let refs:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('route_id',route_id,'revision',revision) FROM source_advertisement_configs WHERE config->>'fixed_ad_id'=$1").bind(id.to_string()).fetch_all(&mut *tx).await?;
+                let refs:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('route_id',route_id,'revision',revision) FROM source_advertisement_configs c WHERE config->>'fixed_ad_id'=$1 OR EXISTS(SELECT 1 FROM advertisement_pools ap JOIN advertisement_pool_slots ps ON ps.pool_id=ap.id AND ps.revision=ap.current_revision WHERE ap.route_id=c.route_id AND ps.ad_id::text=$1)").bind(id.to_string()).fetch_all(&mut *tx).await?;
                 let mut visible_refs = vec![];
                 for r in refs {
                     match routes::access(
@@ -435,6 +449,58 @@ impl AdvertisingStore for Repository {
                 }
                 json!({"items":items,"has_more":ids.len()>30})
             }
+            Command::Pool(route) => {
+                routes::access(&mut tx, actor.id, &route, admin).await?;
+                pools::view(&mut tx, &route).await?
+            }
+            Command::PublishPool(route, input) => {
+                routes::access(&mut tx, actor.id, &route, admin).await?;
+                pools::publish(&mut tx, actor.id, &route, input, "publish").await?
+            }
+            Command::ResetPool(route, input) => {
+                routes::access(&mut tx, actor.id, &route, admin).await?;
+                pools::reset(&mut tx, actor.id, &route, input).await?
+            }
+            Command::CopyPool(route, input) => {
+                ensure(route != input.target_route_id, "ad_pool_wrong_route")?;
+                routes::access(&mut tx, actor.id, &route, admin).await?;
+                routes::access(&mut tx, actor.id, &input.target_route_id, admin).await?;
+                let original = pools::view(&mut tx, &route).await?;
+                ensure(original["pool_id"].is_string(), "ad_pool_missing")?;
+                let slots: Vec<pool::Slot> = serde_json::from_value(original["slots"].clone())?;
+                // A copy always has new slot identities and begins at the first slot.
+                ensure(
+                    sqlx::query_scalar::<_, bool>(
+                        "SELECT NOT EXISTS(SELECT 1 FROM advertisement_pools WHERE route_id=$1)",
+                    )
+                    .bind(&input.target_route_id)
+                    .fetch_one(&mut *tx)
+                    .await?,
+                    "ad_pool_copy_target_exists",
+                )?;
+                pools::publish(
+                    &mut tx,
+                    actor.id,
+                    &input.target_route_id,
+                    pool::Publication {
+                        expected_revision: input.expected_revision,
+                        reason: input.reason,
+                        slots: slots
+                            .into_iter()
+                            .map(|s| pool::SlotInput {
+                                slot_id: None,
+                                ad_id: s.ad_id,
+                            })
+                            .collect(),
+                    },
+                    "copy",
+                )
+                .await?
+            }
+            Command::Consumptions(route, page) => {
+                routes::access(&mut tx, actor.id, &route, admin).await?;
+                pools::consumptions(&mut tx, &route, page).await?
+            }
             Command::Config(route) => {
                 routes::access(&mut tx, actor.id, &route, admin).await?;
                 let (revision, config) = pipeline::config(&mut tx, &route).await?;
@@ -442,7 +508,19 @@ impl AdvertisingStore for Repository {
             }
             Command::Configure(route, v) => {
                 routes::access(&mut tx, actor.id, &route, admin).await?;
+                sqlx::query("SELECT route_id FROM source_advertisement_configs WHERE route_id=$1 FOR UPDATE").bind(&route).fetch_one(&mut *tx).await?;
                 let (n, _) = pipeline::config(&mut tx, &route).await?;
+                if v.config.mode == "pool" {
+                    ensure(
+                        sqlx::query_scalar::<_, bool>(
+                            "SELECT EXISTS(SELECT 1 FROM advertisement_pools WHERE route_id=$1)",
+                        )
+                        .bind(&route)
+                        .fetch_one(&mut *tx)
+                        .await?,
+                        "ad_pool_missing",
+                    )?;
+                }
                 ensure(n == v.expected_revision, "revision_conflict")?;
                 if let Some(id) = v.config.fixed_ad_id {
                     let r = ad_row(&mut tx, id).await?;
@@ -558,10 +636,18 @@ async fn preview(pool: &PgPool, actor: &Actor, route: &str, input: Preview) -> R
             "ad_selection_stale",
         )?;
         let (revision, config) = pipeline::config(&mut tx, route).await?;
-        let mut p = pipeline::select(&mut tx, &snapshot, revision, config, &source, None).await?;
-        tx.commit().await?;
+        let mut p = if config.mode == "pool" {
+            tx.commit().await?;
+            pools::select(pool, &snapshot, revision, config, &source, None).await?
+        } else {
+            let prepared =
+                pipeline::select(&mut tx, &snapshot, revision, config, &source, None).await?;
+            tx.commit().await?;
+            prepared
+        };
         let mut final_result = k::evaluate(&rules, &[("final", &p.content)])?;
         if !final_result.passed()
+            && p.selection.pool.is_none()
             && p.selection.ad_id.is_some()
             && p.selection.config.unavailable_policy == "without_ad"
         {

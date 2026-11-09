@@ -29,6 +29,7 @@ pub(crate) async fn select(
         .channel
         .as_str();
     let mut selection = Selection {
+        pool: None,
         config: config.clone(),
         candidates: vec![],
         config_revision: revision,
@@ -148,7 +149,9 @@ pub(crate) async fn prepare(
         if let Some(ad) = selection.ad_id {
             valid = ad_exclusion(&ad_row(&mut tx, ad).await?, snapshot)?.is_none();
         }
-        let replace = selection.config.auto_recover && can_replace(&mut tx, receipt).await?;
+        let replace = selection.config.mode != "pool"
+            && selection.config.auto_recover
+            && can_replace(&mut tx, receipt).await?;
         if valid {
             frozen = Some((selection.clone(), id, replace));
             Prepared {
@@ -179,15 +182,23 @@ pub(crate) async fn prepare(
         } else {
             config(&mut tx, &snapshot.route_id).await?
         };
-        select(
-            &mut tx,
-            snapshot,
-            revision,
-            config,
-            legacy.as_deref().unwrap_or(&source),
-            None,
-        )
-        .await?
+        if config.mode == "pool" {
+            tx.commit().await?;
+            let prepared =
+                pools::select(pool, snapshot, revision, config, &source, Some(receipt)).await?;
+            tx = pool.begin().await?;
+            prepared
+        } else {
+            select(
+                &mut tx,
+                snapshot,
+                revision,
+                config,
+                legacy.as_deref().unwrap_or(&source),
+                None,
+            )
+            .await?
+        }
     };
     tx.commit().await?;
     if prepared.selection.unavailable() {
@@ -195,6 +206,14 @@ pub(crate) async fn prepare(
         return Ok(None);
     }
     if !final_pass(pool, receipt, event, snapshot, &prepared.content).await? {
+        if prepared.selection.pool.is_some()
+            && prepared.base.is_none()
+            && prepared.selection.ad_id.is_some()
+        {
+            // A rule changed after the pool proposal: rescan the sequence, never silently
+            // consume a selected slot while falling back to a different body.
+            return Err(Fault("ad_selection_stale"));
+        }
         if let Some((old_selection, id, replace)) = frozen {
             if !replace {
                 checks::admit(
@@ -318,6 +337,7 @@ pub(crate) async fn validate(
             )?;
         }
     }
+    pools::validate(tx, receipt, p).await?;
     if p.replacement {
         ensure(can_replace(tx, receipt).await?, "ad_selection_stale")?;
     }
@@ -383,6 +403,7 @@ pub(crate) async fn save(
         .execute(&mut **tx)
         .await?;
     decision(tx, receipt, &p.selection, "selected", Some(id)).await?;
+    pools::consume(tx, receipt, id, p).await?;
     Ok((id, generation, snap))
 }
 pub(crate) async fn recover(pool: &PgPool) -> Result<()> {
@@ -404,7 +425,7 @@ async fn recover_batch(pool: &PgPool, id: Uuid) -> Result<()> {
         let cursor: Option<Uuid> = j.get("after_receipt");
         let ad: Option<Uuid> = j.get("ad_id");
         let route: Option<String> = j.get("route_id");
-        let ids:Vec<Uuid>=sqlx::query_scalar("SELECT v.receipt_id FROM source_content_versions v LEFT JOIN source_execution_tasks l ON l.receipt_id=v.receipt_id LEFT JOIN source_message_compositions c ON c.id=l.composition_id LEFT JOIN source_advertisement_configs a ON a.route_id=v.route_id WHERE ($1::uuid IS NULL OR v.receipt_id>$1) AND ($2::text IS NULL OR v.route_id=$2) AND ($3::uuid IS NULL OR c.selection->>'ad_id'=$3::text OR c.selection #>> '{config,fixed_ad_id}'=$3::text OR a.config->>'fixed_ad_id'=$3::text) AND NOT v.withdrawn AND NOT v.no_resend ORDER BY v.receipt_id LIMIT 50").bind(cursor).bind(route).bind(ad).fetch_all(&mut *tx).await?;
+        let ids:Vec<Uuid>=sqlx::query_scalar("SELECT v.receipt_id FROM source_content_versions v LEFT JOIN source_execution_tasks l ON l.receipt_id=v.receipt_id LEFT JOIN source_message_compositions c ON c.id=l.composition_id LEFT JOIN source_advertisement_configs a ON a.route_id=v.route_id WHERE ($1::uuid IS NULL OR v.receipt_id>$1) AND ($2::text IS NULL OR v.route_id=$2) AND ($3::uuid IS NULL OR c.selection->>'ad_id'=$3::text OR c.selection #>> '{config,fixed_ad_id}'=$3::text OR a.config->>'fixed_ad_id'=$3::text OR EXISTS(SELECT 1 FROM advertisement_pools ap JOIN advertisement_pool_slots ps ON ps.pool_id=ap.id AND ps.revision=ap.current_revision WHERE ap.route_id=v.route_id AND ps.ad_id=$3)) AND NOT v.withdrawn AND NOT v.no_resend ORDER BY v.receipt_id LIMIT 50").bind(cursor).bind(route).bind(ad).fetch_all(&mut *tx).await?;
         sqlx::query("UPDATE source_inbox SET state='waiting',next_attempt_at=now() WHERE receipt_id=ANY($1) AND state NOT IN ('stopped','superseded')").bind(&ids).execute(&mut *tx).await?;
         sqlx::query("UPDATE advertisement_recheck_jobs SET after_receipt=$2,complete=$3,last_error=NULL WHERE id=$1").bind(j.get::<Uuid,_>("id")).bind(ids.last().copied().or(cursor)).bind(ids.len()<50).execute(&mut *tx).await?;
     }

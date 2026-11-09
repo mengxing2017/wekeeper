@@ -222,8 +222,100 @@ async fn compositions(
     )
     .await
 }
+async fn pool_detail(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(id): Path<String>,
+) -> std::result::Result<Response, Response> {
+    run(a, actor, Command::Pool(id), "advertisement-pool").await
+}
+async fn pool_consumptions(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(id): Path<String>,
+    Query(f): Query<Filter>,
+) -> std::result::Result<Response, Response> {
+    run(
+        a,
+        actor,
+        Command::Consumptions(id, f.page.unwrap_or(1)),
+        "advertisement-pool-consumptions",
+    )
+    .await
+}
+async fn publish_pool(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(id): Path<String>,
+    input: crate::http::jsonapi::Input,
+) -> std::result::Result<Response, Response> {
+    let v = input
+        .decode::<pool::Publication>("advertisement-pool-publications")
+        .map_err(|_| Fault("invalid_request").response(&actor.request_id))?;
+    run(
+        a,
+        actor,
+        Command::PublishPool(id, v),
+        "advertisement-pool-publications",
+    )
+    .await
+}
+async fn reset_pool(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(id): Path<String>,
+    input: crate::http::jsonapi::Input,
+) -> std::result::Result<Response, Response> {
+    let v = input
+        .decode::<pool::Reset>("advertisement-pool-resets")
+        .map_err(|_| Fault("invalid_request").response(&actor.request_id))?;
+    run(
+        a,
+        actor,
+        Command::ResetPool(id, v),
+        "advertisement-pool-resets",
+    )
+    .await
+}
+async fn copy_pool(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(id): Path<String>,
+    input: crate::http::jsonapi::Input,
+) -> std::result::Result<Response, Response> {
+    let v = input
+        .decode::<pool::Copy>("advertisement-pool-copies")
+        .map_err(|_| Fault("invalid_request").response(&actor.request_id))?;
+    run(
+        a,
+        actor,
+        Command::CopyPool(id, v),
+        "advertisement-pool-copies",
+    )
+    .await
+}
 pub fn router() -> Router<Application> {
     Router::new()
+        .route(
+            "/api/v2/admin/source-routes/{id}/advertisement-pool",
+            get(pool_detail),
+        )
+        .route(
+            "/api/v2/admin/source-routes/{id}/advertisement-pool/publications",
+            post(publish_pool),
+        )
+        .route(
+            "/api/v2/admin/source-routes/{id}/advertisement-pool/resets",
+            post(reset_pool),
+        )
+        .route(
+            "/api/v2/admin/source-routes/{id}/advertisement-pool/copies",
+            post(copy_pool),
+        )
+        .route(
+            "/api/v2/admin/source-routes/{id}/advertisement-pool/consumptions",
+            get(pool_consumptions),
+        )
         .route("/api/v2/admin/advertisement-directory", get(directory))
         .route("/api/v2/admin/advertisements", get(list).post(create))
         .route("/api/v2/admin/advertisements/{id}", get(detail))

@@ -427,7 +427,10 @@ pub(crate) async fn routing_candidates(
 pub mod source_routing;
 
 pub(crate) async fn source_guard(tx: &mut Tx<'_>) -> Result<()> {
-    guard(tx).await
+    sqlx::query("SELECT pg_advisory_xact_lock_shared(78234610243)")
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
 }
 
 pub(crate) fn routing_candidate_identity(candidate: &Value) -> Value {

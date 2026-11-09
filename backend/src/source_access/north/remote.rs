@@ -39,6 +39,10 @@ impl Fault {
             | "recheck_not_allowed"
             | "ad_selection_stale"
             | "ad_unavailable"
+            | "ad_pool_missing"
+            | "ad_pool_copy_target_exists"
+            | "ad_queue_ownership_lost"
+            | "ad_queue_head_changed"
             | "ad_archived" => 409,
             "temporarily_unavailable"
             | "source_key_configuration_required"
@@ -62,6 +66,12 @@ impl Fault {
         } else {
             match self.0 {
                 "ad_unavailable" => "所选广告当前不可投放，请调整广告授权或路由选用配置",
+                "ad_pool_missing" => "请先发布广告序列，再启用序列模式",
+                "ad_pool_wrong_route" => "广告池不属于当前路由",
+                "ad_pool_invalid_slot" => "槽位已变更或不属于当前广告池，请核对最新序列",
+                "ad_pool_duplicate_slot" => "槽位标识不能重复，重复投放请新增独立槽位",
+                "ad_pool_slot_limit" => "一个广告池最多保存 1000 个槽位",
+                "ad_pool_copy_target_exists" => "目标路由已有独立广告池，请选择尚未创建池的路由",
                 "ad_archived" => "广告已归档，不能继续发布",
                 "invalid_ad_content" => {
                     "广告名称不能为空且最多 120 个字符，正文不能为空且最多 8000 字节"

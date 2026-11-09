@@ -20,21 +20,32 @@ pub(crate) async fn administrator(tx: &mut Tx<'_>, actor: Uuid) -> Result<bool> 
         .await?
         .ok_or(Fault("forbidden"))
 }
-async fn lock_route(tx: &mut Tx<'_>, route: &str) -> Result<sqlx::postgres::PgRow> {
+async fn lock_route_mode(
+    tx: &mut Tx<'_>,
+    route: &str,
+    control: bool,
+) -> Result<sqlx::postgres::PgRow> {
     let source: Uuid = sqlx::query_scalar("SELECT source_id FROM source_routes WHERE route_id=$1")
         .bind(route)
         .fetch_optional(&mut **tx)
         .await?
         .ok_or(Fault("not_found"))?;
-    sqlx::query("SELECT source_id FROM source_callers WHERE source_id=$1 FOR UPDATE")
-        .bind(source)
-        .fetch_one(&mut **tx)
-        .await?;
+    sqlx::query(if control {
+        "SELECT source_id FROM source_callers WHERE source_id=$1 FOR UPDATE"
+    } else {
+        "SELECT source_id FROM source_callers WHERE source_id=$1 FOR SHARE"
+    })
+    .bind(source)
+    .fetch_one(&mut **tx)
+    .await?;
     sqlx::query("SELECT * FROM source_routes WHERE route_id=$1 FOR UPDATE")
         .bind(route)
         .fetch_optional(&mut **tx)
         .await?
         .ok_or(Fault("not_found"))
+}
+async fn lock_route(tx: &mut Tx<'_>, route: &str) -> Result<sqlx::postgres::PgRow> {
+    lock_route_mode(tx, route, true).await
 }
 async fn latest(tx: &mut Tx<'_>, route: &str) -> Result<Option<RouteSnapshot>> {
     let value:Option<Value>=sqlx::query_scalar("SELECT snapshot FROM source_route_revisions WHERE route_id=$1 ORDER BY revision DESC LIMIT 1").bind(route).fetch_optional(&mut **tx).await?;
@@ -663,7 +674,7 @@ impl RoutingStore for RoutingRepository {
                 .fetch_optional(&mut *tx)
                 .await?
                 .ok_or(Fault("not_found"))?;
-        let row = match lock_route(&mut tx, &route).await {
+        let row = match lock_route_mode(&mut tx, &route, false).await {
             Ok(row) => Some(row),
             Err(Fault("not_found")) => None,
             Err(e) => return Err(e),
@@ -773,10 +784,11 @@ pub async fn guard_submission(
             .await?
             .ok_or(Fault("not_found"))?;
     let frozen: RouteSnapshot = serde_json::from_value(decision)?;
-    sqlx::query("SELECT source_id FROM source_callers WHERE source_id=$1 FOR UPDATE")
+    sqlx::query("SELECT source_id FROM source_callers WHERE source_id=$1 FOR SHARE")
         .bind(frozen.source_id)
         .fetch_one(&mut **tx)
         .await?;
+    let live_route = lock_route_mode(tx, &frozen.route_id, false).await;
     let current:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_receipts r JOIN source_inbox i USING(receipt_id) JOIN source_content_versions v ON v.source_id=r.source_id AND v.route_id=r.route_id AND v.external_content_id=convert_from(i.request_body,'UTF8')::jsonb #>> '{data,attributes,external_content_id}' WHERE r.receipt_id=$1 AND v.receipt_id=$1 AND NOT v.withdrawn)").bind(receipt).fetch_one(&mut **tx).await?;
     ensure(current, "content_version_superseded")?;
     crate::advertising::south::adapter::postgres::pipeline::current_guard(tx, receipt, &frozen)
@@ -786,7 +798,7 @@ pub async fn guard_submission(
         .execution
         .as_ref()
         .ok_or(Fault("route_configuration_required"))?;
-    match lock_route(tx, &frozen.route_id).await {
+    match live_route {
         Ok(row) => {
             ensure(
                 row.get::<Option<chrono::DateTime<chrono::Utc>>, _>("retired_at")

@@ -58,14 +58,17 @@ impl Repository {
         let count=sqlx::query("INSERT INTO source_request_nonces(key_id,source_id,nonce,expires_at) VALUES($1,$2,$3,to_timestamp($4)) ON CONFLICT DO NOTHING").bind(&s.key_id).bind(source).bind(s.nonce).bind((seconds+360) as f64).execute(&self.0).await?.rows_affected();
         ensure(count == 1, "replay_detected")?;
         let mut tx = self.0.begin().await?;
-        // Source lock serializes authorization changes and receipt creation for this platform.
+        // Shared source ownership fences authorization control writes.
         // Cleanup is bounded and independent of the lifetime of event identities.
         sqlx::query("DELETE FROM source_request_nonces WHERE (key_id,nonce) IN (SELECT key_id,nonce FROM source_request_nonces WHERE expires_at<now() LIMIT 100)").execute(&mut *tx).await?;
-        let p = sqlx::query("SELECT * FROM source_callers WHERE source_id=$1 FOR UPDATE")
+        let p = sqlx::query("SELECT * FROM source_callers WHERE source_id=$1 FOR SHARE")
             .bind(source)
             .fetch_one(&mut *tx)
             .await?;
-        let c=sqlx::query("SELECT c.* FROM source_credentials c JOIN source_callers p USING(source_id) WHERE key_id=$1 FOR UPDATE OF c").bind(&s.key_id).fetch_one(&mut *tx).await?;
+        // last_used_at is updated below. KEY SHARE avoids two readers upgrading
+        // SHARE locks while still protecting credential identity from deletion;
+        // authorization fields are fenced by the source lock above.
+        let c=sqlx::query("SELECT c.* FROM source_credentials c JOIN source_callers p USING(source_id) WHERE key_id=$1 FOR KEY SHARE OF c").bind(&s.key_id).fetch_one(&mut *tx).await?;
         active(&c)?;
         ensure(
             c.get::<i64, _>("revision") == credential.get::<i64, _>("revision"),
@@ -153,6 +156,11 @@ impl Repository {
             )?;
             let e = doc.data.attributes;
             e.validate()?;
+            // Serialize retries of the same event without serializing unrelated routes.
+            sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 78234610244))")
+                .bind(format!("{source}:{}", s.identity))
+                .execute(&mut *tx)
+                .await?;
             // Check idempotency before current route lifecycle, while keeping source ownership.
             let hash = digest(&body);
             let previous:Option<(Uuid,String)>=sqlx::query_as("SELECT receipt_id,body_sha256 FROM source_receipts WHERE source_id=$1 AND event_id=$2").bind(source).bind(s.identity).fetch_optional(&mut *tx).await?;

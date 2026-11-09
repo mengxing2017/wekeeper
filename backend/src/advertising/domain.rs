@@ -3,6 +3,7 @@ use crate::source_access::domain::routing::RouteSnapshot;
 use crate::source_access::domain::{Fault, Result, digest, ensure};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+pub mod pool;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Scope {
@@ -136,7 +137,7 @@ impl Default for Config {
 impl Config {
     pub fn validate(&self) -> Result<()> {
         ensure(
-            matches!(self.mode.as_str(), "none" | "fixed")
+            matches!(self.mode.as_str(), "none" | "fixed" | "pool")
                 && (self.mode == "fixed") == self.fixed_ad_id.is_some()
                 && matches!(self.insertion_position.as_str(), "before" | "after")
                 && matches!(
@@ -205,6 +206,8 @@ pub struct CandidateEvidence {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Selection {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pool: Option<pool::Selection>,
     pub candidates: Vec<CandidateEvidence>,
     pub config: Config,
     pub config_revision: i64,
@@ -217,7 +220,7 @@ pub struct Selection {
 }
 impl Selection {
     pub fn unavailable(&self) -> bool {
-        self.config.mode == "fixed"
+        matches!(self.config.mode.as_str(), "fixed" | "pool")
             && self.ad_id.is_none()
             && self.config.unavailable_policy == "configuration_error"
     }
@@ -300,6 +303,11 @@ pub enum Command {
     Configure(String, Configuration),
     Preview(String, Preview),
     Compositions(String, Uuid, i64),
+    Pool(String),
+    PublishPool(String, pool::Publication),
+    ResetPool(String, pool::Reset),
+    CopyPool(String, pool::Copy),
+    Consumptions(String, i64),
 }
 
 #[cfg(test)]
@@ -329,7 +337,7 @@ mod tests {
         assert!(measure("正文\t\n", "mobile").valid);
     }
     #[test]
-    fn fixture_is_serialized_by_real_rust_types_and_rejects_retired_pool_mode() {
+    fn fixture_is_serialized_by_real_rust_types_and_accepts_pool_mode() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
             "../../../api-contract/fixtures/source-advertising.json"
         ))
@@ -369,8 +377,40 @@ mod tests {
         let mut config: Config =
             serde_json::from_value(fixture["configuration"]["config"].clone()).unwrap();
         config.mode = "pool".into();
-        assert!(config.validate().is_err());
+        config.fixed_ad_id = None;
+        assert!(config.validate().is_ok());
         assert!(serde_json::from_value::<Config>(serde_json::json!({"mode":"none","fixed_ad_id":null,"insertion_position":"after","unavailable_policy":"without_ad","auto_recover":true,"pool_cursor":1})).is_err());
+    }
+    #[test]
+    fn pool_publication_reset_copy_and_config_use_real_wire_types() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../api-contract/fixtures/source-advertising.json"
+        ))
+        .unwrap();
+        let publication: pool::Publication =
+            serde_json::from_value(fixture["pool_publication"].clone()).unwrap();
+        publication.validate().unwrap();
+        assert_eq!(
+            serde_json::to_value(publication).unwrap(),
+            fixture["pool_publication"]
+        );
+        let selection: Selection =
+            serde_json::from_value(fixture["pool_selection"].clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(selection).unwrap(),
+            fixture["pool_selection"]
+        );
+        let reset: pool::Reset = serde_json::from_value(fixture["pool_reset"].clone()).unwrap();
+        assert_eq!(serde_json::to_value(reset).unwrap(), fixture["pool_reset"]);
+        let copy: pool::Copy = serde_json::from_value(fixture["pool_copy"].clone()).unwrap();
+        assert_eq!(serde_json::to_value(copy).unwrap(), fixture["pool_copy"]);
+        let config: Configuration =
+            serde_json::from_value(fixture["pool_configuration"].clone()).unwrap();
+        config.config.validate().unwrap();
+        assert_eq!(
+            serde_json::to_value(config).unwrap(),
+            fixture["pool_configuration"]
+        );
     }
     #[test]
     fn authorization_is_private_exact_scoped_and_deny_wins() {

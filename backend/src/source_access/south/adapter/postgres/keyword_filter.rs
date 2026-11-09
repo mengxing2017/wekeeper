@@ -12,7 +12,8 @@ async fn guard(tx: &mut Tx<'_>) -> Result<()> {
         .map_err(|_| Fault("temporarily_unavailable"))
 }
 async fn source_lock(tx: &mut Tx<'_>, receipt: Uuid) -> Result<()> {
-    sqlx::query("SELECT source_id FROM source_callers WHERE source_id=(SELECT source_id FROM source_receipts WHERE receipt_id=$1) FOR UPDATE").bind(receipt).fetch_one(&mut **tx).await?;
+    sqlx::query("SELECT source_id FROM source_callers WHERE source_id=(SELECT source_id FROM source_receipts WHERE receipt_id=$1) FOR SHARE").bind(receipt).fetch_one(&mut **tx).await?;
+    sqlx::query("SELECT route_id FROM source_routes WHERE route_id=(SELECT route_id FROM source_receipts WHERE receipt_id=$1) FOR UPDATE").bind(receipt).fetch_optional(&mut **tx).await?;
     Ok(())
 }
 /// Every applicable scope must exist. Missing storage is never an empty rule set.
@@ -266,6 +267,15 @@ pub(crate) async fn admit(
     )?;
     let current:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_content_versions WHERE receipt_id=$1 AND NOT withdrawn)").bind(receipt).fetch_one(&mut *tx).await?;
     ensure(current, "content_version_superseded")?;
+    // A worker whose queue ownership expired must not overwrite admission for a
+    // different frozen pool body after the replacement worker already committed.
+    let frozen_pool:Option<(String,String)>=sqlx::query_as("SELECT c.content_digest,c.composer FROM source_execution_tasks l JOIN source_message_compositions c ON c.id=l.composition_id WHERE l.receipt_id=$1 AND c.selection #>> '{config,mode}'='pool' FOR SHARE OF l").bind(receipt).fetch_optional(&mut *tx).await?;
+    if let Some((frozen_digest, frozen_composer)) = frozen_pool {
+        ensure(
+            frozen_digest == digest(message.as_bytes()) && frozen_composer == composer,
+            "ad_selection_stale",
+        )?;
+    }
     let passed = final_result.as_ref().is_some_and(|r| r.1);
     if !passed {
         let failed = final_result.map(|r| r.0).unwrap_or(original);

@@ -25,7 +25,20 @@ impl<S: AdvertisingStore> Service<S> {
                 v.config.validate()?;
                 Some((v.expected_revision, v.reason.as_str()))
             }
-            Command::List { page, .. }
+            Command::PublishPool(_, v) => {
+                v.validate()?;
+                Some((v.expected_revision, v.reason.as_str()))
+            }
+            Command::ResetPool(_, v) => {
+                ensure(v.expected_cursor_version >= 0, "invalid_request")?;
+                Some((v.expected_revision, v.reason.as_str()))
+            }
+            Command::CopyPool(_, v) => {
+                ensure(!v.target_route_id.is_empty(), "invalid_request")?;
+                Some((v.expected_revision, v.reason.as_str()))
+            }
+            Command::Consumptions(_, page)
+            | Command::List { page, .. }
             | Command::Versions(_, page)
             | Command::Candidates(_, page)
             | Command::Compositions(_, _, page) => {

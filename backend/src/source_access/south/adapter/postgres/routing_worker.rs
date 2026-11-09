@@ -90,31 +90,57 @@ impl RoutingRepository {
         {
             tracing::warn!(code = error.0, "advertisement recovery will retry");
         }
-        let ids:Vec<Uuid>=sqlx::query_scalar("SELECT i.receipt_id FROM source_inbox i JOIN source_receipts r USING(receipt_id) WHERE i.state IN ('received','waiting') AND i.event_type<>'content.withdrawn' AND i.next_attempt_at<=now() ORDER BY i.next_attempt_at,i.receipt_id LIMIT 50").fetch_all(&self.0).await?;
-        for id in ids {
-            if let Err(e) = self.process(id).await {
-                if matches!(e.0, "channel_content_invalid" | "route_retired") {
-                    let mut tx = self.0.begin().await?;
-                    super::projection::transition(
-                        &mut tx,
-                        id,
-                        "applied",
-                        "execution_stopped",
-                        Some(e.0),
-                        "stopped",
-                    )
-                    .await?;
-                    tx.commit().await?;
-                } else {
-                    wait(&self.0, id, e.0).await?;
+        let rows:Vec<(String,Uuid)>=sqlx::query_as("WITH due AS (SELECT r.route_id,i.receipt_id,row_number() OVER(PARTITION BY r.route_id ORDER BY r.receive_order,i.receipt_id) AS route_position FROM source_inbox i JOIN source_receipts r USING(receipt_id) WHERE i.state IN ('received','waiting') AND i.event_type<>'content.withdrawn' AND i.next_attempt_at<=now()) SELECT route_id,receipt_id FROM due ORDER BY route_position,route_id LIMIT 50").fetch_all(&self.0).await?;
+        let mut by_route = std::collections::BTreeMap::<String, Vec<Uuid>>::new();
+        for (route, id) in rows {
+            by_route.entry(route).or_default().push(id);
+        }
+        let mut groups = by_route.into_values();
+        let mut jobs = tokio::task::JoinSet::new();
+        loop {
+            while jobs.len() < 4 {
+                let Some(ids) = groups.next() else { break };
+                let repo = self.clone();
+                jobs.spawn(async move {
+                for id in ids {
+                    if let Err(e)=repo.process(id).await {
+                        if matches!(e.0,"channel_content_invalid"|"route_retired") {
+                            let mut tx=repo.0.begin().await?;
+                            super::projection::transition(&mut tx,id,"applied","execution_stopped",Some(e.0),"stopped").await?;
+                            tx.commit().await?;
+                        } else {wait(&repo.0,id,e.0).await?;}
+                        tracing::warn!(receipt=%id,code=e.0,"source execution processing deferred");
+                    }
                 }
-                tracing::warn!(receipt=%id,code=e.0,"source execution processing deferred");
+                Ok::<(),Fault>(())
+            });
             }
+            let Some(result) = jobs.join_next().await else {
+                break;
+            };
+            result.map_err(|_| Fault("temporarily_unavailable"))??;
         }
         self.retry_waiting().await?;
         self.aggregate().await
     }
     async fn process(&self, receipt: Uuid) -> Result<()> {
+        use crate::advertising::south::adapter::postgres::queue;
+        let withdrawn: bool = sqlx::query_scalar(
+            "SELECT event_type='content.withdrawn' FROM source_inbox WHERE receipt_id=$1",
+        )
+        .bind(receipt)
+        .fetch_one(&self.0)
+        .await?;
+        if withdrawn {
+            return self.process_claimed(receipt, None).await;
+        }
+        let Some(version) = queue::claim(&self.0, receipt).await? else {
+            return Ok(());
+        };
+        let result = self.process_claimed(receipt, Some(version)).await;
+        queue::release(&self.0, receipt, version, result).await
+    }
+    async fn process_claimed(&self, receipt: Uuid, reservation: Option<i64>) -> Result<()> {
         let row=sqlx::query("SELECT r.source_id,r.route_id,i.request_body FROM source_receipts r JOIN source_inbox i USING(receipt_id) WHERE r.receipt_id=$1").bind(receipt).fetch_one(&self.0).await?;
         let source: Uuid = row.get("source_id");
         let route: String = row.get("route_id");
@@ -157,10 +183,22 @@ impl RoutingRepository {
         execution::source_guard(&mut tx)
             .await
             .map_err(execution_error)?;
-        sqlx::query("SELECT source_id FROM source_callers WHERE source_id=$1 FOR UPDATE")
+        sqlx::query("SELECT source_id FROM source_callers WHERE source_id=$1 FOR SHARE")
             .bind(source)
             .fetch_one(&mut *tx)
             .await?;
+        // Projection/withdrawal owns this same route row. Read content validity only
+        // after locking it, otherwise a withdrawal could commit while we wait later.
+        sqlx::query("SELECT route_id FROM source_routes WHERE route_id=$1 FOR UPDATE")
+            .bind(&route)
+            .fetch_optional(&mut *tx)
+            .await?;
+        if let Some(version) = reservation {
+            crate::advertising::south::adapter::postgres::queue::validate(
+                &mut tx, receipt, version,
+            )
+            .await?;
+        }
         let current:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_content_versions WHERE source_id=$1 AND route_id=$2 AND external_content_id=$3 AND receipt_id=$4 AND NOT withdrawn)").bind(source).bind(&route).bind(&event.external_content_id).bind(receipt).fetch_one(&mut *tx).await?;
         if !current {
             finish(
@@ -228,6 +266,7 @@ impl RoutingRepository {
             .await?;
         audit(&mut tx,source,None,None,"source.task.created","source-routing",json!({"receipt_id":receipt,"task_id":task,"authorization_actor":authorizer,"config_revision":snapshot.revision})).await?;
         finish(&mut tx, receipt, "task_created", None).await?;
+        sqlx::query("UPDATE advertisement_pool_queue SET state='done',reservation_expiry=NULL,updated_at=clock_timestamp() WHERE receipt_id=$1").bind(receipt).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(())
     }
