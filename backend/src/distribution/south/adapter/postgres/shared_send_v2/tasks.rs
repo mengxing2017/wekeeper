@@ -662,9 +662,16 @@ pub(super) async fn create_authorized_task(
     let current = policy(tx).await?.ok_or(Error::Unavailable)?;
     let items = plan["items"].as_array().ok_or(Error::Conflict)?;
     let id = Uuid::now_v7();
-    let snap = Uuid::now_v7();
+    let snap = p["source_snapshot_id"]
+        .as_str()
+        .and_then(|v| v.parse::<Uuid>().ok())
+        .unwrap_or_else(Uuid::now_v7);
     let message = plan["message"].as_str().ok_or(Error::Conflict)?;
-    sqlx::query("INSERT INTO distribution_message_snapshots(id,school_id,channel,content,content_hash) VALUES($1,$2,'mobile',$3,$4)").bind(snap).bind(s).bind(message).bind(hash(message)).execute(&mut **tx).await?;
+    if p.get("source_snapshot_id").is_none() {
+        sqlx::query("INSERT INTO distribution_message_snapshots(id,school_id,channel,content,content_hash) VALUES($1,$2,'mobile',$3,$4)").bind(snap).bind(s).bind(message).bind(hash(message)).execute(&mut **tx).await?;
+    } else {
+        require(sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM distribution_message_snapshots WHERE id=$1 AND school_id=$2 AND channel='mobile' AND content=$3 AND content_hash=$4)").bind(snap).bind(s).bind(message).bind(hash(message)).fetch_one(&mut **tx).await?,"source_snapshot_mismatch")?;
+    }
     sqlx::query("INSERT INTO mobile_v9_tasks(id,school_id,draft_id,intent_id,preview_id,confirmed_by,confirmed_until,dispatch_mode) VALUES($1,$2,$3,$4,$5,$6,clock_timestamp()+make_interval(secs=>$7::double precision),'candidate_pool')").bind(id).bind(s).bind(uid(plan,"draft_id")?).bind(uid(plan,"intent_id")?).bind(uid(p,"id")?).bind(principal).bind(current["confirmation_seconds"].as_i64().ok_or(Error::Conflict)? as f64).execute(&mut **tx).await?;
     for item in items {
         let iid = Uuid::now_v7();

@@ -16,7 +16,7 @@ async fn source_lock(tx: &mut Tx<'_>, receipt: Uuid) -> Result<()> {
     Ok(())
 }
 /// Every applicable scope must exist. Missing storage is never an empty rule set.
-pub(super) async fn context(
+pub(crate) async fn context(
     tx: &mut Tx<'_>,
     receipt: Uuid,
     workspace: Option<(&str, Uuid)>,
@@ -25,6 +25,15 @@ pub(super) async fn context(
     let source: Uuid = row.get("source_id");
     let route: String = row.get("route_id");
     let unit: Option<Uuid> = row.get("unit_id");
+    context_for_scope(tx, source, route, unit, workspace).await
+}
+pub(crate) async fn context_for_scope(
+    tx: &mut Tx<'_>,
+    source: Uuid,
+    route: String,
+    unit: Option<Uuid>,
+    workspace: Option<(&str, Uuid)>,
+) -> Result<(k::Context, Vec<k::Rule>)> {
     let mut ids = vec![
         "global".to_owned(),
         format!("source:{source}"),
@@ -80,7 +89,7 @@ pub(super) async fn context(
         rules,
     ))
 }
-async fn check(
+pub(crate) async fn check(
     pool: &PgPool,
     receipt: Uuid,
     event: &Event,
@@ -185,15 +194,20 @@ pub(super) async fn common(pool: &PgPool, receipt: Uuid, event: &Event) -> Resul
     tx.commit().await?;
     Ok(passed && !no_resend)
 }
-pub(super) async fn frozen_text(tx: &mut Tx<'_>, receipt: Uuid) -> Result<Option<String>> {
+pub(crate) async fn frozen_text(tx: &mut Tx<'_>, receipt: Uuid) -> Result<Option<String>> {
+    let composed:Option<String>=sqlx::query_scalar("SELECT c.content FROM source_execution_tasks l JOIN source_message_compositions c ON c.id=l.composition_id WHERE l.receipt_id=$1").bind(receipt).fetch_optional(&mut **tx).await?;
+    if composed.is_some() {
+        return Ok(composed);
+    }
     Ok(sqlx::query_scalar("SELECT content FROM (SELECT s.content FROM source_execution_tasks l JOIN mobile_v9_task_items i ON i.task_id=l.task_id JOIN mobile_v9_plans p ON p.item_id=i.id JOIN distribution_message_snapshots s ON s.id=p.snapshot_id WHERE l.receipt_id=$1 UNION ALL SELECT t.content FROM source_execution_tasks l JOIN broadcast_tasks t ON t.id=l.task_id WHERE l.receipt_id=$1) q LIMIT 1").bind(receipt).fetch_optional(&mut **tx).await?)
 }
-pub(super) async fn admit(
+pub(crate) async fn admit(
     pool: &PgPool,
     receipt: Uuid,
     event: &Event,
     snapshot: &RouteSnapshot,
     message: &str,
+    composer: &str,
 ) -> Result<bool> {
     let config = snapshot
         .execution
@@ -281,7 +295,7 @@ pub(super) async fn admit(
     } else {
         let (final_id, _, final_fp, _) = final_result.ok_or(Fault("content_check_pending"))?;
         ensure(final_fp == fingerprint, "content_check_pending")?;
-        sqlx::query("INSERT INTO keyword_admissions(receipt_id,common_check,workspace_check,final_check,effective_fingerprint,content_digest,composer,context) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(receipt_id) DO UPDATE SET common_check=$2,workspace_check=$3,final_check=$4,effective_fingerprint=$5,content_digest=$6,composer=$7,context=$8,updated_at=clock_timestamp()").bind(receipt).bind(common).bind(original).bind(final_id).bind(fingerprint).bind(digest(message.as_bytes())).bind(k::COMPOSER).bind(json!(ctx)).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO keyword_admissions(receipt_id,common_check,workspace_check,final_check,effective_fingerprint,content_digest,composer,context) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(receipt_id) DO UPDATE SET common_check=$2,workspace_check=$3,final_check=$4,effective_fingerprint=$5,content_digest=$6,composer=$7,context=$8,updated_at=clock_timestamp()").bind(receipt).bind(common).bind(original).bind(final_id).bind(fingerprint).bind(digest(message.as_bytes())).bind(composer).bind(json!(ctx)).execute(&mut *tx).await?;
         sqlx::query("DELETE FROM keyword_target_blocks WHERE receipt_id=$1")
             .bind(receipt)
             .execute(&mut *tx)

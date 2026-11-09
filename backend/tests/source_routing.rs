@@ -698,10 +698,17 @@ async fn accepted_inbox_creates_only_configured_official_targets_and_withdraws_u
         .await
         .unwrap();
     f.lifecycle(LifecycleAction::Enable).await;
+    select_ad(&f, "wecom", workspace).await;
     let receipt = inbox(&f, "official", 1, "content.upsert").await;
     let worker = RoutingRepository(f.pool.clone());
     worker.run_once().await.unwrap();
     let detail:Value=sqlx::query_scalar("SELECT jsonb_build_object('kind',t.authorization_kind,'human_confirmation',t.confirmed_by,'count',count(x.id)) FROM source_execution_tasks l JOIN broadcast_tasks t ON t.id=l.task_id JOIN broadcast_targets x ON x.task_id=t.id WHERE l.receipt_id=$1 GROUP BY t.id").bind(receipt).fetch_one(&f.pool).await.unwrap();
+    assert_eq!(
+        composition(&f, receipt).await["composer"],
+        "source-ad-text/1"
+    );
+    let shared:bool=sqlx::query_scalar("SELECT s.snapshot_id=c.message_snapshot_id FROM source_execution_tasks l JOIN source_message_compositions c ON c.id=l.composition_id JOIN broadcast_task_snapshots s ON s.task_id=l.task_id WHERE l.receipt_id=$1").bind(receipt).fetch_one(&f.pool).await.unwrap();
+    assert!(shared);
     assert_eq!(detail["count"], 3);
     assert_eq!(detail["kind"], "source_route");
     assert!(detail["human_confirmation"].is_null());
@@ -1536,5 +1543,868 @@ async fn keyword_scope_union_workspace_original_and_real_composition_boundaries(
         receipt_value(&f, free).await["sending"],
         json!({"sent":1,"unknown":1,"failed":0,"pending":0})
     );
+    f.close().await;
+}
+
+fn ads(
+    f: &Fixture,
+) -> wekeeper_api::advertising::north::local::Service<
+    wekeeper_api::advertising::south::adapter::postgres::Repository,
+> {
+    wekeeper_api::advertising::north::local::Service(
+        wekeeper_api::advertising::south::adapter::postgres::Repository(f.pool.clone()),
+    )
+}
+async fn select_ad(f: &Fixture, channel: &str, workspace: Uuid) -> Uuid {
+    use wekeeper_api::advertising::domain as a;
+    let ad = ads(f)
+        .execute(
+            &f.actor,
+            a::Command::Create(a::Create {
+                owner_unit_id: f.unit,
+                content: a::Content {
+                    name: "本单位广告".into(),
+                    body: "广告正文".into(),
+                    link: Some("https://example.com/ad".into()),
+                },
+                workspaces: vec![a::Scope {
+                    kind: "unit".into(),
+                    id: f.unit.to_string(),
+                    channel: Some(channel.into()),
+                    workspace_id: Some(workspace),
+                }],
+                reason: "发布".into(),
+            }),
+        )
+        .await
+        .unwrap();
+    let id = serde_json::from_value(ad["id"].clone()).unwrap();
+    ads(f)
+        .execute(
+            &f.actor,
+            a::Command::Configure(
+                f.route.clone(),
+                a::Configuration {
+                    expected_revision: 0,
+                    reason: "选用".into(),
+                    config: a::Config {
+                        mode: "fixed".into(),
+                        fixed_ad_id: Some(id),
+                        ..Default::default()
+                    },
+                },
+            ),
+        )
+        .await
+        .unwrap();
+    id
+}
+async fn disable_ad(f: &Fixture, id: Uuid) {
+    use wekeeper_api::advertising::domain as a;
+    let detail = ads(f)
+        .execute(&f.actor, a::Command::Detail(id))
+        .await
+        .unwrap();
+    let mut policy: a::Policy = serde_json::from_value(detail["policy"].clone()).unwrap();
+    policy.enabled = false;
+    ads(f)
+        .execute(
+            &f.actor,
+            a::Command::Policy(
+                id,
+                a::PolicyPublication {
+                    expected_revision: detail["revision"].as_i64().unwrap(),
+                    reason: "撤销投放".into(),
+                    policy,
+                },
+            ),
+        )
+        .await
+        .unwrap();
+}
+async fn composition(f: &Fixture, r: Uuid) -> Value {
+    sqlx::query_scalar("SELECT to_jsonb(c) FROM source_execution_tasks l JOIN source_message_compositions c ON c.id=l.composition_id WHERE l.receipt_id=$1").bind(r).fetch_one(&f.pool).await.unwrap()
+}
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn advertisement_revoke_replaces_only_unstarted_generation_atomically() {
+    use wekeeper_api::advertising::domain as a;
+    let f = Fixture::new().await;
+    f.configure(f.targets[..3].to_vec()).await;
+    let ad = select_ad(&f, "mobile", f.workspace).await;
+    f.lifecycle(LifecycleAction::Enable).await;
+    let receipt = inbox(&f, "advertised", 1, "content.upsert").await;
+    let worker = RoutingRepository(f.pool.clone());
+    worker.run_once().await.unwrap();
+    let old = composition(&f, receipt).await;
+    let deadline:chrono::DateTime<chrono::Utc>=sqlx::query_scalar("SELECT t.confirmed_until FROM source_execution_tasks l JOIN mobile_v9_tasks t ON t.id=l.task_id WHERE l.receipt_id=$1").bind(receipt).fetch_one(&f.pool).await.unwrap();
+    sqlx::query("UPDATE mobile_v9_dispatch_state ds SET completed_rounds=1 FROM mobile_v9_task_items i JOIN source_execution_tasks l ON l.task_id=i.task_id WHERE ds.item_id=i.id AND l.receipt_id=$1").bind(receipt).execute(&f.pool).await.unwrap();
+
+    assert_eq!(old["composer"], "source-ad-text/1");
+    assert!(
+        old["content"]
+            .as_str()
+            .unwrap()
+            .contains("【广告】\n广告正文")
+    );
+    let snapshots:i64=sqlx::query_scalar("SELECT count(DISTINCT p.snapshot_id) FROM source_execution_tasks l JOIN mobile_v9_task_items i ON i.task_id=l.task_id JOIN mobile_v9_plans p ON p.item_id=i.id WHERE l.receipt_id=$1").bind(receipt).fetch_one(&f.pool).await.unwrap();
+    assert_eq!(snapshots, 1);
+    // A content publication must not rewrite a frozen task, even before execution.
+    ads(&f)
+        .execute(
+            &f.actor,
+            a::Command::Content(
+                ad,
+                a::ContentPublication {
+                    expected_revision: 2,
+                    reason: "新素材".into(),
+                    content: a::Content {
+                        name: "更新".into(),
+                        body: "新版广告".into(),
+                        link: None,
+                    },
+                },
+            ),
+        )
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE source_inbox SET state='waiting',next_attempt_at=now() WHERE receipt_id=$1",
+    )
+    .bind(receipt)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    worker.run_once().await.unwrap();
+    assert_eq!(composition(&f, receipt).await["id"], old["id"]);
+    disable_ad(&f, ad).await;
+    // Revocation blocks new submissions before any recheck worker runs.
+    let mut tx = f.pool.begin().await.unwrap();
+    assert_eq!(
+        wekeeper_api::source_access::south::adapter::postgres::routing::guard_submission(
+            &mut tx,
+            receipt,
+            f.targets[0]
+        )
+        .await
+        .unwrap_err()
+        .0,
+        "ad_frozen_unavailable"
+    );
+    tx.rollback().await.unwrap();
+    for _ in 0..5 {
+        worker.run_once().await.unwrap();
+    }
+    let current = composition(&f, receipt).await;
+    assert_eq!(current["generation"], 1);
+    let inherited:bool=sqlx::query_scalar("SELECT t.confirmed_until=$2 AND bool_and(ds.completed_rounds=1) FROM source_execution_tasks l JOIN mobile_v9_tasks t ON t.id=l.task_id JOIN mobile_v9_task_items i ON i.task_id=t.id JOIN mobile_v9_dispatch_state ds ON ds.item_id=i.id WHERE l.receipt_id=$1 GROUP BY t.id").bind(receipt).bind(deadline).fetch_one(&f.pool).await.unwrap();
+    assert!(inherited);
+
+    assert_eq!(current["supersedes"], old["id"]);
+    assert_eq!(current["composer"], "source-text/1");
+    assert!(!current["content"].as_str().unwrap().contains("【广告】"));
+    let history: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM source_execution_generations WHERE receipt_id=$1")
+            .bind(receipt)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(history, 2);
+    let old_stopped:bool=sqlx::query_scalar("SELECT t.stopped FROM source_execution_generations l JOIN mobile_v9_tasks t ON t.id=l.task_id WHERE l.receipt_id=$1 AND l.generation=0").bind(receipt).fetch_one(&f.pool).await.unwrap();
+    assert!(old_stopped);
+    let unchanged: Value =
+        sqlx::query_scalar("SELECT to_jsonb(c) FROM source_message_compositions c WHERE id=$1")
+            .bind(old["id"].as_str().unwrap().parse::<Uuid>().unwrap())
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(old, unchanged);
+    assert_eq!(receipt_value(&f, receipt).await["summary_total"], 3);
+    f.close().await;
+}
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn advertisement_unknown_freezes_all_targets_and_none_ignores_asset_store_failure() {
+    let f = Fixture::new().await;
+    f.configure(f.targets[..2].to_vec()).await;
+    let ad = select_ad(&f, "mobile", f.workspace).await;
+    f.lifecycle(LifecycleAction::Enable).await;
+    let worker = RoutingRepository(f.pool.clone());
+    let receipt = inbox(&f, "unknown-ad", 1, "content.upsert").await;
+    worker.run_once().await.unwrap();
+    let old = composition(&f, receipt).await;
+    sqlx::query("UPDATE mobile_v9_attempts SET state='unknown' WHERE item_id=(SELECT i.id FROM source_execution_tasks l JOIN mobile_v9_task_items i ON i.task_id=l.task_id WHERE l.receipt_id=$1 LIMIT 1)").bind(receipt).execute(&f.pool).await.unwrap();
+    disable_ad(&f, ad).await;
+    for _ in 0..4 {
+        worker.run_once().await.unwrap();
+    }
+    assert_eq!(composition(&f, receipt).await["id"], old["id"]);
+    let evidence = receipt_value(&f, receipt).await;
+    assert_eq!(evidence["sending"]["unknown"], 1);
+    assert_eq!(evidence["sending"]["failed"], 1);
+    use wekeeper_api::advertising::domain as a;
+    ads(&f)
+        .execute(
+            &f.actor,
+            a::Command::Configure(
+                f.route.clone(),
+                a::Configuration {
+                    expected_revision: 1,
+                    config: a::Config::default(),
+                    reason: "新消息无广告".into(),
+                },
+            ),
+        )
+        .await
+        .unwrap();
+    sqlx::query("ALTER TABLE advertisements RENAME COLUMN policy_version TO unavailable_policy")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let no_ad = inbox(&f, "none-ad", 1, "content.upsert").await;
+    worker.run_once().await.unwrap();
+    assert_eq!(composition(&f, no_ad).await["composer"], "source-text/1");
+    // Broken asset storage cannot prevent withdrawal of an existing advertised message.
+    let withdrawn = inbox(&f, "unknown-ad", 2, "content.withdrawn").await;
+    worker.run_once().await.unwrap();
+    assert_eq!(
+        receipt_value(&f, withdrawn).await["processing_stage"],
+        "withdrawn"
+    );
+    f.close().await;
+}
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn advertisement_private_authorization_cas_preview_and_keyword_fallback() {
+    use wekeeper_api::advertising::domain as a;
+    use wekeeper_api::source_access::{
+        domain::keyword_filter as k, south::adapter::postgres::keyword_filter::KeywordRepository,
+    };
+    let f = Fixture::new().await;
+    f.configure(vec![f.targets[0]]).await;
+    let ad = select_ad(&f, "mobile", f.workspace).await;
+    // Version publication is CAS and never overwrites another operator's update.
+    let input = || a::ContentPublication {
+        expected_revision: 1,
+        reason: "过期修订".into(),
+        content: a::Content {
+            name: "名称".into(),
+            body: "正文".into(),
+            link: None,
+        },
+    };
+    assert_eq!(
+        ads(&f)
+            .execute(&f.actor, a::Command::Content(ad, input()))
+            .await
+            .unwrap_err()
+            .0,
+        "revision_conflict"
+    );
+    let service = wekeeper_api::source_access::north::local::keyword_filter::Service(
+        KeywordRepository(f.pool.clone()),
+    );
+    service
+        .execute(
+            &f.actor,
+            k::Command::Publish {
+                scope: format!("mobile:{}", f.workspace),
+                input: k::Publication {
+                    expected_revision: 0,
+                    reason: "过滤广告".into(),
+                    entries: vec![k::Entry {
+                        word: "广告正文".into(),
+                        enabled: true,
+                    }],
+                },
+            },
+        )
+        .await
+        .unwrap();
+    let preview = ads(&f)
+        .execute(
+            &f.actor,
+            a::Command::Preview(
+                f.route.clone(),
+                a::Preview {
+                    title: Some("通知".into()),
+                    content: Some("正文".into()),
+                    detail_url: "https://example.com/notice/1".into(),
+                },
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(preview["selection"]["composer"], "source-text/1");
+    assert_eq!(preview["deliverable"], true);
+    assert_eq!(preview["checks"]["final"]["total_hits"], 0);
+    assert!(
+        preview["checks"]["excluded_final"]["total_hits"]
+            .as_i64()
+            .unwrap()
+            > 0
+    );
+    f.lifecycle(LifecycleAction::Enable).await;
+    let r = inbox(&f, "keyword-ad", 1, "content.upsert").await;
+    RoutingRepository(f.pool.clone()).run_once().await.unwrap();
+    assert_eq!(composition(&f, r).await["content"], preview["content"]);
+    // A unit author without route/workspace authority cannot read receipt content.
+    let author = Uuid::new_v4();
+    sqlx::query("INSERT INTO accounts(id,username,display_name) VALUES($1,'ad-author','Author')")
+        .bind(author)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    ads(&f)
+        .execute(
+            &f.actor,
+            a::Command::Manager(
+                f.unit,
+                a::Manager {
+                    username: "ad-author".into(),
+                    expected_revision: 0,
+                    can_edit: true,
+                    can_share: false,
+                },
+            ),
+        )
+        .await
+        .unwrap();
+    let actor:Actor=serde_json::from_value(json!({"id":author,"username":"ad-author","display_name":"Author","platform_admin":false,"grants":[],"wecom_authenticated":false})).unwrap();
+    assert_eq!(
+        ads(&f)
+            .execute(&actor, a::Command::Detail(ad))
+            .await
+            .unwrap()["can_edit"],
+        true
+    );
+    assert_eq!(
+        ads(&f)
+            .execute(&actor, a::Command::Compositions(f.route.clone(), r, 1))
+            .await
+            .unwrap_err()
+            .0,
+        "forbidden"
+    );
+    let detail = ads(&f)
+        .execute(&actor, a::Command::Detail(ad))
+        .await
+        .unwrap();
+    let policy = serde_json::from_value(detail["policy"].clone()).unwrap();
+    assert_eq!(
+        ads(&f)
+            .execute(
+                &actor,
+                a::Command::Policy(
+                    ad,
+                    a::PolicyPublication {
+                        expected_revision: 2,
+                        policy,
+                        reason: "越权共享".into()
+                    }
+                )
+            )
+            .await
+            .unwrap_err()
+            .0,
+        "forbidden"
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn advertisement_cross_unit_read_filter_deny_expiry_and_receiver_permissions() {
+    use wekeeper_api::advertising::domain as a;
+    let f = Fixture::new().await;
+    f.configure(vec![f.targets[0]]).await;
+    let other = f
+        .service()
+        .execute(
+            &f.actor,
+            Command::Entity {
+                kind: "routing-units".into(),
+                id: None,
+                input: EntityInput {
+                    name: "同名单位".into(),
+                    description: "另一个稳定身份".into(),
+                    active: true,
+                    revision: None,
+                    unit_id: None,
+                },
+            },
+        )
+        .await
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .parse::<Uuid>()
+        .unwrap();
+    let created = ads(&f)
+        .execute(
+            &f.actor,
+            a::Command::Create(a::Create {
+                owner_unit_id: other,
+                content: a::Content {
+                    name: "外单位广告".into(),
+                    body: "只在明确授权后使用".into(),
+                    link: None,
+                },
+                workspaces: vec![a::Scope {
+                    kind: "unit".into(),
+                    id: other.to_string(),
+                    channel: Some("mobile".into()),
+                    workspace_id: Some(f.workspace),
+                }],
+                reason: "私有默认".into(),
+            }),
+        )
+        .await
+        .unwrap();
+    let id = created["id"].as_str().unwrap().parse::<Uuid>().unwrap();
+    let candidates = ads(&f)
+        .execute(&f.actor, a::Command::Candidates(f.route.clone(), 1))
+        .await
+        .unwrap();
+    assert!(candidates["items"].as_array().unwrap().is_empty());
+    let receiver = Uuid::new_v4();
+    sqlx::query("INSERT INTO accounts(id,username,display_name) VALUES($1,'receiver','Receiver')")
+        .bind(receiver)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO mobile_workspace_members VALUES($1,$2,'admin')")
+        .bind(f.workspace)
+        .bind(receiver)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO source_route_managers(route_id,account_id,granted_by) VALUES($1,$2,$3)",
+    )
+    .bind(&f.route)
+    .bind(receiver)
+    .bind(f.actor.id)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    let actor:Actor=serde_json::from_value(json!({"id":receiver,"username":"receiver","display_name":"Receiver","platform_admin":false,"grants":[],"wecom_authenticated":false})).unwrap();
+    assert_eq!(
+        ads(&f)
+            .execute(&actor, a::Command::Detail(id))
+            .await
+            .unwrap_err()
+            .0,
+        "not_found"
+    );
+    let mut policy = a::Policy {
+        enabled: true,
+        valid_from: chrono::Utc::now(),
+        valid_until: None,
+        allows: vec![a::Scope {
+            kind: "route".into(),
+            id: f.route.clone(),
+            channel: Some("mobile".into()),
+            workspace_id: Some(f.workspace),
+        }],
+        denies: vec![],
+    };
+    ads(&f)
+        .execute(
+            &f.actor,
+            a::Command::Policy(
+                id,
+                a::PolicyPublication {
+                    expected_revision: 2,
+                    reason: "向指定路由共享".into(),
+                    policy: policy.clone(),
+                },
+            ),
+        )
+        .await
+        .unwrap();
+    let list = ads(&f)
+        .execute(
+            &actor,
+            a::Command::List {
+                page: 1,
+                filter: "shared".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(list["items"].as_array().unwrap().len(), 1);
+    assert_eq!(list["items"][0]["can_edit"], false);
+    assert_eq!(list["items"][0]["policy"], Value::Null);
+    let denied = ads(&f)
+        .execute(
+            &actor,
+            a::Command::Content(
+                id,
+                a::ContentPublication {
+                    expected_revision: 3,
+                    reason: "不应修改".into(),
+                    content: a::Content {
+                        name: "覆盖".into(),
+                        body: "覆盖".into(),
+                        link: None,
+                    },
+                },
+            ),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(denied.0, "forbidden");
+    policy.denies.push(a::Scope {
+        kind: "group".into(),
+        id: f.group.to_string(),
+        channel: None,
+        workspace_id: None,
+    });
+    ads(&f)
+        .execute(
+            &f.actor,
+            a::Command::Policy(
+                id,
+                a::PolicyPublication {
+                    expected_revision: 3,
+                    reason: "禁投优先".into(),
+                    policy: policy.clone(),
+                },
+            ),
+        )
+        .await
+        .unwrap();
+    assert!(
+        ads(&f)
+            .execute(&actor, a::Command::Candidates(f.route.clone(), 1))
+            .await
+            .unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    policy.denies.clear();
+    policy.valid_from = chrono::Utc::now() - chrono::Duration::hours(2);
+    policy.valid_until = Some(chrono::Utc::now() - chrono::Duration::hours(1));
+    ads(&f)
+        .execute(
+            &f.actor,
+            a::Command::Policy(
+                id,
+                a::PolicyPublication {
+                    expected_revision: 4,
+                    reason: "已过期".into(),
+                    policy,
+                },
+            ),
+        )
+        .await
+        .unwrap();
+    assert!(
+        ads(&f)
+            .execute(
+                &actor,
+                a::Command::List {
+                    page: 1,
+                    filter: "all".into()
+                }
+            )
+            .await
+            .unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    f.close().await;
+}
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn advertisement_configuration_wait_records_idempotent_decision_and_original_blocks_first() {
+    use wekeeper_api::advertising::domain as a;
+    use wekeeper_api::source_access::{
+        domain::keyword_filter as k, south::adapter::postgres::keyword_filter::KeywordRepository,
+    };
+    let f = Fixture::new().await;
+    f.configure(vec![f.targets[0]]).await;
+    let ad = select_ad(&f, "mobile", f.workspace).await;
+    let config = a::Config {
+        mode: "fixed".into(),
+        fixed_ad_id: Some(ad),
+        unavailable_policy: "configuration_error".into(),
+        ..Default::default()
+    };
+    ads(&f)
+        .execute(
+            &f.actor,
+            a::Command::Configure(
+                f.route.clone(),
+                a::Configuration {
+                    expected_revision: 1,
+                    reason: "不可用时等待".into(),
+                    config,
+                },
+            ),
+        )
+        .await
+        .unwrap();
+    disable_ad(&f, ad).await;
+    f.lifecycle(LifecycleAction::Enable).await;
+    let worker = RoutingRepository(f.pool.clone());
+    let r = inbox(&f, "config-wait", 1, "content.upsert").await;
+    worker.run_once().await.unwrap();
+    assert_eq!(receipt_value(&f, r).await["reason_code"], "ad_unavailable");
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM source_execution_tasks WHERE receipt_id=$1")
+            .bind(r)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 0);
+    for _ in 0..3 {
+        sqlx::query("UPDATE source_inbox SET next_attempt_at=now() WHERE receipt_id=$1")
+            .bind(r)
+            .execute(&f.pool)
+            .await
+            .unwrap();
+        worker.run_once().await.unwrap();
+    }
+    let decisions = ads(&f)
+        .execute(&f.actor, a::Command::Compositions(f.route.clone(), r, 1))
+        .await
+        .unwrap();
+    assert_eq!(decisions["decisions"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        decisions["decisions"][0]["selection"]["exclusions"][0],
+        "ad_disabled"
+    );
+    let service = wekeeper_api::source_access::north::local::keyword_filter::Service(
+        KeywordRepository(f.pool.clone()),
+    );
+    service
+        .execute(
+            &f.actor,
+            k::Command::Publish {
+                scope: format!("mobile:{}", f.workspace),
+                input: k::Publication {
+                    expected_revision: 0,
+                    reason: "原文先拦截".into(),
+                    entries: vec![k::Entry {
+                        word: "正文".into(),
+                        enabled: true,
+                    }],
+                },
+            },
+        )
+        .await
+        .unwrap();
+    sqlx::query("ALTER TABLE advertisements RENAME COLUMN policy_version TO unavailable_policy")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let blocked = inbox(&f, "blocked-raw", 1, "content.upsert").await;
+    worker.run_once().await.unwrap();
+    assert_eq!(
+        receipt_value(&f, blocked).await["reason_code"],
+        "workspace_keyword_blocked"
+    );
+    let none: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM source_advertisement_decisions WHERE receipt_id=$1",
+    )
+    .bind(blocked)
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(none, 0);
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn advertisement_http_identity_csrf_and_strict_publication_contract() {
+    use axum::{
+        body::{Body, to_bytes},
+        http::Request,
+    };
+    use tower::ServiceExt;
+    let f = Fixture::new().await;
+    let app = wekeeper_api::bootstrap::build_application(f.pool.clone());
+    let (token, actor) = app
+        .identity
+        .0
+        .session(f.actor.id, "browser", false)
+        .await
+        .unwrap();
+    let router = wekeeper_api::http::app_router(app);
+    let input = json!({"data":{"type":"advertisements","attributes":{"owner_unit_id":f.unit,"content":{"name":"HTTP 广告","body":"正文","link":null},"workspaces":[],"reason":"创建"}}});
+    let request = |csrf: bool, body: Value| {
+        let mut b = Request::builder()
+            .method("POST")
+            .uri("/api/v2/admin/advertisements")
+            .header("cookie", format!("wekeeper_session={token}"))
+            .header("origin", "http://localhost:5173")
+            .header("content-type", "application/vnd.api+json");
+        if csrf {
+            b = b.header("x-csrf-token", &actor.csrf);
+        }
+        b.body(Body::from(body.to_string())).unwrap()
+    };
+    let no_auth = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v2/admin/advertisements")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(no_auth.status(), 401);
+    let no_csrf = router
+        .clone()
+        .oneshot(request(false, input.clone()))
+        .await
+        .unwrap();
+    assert_eq!(no_csrf.status(), 403);
+    let mut extra = input.clone();
+    extra["data"]["attributes"]["force_pass"] = json!(true);
+    let invalid = router.clone().oneshot(request(true, extra)).await.unwrap();
+    assert_eq!(invalid.status(), 400);
+    let response = router.clone().oneshot(request(true, input)).await.unwrap();
+    assert_eq!(response.status(), 200);
+    let doc: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 100000).await.unwrap()).unwrap();
+    let id = doc["data"]["id"].as_str().unwrap().parse::<Uuid>().unwrap();
+    assert_ne!(id, Uuid::nil());
+    assert_eq!(doc["data"]["attributes"]["revision"], 2);
+    assert!(doc["data"]["attributes"].get("id").is_none());
+    let detail = router
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v2/admin/advertisements/{id}"))
+                .header("cookie", format!("wekeeper_session={token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(detail.status(), 200);
+    let doc: Value =
+        serde_json::from_slice(&to_bytes(detail.into_body(), 100000).await.unwrap()).unwrap();
+    assert_eq!(doc["data"]["id"], id.to_string());
+    assert_eq!(doc["data"]["attributes"]["content"]["body"], "正文");
+    f.close().await;
+}
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn advertisement_child_failure_rolls_back_composition_snapshot_and_decision() {
+    let f = Fixture::new().await;
+    f.configure(vec![f.targets[0]]).await;
+    select_ad(&f, "mobile", f.workspace).await;
+    f.lifecycle(LifecycleAction::Enable).await;
+    sqlx::query("ALTER TABLE mobile_v9_task_drafts RENAME COLUMN message TO unavailable_message")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let r = inbox(&f, "atomic-ad", 1, "content.upsert").await;
+    let worker = RoutingRepository(f.pool.clone());
+    worker.run_once().await.unwrap();
+    for table in [
+        "source_message_compositions",
+        "source_advertisement_decisions",
+        "source_execution_generations",
+        "distribution_message_snapshots",
+        "mobile_v9_tasks",
+    ] {
+        let count: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0, "{table} must roll back with channel child");
+    }
+    assert_eq!(
+        receipt_value(&f, r).await["reason_code"],
+        "temporarily_unavailable"
+    );
+    sqlx::query("ALTER TABLE mobile_v9_task_drafts RENAME COLUMN unavailable_message TO message")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE source_inbox SET next_attempt_at=now() WHERE receipt_id=$1")
+        .bind(r)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    worker.run_once().await.unwrap();
+    assert_eq!(composition(&f, r).await["composer"], "source-ad-text/1");
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn advertisement_deletion_removes_active_listing_and_retains_version_history() {
+    use wekeeper_api::advertising::domain as a;
+    let f = Fixture::new().await;
+    f.configure(vec![f.targets[0]]).await;
+    let id = select_ad(&f, "mobile", f.workspace).await;
+    let active = ads(&f)
+        .execute(
+            &f.actor,
+            a::Command::List {
+                page: 1,
+                filter: "all".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(active["items"].as_array().unwrap().len(), 1);
+    ads(&f)
+        .execute(
+            &f.actor,
+            a::Command::Archive(
+                id,
+                a::Revision {
+                    expected_revision: 2,
+                    reason: "删除不再使用的广告".into(),
+                },
+            ),
+        )
+        .await
+        .unwrap();
+    for filter in ["all", "owned", "shared"] {
+        let active = ads(&f)
+            .execute(
+                &f.actor,
+                a::Command::List {
+                    page: 1,
+                    filter: filter.into(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(active["items"].as_array().unwrap().is_empty());
+    }
+    let archived = ads(&f)
+        .execute(
+            &f.actor,
+            a::Command::List {
+                page: 1,
+                filter: "archived".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(archived["items"][0]["id"], id.to_string());
+    assert_eq!(archived["items"][0]["archived"], true);
+    let versions = ads(&f)
+        .execute(&f.actor, a::Command::Versions(id, 1))
+        .await
+        .unwrap();
+    assert_eq!(versions["items"].as_array().unwrap().len(), 2);
+    let candidates = ads(&f)
+        .execute(&f.actor, a::Command::Candidates(f.route.clone(), 1))
+        .await
+        .unwrap();
+    assert!(candidates["items"].as_array().unwrap().is_empty());
     f.close().await;
 }

@@ -86,11 +86,13 @@ pub async fn create_official_task(
     snapshot: &crate::source_access::domain::routing::RouteSnapshot,
     message: &str,
     authorizer: Uuid,
+    snapshot_id: Uuid,
 ) -> Result<Uuid> {
     use crate::business::{hash, require};
     let config = snapshot.execution.as_ref().ok_or(Error::Conflict)?;
     authorize(tx, authorizer, "wecom", config.workspace_id).await?;
     let content = crate::distribution::domain::broadcast::normalize_text(message)?;
+    require(sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM distribution_message_snapshots WHERE id=$1 AND school_id=$2 AND channel='wecom' AND content=$3 AND content_hash=$4)").bind(snapshot_id).bind(config.workspace_id).bind(&content).bind(hash(&content)).fetch_one(&mut **tx).await?, "source_snapshot_mismatch")?;
     let directory = sqlx::query(
         "SELECT corp_id,credential_generation FROM wecom_directory_state WHERE singleton FOR SHARE",
     )
@@ -101,7 +103,7 @@ pub async fn create_official_task(
     let task = Uuid::now_v7();
     let input = json!({"content_source":"text","text_content":content,"group_ids":snapshot.targets.iter().map(|t|t.id).collect::<Vec<_>>()});
     sqlx::query("INSERT INTO broadcast_tasks(id,school_id,creator_id,content,content_hash,corp_id,generation,state,content_source,source_namespace,draft_input,authorization_kind,authorized_by) VALUES($1,$2,$3,$4,$5,$6,$7,'confirmed','text','builtin.source-route',$8,'source_route',$3)").bind(task).bind(config.workspace_id).bind(authorizer).bind(&content).bind(hash(&content)).bind(&corp).bind(generation).bind(input).execute(&mut **tx).await?;
-    super::content::save_snapshot(tx, config.workspace_id, task, &content, &[]).await?;
+    sqlx::query("INSERT INTO broadcast_task_snapshots SELECT school_id,id,revision,$2 FROM broadcast_tasks WHERE id=$1").bind(task).bind(snapshot_id).execute(&mut **tx).await?;
     for (position, target) in snapshot.targets.iter().enumerate() {
         require(
             target.identity["corp_id"] == corp,

@@ -85,6 +85,11 @@ impl RoutingRepository {
                 "keyword recovery will retry; withdrawals remain independent"
             );
         }
+        if let Err(error) =
+            crate::advertising::south::adapter::postgres::pipeline::recover(&self.0).await
+        {
+            tracing::warn!(code = error.0, "advertisement recovery will retry");
+        }
         let ids:Vec<Uuid>=sqlx::query_scalar("SELECT i.receipt_id FROM source_inbox i JOIN source_receipts r USING(receipt_id) WHERE i.state IN ('received','waiting') AND i.event_type<>'content.withdrawn' AND i.next_attempt_at<=now() ORDER BY i.next_attempt_at,i.receipt_id LIMIT 50").fetch_all(&self.0).await?;
         for id in ids {
             if let Err(e) = self.process(id).await {
@@ -140,20 +145,14 @@ impl RoutingRepository {
             }
             Resolution::Ready { snapshot } => snapshot,
         };
-        let mut read = self.0.begin().await?;
-        let message = super::keyword_filter::frozen_text(&mut read, receipt)
-            .await?
-            .unwrap_or_else(|| {
-                crate::source_access::domain::keyword_filter::compose(
-                    event.title.as_deref(),
-                    event.content.as_deref(),
-                    &event.detail_url,
-                )
-            });
-        read.commit().await?;
-        if !super::keyword_filter::admit(&self.0, receipt, &event, &snapshot, &message).await? {
+        let Some(prepared) = crate::advertising::south::adapter::postgres::pipeline::prepare(
+            &self.0, receipt, &event, &snapshot,
+        )
+        .await?
+        else {
             return Ok(());
-        }
+        };
+        let message = &prepared.content;
         let mut tx = self.0.begin().await?;
         execution::source_guard(&mut tx)
             .await
@@ -180,10 +179,30 @@ impl RoutingRepository {
         .bind(receipt)
         .fetch_one(&mut *tx)
         .await?;
-        if exists {
+        crate::advertising::south::adapter::postgres::pipeline::validate(
+            &mut tx, receipt, &snapshot, &prepared,
+        )
+        .await?;
+        if exists && !prepared.replacement {
+            sqlx::query("DELETE FROM advertisement_target_blocks WHERE receipt_id=$1")
+                .bind(receipt)
+                .execute(&mut *tx)
+                .await?;
             finish(&mut tx, receipt, "task_created", None).await?;
             tx.commit().await?;
             return Ok(());
+        }
+        let (composition, generation, snapshot_id) =
+            crate::advertising::south::adapter::postgres::pipeline::save(
+                &mut tx, receipt, &snapshot, &prepared,
+            )
+            .await?;
+        if exists {
+            ensure(
+                !halt(&mut tx, receipt, "composition_superseded").await?,
+                "ad_selection_stale",
+            )?;
+            sqlx::query("UPDATE source_execution_tasks SET composition_id=$2,generation=$3 WHERE receipt_id=$1").bind(receipt).bind(composition).bind(generation).execute(&mut *tx).await?;
         }
         for target in &mut snapshot.targets {
             *target = guard_submission(&mut tx, receipt, target.id).await?;
@@ -194,10 +213,19 @@ impl RoutingRepository {
             .as_ref()
             .ok_or(Fault("route_configuration_required"))?;
         let task=match config.channel {
-   Channel::Mobile=>crate::distribution::south::adapter::postgres::shared_send_v2::source_routing::create(&mut tx,&snapshot,&message,authorizer).await.map_err(execution_error)?,
-   Channel::Wecom=>execution::create_official_task(&mut tx,&snapshot,&message,authorizer).await.map_err(execution_error)?
+   Channel::Mobile=>crate::distribution::south::adapter::postgres::shared_send_v2::source_routing::create(&mut tx,&snapshot,message,authorizer,snapshot_id).await.map_err(execution_error)?,
+   Channel::Wecom=>execution::create_official_task(&mut tx,&snapshot,message,authorizer,snapshot_id).await.map_err(execution_error)?
   };
-        sqlx::query("INSERT INTO source_execution_tasks(receipt_id,task_id,channel,workspace_id,authorization_actor_id,config_revision,content_digest,target_digest) VALUES($1,$2,$3,$4,$5,$6,$7,$8)").bind(receipt).bind(task).bind(config.channel.as_str()).bind(config.workspace_id).bind(authorizer).bind(snapshot.revision).bind(digest(message.as_bytes())).bind(digest(json!(snapshot.targets).to_string().as_bytes())).execute(&mut *tx).await?;
+        if exists && config.channel == Channel::Mobile {
+            // A new physical child must not renew the original business deadline or dispatch budget.
+            sqlx::query("UPDATE mobile_v9_tasks n SET confirmed_until=o.confirmed_until,next_eligible_at=o.next_eligible_at FROM mobile_v9_tasks o JOIN source_execution_tasks l ON l.task_id=o.id WHERE n.id=$1 AND l.receipt_id=$2").bind(task).bind(receipt).execute(&mut *tx).await?;
+            sqlx::query("UPDATE mobile_v9_dispatch_state n SET completed_rounds=o.completed_rounds,round_origin=o.round_origin,candidate_cursor=o.candidate_cursor,assigned_at=o.assigned_at,next_retry_at=o.next_retry_at,state=o.state,reason=o.reason,finished_at=o.finished_at,infrastructure_failures=o.infrastructure_failures FROM mobile_v9_task_items ni JOIN source_execution_tasks l ON l.receipt_id=$2 JOIN mobile_v9_task_items oi ON oi.task_id=l.task_id AND oi.target_id=ni.target_id JOIN mobile_v9_dispatch_state o ON o.item_id=oi.id WHERE ni.task_id=$1 AND n.item_id=ni.id").bind(task).bind(receipt).execute(&mut *tx).await?;
+        }
+        sqlx::query("INSERT INTO source_execution_tasks(receipt_id,task_id,channel,workspace_id,authorization_actor_id,config_revision,content_digest,target_digest,composition_id,generation) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(receipt_id) DO UPDATE SET task_id=$2,content_digest=$7,composition_id=$9,generation=$10").bind(receipt).bind(task).bind(config.channel.as_str()).bind(config.workspace_id).bind(authorizer).bind(snapshot.revision).bind(digest(message.as_bytes())).bind(digest(json!(snapshot.targets).to_string().as_bytes())).bind(composition).bind(generation).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM advertisement_target_blocks WHERE receipt_id=$1")
+            .bind(receipt)
+            .execute(&mut *tx)
+            .await?;
         audit(&mut tx,source,None,None,"source.task.created","source-routing",json!({"receipt_id":receipt,"task_id":task,"authorization_actor":authorizer,"config_revision":snapshot.revision})).await?;
         finish(&mut tx, receipt, "task_created", None).await?;
         tx.commit().await?;
@@ -210,7 +238,7 @@ impl RoutingRepository {
             .map_err(execution_error)?;
         sqlx::query("INSERT INTO source_summary_queue SELECT l.receipt_id FROM source_execution_tasks l JOIN source_receipts r USING(receipt_id) WHERE r.summary_version IS NULL ORDER BY l.created_at LIMIT 50 ON CONFLICT DO NOTHING").execute(&mut *tx).await?;
         let ids:Vec<Uuid>=sqlx::query_scalar("SELECT receipt_id FROM source_summary_queue ORDER BY receipt_id LIMIT 50 FOR UPDATE SKIP LOCKED").fetch_all(&mut *tx).await?;
-        sqlx::query("WITH results AS (SELECT l.receipt_id, CASE WHEN EXISTS(SELECT 1 FROM mobile_v9_attempts a WHERE a.item_id=i.id AND a.state IN ('observed_sent','manually_confirmed_sent')) THEN 'sent' WHEN EXISTS(SELECT 1 FROM mobile_v9_attempts a LEFT JOIN mobile_execution_grants g ON g.attempt_id=a.id WHERE a.item_id=i.id AND (a.state='unknown' OR (g.id IS NOT NULL AND g.result_body IS NULL AND (t.stopped OR NOT a.current)))) THEN 'unknown' WHEN EXISTS(SELECT 1 FROM keyword_target_blocks kb WHERE kb.receipt_id=l.receipt_id AND kb.target_id=i.target_id) OR t.stopped OR ds.state IN ('dispatch_failed','stopped','confirmation_expired') THEN 'failed' ELSE 'pending' END AS result FROM source_execution_tasks l JOIN mobile_v9_tasks t ON t.id=l.task_id JOIN mobile_v9_task_items i ON i.task_id=l.task_id JOIN mobile_v9_dispatch_state ds ON ds.item_id=i.id WHERE l.channel='mobile' AND l.receipt_id=ANY($1) UNION ALL SELECT l.receipt_id, CASE WHEN x.official_status=1 THEN 'sent' WHEN b.state='unknown' OR b.stop_state='unknown' THEN 'unknown' WHEN EXISTS(SELECT 1 FROM keyword_target_blocks kb WHERE kb.receipt_id=l.receipt_id AND kb.target_id=x.group_id) OR b.stop_state='stopped' OR b.state IN ('rejected','cancelled') OR x.rejected OR x.official_status IN (2,3) THEN 'failed' ELSE 'pending' END FROM source_execution_tasks l JOIN broadcast_targets x ON x.task_id=l.task_id JOIN broadcast_batches b ON b.id=x.batch_id WHERE l.channel='wecom' AND l.receipt_id=ANY($1)), summaries AS (SELECT receipt_id,count(*) AS total,jsonb_build_object('pending',count(*) FILTER(WHERE result='pending'),'sent',count(*) FILTER(WHERE result='sent'),'failed',count(*) FILTER(WHERE result='failed'),'unknown',count(*) FILTER(WHERE result='unknown')) AS summary FROM results GROUP BY receipt_id) UPDATE source_receipts r SET sending=x.summary,summary_total=x.total,summary_version='targets/1',summary_revision=r.summary_revision+1,summary_updated_at=clock_timestamp(),updated_at=clock_timestamp() FROM summaries x WHERE r.receipt_id=x.receipt_id AND (r.sending IS DISTINCT FROM x.summary OR r.summary_version IS NULL)").bind(&ids).execute(&mut *tx).await?;
+        sqlx::query("WITH results AS (SELECT l.receipt_id,i.target_id AS logical_target, CASE WHEN EXISTS(SELECT 1 FROM mobile_v9_attempts a WHERE a.item_id=i.id AND a.state IN ('observed_sent','manually_confirmed_sent')) THEN 'sent' WHEN EXISTS(SELECT 1 FROM mobile_v9_attempts a LEFT JOIN mobile_execution_grants g ON g.attempt_id=a.id WHERE a.item_id=i.id AND (a.state='unknown' OR (g.id IS NOT NULL AND g.result_body IS NULL AND (t.stopped OR NOT a.current)))) THEN 'unknown' WHEN EXISTS(SELECT 1 FROM keyword_target_blocks kb WHERE kb.receipt_id=l.receipt_id AND kb.target_id=i.target_id) OR EXISTS(SELECT 1 FROM advertisement_target_blocks ab WHERE ab.receipt_id=l.receipt_id AND ab.target_id=i.target_id) OR t.stopped OR ds.state IN ('dispatch_failed','stopped','confirmation_expired') THEN 'failed' ELSE 'pending' END AS result FROM source_execution_generations l JOIN mobile_v9_tasks t ON t.id=l.task_id JOIN mobile_v9_task_items i ON i.task_id=l.task_id JOIN mobile_v9_dispatch_state ds ON ds.item_id=i.id WHERE l.channel='mobile' AND l.receipt_id=ANY($1) AND (l.task_id=(SELECT cur.task_id FROM source_execution_tasks cur WHERE cur.receipt_id=l.receipt_id) OR EXISTS(SELECT 1 FROM mobile_v9_attempts a LEFT JOIN mobile_execution_grants g ON g.attempt_id=a.id WHERE a.item_id=i.id AND (g.id IS NOT NULL OR a.state IN ('observed_sent','manually_confirmed_sent','unknown')))) UNION ALL SELECT l.receipt_id,x.group_id AS logical_target, CASE WHEN x.official_status=1 THEN 'sent' WHEN b.state='unknown' OR b.stop_state='unknown' THEN 'unknown' WHEN EXISTS(SELECT 1 FROM keyword_target_blocks kb WHERE kb.receipt_id=l.receipt_id AND kb.target_id=x.group_id) OR EXISTS(SELECT 1 FROM advertisement_target_blocks ab WHERE ab.receipt_id=l.receipt_id AND ab.target_id=x.group_id) OR b.stop_state='stopped' OR b.state IN ('rejected','cancelled') OR x.rejected OR x.official_status IN (2,3) THEN 'failed' ELSE 'pending' END FROM source_execution_generations l JOIN broadcast_targets x ON x.task_id=l.task_id JOIN broadcast_batches b ON b.id=x.batch_id WHERE l.channel='wecom' AND l.receipt_id=ANY($1) AND (l.task_id=(SELECT cur.task_id FROM source_execution_tasks cur WHERE cur.receipt_id=l.receipt_id) OR b.msgid IS NOT NULL OR b.state NOT IN ('queued','cancelled') OR b.stop_state='unknown')), logical AS (SELECT receipt_id,logical_target,CASE WHEN bool_or(result='sent') THEN 'sent' WHEN bool_or(result='unknown') THEN 'unknown' WHEN bool_or(result='pending') THEN 'pending' ELSE 'failed' END AS result FROM results GROUP BY receipt_id,logical_target), summaries AS (SELECT receipt_id,count(*) AS total,jsonb_build_object('pending',count(*) FILTER(WHERE result='pending'),'sent',count(*) FILTER(WHERE result='sent'),'failed',count(*) FILTER(WHERE result='failed'),'unknown',count(*) FILTER(WHERE result='unknown')) AS summary FROM logical GROUP BY receipt_id) UPDATE source_receipts r SET sending=x.summary,summary_total=x.total,summary_version='targets/1',summary_revision=r.summary_revision+1,summary_updated_at=clock_timestamp(),updated_at=clock_timestamp() FROM summaries x WHERE r.receipt_id=x.receipt_id AND (r.sending IS DISTINCT FROM x.summary OR r.summary_version IS NULL)").bind(&ids).execute(&mut *tx).await?;
         sqlx::query("DELETE FROM source_summary_queue WHERE receipt_id=ANY($1)")
             .bind(&ids)
             .execute(&mut *tx)

@@ -62,7 +62,13 @@ async fn ready(tx: &mut Tx<'_>, candidate: &Value) -> Result<bool> {
     Ok(!sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM mobile_execution_grants WHERE device_id=$1 AND NOT session_closed)").bind(uid(candidate,"device_id")?).fetch_one(&mut **tx).await?)
 }
 pub(super) async fn reconcile(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
-    let source:Option<(Uuid,Uuid)>=sqlx::query_as("SELECT l.receipt_id,i.target_id FROM mobile_v9_task_items i JOIN source_execution_tasks l ON l.task_id=i.task_id WHERE i.id=$1 AND NOT EXISTS(SELECT 1 FROM mobile_v9_attempts a JOIN mobile_execution_grants g ON g.attempt_id=a.id WHERE a.item_id=i.id AND a.current)").bind(item).fetch_optional(&mut **tx).await?;
+    let source:Option<(Uuid,Uuid)>=sqlx::query_as("SELECT l.receipt_id,i.target_id FROM mobile_v9_task_items i JOIN source_execution_generations l ON l.task_id=i.task_id WHERE i.id=$1 AND NOT EXISTS(SELECT 1 FROM mobile_v9_attempts a JOIN mobile_execution_grants g ON g.attempt_id=a.id WHERE a.item_id=i.id AND a.current)").bind(item).fetch_optional(&mut **tx).await?;
+    if let Some((receipt, _)) = source {
+        let current:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_execution_tasks l JOIN mobile_v9_task_items i ON i.task_id=l.task_id WHERE l.receipt_id=$1 AND i.id=$2)").bind(receipt).bind(item).fetch_one(&mut **tx).await?;
+        if !current {
+            return status(tx, item, "stopped", "composition_superseded").await;
+        }
+    }
     if let Some((receipt, target)) = source
         && let Err(error) =
             crate::source_access::south::adapter::postgres::routing::guard_submission(

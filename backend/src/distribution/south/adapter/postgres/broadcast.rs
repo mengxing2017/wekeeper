@@ -785,7 +785,13 @@ impl Store for Repository {
         }
 
         if w.operation == "create" {
-            let source:Option<(Uuid,Uuid)>=sqlx::query_as("SELECT l.receipt_id,x.group_id FROM source_execution_tasks l JOIN broadcast_targets x ON x.task_id=l.task_id WHERE x.batch_id=$1").bind(w.id).fetch_optional(&mut *tx).await?;
+            let source:Option<(Uuid,Uuid)>=sqlx::query_as("SELECT l.receipt_id,x.group_id FROM source_execution_generations l JOIN broadcast_targets x ON x.task_id=l.task_id WHERE x.batch_id=$1").bind(w.id).fetch_optional(&mut *tx).await?;
+            if let Some((receipt, _)) = source {
+                let current:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_execution_tasks WHERE receipt_id=$1 AND task_id=$2)").bind(receipt).bind(w.task_id).fetch_one(&mut *tx).await?;
+                if !current {
+                    return Ok(false);
+                }
+            }
             if let Some((receipt, target)) = source
                 && let Err(error) =
                     crate::source_access::south::adapter::postgres::routing::guard_submission(

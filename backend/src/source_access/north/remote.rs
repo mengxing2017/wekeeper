@@ -20,7 +20,7 @@ fn header<'a>(h: &'a HeaderMap, name: &str) -> Result<&'a str> {
         .ok_or(Fault("invalid_request"))
 }
 impl Fault {
-    fn response(self, request_id: &str) -> Response {
+    pub(crate) fn response(self, request_id: &str) -> Response {
         let status = match self.0 {
             "authentication_failed" | "credential_unavailable" | "timestamp_expired" => 401,
             "forbidden" | "source_disabled" | "route_unavailable" => 403,
@@ -36,12 +36,16 @@ impl Fault {
             | "route_configuration_required"
             | "target_unavailable"
             | "content_version_superseded"
-            | "recheck_not_allowed" => 409,
+            | "recheck_not_allowed"
+            | "ad_selection_stale"
+            | "ad_unavailable"
+            | "ad_archived" => 409,
             "temporarily_unavailable"
             | "source_key_configuration_required"
             | "keyword_rules_unavailable"
             | "keyword_engine_unavailable"
-            | "keyword_engine_budget_exceeded" => 503,
+            | "keyword_engine_budget_exceeded"
+            | "ad_configuration_unavailable" => 503,
             "unsupported_media_type" => 415,
             "payload_too_large" => 413,
             "rate_limited" => 429,
@@ -57,6 +61,16 @@ impl Fault {
             "调用方凭据加密服务未配置，请联系部署人员完成配置"
         } else {
             match self.0 {
+                "ad_unavailable" => "所选广告当前不可投放，请调整广告授权或路由选用配置",
+                "ad_archived" => "广告已归档，不能继续发布",
+                "invalid_ad_content" => {
+                    "广告名称不能为空且最多 120 个字符，正文不能为空且最多 8000 字节"
+                }
+                "invalid_ad_link" => "请填写有效的 HTTPS 链接",
+                "invalid_ad_scope" => "请选择有效的单位、分组或路由以及对应工作空间",
+                "invalid_ad_policy" => "请核对广告有效期与共享范围",
+                "invalid_ad_configuration" => "请核对广告模式与固定广告选择",
+                "ad_configuration_unavailable" => "广告配置暂时不可用，请稍后重试",
                 "invalid_keyword" => {
                     "关键字不能为空白，原始长度最多 512 字节，规范化后最多 128 个字符"
                 }

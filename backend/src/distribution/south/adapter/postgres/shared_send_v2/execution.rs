@@ -122,8 +122,12 @@ pub(super) async fn grant(tx: &mut Tx<'_>, c: &Credential, v: GrantRequest) -> R
 
     let mut allowed_attempts = Vec::new();
     for attempt in &v.eligible_attempt_ids {
-        let source:Option<(Uuid,Uuid)>=sqlx::query_as("SELECT l.receipt_id,i.target_id FROM mobile_v9_attempts a JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN source_execution_tasks l ON l.task_id=i.task_id WHERE a.id=$1").bind(attempt).fetch_optional(&mut **tx).await?;
+        let source:Option<(Uuid,Uuid)>=sqlx::query_as("SELECT l.receipt_id,i.target_id FROM mobile_v9_attempts a JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN source_execution_generations l ON l.task_id=i.task_id WHERE a.id=$1").bind(attempt).fetch_optional(&mut **tx).await?;
         if let Some((receipt, target)) = source {
+            let current:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_execution_tasks l JOIN mobile_v9_task_items i ON i.task_id=l.task_id JOIN mobile_v9_attempts a ON a.item_id=i.id WHERE l.receipt_id=$1 AND a.id=$2)").bind(receipt).bind(attempt).fetch_one(&mut **tx).await?;
+            if !current {
+                continue;
+            }
             match crate::source_access::south::adapter::postgres::routing::guard_submission(
                 tx, receipt, target,
             )

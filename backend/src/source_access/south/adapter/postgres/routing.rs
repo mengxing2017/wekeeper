@@ -13,7 +13,7 @@ fn resource_error(e: crate::business::Error) -> Fault {
         _ => Fault("temporarily_unavailable"),
     }
 }
-pub(super) async fn administrator(tx: &mut Tx<'_>, actor: Uuid) -> Result<bool> {
+pub(crate) async fn administrator(tx: &mut Tx<'_>, actor: Uuid) -> Result<bool> {
     sqlx::query_scalar("SELECT platform_admin FROM accounts WHERE id=$1 AND active FOR SHARE")
         .bind(actor)
         .fetch_optional(&mut **tx)
@@ -43,7 +43,7 @@ async fn latest(tx: &mut Tx<'_>, route: &str) -> Result<Option<RouteSnapshot>> {
         .transpose()
         .map_err(Into::into)
 }
-pub(super) async fn access(tx: &mut Tx<'_>, actor: Uuid, route: &str, admin: bool) -> Result<()> {
+pub(crate) async fn access(tx: &mut Tx<'_>, actor: Uuid, route: &str, admin: bool) -> Result<()> {
     if admin {
         return Ok(());
     }
@@ -779,6 +779,8 @@ pub async fn guard_submission(
         .await?;
     let current:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_receipts r JOIN source_inbox i USING(receipt_id) JOIN source_content_versions v ON v.source_id=r.source_id AND v.route_id=r.route_id AND v.external_content_id=convert_from(i.request_body,'UTF8')::jsonb #>> '{data,attributes,external_content_id}' WHERE r.receipt_id=$1 AND v.receipt_id=$1 AND NOT v.withdrawn)").bind(receipt).fetch_one(&mut **tx).await?;
     ensure(current, "content_version_superseded")?;
+    crate::advertising::south::adapter::postgres::pipeline::current_guard(tx, receipt, &frozen)
+        .await?;
     super::keyword_filter::guard_admission(tx, receipt, &frozen).await?;
     let config = frozen
         .execution
