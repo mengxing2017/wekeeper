@@ -1,3 +1,4 @@
+import { keywordRules } from '../../operations/source-access/api'
 import { selectOption } from '../../../test/select-option'
 import { afterEach, expect, it, vi } from 'vitest'
 import { cleanup, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
@@ -60,4 +61,14 @@ it('requires a fresh login after resetting the current platform administrator pa
   fireEvent.click(within(screen.getByRole('dialog')).getByRole('button',{name:'确认重设密码'}))
   await waitFor(()=>expect(identity.resetAdministrator).toHaveBeenCalledWith('u','changed-password'))
   expect(await screen.findByText('登录工作空间',{selector:'h1'})).toBeTruthy()
+})
+
+it('opens the keyword rules page from its registered workspace URL and sidebar entry',async()=>{
+ const scopes=vi.spyOn(keywordRules,'scopes').mockResolvedValue({items:[]})
+ show('keyword-rules')
+ expect(await screen.findByRole('menuitem',{name:'关键字规则'})).toBeTruthy()
+ expect(await screen.findByRole('button',{name:'刷新规则范围'})).toBeTruthy()
+ await waitFor(()=>expect(scopes).toHaveBeenCalled())
+ expect(screen.queryByText('页面不存在')).toBeNull()
+ scopes.mockRestore()
 })

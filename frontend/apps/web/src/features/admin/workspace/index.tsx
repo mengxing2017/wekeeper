@@ -1,3 +1,4 @@
+import { KeywordRules } from '../../operations/source-access/keywords'
 import { AssignedRoutes } from '../../operations/source-access/assigned'
 import { RoutingDirectory } from '../../operations/source-access/directory'
 import { SourceAccess } from '../../operations/source-access'
@@ -89,6 +90,7 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
   </WecomWorkspacePanel>
   else if (tab === 'source-credentials') page = <SourceAccess platformAdmin={user.platform_admin} />
   else if (tab === 'source-routing-directory') page = <RoutingDirectory />
+  else if (tab === 'keyword-rules') page = <KeywordRules />
   else if (tab === 'source-receipts') page = <AssignedRoutes key="source-receipts" receiptsOnly platformAdmin={user.platform_admin} />
   else if (tab === 'source-route-configurations') page = <AssignedRoutes platformAdmin={user.platform_admin} />
   else if (tab === 'audit') page = <AuditEvents />
