@@ -1,0 +1,27 @@
+{
+  "contract_version": "source-v2-4",
+  "composer": "source-ad-text/1",
+  "modes": [
+    "none",
+    "fixed"
+  ],
+  "deferred_mode": "pool (volume 08)",
+  "source": "title_or_empty + LF + body_or_empty + LF + detail_url",
+  "advertisement": "【广告】 + LF + body + optional(LF + https_link)",
+  "separator": "LF LF",
+  "line_endings": "CRLF and CR normalize to LF; no trimming or truncation",
+  "limits": {
+    "wecom_utf8_bytes": 4000,
+    "mobile_utf8_bytes": 8000,
+    "mobile_unicode_scalars": 2000
+  },
+  "authorization": "immutable owner unit, explicit channel/workspace allow scope, deny wins; receiver opt-in required",
+  "replacement": "all historical generations must have no signed execution package, official possible submission, sent or unknown; original auto_recover required",
+  "management_list_filters": [
+    "all",
+    "owned",
+    "shared",
+    "archived"
+  ],
+  "deletion": "archive with expected_revision and reason; excluded from active lists; history retained"
+}

@@ -1,0 +1,87 @@
+{
+  "create": {
+    "owner_unit_id": "00000000-0000-0000-0000-000000000001",
+    "content": {
+      "name": "广告名称",
+      "body": "广告正文",
+      "link": "https://example.com/ad"
+    },
+    "workspaces": [
+      {
+        "kind": "unit",
+        "id": "00000000-0000-0000-0000-000000000001",
+        "channel": "mobile",
+        "workspace_id": "00000000-0000-0000-0000-000000000002"
+      }
+    ],
+    "reason": "创建广告"
+  },
+  "configuration": {
+    "expected_revision": 0,
+    "reason": "选用广告",
+    "config": {
+      "mode": "fixed",
+      "fixed_ad_id": "00000000-0000-0000-0000-000000000003",
+      "insertion_position": "after",
+      "unavailable_policy": "without_ad",
+      "auto_recover": true
+    }
+  },
+  "policy_publication": {
+    "expected_revision": 2,
+    "reason": "发布授权",
+    "policy": {
+      "enabled": true,
+      "valid_from": "2026-11-09T00:00:00Z",
+      "valid_until": null,
+      "allows": [
+        {
+          "kind": "unit",
+          "id": "00000000-0000-0000-0000-000000000001",
+          "channel": "mobile",
+          "workspace_id": "00000000-0000-0000-0000-000000000002"
+        }
+      ],
+      "denies": []
+    }
+  },
+  "content_publication": {
+    "expected_revision": 3,
+    "reason": "发布正文",
+    "content": {
+      "name": "广告名称",
+      "body": "广告正文",
+      "link": "https://example.com/ad"
+    }
+  },
+  "selection": {
+    "config": {
+      "mode": "fixed",
+      "fixed_ad_id": "00000000-0000-0000-0000-000000000003",
+      "insertion_position": "after",
+      "unavailable_policy": "without_ad",
+      "auto_recover": true
+    },
+    "config_revision": 1,
+    "ad_id": "00000000-0000-0000-0000-000000000003",
+    "content_version": "00000000-0000-0000-0000-000000000004",
+    "policy_version": "00000000-0000-0000-0000-000000000005",
+    "composer": "source-ad-text/1",
+    "exclusions": [],
+    "measurement": {
+      "bytes": 100,
+      "scalars": 60,
+      "max_bytes": 8000,
+      "max_scalars": 2000,
+      "valid": true
+    },
+    "candidates": [
+      {
+        "ad_id": "00000000-0000-0000-0000-000000000003",
+        "content_version": "00000000-0000-0000-0000-000000000004",
+        "policy_version": "00000000-0000-0000-0000-000000000005",
+        "exclusion": null
+      }
+    ]
+  }
+}

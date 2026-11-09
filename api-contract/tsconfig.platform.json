@@ -16,6 +16,7 @@
     "src/modules/mobile-execution/shared-send/client.ts",
     "src/modules/source-access/routing-client.ts",
     "src/modules/source-access/receipts-client.ts",
-    "src/modules/source-access/keywords-client.ts"
+    "src/modules/source-access/keywords-client.ts",
+    "src/modules/advertising/client.ts"
   ]
 }
