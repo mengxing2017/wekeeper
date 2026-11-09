@@ -39,7 +39,7 @@ async fn event(
     sqlx::query("INSERT INTO broadcast_events(id,school_id,task_id,actor_id,action,detail) VALUES($1,$2,$3,$4,$5,$6)").bind(Uuid::now_v7()).bind(school).bind(task).bind(actor).bind(action).bind(detail).execute(&mut **tx).await?;
     Ok(())
 }
-const TASK: &str = "SELECT to_jsonb(t)||jsonb_build_object('total',(SELECT count(*) FROM broadcast_targets x WHERE x.task_id=t.id),'sent',(SELECT count(*) FROM broadcast_targets x WHERE x.task_id=t.id AND x.official_status=1),'rejected',(SELECT count(*) FROM broadcast_targets x JOIN broadcast_batches b ON b.id=x.batch_id WHERE x.task_id=t.id AND x.official_status IS DISTINCT FROM 1 AND (x.rejected OR x.official_status IN (2,3) OR b.state='rejected')),'uncertain',(SELECT count(*) FROM broadcast_batches b WHERE b.task_id=t.id AND (b.state='unknown' OR b.stop_state='unknown')),'pending',(SELECT count(*) FROM broadcast_targets x JOIN broadcast_batches b ON b.id=x.batch_id WHERE x.task_id=t.id AND (x.official_status IS NULL OR x.official_status=0) AND NOT x.rejected AND b.stop_state<>'stopped' AND b.state IN ('queued','submitting','created')),'batch_count',(SELECT count(*) FROM broadcast_batches b WHERE b.task_id=t.id),'materials',coalesce((SELECT jsonb_agg(jsonb_build_object('namespace',r.namespace,'external_organization_id',r.external_organization_id,'external_content_id',r.external_content_id,'version',r.version) ORDER BY r.position) FROM broadcast_content_references r WHERE r.task_id=t.id),'[]'::jsonb),'post_ids',coalesce((SELECT jsonb_agg(p.post_id ORDER BY p.position) FROM broadcast_task_posts p WHERE p.task_id=t.id),'[]'::jsonb)) FROM broadcast_tasks t";
+const TASK: &str = "SELECT to_jsonb(t)||jsonb_build_object('total',(SELECT count(*) FROM broadcast_targets x WHERE x.task_id=t.id),'sent',(SELECT count(*) FROM broadcast_targets x WHERE x.task_id=t.id AND x.official_status=1),'rejected',(SELECT count(*) FROM broadcast_targets x JOIN broadcast_batches b ON b.id=x.batch_id WHERE x.task_id=t.id AND x.official_status IS DISTINCT FROM 1 AND (x.rejected OR x.official_status IN (2,3) OR b.state='rejected')),'uncertain',(SELECT count(*) FROM broadcast_batches b WHERE b.task_id=t.id AND (b.state='unknown' OR b.stop_state='unknown' OR EXISTS(SELECT 1 FROM broadcast_targets z WHERE z.batch_id=b.id AND z.official_status IS NOT NULL AND z.official_status NOT IN (0,1,2,3)))),'pending',(SELECT count(*) FROM broadcast_targets x JOIN broadcast_batches b ON b.id=x.batch_id WHERE x.task_id=t.id AND (x.official_status IS NULL OR x.official_status=0) AND NOT x.rejected AND b.stop_state<>'stopped' AND b.state IN ('queued','submitting','created')),'batch_count',(SELECT count(*) FROM broadcast_batches b WHERE b.task_id=t.id),'materials',coalesce((SELECT jsonb_agg(jsonb_build_object('namespace',r.namespace,'external_organization_id',r.external_organization_id,'external_content_id',r.external_content_id,'version',r.version) ORDER BY r.position) FROM broadcast_content_references r WHERE r.task_id=t.id),'[]'::jsonb),'post_ids',coalesce((SELECT jsonb_agg(p.post_id ORDER BY p.position) FROM broadcast_task_posts p WHERE p.task_id=t.id),'[]'::jsonb)) FROM broadcast_tasks t";
 const WORK: &str = "SELECT to_jsonb(b)||jsonb_build_object('content',t.content,'generation',t.generation,'operation','create','operation_id',NULL,'chats',coalesce((SELECT jsonb_agg(x.chat_id ORDER BY x.chat_id) FROM broadcast_targets x WHERE x.batch_id=b.id),'[]'::jsonb)) FROM broadcast_batches b JOIN broadcast_tasks t ON t.id=b.task_id";
 impl Repository {
     #[allow(clippy::too_many_arguments)] // Frozen draft plus credential scope are one transaction.
@@ -245,7 +245,7 @@ impl Repository {
         if let Some(encoded) = preview_key {
             let (key, input_hash) = encoded.rsplit_once(':').ok_or(Error::Conflict)?;
             let response = if generation.is_some() && !input.group_ids.is_empty() {
-                Self::validate(&mut tx, task).await?;
+                Self::validate(&mut tx, task, None).await?;
                 let p = super::content::preview(&mut tx, task).await?;
                 sqlx::query("UPDATE broadcast_previews SET actor_id=$2 WHERE task_id=$1")
                     .bind(task)
@@ -261,7 +261,7 @@ impl Repository {
         tx.commit().await?;
         Ok(task)
     }
-    async fn validate(tx: &mut Tx<'_>, task: Uuid) -> Result<()> {
+    async fn validate(tx: &mut Tx<'_>, task: Uuid, batch: Option<Uuid>) -> Result<()> {
         let t = sqlx::query("SELECT * FROM broadcast_tasks WHERE id=$1")
             .bind(task)
             .fetch_one(&mut **tx)
@@ -281,11 +281,12 @@ impl Repository {
         .await?;
         sqlx::query("SELECT singleton FROM wecom_directory_state WHERE corp_id=$1 AND credential_generation=$2 FOR SHARE").bind(t.get::<String,_>("corp_id")).bind(t.get::<i64,_>("generation")).fetch_optional(&mut **tx).await?.ok_or(Error::Conflict)?;
         super::content::validate_task(&mut *tx, task).await?;
-        let groups=sqlx::query("SELECT g.id FROM broadcast_targets x JOIN broadcast_batches b ON b.id=x.batch_id JOIN wecom_groups g ON g.id=x.group_id JOIN wecom_asset_objects o ON o.id=g.directory_group_id JOIN accounts a ON a.id=b.sender_account JOIN wecom_members m ON m.id=a.wecom_member_id JOIN wecom_workspace_members sm ON sm.account_id=a.id AND sm.school_id=x.school_id WHERE x.task_id=$1 AND g.school_id=x.school_id AND g.active AND g.revision=x.group_revision AND g.chat_id=x.chat_id AND g.corp_id=b.corp_id AND o.credential_generation=$2 AND o.verification='verified' AND o.visibility='visible' AND o.checked_at>now()-interval '24 hours' AND lower(o.data->>'owner' COLLATE \"C\")=m.userid_key AND lower(b.sender COLLATE \"C\")=m.userid_key AND a.active AND a.wecom_binding_revision=b.binding_revision AND m.verification='verified' AND m.status=1 AND sm.role IN ('operator','admin') AND NOT EXISTS(SELECT 1 FROM wecom_sender_qualifications q WHERE q.school_id=g.school_id AND q.account_id=a.id AND NOT q.enabled) ORDER BY g.id FOR UPDATE OF g FOR SHARE OF a,m,sm,o")
-            .bind(task).bind(t.get::<i64,_>("generation")).fetch_all(&mut **tx).await?;
+        let groups=sqlx::query("SELECT g.id FROM broadcast_targets x JOIN broadcast_batches b ON b.id=x.batch_id JOIN wecom_groups g ON g.id=x.group_id JOIN wecom_asset_objects o ON o.id=g.directory_group_id JOIN accounts a ON a.id=b.sender_account JOIN wecom_members m ON m.id=a.wecom_member_id JOIN wecom_workspace_members sm ON sm.account_id=a.id AND sm.school_id=x.school_id WHERE x.task_id=$1 AND ($3::uuid IS NULL OR x.batch_id=$3) AND g.school_id=x.school_id AND g.active AND g.revision=x.group_revision AND g.chat_id=x.chat_id AND g.corp_id=b.corp_id AND o.credential_generation=$2 AND o.verification='verified' AND o.visibility='visible' AND o.checked_at>now()-interval '24 hours' AND lower(o.data->>'owner' COLLATE \"C\")=m.userid_key AND lower(b.sender COLLATE \"C\")=m.userid_key AND a.active AND a.wecom_binding_revision=b.binding_revision AND m.verification='verified' AND m.status=1 AND sm.role IN ('operator','admin') AND NOT EXISTS(SELECT 1 FROM wecom_sender_qualifications q WHERE q.school_id=g.school_id AND q.account_id=a.id AND NOT q.enabled) ORDER BY g.id FOR UPDATE OF g FOR SHARE OF a,m,sm,o")
+            .bind(task).bind(t.get::<i64,_>("generation")).bind(batch).fetch_all(&mut **tx).await?;
         let count: i64 =
-            sqlx::query_scalar("SELECT count(*) FROM broadcast_targets WHERE task_id=$1")
+            sqlx::query_scalar("SELECT count(*) FROM broadcast_targets WHERE task_id=$1 AND ($2::uuid IS NULL OR batch_id=$2)")
                 .bind(task)
+                .bind(batch)
                 .fetch_one(&mut **tx)
                 .await?;
         require(
@@ -382,7 +383,7 @@ impl Repository {
                 .fetch_optional(&mut *tx)
                 .await?
                 .ok_or(Error::Conflict)?;
-                Self::validate(&mut tx, id).await?;
+                Self::validate(&mut tx, id, None).await?;
                 Self::duplicates(&mut tx, id, a.id).await?;
                 sqlx::query("UPDATE broadcast_tasks SET state='confirmed',confirmed_by=$2,confirmed_at=now() WHERE id=$1").bind(id).bind(a.id).execute(&mut *tx).await?;
             }
@@ -648,7 +649,7 @@ impl Store for Repository {
         guard(&mut tx).await?;
         authorize(&mut tx, actor.id, school, false).await?;
         sqlx::query("SELECT id FROM broadcast_tasks WHERE school_id=$1 AND id=$2 AND state='draft' FOR UPDATE").bind(school).bind(id).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
-        Self::validate(&mut tx, id).await?;
+        Self::validate(&mut tx, id, None).await?;
         let preview = super::content::preview(&mut tx, id).await?;
         sqlx::query("UPDATE broadcast_previews SET actor_id=$2 WHERE task_id=$1")
             .bind(id)
@@ -708,7 +709,10 @@ impl Store for Repository {
         let (limit, offset) = page.fetch_bounds()?;
         let sql = match kind {
             "targets" => {
-                "SELECT to_jsonb(x)||jsonb_build_object('sender',b.sender,'creation_state',b.state,'msgid',b.msgid,'member_status',b.member_status,'last_synced_at',b.last_synced_at,'sync_error',b.sync_error,'error_code',b.error_code,'stop_state',b.stop_state,'reconciliation',b.reconciliation,'operation_unknown',EXISTS(SELECT 1 FROM broadcast_operations o WHERE o.batch_id=b.id AND o.state='unknown')) FROM broadcast_targets x JOIN broadcast_batches b ON b.id=x.batch_id WHERE x.school_id=$1 AND x.task_id=$2 ORDER BY b.ordinal,x.group_name,x.id LIMIT $3 OFFSET $4"
+                "SELECT to_jsonb(x)||jsonb_build_object('execution_mode','official_customer_group_broadcast','sync_failures',b.sync_failures,'next_sync_at',b.next_sync_at,'evidence',COALESCE((SELECT to_jsonb(e) FROM channel_execution_observations e WHERE e.batch_id=b.id AND e.target_id=x.group_id ORDER BY e.id DESC LIMIT 1),(SELECT to_jsonb(e) FROM channel_execution_observations e WHERE e.batch_id=b.id AND e.target_id IS NULL ORDER BY e.id DESC LIMIT 1)),'sender',b.sender,'creation_state',b.state,'msgid',b.msgid,'member_status',b.member_status,'last_synced_at',b.last_synced_at,'sync_error',b.sync_error,'error_code',b.error_code,'stop_state',b.stop_state,'reconciliation',b.reconciliation,'operation_unknown',EXISTS(SELECT 1 FROM broadcast_operations o WHERE o.batch_id=b.id AND o.state='unknown')) FROM broadcast_targets x JOIN broadcast_batches b ON b.id=x.batch_id WHERE x.school_id=$1 AND x.task_id=$2 ORDER BY b.ordinal,x.group_name,x.id LIMIT $3 OFFSET $4"
+            }
+            "observations" => {
+                "SELECT to_jsonb(e)||jsonb_build_object('id',e.id::text) FROM channel_execution_observations e WHERE e.workspace_id=$1 AND e.task_id=$2 AND e.channel='wecom' ORDER BY e.id DESC LIMIT $3 OFFSET $4"
             }
             "events" => {
                 "SELECT jsonb_build_object('id',e.id,'created_at',e.created_at,'actor_name',coalesce(a.display_name,'系统'),'description',CASE e.action WHEN 'draft.saved' THEN '保存了群发草稿' WHEN 'confirm' THEN '确认创建官方群发任务' WHEN 'stop' THEN '申请停止任务' WHEN 'remind' THEN '申请提醒执行成员' WHEN 'reconcile' THEN '登记了人工核对结论' WHEN 'create.result' THEN '更新了官方任务创建结果' ELSE '更新了任务处理记录' END,'reason',coalesce(e.detail->>'reason','')) FROM broadcast_events e LEFT JOIN accounts a ON a.id=e.actor_id WHERE e.school_id=$1 AND e.task_id=$2 ORDER BY e.created_at DESC,e.id DESC LIMIT $3 OFFSET $4"
@@ -830,12 +834,12 @@ impl Store for Repository {
             if state != "queued" {
                 return Ok(false);
             }
-            Self::validate(&mut tx, w.task_id).await?;
+            Self::validate(&mut tx, w.task_id, Some(w.id)).await?;
             if !super::content::reserve_resource(&mut tx, w).await? {
                 tx.commit().await?;
                 return Ok(false);
             }
-            let n=sqlx::query("UPDATE broadcast_batches SET state='submitting',invocation_id=$2,claimed_at=now() WHERE id=$1 AND state='queued' AND invocation_id IS NULL").bind(w.id).bind(Uuid::now_v7()).execute(&mut *tx).await?.rows_affected();
+            let n=sqlx::query("UPDATE broadcast_batches SET state='submitting',invocation_id=$2,claimed_at=now(),submitted_at=clock_timestamp(),request_digest=$3,error_code=NULL WHERE id=$1 AND state='queued' AND invocation_id IS NULL").bind(w.id).bind(Uuid::now_v7()).bind(crate::business::hash(&json!({"operation":"create","sender":w.sender,"content":w.content,"chats":w.chats,"corp_id":w.corp_id,"generation":w.generation}).to_string())).execute(&mut *tx).await?.rows_affected();
             event(
                 &mut tx,
                 w.school_id,
@@ -852,7 +856,7 @@ impl Store for Repository {
             if t.get::<bool, _>("stopped") {
                 return Ok(false);
             }
-            Self::validate(&mut tx, w.task_id).await?;
+            Self::validate(&mut tx, w.task_id, Some(w.id)).await?;
         }
         let op = w.operation_id.ok_or(Error::Conflict)?;
         let o =
@@ -901,6 +905,18 @@ impl Store for Repository {
                 current.get::<String, _>("state").as_str(),
                 "queued" | "submitting" | "unknown"
             ) {
+                return Ok(());
+            }
+            if w.operation == "preflight" {
+                let failures: i32 =
+                    sqlx::query_scalar("SELECT sync_failures FROM broadcast_batches WHERE id=$1")
+                        .bind(w.id)
+                        .fetch_one(&mut *tx)
+                        .await?;
+                let delay =
+                    read_retry_seconds(failures.saturating_add(1), Uuid::now_v7().as_u128() as u64);
+                sqlx::query("UPDATE broadcast_batches SET error_code=$2,sync_failures=LEAST(sync_failures+1,1000),next_sync_at=clock_timestamp()+make_interval(secs=>$3::double precision) WHERE id=$1 AND state='queued' AND invocation_id IS NULL").bind(w.id).bind(&error).bind(delay as f64).execute(&mut *tx).await?;
+                tx.commit().await?;
                 return Ok(());
             }
             let msgid = if let Outcome::Created { msgid, .. } = &outcome {
@@ -955,21 +971,33 @@ impl Store for Repository {
             sqlx::query("UPDATE broadcast_batches SET sync_error='credential_generation_changed' WHERE id=$1").bind(w.id).execute(&mut *tx).await?;
         tx.commit().await?; return Ok(());
         }
+        let matches: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM broadcast_batches WHERE id=$1 AND msgid=$2)",
+        )
+        .bind(w.id)
+        .bind(&w.msgid)
+        .fetch_one(&mut *tx)
+        .await?;
+        if !matches {
+            return Ok(());
+        }
         match results {
             Ok(results) => {
-                sqlx::query("UPDATE broadcast_batches SET member_status=$2,last_synced_at=now(),sync_error=NULL WHERE id=$1 AND msgid=$3").bind(w.id).bind(results.member_status).bind(&w.msgid).execute(&mut *tx).await?;
+                sqlx::query("UPDATE broadcast_batches SET member_status=$2,last_synced_at=clock_timestamp(),sync_error=NULL,sync_failures=0,next_sync_at=clock_timestamp()+interval '30 seconds' WHERE id=$1 AND msgid=$3").bind(w.id).bind(results.member_status).bind(&w.msgid).execute(&mut *tx).await?;
                 for r in results.groups {
                     // A late/paginated observation cannot erase an existing official success.
                     sqlx::query("UPDATE broadcast_targets SET official_status=$3,send_time=$4 WHERE batch_id=$1 AND chat_id=$2 AND (official_status IS DISTINCT FROM 1 OR $3=1)").bind(w.id).bind(r.chat_id).bind(r.status).bind(r.send_time).execute(&mut *tx).await?;
                 }
             }
             Err(_) => {
-                sqlx::query(
-                    "UPDATE broadcast_batches SET sync_error='sync_incomplete' WHERE id=$1",
-                )
-                .bind(w.id)
-                .execute(&mut *tx)
-                .await?;
+                let failures: i32 =
+                    sqlx::query_scalar("SELECT sync_failures FROM broadcast_batches WHERE id=$1")
+                        .bind(w.id)
+                        .fetch_one(&mut *tx)
+                        .await?;
+                let delay =
+                    read_retry_seconds(failures.saturating_add(1), Uuid::now_v7().as_u128() as u64);
+                sqlx::query("UPDATE broadcast_batches SET sync_error='sync_incomplete',sync_failures=LEAST(sync_failures+1,1000),next_sync_at=clock_timestamp()+make_interval(secs=>$2::double precision) WHERE id=$1").bind(w.id).bind(delay as f64).execute(&mut *tx).await?;
             }
         }
         tx.commit().await?;

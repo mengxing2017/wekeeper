@@ -4,6 +4,50 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
+pub const MAX_BATCH_TARGETS: usize = 2000;
+pub const MAX_CONTENT_BYTES: usize = 4000;
+
+/// Current adapter supports official customer groups, with confirmation outside this platform.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionCapability {
+    pub execution_mode: String,
+    pub target_kind: String,
+    pub platform_interaction: String,
+    pub external_confirmation: String,
+    pub result_semantics: String,
+    pub limits: ExecutionLimits,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionLimits {
+    pub max_batch_targets: usize,
+    pub max_content_bytes: usize,
+}
+pub fn execution_capability(automatic: bool) -> ExecutionCapability {
+    ExecutionCapability {
+        execution_mode: "official_customer_group_broadcast".into(),
+        target_kind: "customer_group".into(),
+        platform_interaction: if automatic {
+            "none"
+        } else {
+            "manual_task_confirmation"
+        }
+        .into(),
+        external_confirmation: "member_required".into(),
+        result_semantics: "official_group_send_result".into(),
+        limits: ExecutionLimits {
+            max_batch_targets: MAX_BATCH_TARGETS,
+            max_content_bytes: MAX_CONTENT_BYTES,
+        },
+    }
+}
+/// Persistent failure count is capped separately; no supplier write is retried by this policy.
+pub fn read_retry_seconds(failures: i32, jitter: u64) -> i64 {
+    let base = 5_i64 * (1_i64 << failures.saturating_sub(1).clamp(0, 6));
+    (base + (jitter % 5) as i64).min(300)
+}
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ContentSource {
@@ -144,6 +188,10 @@ pub struct Task {
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Target {
+    pub execution_mode: String,
+    pub sync_failures: i32,
+    pub next_sync_at: Option<String>,
+    pub evidence: Option<crate::distribution::domain::execution_evidence::Observation>,
     pub id: Uuid,
     pub group_id: Uuid,
     pub chat_id: String,
@@ -211,7 +259,7 @@ pub fn normalize_text(content: &str) -> Result<String> {
 
 pub fn validate_content(content: &str) -> Result<()> {
     require(
-        !content.trim().is_empty() && content.len() <= 4000,
+        !content.trim().is_empty() && content.len() <= MAX_CONTENT_BYTES,
         "正文必须为 1–4000 UTF-8 字节",
     )
 }
@@ -224,7 +272,10 @@ pub fn chunks<T>(targets: Vec<(String, T)>) -> Vec<(String, Vec<T>)> {
     for (owner, targets) in owners {
         let mut iter = targets.into_iter().peekable();
         while iter.peek().is_some() {
-            out.push((owner.clone(), iter.by_ref().take(2000).collect()));
+            out.push((
+                owner.clone(),
+                iter.by_ref().take(MAX_BATCH_TARGETS).collect(),
+            ));
         }
     }
     out
@@ -326,6 +377,24 @@ mod tests {
             parts.iter().map(|(_, v)| v.len()).collect::<Vec<_>>(),
             [1, 2000, 1]
         );
+    }
+    #[test]
+    fn capability_and_bounded_read_retry_contract() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../../api-contract/fixtures/wecom-execution-capability.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(execution_capability(true)).unwrap(),
+            fixture
+        );
+        assert_eq!(
+            execution_capability(false).platform_interaction,
+            "manual_task_confirmation"
+        );
+        assert_eq!(read_retry_seconds(1, 0), 5);
+        assert_eq!(read_retry_seconds(2, 4), 14);
+        assert_eq!(read_retry_seconds(1000, 4), 300);
     }
     #[test]
     fn malformed_success_is_unknown() {

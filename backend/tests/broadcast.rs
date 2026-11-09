@@ -547,6 +547,25 @@ async fn http_scope_csrf_retirement_and_real_task_contract() {
         serde_json::from_slice(&to_bytes(response.into_body(), 65536).await.unwrap()).unwrap();
     assert_eq!(value["data"]["type"], "broadcast-tasks");
     assert_eq!(value["data"]["attributes"]["total"], 2);
+    let response = app
+        .clone()
+        .oneshot(request(
+            "GET",
+            &format!("{path}/observations"),
+            false,
+            Value::Null,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let observations: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 65536).await.unwrap()).unwrap();
+    assert!(observations["data"][0]["id"].is_string());
+    assert_eq!(
+        observations["data"][0]["attributes"]["evidence_type"],
+        "platform_accepted"
+    );
+    assert!(observations["data"][0]["attributes"].get("id").is_none());
     let body = json!({"data":{"type":"broadcast-tasks","attributes":{"revision":1}}});
     assert_eq!(
         app.clone()
@@ -1668,4 +1687,151 @@ async fn automatic_health_never_unpauses_explicit_business_control() {
     let history: (bool, bool, Option<String>) = sqlx::query_as("SELECT last_success_at IS NOT NULL,last_failure_at IS NOT NULL,error_code FROM official_channel_health WHERE credential_scope='scope'")
         .fetch_one(&pool).await.unwrap();
     assert_eq!(history, (true, true, Some("wecom_48002".into())));
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn execution_evidence_preserves_creation_pending_success_and_read_backoff() {
+    let (pool, a, s, input, fake) = setup().await;
+    let service = Service {
+        sources: wekeeper_api::distribution::south::adapter::in_process::Sources(pool.clone()),
+        store: Repository(pool.clone()),
+        client: fake.clone(),
+        management_available: true,
+        origin: "https://school.test".into(),
+    };
+    let task = service.save(&a, s, None, input).await.unwrap();
+    service
+        .action(
+            &a,
+            s,
+            task.id,
+            "confirm",
+            "confirm",
+            with_preview(&service, &a, s, task.id, action(Some(1))).await,
+        )
+        .await
+        .unwrap();
+    let mut work = service.store.work(Some(task.id)).await.unwrap().remove(0);
+    let preflight = Work {
+        operation: "preflight".into(),
+        ..work.clone()
+    };
+    service
+        .store
+        .finish(&preflight, Outcome::Rejected("preflight_failed".into()))
+        .await
+        .unwrap();
+    let state: (String, i32, Option<Uuid>) = sqlx::query_as(
+        "SELECT state,sync_failures,invocation_id FROM broadcast_batches WHERE id=$1",
+    )
+    .bind(work.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(state, ("queued".into(), 1, None));
+    assert!(service.store.claim(&work).await.unwrap());
+    service
+        .store
+        .finish(
+            &work,
+            Outcome::Created {
+                msgid: "evidence-message".into(),
+                failed: vec![],
+            },
+        )
+        .await
+        .unwrap();
+    let created = service.task(&a, s, task.id).await.unwrap();
+    assert_eq!((created.sent, created.pending), (0, 2));
+    let (digest, submitted): (Option<String>, bool) = sqlx::query_as(
+        "SELECT request_digest,submitted_at IS NOT NULL FROM broadcast_batches WHERE id=$1",
+    )
+    .bind(work.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(submitted && digest.is_some_and(|v| v.len() == 64));
+    work.msgid = Some("evidence-message".into());
+    work.operation = "read".into();
+    service
+        .store
+        .observed(
+            &work,
+            Ok(Results {
+                member_status: Some(2),
+                groups: vec![],
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(service.task(&a, s, task.id).await.unwrap().sent, 0);
+    let result = Results {
+        member_status: Some(2),
+        groups: vec![Observation {
+            chat_id: work.chats[0].clone(),
+            status: 1,
+            send_time: Some(1700000000),
+        }],
+    };
+    service
+        .store
+        .observed(&work, Ok(result.clone()))
+        .await
+        .unwrap();
+    service.store.observed(&work, Ok(result)).await.unwrap();
+    service
+        .store
+        .observed(&work, Err(wekeeper_api::business::Error::Unavailable))
+        .await
+        .unwrap();
+    let backoff:(i32,bool)=sqlx::query_as("SELECT sync_failures,next_sync_at BETWEEN clock_timestamp()+interval '3 seconds' AND clock_timestamp()+interval '10 seconds' FROM broadcast_batches WHERE id=$1").bind(work.id).fetch_one(&pool).await.unwrap();
+    assert_eq!(backoff, (1, true));
+    assert_eq!(service.task(&a, s, task.id).await.unwrap().sent, 1);
+    let rows = service
+        .rows(&a, s, task.id, "observations", Page::default())
+        .await
+        .unwrap();
+    assert!(
+        rows.iter()
+            .any(|v| v["evidence_type"] == "official_task_created"
+                && v["normalized_result"] == "pending")
+    );
+    assert!(
+        rows.iter()
+            .any(|v| v["evidence_type"] == "external_member_executed"
+                && v["normalized_result"] == "pending")
+    );
+    assert_eq!(
+        rows.iter()
+            .filter(|v| v["evidence_type"] == "official_group_sent")
+            .count(),
+        1
+    );
+    assert!(rows.iter().all(|v| v.get("result_credential").is_none()));
+    assert!(
+        sqlx::query("DELETE FROM channel_execution_observations WHERE task_id=$1")
+            .bind(task.id)
+            .execute(&pool)
+            .await
+            .is_err()
+    );
+    let targets = service
+        .rows(&a, s, task.id, "targets", Page::default())
+        .await
+        .unwrap();
+    assert!(
+        targets
+            .iter()
+            .any(|v| v["evidence"]["evidence_type"] == "official_group_sent")
+    );
+    let mut outsider = a.clone();
+    outsider.id = Uuid::new_v4();
+    outsider.platform_admin = false;
+    assert!(
+        service
+            .rows(&outsider, s, task.id, "observations", Page::default())
+            .await
+            .is_err()
+    );
 }

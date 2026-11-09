@@ -27,7 +27,10 @@ impl<R: Store> Service<R> {
         configured: bool,
         scope: &str,
     ) -> Result<Value> {
-        self.0.channel(a, s, configured, scope).await
+        let mut value = self.0.channel(a, s, configured, scope).await?;
+        value["execution"] =
+            serde_json::json!(crate::distribution::domain::broadcast::execution_capability(false));
+        Ok(value)
     }
 }
 

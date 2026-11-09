@@ -253,7 +253,7 @@ pub(super) async fn complete(tx: &mut Tx<'_>, v: Completion) -> Result<Value> {
         "execution_kind_mismatch",
     )?;
     let receipt = json!({"id":Uuid::now_v7(),"result_id":v.result_id,"execution_id":v.execution_id,"body_digest":h,"recorded":true});
-    sqlx::query("UPDATE mobile_execution_grants SET result_id=$2,result_body=$3,result_hash=$4,receipt=$5,result_received_at=clock_timestamp(),session_closed=true WHERE id=$1").bind(v.execution_id).bind(v.result_id).bind(body).bind(h).bind(&receipt).execute(&mut **tx).await?;
+    sqlx::query("UPDATE mobile_execution_grants SET result_id=$2,result_body=$3,result_hash=$4,receipt=$5,result_received_at=clock_timestamp(),session_closed=true,device_started_at=$6,device_finished_at=$7 WHERE id=$1").bind(v.execution_id).bind(v.result_id).bind(body).bind(h).bind(&receipt).bind(v.device_started_at).bind(v.device_finished_at).execute(&mut **tx).await?;
     sqlx::query("UPDATE mobile_v9_dispatch_state ds SET next_retry_at=clock_timestamp() FROM mobile_v9_attempts a WHERE a.id=$1 AND ds.item_id=a.item_id AND ds.state NOT IN ('completed','stopped','confirmation_expired','dispatch_failed')").bind(row["attempt_id"].as_str().and_then(|v|v.parse::<Uuid>().ok())).execute(&mut **tx).await?;
     Ok(receipt)
 }

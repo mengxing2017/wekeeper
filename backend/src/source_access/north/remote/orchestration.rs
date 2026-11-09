@@ -42,6 +42,14 @@ async fn events(
 ) -> std::result::Result<Response, Response> {
     execute(a, actor, Command::Events(id, p.after.unwrap_or(0))).await
 }
+async fn observations(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(id): Path<uuid::Uuid>,
+    Query(p): Query<Cursor>,
+) -> std::result::Result<Response, Response> {
+    execute(a, actor, Command::Observations(id, p.after.unwrap_or(0))).await
+}
 async fn targets(
     State(a): State<Application>,
     actor: Actor,
@@ -99,6 +107,10 @@ async fn save_policy(
 pub fn router() -> Router<Application> {
     Router::new()
         .route("/api/v2/admin/source-automation-tasks", get(list))
+        .route(
+            "/api/v2/admin/source-automation-tasks/{id}/observations",
+            get(observations),
+        )
         .route("/api/v2/admin/source-automation-tasks/{id}", get(detail))
         .route(
             "/api/v2/admin/source-automation-tasks/{id}/events",

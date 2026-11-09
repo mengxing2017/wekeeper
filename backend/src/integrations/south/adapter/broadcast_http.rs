@@ -65,7 +65,7 @@ impl Port for Client {
             return Ok(());
         }
         require(
-            !w.chats.is_empty() && w.chats.len() <= 2000,
+            !w.chats.is_empty() && w.chats.len() <= MAX_BATCH_TARGETS,
             "客户群目标无效",
         )?;
         self.0.directory().verify_account(w.sender_account).await?;
@@ -86,7 +86,7 @@ impl Port for Client {
             return Outcome::Unknown;
         };
         let (endpoint, body) = match w.operation.as_str() {
-            "create" if !w.chats.is_empty() && w.chats.len() <= 2000 => (
+            "create" if !w.chats.is_empty() && w.chats.len() <= MAX_BATCH_TARGETS => (
                 "add_msg_template",
                 json!({"chat_type":"group","sender":w.sender,"chat_id_list":w.chats,"text":{"content":w.content}}),
             ),

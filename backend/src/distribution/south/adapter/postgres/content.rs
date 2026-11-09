@@ -74,15 +74,21 @@ pub async fn save_snapshot(
     Ok(())
 }
 pub async fn validate_task(tx: &mut Tx<'_>, task: Uuid) -> Result<()> {
-    let row=sqlx::query("SELECT t.content_source,t.source_namespace,t.school_id,t.content,s.enabled,s.max_pending FROM broadcast_tasks t JOIN distribution_sources s ON s.namespace=t.source_namespace WHERE t.id=$1 FOR SHARE OF s")
+    let row=sqlx::query("SELECT t.content_source,t.source_namespace,t.authorization_kind,t.school_id,t.content,s.enabled,s.max_pending FROM broadcast_tasks t JOIN distribution_sources s ON s.namespace=t.source_namespace WHERE t.id=$1 FOR SHARE OF s")
         .bind(task).fetch_one(&mut **tx).await?;
     require(row.get("enabled"), "内容来源已暂停")?;
     let refs=sqlx::query("SELECT r.*,m.version AS current_version,m.allowed,o.enabled AS organization_enabled FROM broadcast_content_references r LEFT JOIN distribution_materials m USING(namespace,external_organization_id,external_content_id,school_id) LEFT JOIN distribution_source_organizations o USING(namespace,external_organization_id,school_id) WHERE r.task_id=$1 ORDER BY r.position")
         .bind(task).fetch_all(&mut **tx).await?;
     let namespace: String = row.get("source_namespace");
     if row.get::<String, _>("content_source") == "text" {
+        // Automatic messages use the frozen route generation, never a manual
+        // confirmation or a namespace supplied by the caller.
+        let source_route = namespace == "builtin.source-route"
+            && row.get::<String, _>("authorization_kind") == "source_route"
+            && sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM source_execution_generations WHERE task_id=$1 AND channel='wecom' AND workspace_id=$2)")
+                .bind(task).bind(row.get::<Uuid,_>("school_id")).fetch_one(&mut **tx).await?;
         require(
-            refs.is_empty() && namespace == "builtin.direct",
+            refs.is_empty() && (namespace == "builtin.direct" || source_route),
             "来源不匹配",
         )?;
     } else {

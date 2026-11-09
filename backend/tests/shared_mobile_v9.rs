@@ -2434,6 +2434,8 @@ fn completion(
         evidence: "synthetic evidence".into(),
         consumed: matches!(outcome, "observed_sent" | "unknown"),
         calling_marked: matches!(outcome, "observed_sent" | "unknown"),
+        device_started_at: None,
+        device_finished_at: None,
     }
 }
 
@@ -2705,6 +2707,70 @@ async fn delivery_recovers_an_issued_task_without_another_permission_or_dependen
         .await
         .unwrap(),
         1
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn durable_completion_local_times_are_optional_idempotent_and_never_move_deadlines() {
+    use wekeeper_api::distribution::domain::shared_mobile::execution::ExecutionReceipt;
+    let f = Fixture::with_adapter(false).await;
+    let (c, epoch) = pool_ready(&f, f.device).await;
+    let task = pool_confirm(&f, vec![f.targets[0]]).await;
+    let attempt = serde_json::from_value(pool_current(&task["items"][0])["id"].clone()).unwrap();
+    let grant = pool_claim(&f, &c, epoch, attempt).await;
+    let mut result = completion(&grant, "observed_sent");
+    result.device_started_at = Some("2020-01-01T00:00:00Z".parse().unwrap());
+    result.device_finished_at = Some("2020-01-01T00:00:01Z".parse().unwrap());
+    let execution = result.execution_id;
+    f.repo()
+        .device_write(
+            &c,
+            "receipt-time",
+            DeviceCommand::Receipt(ExecutionReceipt {
+                execution_id: execution,
+            }),
+        )
+        .await
+        .unwrap();
+    let deadline: chrono::DateTime<chrono::Utc> =
+        sqlx::query_scalar("SELECT result_deadline_at FROM mobile_execution_grants WHERE id=$1")
+            .bind(execution)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    let first = f.repo().complete_execution(result.clone()).await.unwrap();
+    let replay = f.repo().complete_execution(result.clone()).await.unwrap();
+    assert_eq!(first, replay);
+    let saved: (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) = sqlx::query_as(
+        "SELECT device_finished_at,result_deadline_at FROM mobile_execution_grants WHERE id=$1",
+    )
+    .bind(execution)
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(saved, (result.device_finished_at.unwrap(), deadline));
+    let observations:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(o) FROM channel_execution_observations o WHERE execution_id=$1 ORDER BY id").bind(execution).fetch_all(&f.pool).await.unwrap();
+    assert_eq!(
+        observations
+            .iter()
+            .filter(|v| v["evidence_type"] == "device_observed_sent")
+            .count(),
+        1
+    );
+    assert!(
+        observations
+            .iter()
+            .any(|v| v["evidence_type"] == "device_received")
+    );
+    result.device_finished_at = Some("2020-01-01T00:00:02Z".parse().unwrap());
+    assert!(f.repo().complete_execution(result).await.is_err());
+    pool_tick(&f).await;
+    let detail = pool_detail(&f, &task).await;
+    assert_eq!(
+        detail["items"][0]["attempts"][0]["evidence"]["evidence_type"],
+        "device_observed_sent"
     );
     f.close().await;
 }

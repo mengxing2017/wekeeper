@@ -43,9 +43,20 @@ pub struct Completion {
     pub evidence: String,
     pub consumed: bool,
     pub calling_marked: bool,
+    /// Device clocks are observational only; dispatch deadlines use database time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_started_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_finished_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 impl Completion {
     pub fn validate(&self) -> Result<()> {
+        require(
+            self.device_started_at
+                .zip(self.device_finished_at)
+                .is_none_or(|(a, b)| a <= b),
+            "execution_device_time_invalid",
+        )?;
         require(
             matches!(
                 self.outcome.as_str(),
@@ -157,6 +168,27 @@ mod wire_tests {
     use super::*;
     use ring::signature::{ECDSA_P256_SHA256_ASN1, UnparsedPublicKey};
     use serde_json::Value;
+    #[test]
+    fn optional_device_times_preserve_legacy_payload_and_validate_order() {
+        let fixture: Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../api-contract/fixtures/durable-execution.json"
+        )))
+        .unwrap();
+        let legacy: Completion = serde_json::from_value(fixture["completion"].clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(&legacy).unwrap(),
+            fixture["completion"]
+        );
+        let mut timed = legacy;
+        timed.device_started_at = Some("2020-01-01T00:00:00Z".parse().unwrap());
+        timed.device_finished_at = Some("2020-01-01T00:00:01Z".parse().unwrap());
+        timed.validate().unwrap();
+        let encoded = serde_json::to_value(&timed).unwrap();
+        assert_eq!(encoded["device_finished_at"], "2020-01-01T00:00:01Z");
+        std::mem::swap(&mut timed.device_started_at, &mut timed.device_finished_at);
+        assert!(timed.validate().is_err());
+    }
     #[test]
     fn fixture_preserves_result_identity_and_authenticates_the_full_grant() {
         let f: Value = serde_json::from_str(include_str!(concat!(

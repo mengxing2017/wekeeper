@@ -16,7 +16,9 @@ impl<R: OrchestrationStore> Service<R> {
                 "invalid_request",
             )?,
             Command::Stop(_, c) | Command::Retry(_, c) => c.validate()?,
-            Command::Events(_, after) => ensure(*after >= 0, "invalid_request")?,
+            Command::Events(_, after) | Command::Observations(_, after) => {
+                ensure(*after >= 0, "invalid_request")?
+            }
             Command::Policy(_, Some(p)) => ensure(
                 p.revision >= 0 && !p.reason.trim().is_empty() && p.reason.chars().count() <= 2000,
                 "invalid_request",

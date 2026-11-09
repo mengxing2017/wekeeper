@@ -407,59 +407,65 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
             return Ok(());
         }
         for w in self.store.work(None).await? {
-            if w.operation == "read" {
-                if self.store.claim(&w).await? {
-                    self.store
-                        .observed(&w, self.client.results(&w).await)
-                        .await?;
-                }
-                continue;
+            if let Err(error) = self.run_work(w).await {
+                tracing::warn!(?error, "broadcast work failed; continuing other batches");
             }
-            let source_ok = if matches!(w.operation.as_str(), "create" | "remind") {
-                let task = self.store.task(w.school_id, w.task_id).await?;
-                self.sources
-                    .check(w.school_id, &task.materials)
-                    .await
-                    .is_ok()
-            } else {
-                true
-            };
-            if !source_ok || self.client.verify(&w).await.is_err() {
-                let preflight = Work {
-                    operation: if w.operation == "create" {
-                        "preflight".into()
-                    } else {
-                        w.operation.clone()
-                    },
-                    ..w.clone()
-                };
+        }
+        Ok(())
+    }
+    async fn run_work(&self, w: Work) -> Result<()> {
+        if w.operation == "read" {
+            if self.store.claim(&w).await? {
                 self.store
-                    .finish(&preflight, Outcome::Rejected("preflight_failed".into()))
+                    .observed(&w, self.client.results(&w).await)
                     .await?;
-                continue;
             }
-            match self.store.claim(&w).await {
-                Ok(true) => {
-                    self.store.finish(&w, self.client.invoke(&w).await).await?;
-                }
-                Ok(false) => {}
-                Err(Error::Forbidden | Error::Conflict | Error::Invalid(_) | Error::Policy(_)) => {
-                    self.store
-                        .finish(
-                            &Work {
-                                operation: if w.operation == "create" {
-                                    "preflight".into()
-                                } else {
-                                    w.operation.clone()
-                                },
-                                ..w.clone()
+            return Ok(());
+        }
+        let source_ok = if matches!(w.operation.as_str(), "create" | "remind") {
+            let task = self.store.task(w.school_id, w.task_id).await?;
+            self.sources
+                .check(w.school_id, &task.materials)
+                .await
+                .is_ok()
+        } else {
+            true
+        };
+        if !source_ok || self.client.verify(&w).await.is_err() {
+            let preflight = Work {
+                operation: if w.operation == "create" {
+                    "preflight".into()
+                } else {
+                    w.operation.clone()
+                },
+                ..w.clone()
+            };
+            self.store
+                .finish(&preflight, Outcome::Rejected("preflight_failed".into()))
+                .await?;
+            return Ok(());
+        }
+        match self.store.claim(&w).await {
+            Ok(true) => {
+                self.store.finish(&w, self.client.invoke(&w).await).await?;
+            }
+            Ok(false) => {}
+            Err(Error::Forbidden | Error::Conflict | Error::Invalid(_) | Error::Policy(_)) => {
+                self.store
+                    .finish(
+                        &Work {
+                            operation: if w.operation == "create" {
+                                "preflight".into()
+                            } else {
+                                w.operation.clone()
                             },
-                            Outcome::Rejected("authorization_or_snapshot_changed".into()),
-                        )
-                        .await?;
-                }
-                Err(e) => return Err(e),
+                            ..w.clone()
+                        },
+                        Outcome::Rejected("authorization_or_snapshot_changed".into()),
+                    )
+                    .await?;
             }
+            Err(e) => return Err(e),
         }
         Ok(())
     }

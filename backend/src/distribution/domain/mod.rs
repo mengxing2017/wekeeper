@@ -61,6 +61,7 @@ mod tests {
 }
 
 pub mod broadcast;
+pub mod execution_evidence;
 
 pub mod device_registry;
 

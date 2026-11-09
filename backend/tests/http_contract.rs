@@ -502,6 +502,10 @@ async fn broadcast_rust_serialization_matches_shared_fixtures() {
         draft_input: serde_json::from_value(serde_json::json!({"content_source":"posts","template_version_id":id,"post_ids":[id],"group_ids":[id]})).unwrap(),
     };
     let target = Target {
+        execution_mode: "official_customer_group_broadcast".into(),
+        sync_failures: 0,
+        next_sync_at: None,
+        evidence: None,
         id,
         group_id: id,
         chat_id: "CHAT".into(),

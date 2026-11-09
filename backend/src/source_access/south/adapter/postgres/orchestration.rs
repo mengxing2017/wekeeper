@@ -91,6 +91,7 @@ impl OrchestrationStore for Repository {
                 let id = match &command {
                     Command::Detail(id)
                     | Command::Events(id, _)
+                    | Command::Observations(id, _)
                     | Command::Targets(id)
                     | Command::Attempts(id, _)
                     | Command::Stop(id, _)
@@ -115,11 +116,32 @@ impl OrchestrationStore for Repository {
                         .fetch_one(&mut *tx)
                         .await?;
                         let composition:Option<Value>=sqlx::query_scalar("SELECT to_jsonb(c) FROM source_message_compositions c WHERE id=(SELECT composition_id FROM source_execution_tasks WHERE receipt_id=$1)").bind(id).fetch_optional(&mut *tx).await?;
-                        json!({"task":task,"frozen":frozen,"composition":composition})
+                        let execution = if task.channel == "wecom" {
+                            json!(
+                                crate::distribution::domain::broadcast::execution_capability(true)
+                            )
+                        } else {
+                            json!({"execution_mode":"device_owned_group_text","target_kind":"group_name","platform_interaction":"none","external_confirmation":"none","result_semantics":"device_observed_sent"})
+                        };
+                        json!({"task":task,"frozen":frozen,"composition":composition,"execution":execution})
                     }
                     Command::Events(_, after) => {
                         let rows:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',id,'kind',kind,'detail',detail,'actor_id',actor_id,'executed_by',executed_by,'created_at',created_at) FROM source_automation_task_events WHERE task_id=$1 AND id>$2 ORDER BY id LIMIT 51").bind(id).bind(after).fetch_all(&mut *tx).await?;
                         json!({"items":rows.iter().take(50).collect::<Vec<_>>(),"next_cursor":if rows.len()>50 {rows[49]["id"].clone()}else{Value::Null}})
+                    }
+                    Command::Observations(_, after) => {
+                        let rows:Vec<Value> = sqlx::query_scalar("SELECT to_jsonb(o) FROM channel_execution_observations o JOIN source_execution_generations g ON g.task_id=o.task_id AND g.channel=o.channel JOIN source_automation_tasks t ON t.id=g.receipt_id AND t.workspace_id=o.workspace_id AND t.channel=o.channel WHERE g.receipt_id=$1 AND o.id>$2 ORDER BY o.id LIMIT 51").bind(id).bind(after).fetch_all(&mut *tx).await?;
+                        let items = rows
+                            .iter()
+                            .take(50)
+                            .cloned()
+                            .map(
+                                serde_json::from_value::<
+                                    crate::distribution::domain::execution_evidence::Observation,
+                                >,
+                            )
+                            .collect::<std::result::Result<Vec<_>, _>>()?;
+                        json!({"items":items,"next_cursor":if rows.len()>50 {rows[49]["id"].clone()} else {Value::Null}})
                     }
                     Command::Targets(_) => {
                         let rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(f)-'identity'-'receipt_id' FROM source_automation_target_facts f WHERE receipt_id=$1 ORDER BY target_id").bind(id).fetch_all(&mut *tx).await?;
@@ -129,7 +151,7 @@ impl OrchestrationStore for Repository {
                     Command::Attempts(_, target) => {
                         let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_automation_target_facts WHERE receipt_id=$1 AND target_id=$2)").bind(id).bind(target).fetch_one(&mut *tx).await?;
                         ensure(valid, "target_unavailable")?;
-                        let rows:Vec<Value>=sqlx::query_scalar("SELECT evidence FROM (SELECT jsonb_build_object('id',a.id,'channel','mobile','channel_task_id',g.task_id,'generation',g.generation,'attempt_no',a.attempt_no,'current',a.current,'state',a.state,'device_id',p.device_id,'next_attempt_at',a.not_before,'grant_id',x.id,'received_at',r.received_at,'result_received_at',x.result_received_at,'result_status',x.result_body->>'status') AS evidence,g.generation,a.attempt_no FROM source_execution_generations g JOIN mobile_v9_task_items i ON i.task_id=g.task_id JOIN mobile_v9_attempts a ON a.item_id=i.id JOIN mobile_v9_plans p ON p.id=a.plan_id LEFT JOIN mobile_execution_grants x ON x.attempt_id=a.id LEFT JOIN LATERAL (SELECT min(received_at) AS received_at FROM mobile_v9_task_receipts WHERE attempt_id=a.id) r ON true WHERE g.receipt_id=$1 AND i.target_id=$2 UNION ALL SELECT jsonb_build_object('id',b.id,'channel','wecom','channel_task_id',g.task_id,'generation',g.generation,'state',b.state,'invocation_id',b.invocation_id,'msgid',b.msgid,'stop_state',b.stop_state,'error_code',b.error_code,'sync_error',b.sync_error,'reconciliation',b.reconciliation),g.generation,0 FROM source_execution_generations g JOIN broadcast_targets x ON x.task_id=g.task_id JOIN broadcast_batches b ON b.id=x.batch_id WHERE g.receipt_id=$1 AND x.group_id=$2) a ORDER BY generation,attempt_no").bind(id).bind(target).fetch_all(&mut *tx).await?;
+                        let rows:Vec<Value>=sqlx::query_scalar("SELECT evidence FROM (SELECT jsonb_build_object('id',a.id,'channel','mobile','channel_task_id',g.task_id,'generation',g.generation,'attempt_no',a.attempt_no,'current',a.current,'state',a.state,'device_id',p.device_id,'next_attempt_at',a.not_before,'grant_id',x.id,'received_at',r.received_at,'result_received_at',x.result_received_at,'result_status',x.result_body->>'outcome','delivery_id',x.id,'device_started_at',x.device_started_at,'device_finished_at',x.device_finished_at,'device_clock_trusted',false) AS evidence,g.generation,a.attempt_no FROM source_execution_generations g JOIN mobile_v9_task_items i ON i.task_id=g.task_id JOIN mobile_v9_attempts a ON a.item_id=i.id JOIN mobile_v9_plans p ON p.id=a.plan_id LEFT JOIN mobile_execution_grants x ON x.attempt_id=a.id LEFT JOIN LATERAL (SELECT min(received_at) AS received_at FROM mobile_v9_task_receipts WHERE attempt_id=a.id) r ON true WHERE g.receipt_id=$1 AND i.target_id=$2 UNION ALL SELECT jsonb_build_object('id',b.id,'channel','wecom','channel_task_id',g.task_id,'generation',g.generation,'state',b.state,'invocation_id',b.invocation_id,'msgid',b.msgid,'stop_state',b.stop_state,'error_code',b.error_code,'sync_error',b.sync_error,'reconciliation',b.reconciliation,'member_status',b.member_status,'last_synced_at',b.last_synced_at,'sync_failures',b.sync_failures,'next_sync_at',b.next_sync_at),g.generation,0 FROM source_execution_generations g JOIN broadcast_targets x ON x.task_id=g.task_id JOIN broadcast_batches b ON b.id=x.batch_id WHERE g.receipt_id=$1 AND x.group_id=$2) a ORDER BY generation,attempt_no").bind(id).bind(target).fetch_all(&mut *tx).await?;
                         json!({"items":rows})
                     }
                     Command::Stop(_, input) => {

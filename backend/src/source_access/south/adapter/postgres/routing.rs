@@ -77,6 +77,10 @@ pub(crate) async fn access(tx: &mut Tx<'_>, actor: Uuid, route: &str, admin: boo
 async fn view(tx: &mut Tx<'_>, row: &sqlx::postgres::PgRow) -> Result<Value> {
     let route: String = row.get("route_id");
     let mut value = json!({"id":route,"revision":row.get::<i64,_>("revision"),"config_revision":row.get::<i64,_>("config_revision"),"unit_id":row.get::<Option<Uuid>,_>("unit_id"),"group_id":row.get::<Option<Uuid>,_>("group_id"),"status":row.get::<String,_>("status"),"execution_state":row.get::<String,_>("execution_state"),"retired_at":row.get::<Option<chrono::DateTime<chrono::Utc>>,_>("retired_at"),"snapshot":latest(tx,&route).await?});
+    if value["snapshot"]["execution"]["channel"] == "wecom" {
+        value["execution_capability"] =
+            json!(crate::distribution::domain::broadcast::execution_capability(true));
+    }
     value["managers"]=json!(sqlx::query_scalar::<_,Value>("SELECT jsonb_build_object('id',m.account_id,'username',a.username,'revision',m.revision,'can_recheck',m.can_recheck) FROM source_route_managers m JOIN accounts a ON a.id=m.account_id WHERE route_id=$1 ORDER BY a.username").bind(&route).fetch_all(&mut **tx).await?);
     Ok(value)
 }

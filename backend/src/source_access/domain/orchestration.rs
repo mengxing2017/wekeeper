@@ -88,6 +88,7 @@ pub enum Command {
     List(Filter),
     Detail(Uuid),
     Events(Uuid, i64),
+    Observations(Uuid, i64),
     Targets(Uuid),
     Attempts(Uuid, Uuid),
     Stop(Uuid, Control),

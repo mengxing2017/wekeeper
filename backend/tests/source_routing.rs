@@ -3439,3 +3439,137 @@ async fn automation_official_stop_persists_existing_executor_operation_and_prese
     assert_eq!(detail["task"]["counts"]["cancelled"], 1);
     f.close().await;
 }
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn automatic_official_execution_needs_no_platform_confirmation_and_preserves_evidence() {
+    use wekeeper_api::distribution::{
+        domain::broadcast::{Observation, Outcome, Results},
+        south::{adapter::postgres::broadcast::Repository as Broadcast, port::broadcast::Store},
+    };
+    use wekeeper_api::source_access::{
+        domain::orchestration::Command as Auto,
+        north::local::orchestration::Service as AutoService,
+        south::adapter::postgres::orchestration::Repository,
+    };
+    let f = Fixture::new().await;
+    let (workspace, groups) = configure_official(&f).await;
+    sqlx::query("INSERT INTO official_channel_health(corp_id,generation,credential_scope,available,checked_at,last_success_at) VALUES('source-corp',1,'scope',true,now(),now())").execute(&f.pool).await.unwrap();
+    f.lifecycle(LifecycleAction::Enable).await;
+    let receipt = inbox(&f, "official-execution", 1, "content.upsert").await;
+    let worker = RoutingRepository(f.pool.clone());
+    worker.run_once().await.unwrap();
+    let (task,): (Uuid,) = sqlx::query_as(
+        "SELECT task_id FROM source_execution_tasks WHERE receipt_id=$1 AND channel='wecom'",
+    )
+    .bind(receipt)
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    let (kind, confirmed): (String, Option<Uuid>) =
+        sqlx::query_as("SELECT authorization_kind,confirmed_by FROM broadcast_tasks WHERE id=$1")
+            .bind(task)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!((kind, confirmed), ("source_route".into(), None));
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_v9_tasks")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        0
+    );
+    let store = Broadcast(f.pool.clone());
+    for (index, mut w) in store
+        .work(Some(task))
+        .await
+        .unwrap()
+        .into_iter()
+        .enumerate()
+    {
+        assert!(store.claim(&w).await.unwrap());
+        let msgid = format!("automatic-{}", w.id);
+        store
+            .finish(
+                &w,
+                Outcome::Created {
+                    msgid: msgid.clone(),
+                    failed: vec![],
+                },
+            )
+            .await
+            .unwrap();
+        w.msgid = Some(msgid);
+        w.operation = "read".into();
+        store
+            .observed(
+                &w,
+                Ok(Results {
+                    member_status: Some(2),
+                    groups: vec![Observation {
+                        chat_id: w.chats[0].clone(),
+                        status: match index {
+                            0 => 1,
+                            1 => 99,
+                            _ => 0,
+                        },
+                        send_time: Some(1700000000),
+                    }],
+                }),
+            )
+            .await
+            .unwrap();
+    }
+    worker.aggregate().await.unwrap();
+    let auto = AutoService(Repository(f.pool.clone()));
+    let detail = auto.execute(&f.actor, Auto::Detail(receipt)).await.unwrap();
+    assert_eq!(detail["execution"]["platform_interaction"], "none");
+    assert_eq!(
+        detail["execution"]["external_confirmation"],
+        "member_required"
+    );
+    assert_eq!(detail["task"]["counts"]["sent"], 1);
+    assert_eq!(detail["task"]["counts"]["unknown"], 1);
+    let facts = auto
+        .execute(&f.actor, Auto::Observations(receipt, 0))
+        .await
+        .unwrap();
+    assert!(
+        facts["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v["evidence_type"] == "official_task_created"
+                && v["normalized_result"] == "pending")
+    );
+    let targets = auto
+        .execute(&f.actor, Auto::Targets(receipt))
+        .await
+        .unwrap();
+    assert_eq!(targets["items"].as_array().unwrap().len(), 3);
+    let attempts = auto
+        .execute(&f.actor, Auto::Attempts(receipt, groups[0]))
+        .await
+        .unwrap();
+    assert_eq!(attempts["items"][0]["member_status"], 2);
+    let mut outsider = f.actor.clone();
+    outsider.id = Uuid::new_v4();
+    outsider.platform_admin = false;
+    assert!(
+        auto.execute(&outsider, Auto::Observations(receipt, 0))
+            .await
+            .is_err()
+    );
+    let stored = store
+        .rows(
+            workspace,
+            task,
+            "observations",
+            wekeeper_api::business::Page::default(),
+        )
+        .await
+        .unwrap();
+    assert!(!stored.is_empty());
+    f.close().await;
+}
