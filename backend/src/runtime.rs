@@ -175,9 +175,22 @@ async fn serve_inner(
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         }
     });
+    let routing = crate::source_access::south::adapter::postgres::routing::RoutingRepository(
+        application.pool.clone(),
+    );
+    let routing_worker = tokio::spawn(async move {
+        loop {
+            if routing.run_once().await.is_err() {
+                tracing::warn!("routing configuration recovery will retry");
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
+    });
     let result = axum::serve(listener, http::app_router(application))
         .with_graceful_shutdown(shutdown_signal())
         .await;
+    routing_worker.abort();
+    let _ = routing_worker.await;
     health_worker.abort();
     let _ = health_worker.await;
     wait_worker.abort();

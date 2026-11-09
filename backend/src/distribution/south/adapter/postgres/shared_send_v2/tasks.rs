@@ -337,7 +337,7 @@ pub(super) async fn write(
             }
             let p:Value=sqlx::query_scalar("SELECT to_jsonb(p) FROM mobile_v9_previews p JOIN mobile_v9_task_drafts d ON d.id=p.draft_id AND d.revision=p.draft_revision WHERE p.school_id=$1 AND p.id=$2 AND p.expires_at>clock_timestamp() AND p.digest=$3 FOR UPDATE OF d").bind(s).bind(input.preview_id).bind(input.preview_digest).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("preview_expired"))?;
             let plan = &p["plan"];
-            let current = policy(tx)
+            policy(tx)
                 .await?
                 .ok_or(Error::Policy("shared_send_not_released"))?;
             require(plan["dispatch_mode"] == "candidate_pool", "preview_expired")?;
@@ -358,64 +358,7 @@ pub(super) async fn write(
                 }
                 require(items.len() <= 100, "shared_send_targets_invalid")?;
             }
-            let id = Uuid::now_v7();
-            let snap = Uuid::now_v7();
-            let message = plan["message"].as_str().ok_or(Error::Conflict)?;
-            sqlx::query("INSERT INTO distribution_message_snapshots(id,school_id,channel,content,content_hash) VALUES($1,$2,'mobile',$3,$4)").bind(snap).bind(s).bind(message).bind(hash(message)).execute(&mut **tx).await?;
-            sqlx::query("INSERT INTO mobile_v9_tasks(id,school_id,draft_id,intent_id,preview_id,confirmed_by,confirmed_until,dispatch_mode) VALUES($1,$2,$3,$4,$5,$6,clock_timestamp()+make_interval(secs=>$7::double precision),'candidate_pool')").bind(id).bind(s).bind(uid(plan,"draft_id")?).bind(uid(plan,"intent_id")?).bind(input.preview_id).bind(a.id).bind(current["confirmation_seconds"].as_i64().ok_or(Error::Conflict)? as f64).execute(&mut **tx).await?;
-            for item in items {
-                let iid = Uuid::now_v7();
-                let pid = Uuid::now_v7();
-                let aid = Uuid::now_v7();
-                let mut frozen = item["selected"].clone();
-                frozen["schema"] = json!(SCHEMA);
-                frozen["school_id"] = json!(s);
-                frozen["intent_id"] = plan["intent_id"].clone();
-                frozen["item_id"] = json!(iid);
-                frozen["attempt_id"] = json!(aid);
-                frozen["message"] = json!(message);
-                frozen["content_digest"] = plan["content_digest"].clone();
-                let minimum = ["global", "school", "device", "target"]
-                    .iter()
-                    .filter_map(|k| current["limits"][k]["interval_seconds"].as_i64())
-                    .max()
-                    .unwrap_or(1);
-                frozen["between_targets_seconds"] = json!(
-                    plan["between_targets_seconds"]
-                        .as_i64()
-                        .ok_or(Error::Conflict)?
-                        .max(minimum)
-                );
-                frozen["policy_id"] = p["policy_id"].clone();
-                frozen["selection_policy"] = json!("exact_unique");
-                sqlx::query("INSERT INTO mobile_v9_task_items(id,school_id,task_id,intent_id,target_id,position) VALUES($1,$2,$3,$4,$5,$6)").bind(iid).bind(s).bind(id).bind(uid(plan,"intent_id")?).bind(uid(item,"target_id")?).bind(item["position"].as_i64().ok_or(Error::Conflict)? as i32).execute(&mut **tx).await?;
-                sqlx::query("INSERT INTO mobile_v9_plans(id,school_id,item_id,target_id,device_id,snapshot_id,plan,digest,content_digest) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)").bind(pid).bind(s).bind(iid).bind(uid(item,"target_id")?).bind(uid(&frozen,"device_id")?).bind(snap).bind(&frozen).bind(digest(&frozen)?).bind(plan["content_digest"].as_str()).execute(&mut **tx).await?;
-                sqlx::query("INSERT INTO mobile_v9_attempts(id,school_id,item_id,plan_id,attempt_no,confirmed_by) VALUES($1,$2,$3,$4,1,$5)").bind(aid).bind(s).bind(iid).bind(pid).bind(a.id).execute(&mut **tx).await?;
-                let mut pool: Vec<Value> = item["candidates"]
-                    .as_array()
-                    .ok_or(Error::Conflict)?
-                    .iter()
-                    .filter(|c| c["confirmable"] == true)
-                    .cloned()
-                    .collect();
-                pool.sort_by_key(|c| c["device_id"] != item["selected"]["device_id"]);
-                require(!pool.is_empty(), "shared_send_selection_invalid")?;
-                sqlx::query(
-                    "INSERT INTO mobile_v9_dispatch_scopes(item_id,candidates) VALUES($1,$2)",
-                )
-                .bind(iid)
-                .bind(json!(pool))
-                .execute(&mut **tx)
-                .await?;
-                sqlx::query(
-                    "INSERT INTO mobile_v9_dispatch_state(item_id,candidate_cursor) VALUES($1,1)",
-                )
-                .bind(iid)
-                .execute(&mut **tx)
-                .await?;
-                dispatch::reconcile(tx, iid).await?;
-            }
-            task(tx, s, id).await
+            create_authorized_task(tx, a.id, s, &p).await
         }
         SchoolCommand::Reassign(id, input) => {
             require(
@@ -705,4 +648,71 @@ mod group_target_tests {
             assert_eq!(digest(&projected).unwrap(), case["expected_sha256"]);
         }
     }
+}
+
+/// Shared persistence for an already-authorized immutable plan. Only the manual
+/// command validates a human Confirmation; source authorization is a distinct use case.
+pub(super) async fn create_authorized_task(
+    tx: &mut Tx<'_>,
+    principal: Uuid,
+    s: Uuid,
+    p: &Value,
+) -> Result<Value> {
+    let plan = &p["plan"];
+    let current = policy(tx).await?.ok_or(Error::Unavailable)?;
+    let items = plan["items"].as_array().ok_or(Error::Conflict)?;
+    let id = Uuid::now_v7();
+    let snap = Uuid::now_v7();
+    let message = plan["message"].as_str().ok_or(Error::Conflict)?;
+    sqlx::query("INSERT INTO distribution_message_snapshots(id,school_id,channel,content,content_hash) VALUES($1,$2,'mobile',$3,$4)").bind(snap).bind(s).bind(message).bind(hash(message)).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO mobile_v9_tasks(id,school_id,draft_id,intent_id,preview_id,confirmed_by,confirmed_until,dispatch_mode) VALUES($1,$2,$3,$4,$5,$6,clock_timestamp()+make_interval(secs=>$7::double precision),'candidate_pool')").bind(id).bind(s).bind(uid(plan,"draft_id")?).bind(uid(plan,"intent_id")?).bind(uid(p,"id")?).bind(principal).bind(current["confirmation_seconds"].as_i64().ok_or(Error::Conflict)? as f64).execute(&mut **tx).await?;
+    for item in items {
+        let iid = Uuid::now_v7();
+        let pid = Uuid::now_v7();
+        let aid = Uuid::now_v7();
+        let mut frozen = item["selected"].clone();
+        frozen["schema"] = json!(SCHEMA);
+        frozen["school_id"] = json!(s);
+        frozen["intent_id"] = plan["intent_id"].clone();
+        frozen["item_id"] = json!(iid);
+        frozen["attempt_id"] = json!(aid);
+        frozen["message"] = json!(message);
+        frozen["content_digest"] = plan["content_digest"].clone();
+        let minimum = ["global", "school", "device", "target"]
+            .iter()
+            .filter_map(|k| current["limits"][k]["interval_seconds"].as_i64())
+            .max()
+            .unwrap_or(1);
+        frozen["between_targets_seconds"] = json!(
+            plan["between_targets_seconds"]
+                .as_i64()
+                .ok_or(Error::Conflict)?
+                .max(minimum)
+        );
+        frozen["policy_id"] = p["policy_id"].clone();
+        frozen["selection_policy"] = json!("exact_unique");
+        sqlx::query("INSERT INTO mobile_v9_task_items(id,school_id,task_id,intent_id,target_id,position) VALUES($1,$2,$3,$4,$5,$6)").bind(iid).bind(s).bind(id).bind(uid(plan,"intent_id")?).bind(uid(item,"target_id")?).bind(item["position"].as_i64().ok_or(Error::Conflict)? as i32).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO mobile_v9_plans(id,school_id,item_id,target_id,device_id,snapshot_id,plan,digest,content_digest) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)").bind(pid).bind(s).bind(iid).bind(uid(item,"target_id")?).bind(uid(&frozen,"device_id")?).bind(snap).bind(&frozen).bind(digest(&frozen)?).bind(plan["content_digest"].as_str()).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO mobile_v9_attempts(id,school_id,item_id,plan_id,attempt_no,confirmed_by) VALUES($1,$2,$3,$4,1,$5)").bind(aid).bind(s).bind(iid).bind(pid).bind(principal).execute(&mut **tx).await?;
+        let mut pool: Vec<Value> = item["candidates"]
+            .as_array()
+            .ok_or(Error::Conflict)?
+            .iter()
+            .filter(|c| c["confirmable"] == true)
+            .cloned()
+            .collect();
+        pool.sort_by_key(|c| c["device_id"] != item["selected"]["device_id"]);
+        require(!pool.is_empty(), "shared_send_selection_invalid")?;
+        sqlx::query("INSERT INTO mobile_v9_dispatch_scopes(item_id,candidates) VALUES($1,$2)")
+            .bind(iid)
+            .bind(json!(pool))
+            .execute(&mut **tx)
+            .await?;
+        sqlx::query("INSERT INTO mobile_v9_dispatch_state(item_id,candidate_cursor) VALUES($1,1)")
+            .bind(iid)
+            .execute(&mut **tx)
+            .await?;
+        dispatch::reconcile(tx, iid).await?;
+    }
+    task(tx, s, id).await
 }

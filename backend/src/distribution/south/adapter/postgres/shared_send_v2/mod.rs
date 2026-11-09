@@ -406,3 +406,30 @@ mod default_policy_tests {
             .unwrap();
     }
 }
+
+/// Routing freezes only business-authorized candidates, never transient phone readiness.
+pub(crate) async fn routing_candidates(
+    tx: &mut Tx<'_>,
+    workspace: Uuid,
+    target: Uuid,
+) -> Result<Vec<Value>> {
+    let mut result = Vec::new();
+    for candidate in tasks::raw_candidates(tx, workspace, target).await? {
+        if tasks::scope_control(tx, workspace, uid(&candidate, "device_id")?, target).await?
+            == tasks::ScopeControl::Authorized
+        {
+            result.push(candidate);
+        }
+    }
+    Ok(result)
+}
+
+pub mod source_routing;
+
+pub(crate) async fn source_guard(tx: &mut Tx<'_>) -> Result<()> {
+    guard(tx).await
+}
+
+pub(crate) fn routing_candidate_identity(candidate: &Value) -> Value {
+    tasks::dependencies(candidate)
+}

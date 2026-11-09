@@ -119,7 +119,26 @@ pub(super) async fn grant(tx: &mut Tx<'_>, c: &Credential, v: GrantRequest) -> R
         sqlx::query("INSERT INTO mobile_execution_grants(id,inspection_id,device_id,credential_generation,kind,result_credential_hash,envelope) VALUES($1,$2,$3,$4,'inspection',$5,$6)").bind(id).bind(binding).bind(c.device_id).bind(c.generation).bind(hash(&secret)).bind(secrets::seal(&envelope)?).execute(&mut **tx).await?;
         return Ok(envelope);
     }
-    let rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(a)||jsonb_build_object('plan',p.plan,'plan_digest',p.digest,'content_digest',p.content_digest,'task_id',t.id,'target_id',i.target_id,'confirmed_until',t.confirmed_until) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE NOT EXISTS(SELECT 1 FROM mobile_v9_dispatch_state ds WHERE ds.item_id=a.item_id AND ds.state IN ('waiting_resources','completed','stopped','confirmation_expired','dispatch_failed')) AND p.device_id=$1 AND a.id=ANY($2) AND a.current AND a.state='queued' AND a.not_before<=clock_timestamp() AND NOT t.stopped AND t.confirmed_until>clock_timestamp() AND t.next_eligible_at<=clock_timestamp() ORDER BY t.created_at,i.position FOR UPDATE OF a,t").bind(c.device_id).bind(&v.eligible_attempt_ids).fetch_all(&mut **tx).await?;
+
+    let mut allowed_attempts = Vec::new();
+    for attempt in &v.eligible_attempt_ids {
+        let source:Option<(Uuid,Uuid)>=sqlx::query_as("SELECT l.receipt_id,i.target_id FROM mobile_v9_attempts a JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN source_execution_tasks l ON l.task_id=i.task_id WHERE a.id=$1").bind(attempt).fetch_optional(&mut **tx).await?;
+        if let Some((receipt, target)) = source {
+            match crate::source_access::south::adapter::postgres::routing::guard_submission(
+                tx, receipt, target,
+            )
+            .await
+            {
+                Ok(_) => {}
+                Err(error) if error.0 == "temporarily_unavailable" => {
+                    return Err(Error::Unavailable);
+                }
+                Err(_) => continue,
+            }
+        }
+        allowed_attempts.push(*attempt);
+    }
+    let rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(a)||jsonb_build_object('plan',p.plan,'plan_digest',p.digest,'content_digest',p.content_digest,'task_id',t.id,'target_id',i.target_id,'confirmed_until',t.confirmed_until) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE NOT EXISTS(SELECT 1 FROM mobile_v9_dispatch_state ds WHERE ds.item_id=a.item_id AND ds.state IN ('waiting_resources','completed','stopped','confirmation_expired','dispatch_failed')) AND p.device_id=$1 AND a.id=ANY($2) AND a.current AND a.state='queued' AND a.not_before<=clock_timestamp() AND NOT t.stopped AND t.confirmed_until>clock_timestamp() AND t.next_eligible_at<=clock_timestamp() ORDER BY t.created_at,i.position FOR UPDATE OF a,t").bind(c.device_id).bind(&allowed_attempts).fetch_all(&mut **tx).await?;
     let mut rejected = false;
     for row in rows {
         // Completion facts are authoritative even before the next projection scan.

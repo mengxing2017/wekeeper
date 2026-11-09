@@ -11,6 +11,7 @@ use axum::{
     routing::{get, post},
 };
 use serde_json::json;
+pub mod routing;
 fn header<'a>(h: &'a HeaderMap, name: &str) -> Result<&'a str> {
     ensure(h.get_all(name).iter().count() == 1, "invalid_request")?;
     h.get(name)
@@ -23,7 +24,16 @@ impl Fault {
             "authentication_failed" | "credential_unavailable" | "timestamp_expired" => 401,
             "forbidden" | "source_disabled" | "route_unavailable" => 403,
             "not_found" | "receipt_not_found" => 404,
-            "replay_detected" | "event_conflict" | "revision_conflict" | "cursor_stale" => 409,
+            "replay_detected"
+            | "event_conflict"
+            | "revision_conflict"
+            | "cursor_stale"
+            | "route_retired"
+            | "group_in_use"
+            | "scope_immutable"
+            | "invalid_transition"
+            | "route_configuration_required"
+            | "target_unavailable" => 409,
             "temporarily_unavailable" | "source_key_configuration_required" => 503,
             "unsupported_media_type" => 415,
             "payload_too_large" => 413,
@@ -278,6 +288,7 @@ async fn association(
 }
 pub fn router() -> Router<Application> {
     Router::new()
+        .merge(routing::router())
         .route(
             "/api/v2/admin/source-credentials/{key}/secret-reveals",
             post(reveal_secret),

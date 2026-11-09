@@ -103,7 +103,7 @@ impl Repository {
                 ensure(value.starts_with(&prefix), "cursor_stale")?;
                 after = value[prefix.len()..].into();
             }
-            let rows=sqlx::query("SELECT r.route_id,r.status FROM source_key_routes k JOIN source_routes r USING(route_id,source_id) WHERE k.key_id=$1 AND k.source_id=$2 AND k.status='active' AND r.route_id>$3 AND ($4::text IS NULL OR r.route_id=$4) ORDER BY r.route_id LIMIT $5").bind(&s.key_id).bind(source).bind(after).bind(&check.route_id).bind((limit+1) as i64).fetch_all(&mut *tx).await?;
+            let rows=sqlx::query("SELECT r.route_id,r.route_name,r.status,r.execution_state,r.retired_at FROM source_key_routes k JOIN source_routes r USING(route_id,source_id) WHERE k.key_id=$1 AND k.source_id=$2 AND k.status='active' AND r.route_id>$3 AND ($4::text IS NULL OR r.route_id=$4) ORDER BY r.route_id LIMIT $5").bind(&s.key_id).bind(source).bind(after).bind(&check.route_id).bind((limit+1) as i64).fetch_all(&mut *tx).await?;
             let next = if rows.len() > limit {
                 Some(encode(
                     format!(
@@ -116,11 +116,27 @@ impl Repository {
             } else {
                 None
             };
-            let mut routes:Vec<Value>=rows.iter().take(limit).map(|r|json!({"route_id":r.get::<String,_>("route_id"),"available":r.get::<String,_>("status")=="active"})).collect();
+            let mut routes: Vec<crate::source_access::domain::routing::RouteCapability> = rows
+                .iter()
+                .take(limit)
+                .map(|r| crate::source_access::domain::routing::RouteCapability {
+                    route_id: r.get("route_id"),
+                    available: r.get::<String, _>("status") == "active"
+                        && r.get::<Option<chrono::DateTime<chrono::Utc>>, _>("retired_at")
+                            .is_none(),
+                    display_name: Some(r.get("route_name")),
+                    execution_state: Some(r.get("execution_state")),
+                })
+                .collect();
             if routes.is_empty()
                 && let Some(route) = check.route_id
             {
-                routes.push(json!({"route_id":route,"available":false}));
+                routes.push(crate::source_access::domain::routing::RouteCapability {
+                    route_id: route,
+                    available: false,
+                    display_name: None,
+                    execution_state: None,
+                });
             }
             (
                 false,
@@ -137,8 +153,37 @@ impl Repository {
             )?;
             let e = doc.data.attributes;
             e.validate()?;
-            self.route(&mut tx, source, &s.key_id, &e.route_id, true)
+            // Check idempotency before current route lifecycle, while keeping source ownership.
+            let hash = digest(&body);
+            let previous:Option<(Uuid,String)>=sqlx::query_as("SELECT receipt_id,body_sha256 FROM source_receipts WHERE source_id=$1 AND event_id=$2").bind(source).bind(s.identity).fetch_optional(&mut *tx).await?;
+            if let Some((id, old_hash)) = previous {
+                self.route(&mut tx, source, &s.key_id, &e.route_id, false)
+                    .await?;
+                ensure(old_hash == hash, "event_conflict")?;
+                let value = self.receipt(&mut tx, source, id).await?;
+                audit(
+                    &mut tx,
+                    source,
+                    Some(&s.key_id),
+                    None,
+                    "source.retry",
+                    &s.request_id,
+                    json!({"event_id":s.identity}),
+                )
                 .await?;
+                tx.commit().await?;
+                return Ok((false, value));
+            }
+            let retired:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_route_tombstones WHERE route_id=$1 AND source_id=$2)").bind(&e.route_id).bind(source).fetch_one(&mut *tx).await?;
+            if retired && e.event_type == "content.withdrawn" {
+                self.route(&mut tx, source, &s.key_id, &e.route_id, false)
+                    .await?;
+                let historical:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_inbox i JOIN source_receipts r USING(receipt_id) WHERE r.source_id=$1 AND r.route_id=$2 AND convert_from(i.request_body,'UTF8')::jsonb #>> '{data,attributes,external_content_id}'=$3)").bind(source).bind(&e.route_id).bind(&e.external_content_id).fetch_one(&mut *tx).await?;
+                ensure(historical, "route_unavailable")?;
+            } else {
+                self.route(&mut tx, source, &s.key_id, &e.route_id, true)
+                    .await?;
+            }
             let hash = digest(&body);
             let old:Option<(Uuid,String)>=sqlx::query_as("SELECT receipt_id,body_sha256 FROM source_receipts WHERE source_id=$1 AND event_id=$2").bind(source).bind(s.identity).fetch_optional(&mut *tx).await?;
             let (id, fresh) = if let Some((id, old_hash)) = old {
@@ -195,7 +240,7 @@ impl Repository {
         route: &str,
         submit: bool,
     ) -> Result<()> {
-        let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_key_routes k JOIN source_routes r USING(route_id,source_id) WHERE k.key_id=$1 AND k.route_id=$2 AND k.source_id=$3 AND k.status='active' AND (NOT $4 OR r.status='active'))").bind(key).bind(route).bind(source).bind(submit).fetch_one(&mut **tx).await?;
+        let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_key_routes k JOIN source_routes r USING(route_id,source_id) WHERE k.key_id=$1 AND k.route_id=$2 AND k.source_id=$3 AND k.status='active' AND (NOT $4 OR (r.status='active' AND r.retired_at IS NULL)))").bind(key).bind(route).bind(source).bind(submit).fetch_one(&mut **tx).await?;
         ensure(allowed, "route_unavailable")
     }
     async fn receipt(
@@ -396,6 +441,13 @@ impl Repository {
                 .await?;
         } else if kind == "source-routes" {
             ensure(matches!(status, "active" | "disabled"), "invalid_request")?;
+            let retired: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM source_route_tombstones WHERE route_id=$1)",
+            )
+            .bind(&object)
+            .fetch_one(&mut *tx)
+            .await?;
+            ensure(!retired, "route_retired")?;
             let name = v.route_name.ok_or(Fault("invalid_request"))?;
             ensure(
                 !name.trim().is_empty() && name.len() <= 512,
@@ -637,3 +689,6 @@ impl Repository {
         Ok(json!({"id":route,"key_id":key,"status":status,"credential_revision":revision+1}))
     }
 }
+
+pub mod routing;
+pub mod routing_worker;

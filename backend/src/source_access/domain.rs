@@ -396,3 +396,5 @@ pub struct AssociationInput {
     pub revision: i64,
     pub status: String,
 }
+
+pub mod routing;

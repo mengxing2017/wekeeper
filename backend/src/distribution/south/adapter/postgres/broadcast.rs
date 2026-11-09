@@ -267,9 +267,10 @@ impl Repository {
             .fetch_one(&mut **tx)
             .await?;
         let s: Uuid = t.get("school_id");
-        let actor: Uuid = t
-            .get::<Option<Uuid>, _>("confirmed_by")
-            .unwrap_or(t.get("creator_id"));
+        let actor: Uuid = t.get::<Option<Uuid>, _>("confirmed_by").unwrap_or(
+            t.get::<Option<Uuid>, _>("authorized_by")
+                .unwrap_or(t.get("creator_id")),
+        );
         authorize(
             tx,
             actor,
@@ -779,6 +780,24 @@ impl Store for Repository {
             .fetch_one(&mut *tx)
             .await?;
             if !super::workflows::channel_status(&mut tx, &scope).await?.0 {
+                return Ok(false);
+            }
+        }
+
+        if w.operation == "create" {
+            let source:Option<(Uuid,Uuid)>=sqlx::query_as("SELECT l.receipt_id,x.group_id FROM source_execution_tasks l JOIN broadcast_targets x ON x.task_id=l.task_id WHERE x.batch_id=$1").bind(w.id).fetch_optional(&mut *tx).await?;
+            if let Some((receipt, target)) = source
+                && let Err(error) =
+                    crate::source_access::south::adapter::postgres::routing::guard_submission(
+                        &mut tx, receipt, target,
+                    )
+                    .await
+            {
+                if error.0 == "temporarily_unavailable" {
+                    return Err(Error::Unavailable);
+                }
+                sqlx::query("UPDATE broadcast_batches SET next_sync_at=now()+interval '30 seconds',error_code=$2,state=CASE WHEN $2 IN ('route_retired','target_removed','target_identity_changed','not_found') THEN 'cancelled' ELSE state END WHERE id=$1 AND state='queued'").bind(w.id).bind(error.0).execute(&mut *tx).await?;
+                tx.commit().await?;
                 return Ok(false);
             }
         }
