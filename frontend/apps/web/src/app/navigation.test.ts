@@ -118,3 +118,9 @@ test('广告序列轮询提供独立入口并要求路由配置权限',()=>{
  expect(canNavigate(item,false,'operator','operator')).toBe(false)
  expect(canNavigate(item,false,undefined,undefined,false,true)).toBe(false)
 })
+
+test('makes automatic tasks discoverable to both workspace operators without granting route configuration',()=>{
+ expect(visibleNavigationKeys(false,'operator','operator')).toContain('source-automation-tasks')
+ expect(visibleNavigationKeys(false,undefined,'operator')).toContain('source-automation-tasks')
+ expect(visibleNavigationKeys(false,'operator','operator')).not.toContain('source-route-configurations')
+})

@@ -1,6 +1,7 @@
+import {VersionPolicyEditor} from './automation'
 import {useEffect,useState} from 'react'
 import {useQuery} from '@tanstack/react-query'
-import {Alert,Button,Checkbox,Descriptions,Form,Input,Modal,Popconfirm,Select,Space,Table,Tag,Typography} from 'antd'
+import {Alert,Button,Checkbox,Descriptions,Drawer,Form,Input,Modal,Popconfirm,Select,Space,Table,Tag,Typography} from 'antd'
 import {sourceRouting,routingIssueLabels,type RouteConfiguration,type RouteConfigurationInput,type RoutingAction,type RoutingChannel,type RoutingHandoff,type RoutingCheck} from './api'
 
 export function RouteConfigurationEditor({route,onChanged,manageAuthorizations=true}:{route:string;onChanged:()=>Promise<void>;manageAuthorizations?:boolean}) {
@@ -8,6 +9,7 @@ export function RouteConfigurationEditor({route,onChanged,manageAuthorizations=t
  const [base,setBase]=useState<RouteConfiguration|null>(null),[conflict,setConflict]=useState<RouteConfiguration|null>(null)
  const [error,setError]=useState(''),[busy,setBusy]=useState(false),[check,setCheck]=useState<RoutingCheck|null>(null)
  const [action,setAction]=useState<RoutingAction|null>(null),[reason,setReason]=useState(''),[username,setUsername]=useState('')
+ const [policyOpen,setPolicyOpen]=useState(false)
  const [canRecheck,setCanRecheck]=useState(false)
  const [handoff,setHandoff]=useState<RoutingHandoff|null>(null),[historyPage,setHistoryPage]=useState(1)
  const q=useQuery({queryKey:['route-configuration',route],queryFn:()=>sourceRouting.configuration(route)})
@@ -61,6 +63,8 @@ export function RouteConfigurationEditor({route,onChanged,manageAuthorizations=t
    </>}
    <Button type="primary" loading={busy} disabled={!!conflict} onClick={save}>保存执行配置</Button>
   </Form>
+  <Button disabled={readonly} onClick={()=>setPolicyOpen(true)}>版本投递策略</Button>
+  <Drawer open={policyOpen} title="版本投递策略" onClose={()=>setPolicyOpen(false)}>{policyOpen&&<VersionPolicyEditor route={route}/>}</Drawer>
   <Space wrap>
    <Button disabled={!base||busy} onClick={runCheck}>检查启用条件</Button>
    <Button disabled={!base||busy||readonly} onClick={()=>{setReason('');setAction(base?.execution_state==='paused'?'resume':'enable')}}>{base?.execution_state==='paused'?'恢复自动执行':'启用自动执行'}</Button>

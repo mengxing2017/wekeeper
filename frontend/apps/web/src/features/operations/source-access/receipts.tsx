@@ -17,7 +17,7 @@ export function SourceReceipts({route}:{route:string}){
  return <Space orientation="vertical" style={{width:'100%'}}>
   <Alert type="info" title="收件成功与素材应用不代表已发群；发送摘要按实际目标结果统计，手机换机不增加目标数。"/>
   {(error||list.error||detail.error)&&<Alert type="error" title={error||list.error?.message||detail.error?.message}/>}
-  <Button onClick={refresh}>刷新收件</Button>
+  <Space><Button onClick={refresh}>刷新收件</Button><Button href={`/admin?view=source-automation-tasks&route=${encodeURIComponent(route)}`}>查看自动链路任务</Button></Space>
   <Table<ReceiptRow> rowKey="id" loading={list.isFetching} dataSource={list.data?.items??[]} pagination={false} columns={[
    {title:'事件 ID',dataIndex:'event_id'},{title:'内容 ID',dataIndex:'external_content_id'},{title:'版本序号',dataIndex:'sequence'},
    {title:'素材状态',render:(_,r)=>status(r.status)},{title:'处理阶段',render:(_,r)=>stage(r.processing_stage)},
@@ -33,6 +33,7 @@ export function SourceReceipts({route}:{route:string}){
      {key:'reason',label:'处理原因',children:reason(detail.data.reason_code)},{key:'sequence',label:'已观察水位',children:detail.data.observed_sequence??'—'},
      {key:'sending',label:'发送结果',children:summary(detail.data)},{key:'updated',label:'最后更新时间',children:detail.data.updated_at},
     ]}/>
+    {detail.data.automation_task_id&&<Button href={`/admin?view=source-automation-tasks&task=${encodeURIComponent(detail.data.automation_task_id)}`}>查看关联自动任务</Button>}
     {detail.data.can_recheck&&<Button disabled={!['keyword_blocked','workspace_keyword_blocked','final_keyword_blocked'].includes(detail.data.reason_code??'')} onClick={()=>{setNote('');setConfirm(true)}}>按当前规则重检</Button>}
     <Typography.Title level={5}>处理时间线（最近 100 条）</Typography.Title>
     <Table rowKey="revision" dataSource={detail.data.history} pagination={false} columns={[{title:'处理修订',dataIndex:'revision'},{title:'状态',render:(_,h)=>status(h.status)},{title:'阶段',render:(_,h)=>stage(h.stage)},{title:'原因',render:(_,h)=>reason(h.reason_code)},{title:'时间',dataIndex:'created_at'}]}/>
