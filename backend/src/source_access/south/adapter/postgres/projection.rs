@@ -199,78 +199,14 @@ impl RoutingRepository {
         tx.commit().await?;
         self.evaluate(receipt, source, event, &fp).await
     }
-    async fn evaluate(&self, receipt: Uuid, source: Uuid, event: &Event, fp: &str) -> Result<bool> {
-        let mut tx = self.0.begin().await?;
-        crate::distribution::south::adapter::postgres::routing::source_guard(&mut tx)
-            .await
-            .map_err(|_| Fault("temporarily_unavailable"))?;
-        sqlx::query("SELECT source_id FROM source_callers WHERE source_id=$1 FOR UPDATE")
-            .bind(source)
-            .fetch_one(&mut *tx)
-            .await?;
-        let current=sqlx::query("SELECT receipt_id,withdrawn,no_resend,check_state,check_revision FROM source_content_versions WHERE source_id=$1 AND route_id=$2 AND external_content_id=$3 FOR UPDATE").bind(source).bind(&event.route_id).bind(&event.external_content_id).fetch_one(&mut *tx).await?;
-        if current.get::<Uuid, _>("receipt_id") != receipt || current.get::<bool, _>("withdrawn") {
-            transition(
-                &mut tx,
-                receipt,
-                "ignored_stale",
-                "ignored_stale",
-                Some("content_version_superseded"),
-                "ignored_stale",
-            )
-            .await?;
-            tx.commit().await?;
-            return Ok(false);
-        }
-        let policy =
-            sqlx::query("SELECT revision,terms FROM source_check_policy WHERE singleton FOR SHARE")
-                .fetch_one(&mut *tx)
-                .await?;
-        let revision: i64 = policy.get("revision");
-        let terms: Vec<String> = policy.get("terms");
-        if current.get::<String, _>("check_state") == "passed"
-            && current.get::<Option<String>, _>("check_revision") == Some(revision.to_string())
-        {
-            tx.commit().await?;
-            return Ok(!current.get::<bool, _>("no_resend"));
-        }
-
-        let blocked = projection::blocked(event, &terms);
-        let outcome = if blocked { "blocked" } else { "passed" };
-        sqlx::query("INSERT INTO source_content_checks(receipt_id,rule_revision,fingerprint,outcome) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING").bind(receipt).bind(revision).bind(fp).bind(outcome).execute(&mut *tx).await?;
-        sqlx::query("UPDATE source_content_versions SET check_state=$2,check_revision=$3 WHERE receipt_id=$1").bind(receipt).bind(outcome).bind(revision.to_string()).execute(&mut *tx).await?;
-        let no_resend: bool = current.get("no_resend");
-        transition(
-            &mut tx,
-            receipt,
-            if blocked { "rejected" } else { "applied" },
-            if blocked {
-                "rejected"
-            } else if no_resend {
-                "no_resend"
-            } else {
-                "projection_applied"
-            },
-            if blocked {
-                Some("keyword_blocked")
-            } else {
-                None
-            },
-            if blocked {
-                "rejected"
-            } else if no_resend {
-                "no_resend"
-            } else {
-                "waiting"
-            },
-        )
-        .await?;
-        sqlx::query("DELETE FROM source_recheck_requests WHERE receipt_id=$1")
-            .bind(receipt)
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
-        Ok(!blocked && !no_resend)
+    async fn evaluate(
+        &self,
+        receipt: Uuid,
+        _source: Uuid,
+        event: &Event,
+        _fp: &str,
+    ) -> Result<bool> {
+        super::keyword_filter::common(&self.0, receipt, event).await
     }
     pub(super) async fn recover_checks(&self) -> Result<()> {
         // Bounded backfill preserves existing tasks, envelopes and original receipt identities.
@@ -296,35 +232,9 @@ impl RoutingRepository {
             sqlx::query("UPDATE source_inbox SET projected=true,state='waiting',next_attempt_at=now() WHERE receipt_id=$1 AND NOT EXISTS(SELECT 1 FROM source_content_versions WHERE receipt_id=$1 AND withdrawn)").bind(receipt).execute(&mut *tx).await?;
             tx.commit().await?;
         }
-        let mut tx = self.0.begin().await?;
-        crate::distribution::south::adapter::postgres::routing::source_guard(&mut tx)
-            .await
-            .map_err(|_| Fault("temporarily_unavailable"))?;
-        let policy: Option<i64> = sqlx::query_scalar(
-            "SELECT revision FROM source_check_policy WHERE singleton FOR SHARE",
-        )
-        .fetch_optional(&mut *tx)
-        .await?;
-        if let Some(revision) = policy {
-            let scan = sqlx::query("SELECT * FROM source_check_scan WHERE singleton FOR UPDATE")
-                .fetch_one(&mut *tx)
-                .await?;
-            let changed = scan.get::<i64, _>("rule_revision") != revision;
-            if changed || !scan.get::<bool, _>("complete") {
-                let cursor: Option<Uuid> = if changed {
-                    None
-                } else {
-                    scan.get("after_receipt")
-                };
-                let page:Vec<Uuid>=sqlx::query_scalar("SELECT receipt_id FROM source_content_versions WHERE $1::uuid IS NULL OR receipt_id>$1 ORDER BY receipt_id LIMIT 50").bind(cursor).fetch_all(&mut *tx).await?;
-                sqlx::query("SELECT source_id FROM source_callers WHERE source_id IN (SELECT source_id FROM source_content_versions WHERE receipt_id=ANY($1)) ORDER BY source_id FOR UPDATE").bind(&page).fetch_all(&mut *tx).await?;
-                let ids:Vec<Uuid>=sqlx::query_scalar("UPDATE source_content_versions SET check_state='pending' WHERE receipt_id=ANY($1) AND NOT withdrawn AND fingerprint IS NOT NULL AND check_revision IS DISTINCT FROM $2 RETURNING receipt_id").bind(&page).bind(revision.to_string()).fetch_all(&mut *tx).await?;
-                sqlx::query("UPDATE source_receipts SET status='received',processing_stage='filter_pending',reason_code=NULL WHERE receipt_id=ANY($1) AND status<>'received'").bind(&ids).execute(&mut *tx).await?;
-                sqlx::query("UPDATE source_inbox SET state='waiting',next_attempt_at=now() WHERE receipt_id=ANY($1)").bind(&ids).execute(&mut *tx).await?;
-                sqlx::query("UPDATE source_check_scan SET rule_revision=$1,after_receipt=$2,complete=$3 WHERE singleton").bind(revision).bind(page.last().copied().or(cursor)).bind(page.len()<50).execute(&mut *tx).await?;
-            }
-        }
-        tx.commit().await?;
+        super::keyword_filter::KeywordRepository(self.0.clone())
+            .recover()
+            .await?;
         Ok(())
     }
 }
@@ -402,8 +312,17 @@ impl crate::source_access::south::port::ProjectionStore for ReceiptsRepository {
                 )?;
                 ensure(
                     !row.get::<bool, _>("withdrawn")
-                        && row.get::<Option<String>, _>("reason_code").as_deref()
-                            == Some("keyword_blocked"),
+                        && row
+                            .get::<Option<String>, _>("reason_code")
+                            .as_deref()
+                            .is_some_and(|reason| {
+                                matches!(
+                                    reason,
+                                    "keyword_blocked"
+                                        | "workspace_keyword_blocked"
+                                        | "final_keyword_blocked"
+                                )
+                            }),
                     "recheck_not_allowed",
                 )?;
                 sqlx::query("INSERT INTO source_recheck_requests(receipt_id,actor_id,reason,expected_revision) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING").bind(receipt).bind(actor.id).bind(input.reason.trim()).bind(input.revision).execute(&mut *tx).await?;

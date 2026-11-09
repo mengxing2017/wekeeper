@@ -43,13 +43,6 @@ pub fn fingerprint(event: &Event) -> String {
         .expect("serializing fixed payload"),
     )
 }
-/// Initial exact-text policy evaluator. Rule management and normalized/local matching belong to volume 06.
-pub fn blocked(event: &Event, terms: &[String]) -> bool {
-    terms.iter().filter(|v| !v.is_empty()).any(|term| {
-        event.title.as_deref().unwrap_or("").contains(term)
-            || event.content.as_deref().unwrap_or("").contains(term)
-    })
-}
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Sending {
@@ -118,8 +111,6 @@ mod tests {
         assert_eq!(fingerprint(&event), expected);
         event.content = Some(format!("{} ", event.content.unwrap()));
         assert_ne!(fingerprint(&event), expected);
-        assert!(blocked(&event, &["中文".into()]));
-        assert!(!blocked(&event, &[]));
     }
     #[test]
     fn versions_never_use_arrival_time() {

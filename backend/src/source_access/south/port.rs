@@ -41,3 +41,11 @@ pub trait ProjectionStore: Clone + Send + Sync {
 pub trait InboxWorker: Send + Sync {
     fn tick(&self) -> impl std::future::Future<Output = Result<()>> + Send;
 }
+
+pub trait KeywordStore: Clone + Send + Sync {
+    fn execute(
+        &self,
+        actor: &crate::business::Actor,
+        command: crate::source_access::domain::keyword_filter::Command,
+    ) -> impl std::future::Future<Output = Result<Value>> + Send;
+}

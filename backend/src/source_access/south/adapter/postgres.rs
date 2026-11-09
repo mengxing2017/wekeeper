@@ -705,3 +705,5 @@ pub mod routing;
 pub mod routing_worker;
 
 pub mod projection;
+
+pub mod keyword_filter;

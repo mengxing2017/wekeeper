@@ -39,9 +39,15 @@ cargo test --manifest-path backend/Cargo.toml --test source_access -- --ignored
 
 ## 版本投影、检查与回执
 
-当前发布目录为 `api-contract/source-v2/manifest.json` 的 `source-v2-2`。事件原文摘要保持原始字节语义；版本载荷指纹使用 `source-payload/1` 的固定字段顺序，见共享 fixture。相同序号等价事件关联规范回执，相同序号不同载荷异步拒绝；低序号记录观察水位，首次撤回也建立墓碑。内容更新先使旧版不再取得新执行包或官方提交资格；已有签包、提交、成功或 unknown 时不自动再次群发。原快照和真实结果不修改。
+当前发布目录为 `api-contract/source-v2/manifest.json` 的 `source-v2-3`。事件原文摘要保持原始字节语义；版本载荷指纹使用 `source-payload/1` 的固定字段顺序，见共享 fixture。相同序号等价事件关联规范回执，相同序号不同载荷异步拒绝；低序号记录观察水位，首次撤回也建立墓碑。内容更新先使旧版不再取得新执行包或官方提交资格；已有签包、提交、成功或 unknown 时不自动再次群发。原快照和真实结果不修改。
 
-持久检查绑定原回执、内容指纹和规则修订。当前实现从 `source_check_policy` 实际读取修订与词条并作原文子串匹配，成功读到空词条集合才通过；数据库异常记录持久重试，不能用空集合代替失败。第 06 卷的规则维护、归一化匹配及广告能力尚不在本模块交付范围。规则修订变化在提交事务内立即使旧检查资格失效，消费者有界重评；显式重检不允许强制通过，也不产生新事件身份。
+规则按 global/source/unit/route/workspace 的不可变版本合并；workspace 身份包含 mobile/wecom 通道。原文标题、正文独立检查，选定工作空间后加查附加词，最终完整正文（含链接、实际换行）再次检查。`nfkc-fullfold/1` 固定 Unicode 18.0.0（内置官方 CaseFolding，NFKC → full default case folding → NFKC）；不折叠空白、不删除零宽字符，也不改写签名字节或 `source-payload/1`。规则与输入摘要、范围版本向量、回执和组合器共同绑定证据；匹配在事务外执行，落库与签包/官方提交在既有互斥事务内做 CAS，不能使用过期资格。
+
+迁移将旧 `source_check_policy` 导入全局版本并禁止再写；旧检查仅供历史阅读。真正空范围也保存范围头和空版本，缺失范围或存储故障保留重试，不按空集放行。新对象通过数据库触发器初始化范围；删除 live 凭据/路由不抹除历史范围版本。规则发布创建持久批次，每轮扫描最多 50 个受影响当前回执；已创建任务仅重检其冻结正文，不重建任务。可控目标的临时过滤记录与手动停止分开，放宽规则恢复原任务；成功及 unknown 事实保留。撤回优先于规则恢复处理，检查器故障不阻止墓碑。
+
+管理接口 `keyword-rule-scopes`、`versions`、`publications` 以及回执的 `checks`、`checks/{check}/hits` 对每次访问重新校验权限并记审计。系统管理员维护全部范围，普通工作空间管理员只维护自身附加规则；路由授权不授予上游词集修改权。发布必须携带 expected_revision 和 reason，不接受 outcome/force_pass。每范围最多 2000 词、有效并集最多 10000 词；每词原始 512 字节、规范化后 128 个标量。命中规则完整分页，位置样例最多 100 条，标量左闭右开；重叠计数保留，工作预算超出真实重试。
+
+当前无广告链路直接使用 `source-text/1` 合成标题、正文、链接并统一通道换行。`check_candidate` 提供最终正文候选排除协议，保留 slot_id/advertisement_version，不消耗游标。广告候选提供、真实序列、同事务消费归后续广告模块联调，当前不宣称真实广告序列验收通过；这不影响合法无广告消息处理。已交付手机包仍直接本地执行，没有新增手机联网检查。
 
 管理端点位于 `/api/v2/admin/source-routes/{route}/receipts`，列表每页 30 条，详情返回最近 100 条处理与检查历史。`POST .../{receipt}/rechecks` 的 `source-receipt-rechecks` 属性为 revision、reason；会话及 CSRF 之外，还校验路由和当前工作空间管理授权、独立 can_recheck 授权、当前未撤回版本及处理修订。系统管理员可重检全部路由的合法当前内容。
 

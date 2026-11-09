@@ -617,8 +617,8 @@ impl RoutingRepository {
                     }
                     Command::Handoff { .. } => {
                         ensure(admin, "forbidden")?;
-                        record(&mut tx,actor,Some(&route),"routing.handoff",json!({"contract_version":"source-v2-2","config_revision":row.get::<i64,_>("config_revision")})).await?;
-                        json!({"id":route,"route_id":route,"receiver_path":"/api/v2/source-events","authentication":"HMAC-SHA256","signature_versions":[2],"schema_versions":[2],"contract_version":"source-v2-2","config_revision":row.get::<i64,_>("config_revision")})
+                        record(&mut tx,actor,Some(&route),"routing.handoff",json!({"contract_version":"source-v2-3","config_revision":row.get::<i64,_>("config_revision")})).await?;
+                        json!({"id":route,"route_id":route,"receiver_path":"/api/v2/source-events","authentication":"HMAC-SHA256","signature_versions":[2],"schema_versions":[2],"contract_version":"source-v2-3","config_revision":row.get::<i64,_>("config_revision")})
                     }
                     _ => unreachable!(),
                 };
@@ -777,21 +777,9 @@ pub async fn guard_submission(
         .bind(frozen.source_id)
         .fetch_one(&mut **tx)
         .await?;
-    let current=sqlx::query("SELECT v.receipt_id,v.withdrawn,v.check_state,v.check_revision,p.revision FROM source_receipts r JOIN source_content_versions v ON v.source_id=r.source_id AND v.route_id=r.route_id JOIN source_inbox i ON i.receipt_id=r.receipt_id AND convert_from(i.request_body,'UTF8')::jsonb #>> '{data,attributes,external_content_id}'=v.external_content_id CROSS JOIN source_check_policy p WHERE r.receipt_id=$1 AND p.singleton FOR SHARE OF v,p").bind(receipt).fetch_optional(&mut **tx).await?;
-    {
-        let current = current.ok_or(Fault("content_check_pending"))?;
-        ensure(
-            current.get::<Uuid, _>("receipt_id") == receipt && !current.get::<bool, _>("withdrawn"),
-            "content_version_superseded",
-        )?;
-        ensure(
-            current.get::<String, _>("check_state") == "passed"
-                && current.get::<Option<String>, _>("check_revision")
-                    == Some(current.get::<i64, _>("revision").to_string()),
-            "content_check_pending",
-        )?;
-    }
-
+    let current:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_receipts r JOIN source_inbox i USING(receipt_id) JOIN source_content_versions v ON v.source_id=r.source_id AND v.route_id=r.route_id AND v.external_content_id=convert_from(i.request_body,'UTF8')::jsonb #>> '{data,attributes,external_content_id}' WHERE r.receipt_id=$1 AND v.receipt_id=$1 AND NOT v.withdrawn)").bind(receipt).fetch_one(&mut **tx).await?;
+    ensure(current, "content_version_superseded")?;
+    super::keyword_filter::guard_admission(tx, receipt, &frozen).await?;
     let config = frozen
         .execution
         .as_ref()

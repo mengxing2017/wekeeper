@@ -73,8 +73,19 @@ pub(super) async fn halt(
 }
 impl RoutingRepository {
     pub async fn run_once(&self) -> Result<()> {
-        self.recover_checks().await?;
-        let ids:Vec<Uuid>=sqlx::query_scalar("SELECT i.receipt_id FROM source_inbox i JOIN source_receipts r USING(receipt_id) WHERE i.state IN ('received','waiting') AND i.next_attempt_at<=now() ORDER BY i.next_attempt_at,i.receipt_id LIMIT 50").fetch_all(&self.0).await?;
+        let withdrawals:Vec<Uuid>=sqlx::query_scalar("SELECT receipt_id FROM source_inbox WHERE event_type='content.withdrawn' AND state IN ('received','waiting') AND next_attempt_at<=now() ORDER BY next_attempt_at,receipt_id LIMIT 50").fetch_all(&self.0).await?;
+        for id in withdrawals {
+            if let Err(e) = self.process(id).await {
+                wait(&self.0, id, e.0).await?;
+            }
+        }
+        if let Err(error) = self.recover_checks().await {
+            tracing::warn!(
+                code = error.0,
+                "keyword recovery will retry; withdrawals remain independent"
+            );
+        }
+        let ids:Vec<Uuid>=sqlx::query_scalar("SELECT i.receipt_id FROM source_inbox i JOIN source_receipts r USING(receipt_id) WHERE i.state IN ('received','waiting') AND i.event_type<>'content.withdrawn' AND i.next_attempt_at<=now() ORDER BY i.next_attempt_at,i.receipt_id LIMIT 50").fetch_all(&self.0).await?;
         for id in ids {
             if let Err(e) = self.process(id).await {
                 if matches!(e.0, "channel_content_invalid" | "route_retired") {
@@ -129,6 +140,20 @@ impl RoutingRepository {
             }
             Resolution::Ready { snapshot } => snapshot,
         };
+        let mut read = self.0.begin().await?;
+        let message = super::keyword_filter::frozen_text(&mut read, receipt)
+            .await?
+            .unwrap_or_else(|| {
+                crate::source_access::domain::keyword_filter::compose(
+                    event.title.as_deref(),
+                    event.content.as_deref(),
+                    &event.detail_url,
+                )
+            });
+        read.commit().await?;
+        if !super::keyword_filter::admit(&self.0, receipt, &event, &snapshot, &message).await? {
+            return Ok(());
+        }
         let mut tx = self.0.begin().await?;
         execution::source_guard(&mut tx)
             .await
@@ -164,12 +189,6 @@ impl RoutingRepository {
             *target = guard_submission(&mut tx, receipt, target.id).await?;
         }
         let authorizer:Uuid=sqlx::query_scalar("SELECT authorized_by FROM source_routes WHERE route_id=$1 AND authorized_by IS NOT NULL").bind(&route).fetch_one(&mut *tx).await?;
-        let message = format!(
-            "{}\n{}\n{}",
-            event.title.unwrap_or_default(),
-            event.content.unwrap_or_default(),
-            event.detail_url
-        );
         let config = snapshot
             .execution
             .as_ref()
@@ -191,7 +210,7 @@ impl RoutingRepository {
             .map_err(execution_error)?;
         sqlx::query("INSERT INTO source_summary_queue SELECT l.receipt_id FROM source_execution_tasks l JOIN source_receipts r USING(receipt_id) WHERE r.summary_version IS NULL ORDER BY l.created_at LIMIT 50 ON CONFLICT DO NOTHING").execute(&mut *tx).await?;
         let ids:Vec<Uuid>=sqlx::query_scalar("SELECT receipt_id FROM source_summary_queue ORDER BY receipt_id LIMIT 50 FOR UPDATE SKIP LOCKED").fetch_all(&mut *tx).await?;
-        sqlx::query("WITH results AS (SELECT l.receipt_id, CASE WHEN EXISTS(SELECT 1 FROM mobile_v9_attempts a WHERE a.item_id=i.id AND a.state IN ('observed_sent','manually_confirmed_sent')) THEN 'sent' WHEN EXISTS(SELECT 1 FROM mobile_v9_attempts a LEFT JOIN mobile_execution_grants g ON g.attempt_id=a.id WHERE a.item_id=i.id AND (a.state='unknown' OR (g.id IS NOT NULL AND g.result_body IS NULL AND (t.stopped OR NOT a.current)))) THEN 'unknown' WHEN t.stopped OR ds.state IN ('dispatch_failed','stopped','confirmation_expired') THEN 'failed' ELSE 'pending' END AS result FROM source_execution_tasks l JOIN mobile_v9_tasks t ON t.id=l.task_id JOIN mobile_v9_task_items i ON i.task_id=l.task_id JOIN mobile_v9_dispatch_state ds ON ds.item_id=i.id WHERE l.channel='mobile' AND l.receipt_id=ANY($1) UNION ALL SELECT l.receipt_id, CASE WHEN x.official_status=1 THEN 'sent' WHEN b.state='unknown' OR b.stop_state='unknown' THEN 'unknown' WHEN b.stop_state='stopped' OR b.state IN ('rejected','cancelled') OR x.rejected OR x.official_status IN (2,3) THEN 'failed' ELSE 'pending' END FROM source_execution_tasks l JOIN broadcast_targets x ON x.task_id=l.task_id JOIN broadcast_batches b ON b.id=x.batch_id WHERE l.channel='wecom' AND l.receipt_id=ANY($1)), summaries AS (SELECT receipt_id,count(*) AS total,jsonb_build_object('pending',count(*) FILTER(WHERE result='pending'),'sent',count(*) FILTER(WHERE result='sent'),'failed',count(*) FILTER(WHERE result='failed'),'unknown',count(*) FILTER(WHERE result='unknown')) AS summary FROM results GROUP BY receipt_id) UPDATE source_receipts r SET sending=x.summary,summary_total=x.total,summary_version='targets/1',summary_revision=r.summary_revision+1,summary_updated_at=clock_timestamp(),updated_at=clock_timestamp() FROM summaries x WHERE r.receipt_id=x.receipt_id AND (r.sending IS DISTINCT FROM x.summary OR r.summary_version IS NULL)").bind(&ids).execute(&mut *tx).await?;
+        sqlx::query("WITH results AS (SELECT l.receipt_id, CASE WHEN EXISTS(SELECT 1 FROM mobile_v9_attempts a WHERE a.item_id=i.id AND a.state IN ('observed_sent','manually_confirmed_sent')) THEN 'sent' WHEN EXISTS(SELECT 1 FROM mobile_v9_attempts a LEFT JOIN mobile_execution_grants g ON g.attempt_id=a.id WHERE a.item_id=i.id AND (a.state='unknown' OR (g.id IS NOT NULL AND g.result_body IS NULL AND (t.stopped OR NOT a.current)))) THEN 'unknown' WHEN EXISTS(SELECT 1 FROM keyword_target_blocks kb WHERE kb.receipt_id=l.receipt_id AND kb.target_id=i.target_id) OR t.stopped OR ds.state IN ('dispatch_failed','stopped','confirmation_expired') THEN 'failed' ELSE 'pending' END AS result FROM source_execution_tasks l JOIN mobile_v9_tasks t ON t.id=l.task_id JOIN mobile_v9_task_items i ON i.task_id=l.task_id JOIN mobile_v9_dispatch_state ds ON ds.item_id=i.id WHERE l.channel='mobile' AND l.receipt_id=ANY($1) UNION ALL SELECT l.receipt_id, CASE WHEN x.official_status=1 THEN 'sent' WHEN b.state='unknown' OR b.stop_state='unknown' THEN 'unknown' WHEN EXISTS(SELECT 1 FROM keyword_target_blocks kb WHERE kb.receipt_id=l.receipt_id AND kb.target_id=x.group_id) OR b.stop_state='stopped' OR b.state IN ('rejected','cancelled') OR x.rejected OR x.official_status IN (2,3) THEN 'failed' ELSE 'pending' END FROM source_execution_tasks l JOIN broadcast_targets x ON x.task_id=l.task_id JOIN broadcast_batches b ON b.id=x.batch_id WHERE l.channel='wecom' AND l.receipt_id=ANY($1)), summaries AS (SELECT receipt_id,count(*) AS total,jsonb_build_object('pending',count(*) FILTER(WHERE result='pending'),'sent',count(*) FILTER(WHERE result='sent'),'failed',count(*) FILTER(WHERE result='failed'),'unknown',count(*) FILTER(WHERE result='unknown')) AS summary FROM results GROUP BY receipt_id) UPDATE source_receipts r SET sending=x.summary,summary_total=x.total,summary_version='targets/1',summary_revision=r.summary_revision+1,summary_updated_at=clock_timestamp(),updated_at=clock_timestamp() FROM summaries x WHERE r.receipt_id=x.receipt_id AND (r.sending IS DISTINCT FROM x.summary OR r.summary_version IS NULL)").bind(&ids).execute(&mut *tx).await?;
         sqlx::query("DELETE FROM source_summary_queue WHERE receipt_id=ANY($1)")
             .bind(&ids)
             .execute(&mut *tx)

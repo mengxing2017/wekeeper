@@ -37,7 +37,11 @@ impl Fault {
             | "target_unavailable"
             | "content_version_superseded"
             | "recheck_not_allowed" => 409,
-            "temporarily_unavailable" | "source_key_configuration_required" => 503,
+            "temporarily_unavailable"
+            | "source_key_configuration_required"
+            | "keyword_rules_unavailable"
+            | "keyword_engine_unavailable"
+            | "keyword_engine_budget_exceeded" => 503,
             "unsupported_media_type" => 415,
             "payload_too_large" => 413,
             "rate_limited" => 429,
@@ -52,7 +56,18 @@ impl Fault {
         let title = if configuration_required {
             "调用方凭据加密服务未配置，请联系部署人员完成配置"
         } else {
-            "请求未完成"
+            match self.0 {
+                "invalid_keyword" => {
+                    "关键字不能为空白，原始长度最多 512 字节，规范化后最多 128 个字符"
+                }
+                "duplicate_keyword" => "存在规范化后重复的关键字，请合并条目",
+                "keyword_limit_exceeded" => "关键字数量超限，每个范围最多 2000 条",
+                "revision_conflict" => "记录已被修改，请保留输入并刷新最新修订后核对",
+                "keyword_rules_unavailable"
+                | "keyword_engine_unavailable"
+                | "keyword_engine_budget_exceeded" => "关键字检查暂时不可用，将继续重试",
+                _ => "请求未完成",
+            }
         };
         let retryable = !configuration_required
             && (matches!(status, 429 | 500 | 503)
@@ -301,6 +316,7 @@ async fn association(
 pub fn router() -> Router<Application> {
     Router::new()
         .merge(projection::router())
+        .merge(keyword_filter::router())
         .merge(routing::router())
         .route(
             "/api/v2/admin/source-credentials/{key}/secret-reveals",
@@ -460,3 +476,5 @@ mod response_tests {
         assert_eq!(value, expected);
     }
 }
+
+pub mod keyword_filter;
