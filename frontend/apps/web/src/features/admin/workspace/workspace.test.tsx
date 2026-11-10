@@ -64,11 +64,11 @@ it('requires a fresh login after resetting the current platform administrator pa
 })
 
 it('opens the keyword rules page from its registered workspace URL and sidebar entry',async()=>{
- const scopes=vi.spyOn(keywordRules,'scopes').mockResolvedValue({items:[]})
+ const words=vi.spyOn(keywordRules,'list').mockResolvedValue({entries:[],revision:0})
  show('keyword-rules')
  expect(await screen.findByRole('menuitem',{name:'敏感词拦截'})).toBeTruthy()
- expect(await screen.findByRole('button',{name:'刷新规则范围'})).toBeTruthy()
- await waitFor(()=>expect(scopes).toHaveBeenCalled())
+ expect(await screen.findByRole('button',{name:'添加敏感词'})).toBeTruthy()
+ await waitFor(()=>expect(words).toHaveBeenCalled())
  expect(screen.queryByText('页面不存在')).toBeNull()
- scopes.mockRestore()
+ words.mockRestore()
 })

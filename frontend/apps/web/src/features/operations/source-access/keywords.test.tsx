@@ -1,23 +1,44 @@
-import {cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react'
+import {cleanup,fireEvent,render,screen,waitFor,within} from '@testing-library/react'
 import {QueryClient,QueryClientProvider} from '@tanstack/react-query'
 import {afterEach,beforeEach,expect,it,vi} from 'vitest'
 import {KeywordRules} from './keywords'
-const api=vi.hoisted(()=>({scopes:vi.fn(),versions:vi.fn(),publish:vi.fn()}))
+const api=vi.hoisted(()=>({list:vi.fn(),save:vi.fn()}))
 vi.mock('./api',()=>({keywordRules:api}))
-beforeEach(()=>{
- api.scopes.mockResolvedValue({items:[{id:'mobile:w1',kind:'workspace',label:'运营',channel:'mobile',revision:0,can_edit:true,recheck_complete:true}]})
- api.versions.mockResolvedValue({items:[{id:'v0',revision:0,entries:[],reason:'initial empty',created_at:'2026-11-09'}],has_more:false})
- api.publish.mockResolvedValue({revision:1})
-})
+function show(){render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><KeywordRules/></QueryClientProvider>)}
+beforeEach(()=>{api.list.mockResolvedValue({revision:3,entries:[{word:'诈骗',enabled:true}]});api.save.mockResolvedValue({revision:4})})
 afterEach(()=>{cleanup();vi.resetAllMocks()})
-it('publishes the selected authorized scope with revision, reason and enabled entries',async()=>{
- render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><KeywordRules/></QueryClientProvider>)
- fireEvent.click(await screen.findByRole('button',{name:'查看与发布'}))
- await waitFor(()=>expect(screen.getByRole('button',{name:'编辑当前规则'}).hasAttribute('disabled')).toBe(false))
- fireEvent.click(screen.getByRole('button',{name:'编辑当前规则'}))
+it('直接显示敏感词并保存新增',async()=>{
+ show();expect(await screen.findByText('诈骗')).toBeTruthy()
+ expect(screen.queryByText('发布历史')).toBeNull()
  fireEvent.click(screen.getByRole('button',{name:'添加敏感词'}))
- fireEvent.change(screen.getByLabelText('敏感词 1'),{target:{value:'禁止'}})
- fireEvent.change(screen.getByLabelText('发布原因'),{target:{value:'补充工作空间限制'}})
- fireEvent.click(screen.getByRole('button',{name:'发布新版本'}))
- await waitFor(()=>expect(api.publish).toHaveBeenCalledWith('mobile:w1',{expected_revision:0,reason:'补充工作空间限制',entries:[{word:'禁止',enabled:true}]}))
+ fireEvent.change(screen.getByLabelText('敏感词'),{target:{value:'违法'}})
+ fireEvent.click(within(screen.getByRole('dialog')).getByRole('button',{name:/保\s*存/}))
+ await waitFor(()=>expect(api.save).toHaveBeenCalledWith({expected_revision:3,entries:[{word:'诈骗',enabled:true},{word:'违法',enabled:true}]}))
+})
+it('编辑敏感词并保留并发版本',async()=>{
+ show();await screen.findByText('诈骗')
+ fireEvent.click(screen.getByRole('button',{name:/编\s*辑/}))
+ fireEvent.change(screen.getByLabelText('敏感词'),{target:{value:'欺诈'}})
+ fireEvent.click(within(screen.getByRole('dialog')).getByRole('button',{name:/保\s*存/}))
+ await waitFor(()=>expect(api.save).toHaveBeenCalledWith({expected_revision:3,entries:[{word:'欺诈',enabled:true}]}))
+})
+it('启停敏感词时保存当前列表',async()=>{
+ show();await screen.findByText('诈骗')
+ fireEvent.click(screen.getByRole('switch',{name:'诈骗启用状态'}))
+ await waitFor(()=>expect(api.save).toHaveBeenCalledWith({expected_revision:3,entries:[{word:'诈骗',enabled:false}]}))
+})
+it('确认后删除敏感词',async()=>{
+ show();await screen.findByText('诈骗')
+ fireEvent.click(screen.getByRole('button',{name:/删\s*除/}))
+ fireEvent.click(await screen.findByRole('button',{name:'确认删除'}))
+ await waitFor(()=>expect(api.save).toHaveBeenCalledWith({expected_revision:3,entries:[]}))
+})
+it('并发冲突时保留输入',async()=>{
+ api.save.mockRejectedValue(new Error('记录已被修改，请刷新后重试'))
+ show();await screen.findByText('诈骗')
+ fireEvent.click(screen.getByRole('button',{name:'添加敏感词'}))
+ fireEvent.change(screen.getByLabelText('敏感词'),{target:{value:'新词'}})
+ fireEvent.click(within(screen.getByRole('dialog')).getByRole('button',{name:/保\s*存/}))
+ expect(await within(screen.getByRole('dialog')).findByText('记录已被修改，请刷新后重试')).toBeTruthy()
+ expect((screen.getByLabelText('敏感词') as HTMLInputElement).value).toBe('新词')
 })

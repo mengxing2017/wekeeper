@@ -15,7 +15,7 @@ beforeEach(()=>{
  api.directory.mockResolvedValue({units:[],scopes:[],workspaces:[],routes:[],system_admin:false})
  api.list.mockResolvedValue({items:[ad],has_more:false});api.detail.mockResolvedValue(ad)
  api.config.mockResolvedValue({id:'r1',revision:4,config});api.candidates.mockResolvedValue({items:[ad],has_more:false});api.configure.mockResolvedValue({revision:5})
- api.preview.mockResolvedValue({content:'通知\n正文\nhttps://example.com\n\n【广告】\n共享素材',selection:{composer:'source-ad-text/1',exclusions:[],measurement:{bytes:80,max_bytes:8000,scalars:40,max_scalars:2000}},checks:{common:{total_hits:0},original:{total_hits:0},final:{total_hits:0}},preview_only:true,deliverable:true})
+ api.preview.mockResolvedValue({content:'通知\n正文\nhttps://example.com\n\n【广告】\n共享素材',selection:{composer:'source-ad-text/1',exclusions:[],measurement:{bytes:80,max_bytes:8000,scalars:40,max_scalars:2000}},checks:{common:{total_hits:0},original:null,final:null},preview_only:true,deliverable:true})
 })
 afterEach(()=>{cleanup();vi.resetAllMocks()})
 function show(node:React.ReactNode){render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}>{node}</QueryClientProvider>)}
@@ -32,7 +32,7 @@ it('route configuration explicitly saves the selected mode and previews actual t
  fireEvent.click(screen.getByRole('button',{name:'保存广告配置'}));await waitFor(()=>expect(api.configure).toHaveBeenCalledWith('r1',4,config,'本路由主动选用'))
  fireEvent.change(screen.getByLabelText('组合预览标题'),{target:{value:'通知'}});fireEvent.change(screen.getByLabelText('组合预览正文'),{target:{value:'正文'}});fireEvent.change(screen.getByLabelText('组合预览来源链接'),{target:{value:'https://example.com'}})
  fireEvent.click(screen.getByRole('button',{name:'预览组合（不创建任务）'}));await waitFor(()=>expect(api.preview).toHaveBeenCalledWith('r1',{title:'通知',content:'正文',detail_url:'https://example.com'}))
- expect(await screen.findByText(/最终检查 0/)).toBeTruthy();expect(screen.getByText(/【广告】/)).toBeTruthy();expect(api.create).not.toHaveBeenCalled()
+ expect(await screen.findByText(/来源消息检查 0/)).toBeTruthy();expect(screen.getByText(/【广告】/)).toBeTruthy();expect(api.create).not.toHaveBeenCalled()
 })
 it('a revision conflict retains the route draft and displays the server error',async()=>{
  api.configure.mockRejectedValue(new Error('记录已被修改，请核对最新修订'))
