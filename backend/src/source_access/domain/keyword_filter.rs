@@ -7,7 +7,7 @@ use std::{
 };
 use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
-pub const ALGORITHM: &str = "nfkc-fullfold/1";
+pub const ALGORITHM: &str = "nfkc-fullfold-whitespace/2";
 pub const UNICODE_VERSION: &str = "18.0.0";
 pub const COMPOSER: &str = "source-text/1";
 pub fn normalize(value: &str) -> String {
@@ -175,27 +175,51 @@ pub fn evaluate(rules: &[Rule], fields: &[(&str, &str)]) -> Result<Evaluation> {
     let mut work = 0usize;
     for (field, text) in &normalized {
         let mut offsets = vec![0; text.len() + 1];
+        let mut compact = String::new();
+        let mut compact_starts = Vec::new();
+        let mut compact_ends = Vec::new();
         let mut count = 0;
-        for (byte, _) in text.char_indices() {
+        for (byte, character) in text.char_indices() {
             offsets[byte] = count;
+            if !character.is_whitespace() {
+                compact.push(character);
+                for _ in 0..character.len_utf8() {
+                    compact_starts.push(count);
+                    compact_ends.push(count + 1);
+                }
+            }
             count += 1;
         }
         offsets[text.len()] = count;
-        for hit in matcher.engine.find_overlapping_iter(text) {
-            work += 1;
-            ensure(work <= 2_000_000, "keyword_engine_budget_exceeded")?;
-            for &index in &matcher.groups[hit.pattern().as_usize()] {
+        let mut occurrences = BTreeSet::new();
+        for (candidate, compressed) in [(text.as_str(), false), (compact.as_str(), true)] {
+            if compressed && compact.len() == text.len() {
+                continue;
+            }
+            for hit in matcher.engine.find_overlapping_iter(candidate) {
                 work += 1;
                 ensure(work <= 2_000_000, "keyword_engine_budget_exceeded")?;
-                result.total_hits += 1;
-                matched.insert(index);
-                if result.samples.len() < 100 {
-                    result.samples.push(Sample {
-                        rule_id: rules[index].id.clone(),
-                        field: (*field).into(),
-                        start: offsets[hit.start()],
-                        end: offsets[hit.end()],
-                    });
+                let (start, end) = if compressed {
+                    (compact_starts[hit.start()], compact_ends[hit.end() - 1])
+                } else {
+                    (offsets[hit.start()], offsets[hit.end()])
+                };
+                for &index in &matcher.groups[hit.pattern().as_usize()] {
+                    work += 1;
+                    ensure(work <= 2_000_000, "keyword_engine_budget_exceeded")?;
+                    if !occurrences.insert((index, start, end)) {
+                        continue;
+                    }
+                    result.total_hits += 1;
+                    matched.insert(index);
+                    if result.samples.len() < 100 {
+                        result.samples.push(Sample {
+                            rule_id: rules[index].id.clone(),
+                            field: (*field).into(),
+                            start,
+                            end,
+                        });
+                    }
                 }
             }
         }
@@ -293,6 +317,43 @@ mod tests {
         assert!(e.truncated);
         assert!(
             evaluate(&[rule("ab")], &[("title", "a"), ("content", "b")])
+                .unwrap()
+                .passed()
+        );
+    }
+    #[test]
+    fn matches_across_whitespace_with_original_positions_and_no_duplicate_hits() {
+        let result = evaluate(
+            &[rule("诈骗"), rule("骗术")],
+            &[("content", "诈骗 诈 \n骗\t术")],
+        )
+        .unwrap();
+        assert_eq!(result.total_hits, 3);
+        assert!(
+            result
+                .samples
+                .iter()
+                .any(|s| s.rule_id == "诈骗" && (s.start, s.end) == (0, 2))
+        );
+        assert!(
+            result
+                .samples
+                .iter()
+                .any(|s| s.rule_id == "诈骗" && (s.start, s.end) == (3, 7))
+        );
+        assert!(
+            result
+                .samples
+                .iter()
+                .any(|s| s.rule_id == "骗术" && (s.start, s.end) == (6, 9))
+        );
+        assert!(
+            evaluate(&[rule("诈骗")], &[("content", "诈\u{200b}骗")])
+                .unwrap()
+                .passed()
+        );
+        assert!(
+            evaluate(&[rule("诈骗")], &[("title", "诈"), ("content", "骗")])
                 .unwrap()
                 .passed()
         );
