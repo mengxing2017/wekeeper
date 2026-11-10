@@ -91,9 +91,9 @@ test('收件与回执提供直接菜单，沿用路由工作空间管理授权',
  expect(visibleNavigationKeys(false,'operator','operator',true)).toContain('source-receipts')
 })
 
-test('关键字规则提供独立消息接收管理入口，工作空间管理员可见',()=>{
+test('敏感词拦截提供独立消息接收管理入口，工作空间管理员可见',()=>{
  const item=navigation.find(item=>item.key==='keyword-rules')!
- expect(item.label).toBe('关键字规则')
+ expect(item.label).toBe('敏感词拦截')
  expect(item.domain).toBe('source')
  expect(canNavigate(item,true)).toBe(true)
  expect(canNavigate(item,false,undefined,'admin')).toBe(true)

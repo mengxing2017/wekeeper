@@ -15,7 +15,7 @@ export function KeywordRules(){
    {title:'当前修订',dataIndex:'revision'},{title:'重检扫描',render:(_,r)=>r.recheck_complete?'扫描完成':'扫描中'},
    {title:'操作',render:(_,r)=><Button onClick={()=>setSelected(r)}>查看与发布</Button>},
   ]}/>
-  <Drawer open={!!selected} title="关键字规则与版本历史" size="large" onClose={()=>setSelected(undefined)} destroyOnHidden>
+  <Drawer open={!!selected} title="敏感词拦截与版本历史" size="large" onClose={()=>setSelected(undefined)} destroyOnHidden>
    {selected&&<RuleEditor key={selected.id} scope={selected}/>}
   </Drawer>
  </Space>
@@ -30,19 +30,19 @@ function RuleEditor({scope}:{scope:KeywordScope}){
   <Typography.Text>{kinds[scope.kind]}：{scope.label}</Typography.Text>
   {versions.error&&<Alert type="error" title={versions.error.message}/>}{error&&<Alert type="error" title={error}/>}
   {entries===null?<Button disabled={!scope.can_edit||page!==1||!versions.data?.items.length} onClick={start}>编辑当前规则</Button>:<>
-   <Alert type="info" title="每个范围最多 2000 条。相同规范化关键字不能重复；空规则集需明确发布。关闭条目后保留版本记录。"/>
+   <Alert type="info" title="每个范围最多 2000 条。相同规范化敏感词不能重复；空规则集需明确发布。关闭条目后保留版本记录。"/>
    <Table rowKey={r=>String(entries.indexOf(r))} dataSource={entries} pagination={{pageSize:20}} columns={[
-    {title:'关键字',render:(_,r,i)=><Input aria-label={`关键字 ${i+1}`} value={r.word} onChange={e=>setEntries(entries.map((x,j)=>j===entries.indexOf(r)?{...x,word:e.target.value}:x))}/>},
+    {title:'敏感词',render:(_,r,i)=><Input aria-label={`敏感词 ${i+1}`} value={r.word} onChange={e=>setEntries(entries.map((x,j)=>j===entries.indexOf(r)?{...x,word:e.target.value}:x))}/>},
     {title:'启用',render:(_,r)=><Switch checked={r.enabled} onChange={enabled=>setEntries(entries.map((x,j)=>j===entries.indexOf(r)?{...x,enabled}:x))}/>},
     {title:'操作',render:(_,r)=><Button onClick={()=>setEntries(entries.filter((_,j)=>j!==entries.indexOf(r)))}>移除</Button>},
    ]}/>
-   <Button disabled={entries.length>=2000} onClick={()=>setEntries([...entries,{word:'',enabled:true}])}>添加关键字</Button>
+   <Button disabled={entries.length>=2000} onClick={()=>setEntries([...entries,{word:'',enabled:true}])}>添加敏感词</Button>
    <Input.TextArea aria-label="发布原因" placeholder="发布原因" maxLength={2000} value={reason} onChange={e=>setReason(e.target.value)}/>
    <Space><Button type="primary" loading={busy} onClick={publish}>发布新版本</Button><Button disabled={busy} onClick={()=>setEntries(null)}>取消编辑</Button></Space>
   </>}
   <Typography.Title level={5}>发布历史</Typography.Title>
   <Table<KeywordVersion> rowKey="id" dataSource={versions.data?.items??[]} loading={versions.isFetching} pagination={false} columns={[{title:'修订',dataIndex:'revision'},{title:'原因',dataIndex:'reason'},{title:'条目数',render:(_,r)=>r.entries.length},{title:'时间',dataIndex:'created_at'},{title:'操作',render:(_,r)=><Button onClick={()=>setHistorical(r)}>查看条目</Button>}]}/>
   <Space><Button disabled={page===1||entries!==null} onClick={()=>setPage(page-1)}>上一页</Button><Typography.Text>{page}</Typography.Text><Button disabled={!versions.data?.has_more||entries!==null} onClick={()=>setPage(page+1)}>下一页</Button></Space>
-  {historical&&<><Typography.Title level={5}>修订 {historical.revision} 的条目</Typography.Title><Table rowKey={r=>String(historical.entries.indexOf(r))} dataSource={historical.entries} pagination={{pageSize:20}} columns={[{title:'原始关键字',dataIndex:'word'},{title:'规范化文本',dataIndex:'normalized'},{title:'状态',render:(_,r)=>r.enabled?'启用':'停用'}]}/></>}
+  {historical&&<><Typography.Title level={5}>修订 {historical.revision} 的条目</Typography.Title><Table rowKey={r=>String(historical.entries.indexOf(r))} dataSource={historical.entries} pagination={{pageSize:20}} columns={[{title:'原始敏感词',dataIndex:'word'},{title:'规范化文本',dataIndex:'normalized'},{title:'状态',render:(_,r)=>r.enabled?'启用':'停用'}]}/></>}
  </Space>
 }
