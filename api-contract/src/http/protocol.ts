@@ -103,12 +103,12 @@ export function decodeResource(value: unknown): Record<string, unknown> {
 export function resourceType(path: string): string {
   const parts = path.split("?")[0].split("/").filter(Boolean);
   if (parts[1] === 'v2' && parts[2] === 'admin') {
+    if (parts[3] === 'sensitive-words' && !parts[4]) return 'sensitive-words';
     if (parts[3] === 'source-automation-tasks') return parts[5] === 'stop' ? 'source-automation-task-stops' : parts[5] === 'retry-requests' ? 'source-automation-task-retry-requests' : 'source-automation-tasks';
     if (parts[3] === 'advertisements') return parts[5] ? `advertisement-${parts[5]}` : 'advertisements';
     if (parts[3] === 'routing-units' && parts[5] === 'advertisement-managers') return 'advertisement-managers';
     if (parts[3] === 'routing') return parts[4];
     if (parts[3] === 'routing-groups' && parts[5] === 'targets') return 'routing-group-targets';
-    if (parts[3] === 'keyword-rule-scopes' && parts[5] === 'publications') return 'keyword-rule-publications';
     if (parts[3] === 'source-routes' && parts[5] === 'receipts' && parts[7] === 'rechecks') return 'source-receipt-rechecks';
     if (parts[3] === 'source-routes' && parts[5] === 'advertisement-pool') return parts[6] ? `advertisement-pool-${parts[6]}` : 'advertisement-pool';
     if (parts[3] === 'source-routes' && parts[5]) {

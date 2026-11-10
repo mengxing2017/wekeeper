@@ -51,5 +51,14 @@
     "total_hits": 101,
     "truncated": true,
     "created_at": "2026-11-09T00:00:00+00:00"
+  },
+  "update": {
+    "expected_revision": 1,
+    "entries": [
+      {
+        "word": "Ｓtraße",
+        "enabled": true
+      }
+    ]
   }
 }
