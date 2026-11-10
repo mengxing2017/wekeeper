@@ -585,24 +585,11 @@ async fn preview(pool: &PgPool, actor: &Actor, route: &str, input: Preview) -> R
     let admin = routes::administrator(&mut tx, actor.id).await?;
     routes::access(&mut tx, actor.id, route, admin).await?;
     let snapshot = route_snapshot(&mut tx, route).await?;
-    let e = snapshot
-        .execution
-        .as_ref()
-        .ok_or(Fault("route_configuration_required"))?;
     let (common_ctx, common_rules) = checks::context_for_scope(
         &mut tx,
         snapshot.source_id,
         route.into(),
         Some(snapshot.unit_id),
-        None,
-    )
-    .await?;
-    let (ctx, rules) = checks::context_for_scope(
-        &mut tx,
-        snapshot.source_id,
-        route.into(),
-        Some(snapshot.unit_id),
-        Some((e.channel.as_str(), e.workspace_id)),
     )
     .await?;
     tx.commit().await?;
@@ -611,16 +598,9 @@ async fn preview(pool: &PgPool, actor: &Actor, route: &str, input: Preview) -> R
         ("content", input.content.as_deref().unwrap_or("")),
     ];
     let common = k::evaluate(&common_rules, &fields)?;
-    let original = if common.passed() {
-        Some(k::evaluate(&rules, &fields)?)
-    } else {
-        None
-    };
     let mut selection = None;
     let mut content = None;
-    let mut final_check = None;
-    let mut excluded_final = None;
-    if original.as_ref().is_some_and(k::Evaluation::passed) {
+    if common.passed() {
         let source = k::compose(
             input.title.as_deref(),
             input.content.as_deref(),
@@ -628,7 +608,6 @@ async fn preview(pool: &PgPool, actor: &Actor, route: &str, input: Preview) -> R
         );
         let mut tx = pool.begin().await?;
         guard(&mut tx).await?;
-        // Recheck permissions before reading the asset after potentially expensive matching.
         let admin = routes::administrator(&mut tx, actor.id).await?;
         routes::access(&mut tx, actor.id, route, admin).await?;
         ensure(
@@ -636,7 +615,7 @@ async fn preview(pool: &PgPool, actor: &Actor, route: &str, input: Preview) -> R
             "ad_selection_stale",
         )?;
         let (revision, config) = pipeline::config(&mut tx, route).await?;
-        let mut p = if config.mode == "pool" {
+        let p = if config.mode == "pool" {
             tx.commit().await?;
             pools::select(pool, &snapshot, revision, config, &source, None).await?
         } else {
@@ -645,39 +624,15 @@ async fn preview(pool: &PgPool, actor: &Actor, route: &str, input: Preview) -> R
             tx.commit().await?;
             prepared
         };
-        let mut final_result = k::evaluate(&rules, &[("final", &p.content)])?;
-        if !final_result.passed()
-            && p.selection.pool.is_none()
-            && p.selection.ad_id.is_some()
-            && p.selection.config.unavailable_policy == "without_ad"
-        {
-            excluded_final = Some(final_result);
-            p.selection
-                .exclusions
-                .push("ad_final_keyword_blocked".into());
-            for candidate in &mut p.selection.candidates {
-                if Some(candidate.ad_id) == p.selection.ad_id {
-                    candidate.exclusion = Some("ad_final_keyword_blocked".into());
-                }
-            }
-            p.selection.ad_id = None;
-            p.selection.content_version = None;
-            p.selection.policy_version = None;
-            p.selection.composer = k::COMPOSER.into();
-            p.content = source;
-            p.selection.measurement = measure(&p.content, e.channel.as_str());
-            final_result = k::evaluate(&rules, &[("final", &p.content)])?;
-        }
         content = Some(p.content);
         selection = Some(p.selection);
-        final_check = Some(final_result);
     }
     let mut tx = pool.begin().await?;
     crate::audit::record(&mut tx, actor, Uuid::nil(), "advertising.access", actor.id,
-        json!({"action":"preview","route_id":route,"common_fingerprint":common_ctx.fingerprint(),"effective_fingerprint":ctx.fingerprint()})).await.map_err(|_|Fault("temporarily_unavailable"))?;
+        json!({"action":"preview","route_id":route,"common_fingerprint":common_ctx.fingerprint(),"effective_fingerprint":common_ctx.fingerprint()})).await.map_err(|_|Fault("temporarily_unavailable"))?;
     tx.commit().await?;
     Ok(
-        json!({"content":content,"selection":selection,"checks":{"common":common,"original":original,"final":final_check,"excluded_final":excluded_final},"rule_fingerprint":ctx.fingerprint(),"deliverable":final_check.as_ref().is_some_and(k::Evaluation::passed) && selection.as_ref().is_some_and(|s|!s.unavailable()),"preview_only":true}),
+        json!({"content":content,"selection":selection,"checks":{"common":common,"original":null,"final":null,"excluded_final":null},"rule_fingerprint":common_ctx.fingerprint(),"deliverable":common.passed() && selection.as_ref().is_some_and(|s|!s.unavailable()),"preview_only":true}),
     )
 }
 

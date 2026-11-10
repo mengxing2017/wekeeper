@@ -824,7 +824,7 @@ async fn projection_equivalence_conflict_stale_tombstone_and_default_no_resend()
 }
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn real_policy_recheck_keeps_identity_history_and_fails_closed() {
+async fn rejected_message_does_not_recover_when_rules_are_relaxed() {
     use wekeeper_api::source_access::{
         domain::projection::{Command as P, RecheckInput},
         north::local::projection::Service as PS,
@@ -837,10 +837,6 @@ async fn real_policy_recheck_keeps_identity_history_and_fails_closed() {
     let worker = RoutingRepository(f.pool.clone());
     let receipt = inbox(&f, "recheck", 1, "content.upsert").await;
     worker.run_once().await.unwrap();
-    assert_eq!(
-        receipt_value(&f, receipt).await["reason_code"],
-        "keyword_blocked"
-    );
     let service = PS(ReceiptsRepository(f.pool.clone()));
     let detail = service
         .execute(
@@ -852,164 +848,31 @@ async fn real_policy_recheck_keeps_identity_history_and_fails_closed() {
         )
         .await
         .unwrap();
-    assert_eq!(sqlx::query_scalar::<_,String>("SELECT outcome FROM keyword_check_results WHERE receipt_id=$1 ORDER BY created_at LIMIT 1").bind(receipt).fetch_one(&f.pool).await.unwrap(), "blocked");
-    let operator_id = Uuid::new_v4();
-    sqlx::query(
-        "INSERT INTO accounts(id,username,display_name) VALUES($1,'receipt-operator','Operator')",
-    )
-    .bind(operator_id)
-    .execute(&f.pool)
-    .await
-    .unwrap();
-    let mut operator = f.actor.clone();
-    operator.id = operator_id;
-    operator.platform_admin = false;
-    let read = || P::Detail {
-        route: f.route.clone(),
-        receipt,
-    };
+    assert_eq!(detail["reason_code"], "keyword_blocked");
+    assert_eq!(detail["can_recheck"], false);
+    publish_keywords(&f, "global", &[]).await;
+    worker.run_once().await.unwrap();
     assert_eq!(
-        service.execute(&operator, read()).await.unwrap_err().0,
-        "forbidden"
+        receipt_value(&f, receipt).await["reason_code"],
+        "keyword_blocked"
     );
-    sqlx::query(
-        "INSERT INTO source_route_managers(route_id,account_id,granted_by) VALUES($1,$2,$3)",
-    )
-    .bind(&f.route)
-    .bind(operator_id)
-    .bind(f.actor.id)
-    .execute(&f.pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO mobile_workspace_members(workspace_id,account_id,role) VALUES($1,$2,'admin')",
-    )
-    .bind(f.workspace)
-    .bind(operator_id)
-    .execute(&f.pool)
-    .await
-    .unwrap();
-    assert_eq!(
-        service.execute(&operator, read()).await.unwrap()["can_recheck"],
-        false
-    );
-    let denied = P::Recheck {
-        route: f.route.clone(),
-        receipt,
-        input: RecheckInput {
-            revision: detail["revision"].as_i64().unwrap(),
-            reason: "正常理由".into(),
-        },
-    };
-    assert_eq!(
-        service.execute(&operator, denied).await.unwrap_err().0,
-        "forbidden"
-    );
-    sqlx::query("UPDATE source_route_managers SET can_recheck=true WHERE account_id=$1")
-        .bind(operator_id)
-        .execute(&f.pool)
-        .await
-        .unwrap();
-    assert_eq!(
-        service.execute(&operator, read()).await.unwrap()["can_recheck"],
-        true
-    );
-    sqlx::query("DELETE FROM mobile_workspace_members WHERE account_id=$1")
-        .bind(operator_id)
-        .execute(&f.pool)
-        .await
-        .unwrap();
-    assert_eq!(
-        service.execute(&operator, read()).await.unwrap_err().0,
-        "forbidden"
-    );
-    let recheck = |revision| P::Recheck {
-        route: f.route.clone(),
-        receipt,
-        input: RecheckInput {
-            revision,
-            reason: "复核原内容".into(),
-        },
-    };
-    assert_eq!(
-        service.execute(&f.actor, recheck(-1)).await.unwrap_err().0,
-        "invalid_request"
-    );
-    service
-        .execute(&f.actor, recheck(detail["revision"].as_i64().unwrap()))
-        .await
-        .unwrap();
-    // A second operator using a stale revision cannot enqueue another plan.
     assert_eq!(
         service
-            .execute(&f.actor, recheck(detail["revision"].as_i64().unwrap()))
+            .execute(
+                &f.actor,
+                P::Recheck {
+                    route: f.route.clone(),
+                    receipt,
+                    input: RecheckInput {
+                        revision: detail["revision"].as_i64().unwrap(),
+                        reason: "重检".into()
+                    }
+                }
+            )
             .await
             .unwrap_err()
             .0,
-        "revision_conflict"
-    );
-    worker.run_once().await.unwrap();
-    assert_eq!(receipt_value(&f, receipt).await["status"], "rejected");
-    let plans: i64 = sqlx::query_scalar("SELECT count(*) FROM source_recheck_requests")
-        .fetch_one(&f.pool)
-        .await
-        .unwrap();
-    assert_eq!(plans, 0);
-    // Removing the persisted policy is a storage failure, never a fabricated empty pass.
-    sqlx::query("ALTER TABLE keyword_scope_heads RENAME COLUMN version_id TO unavailable_version")
-        .execute(&f.pool)
-        .await
-        .unwrap();
-    let revision = receipt_value(&f, receipt).await["processing_revision"]
-        .as_i64()
-        .unwrap();
-    service.execute(&f.actor, recheck(revision)).await.unwrap();
-    worker.run_once().await.unwrap();
-    assert_eq!(receipt_value(&f, receipt).await["status"], "received");
-    assert_eq!(
-        receipt_value(&f, receipt).await["processing_stage"],
-        "processing_retry"
-    );
-    let tasks: i64 = sqlx::query_scalar("SELECT count(*) FROM source_execution_tasks")
-        .fetch_one(&f.pool)
-        .await
-        .unwrap();
-    assert_eq!(tasks, 0);
-    sqlx::query("ALTER TABLE keyword_scope_heads RENAME COLUMN unavailable_version TO version_id")
-        .execute(&f.pool)
-        .await
-        .unwrap();
-    publish_keywords(&f, "global", &[]).await;
-    // Recovery after a new process requires no source resubmission.
-    RoutingRepository(f.pool.clone()).run_once().await.unwrap();
-    let detail = service
-        .execute(
-            &f.actor,
-            P::Detail {
-                route: f.route.clone(),
-                receipt,
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(detail["status"], "applied");
-    assert_eq!(detail["processing_stage"], "task_created");
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>(
-            "SELECT count(*) FROM keyword_check_results WHERE receipt_id=$1"
-        )
-        .bind(receipt)
-        .fetch_one(&f.pool)
-        .await
-        .unwrap(),
-        4
-    );
-    assert!(
-        detail["history"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|h| h["reason_code"] == "keyword_blocked")
+        "recheck_not_allowed"
     );
     let tasks: i64 =
         sqlx::query_scalar("SELECT count(*) FROM source_execution_tasks WHERE receipt_id=$1")
@@ -1017,47 +880,105 @@ async fn real_policy_recheck_keeps_identity_history_and_fails_closed() {
             .fetch_one(&f.pool)
             .await
             .unwrap();
-    assert_eq!(tasks, 1);
-    // A rule revision invalidates old qualification immediately, before the next worker tick.
-    publish_keywords(&f, "global", &["正文"]).await;
-    let mut tx = f.pool.begin().await.unwrap();
-    assert_eq!(
-        wekeeper_api::source_access::south::adapter::postgres::routing::guard_submission(
-            &mut tx,
-            receipt,
-            f.targets[0]
-        )
-        .await
-        .unwrap_err()
-        .0,
-        "content_check_pending"
-    );
-    tx.rollback().await.unwrap();
-    worker.run_once().await.unwrap();
-    assert_eq!(receipt_value(&f, receipt).await["status"], "rejected");
+    assert_eq!(tasks, 0);
     let newer = inbox(&f, "recheck", 2, "content.upsert").await;
     worker.run_once().await.unwrap();
     assert_eq!(
-        receipt_value(&f, newer).await["reason_code"],
-        "keyword_blocked"
-    );
-    let revision = receipt_value(&f, receipt).await["processing_revision"]
-        .as_i64()
-        .unwrap();
-    assert_eq!(
-        service
-            .execute(&f.actor, recheck(revision))
-            .await
-            .unwrap_err()
-            .0,
-        "content_version_superseded"
+        receipt_value(&f, newer).await["processing_stage"],
+        "task_created"
     );
     f.close().await;
 }
 
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn policy_revision_recovery_uses_persistent_bounded_pages() {
+async fn sensitive_words_http_list_save_and_conflict() {
+    use axum::{
+        body::{Body, to_bytes},
+        http::Request,
+    };
+    use tower::ServiceExt;
+    let f = Fixture::new().await;
+    let app = wekeeper_api::bootstrap::build_application(f.pool.clone());
+    let (token, actor) = app
+        .identity
+        .0
+        .session(f.actor.id, "browser", false)
+        .await
+        .unwrap();
+    let router = wekeeper_api::http::app_router(app);
+    let get = || {
+        Request::builder()
+            .uri("/api/v2/admin/sensitive-words")
+            .header("cookie", format!("wekeeper_session={token}"))
+            .body(Body::empty())
+            .unwrap()
+    };
+    let response = router.clone().oneshot(get()).await.unwrap();
+    assert_eq!(response.status(), 200);
+    let doc: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 100000).await.unwrap()).unwrap();
+    let revision = doc["data"]["attributes"]["revision"].as_i64().unwrap();
+    let input = json!({"data":{"type":"sensitive-words","attributes":{"expected_revision":revision,"entries":[{"word":"诈骗","enabled":true}]}}});
+    let put = || {
+        Request::builder()
+            .method("PUT")
+            .uri("/api/v2/admin/sensitive-words")
+            .header("cookie", format!("wekeeper_session={token}"))
+            .header("origin", "http://localhost:5173")
+            .header("x-csrf-token", &actor.csrf)
+            .header("content-type", "application/vnd.api+json")
+            .body(Body::from(input.to_string()))
+            .unwrap()
+    };
+    assert_eq!(router.clone().oneshot(put()).await.unwrap().status(), 200);
+    assert_eq!(router.clone().oneshot(put()).await.unwrap().status(), 409);
+    let doc: Value = serde_json::from_slice(
+        &to_bytes(router.oneshot(get()).await.unwrap().into_body(), 100000)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(doc["data"]["attributes"]["entries"][0]["word"], "诈骗");
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn whitespace_obfuscated_sensitive_word_is_rejected() {
+    let f = Fixture::new().await;
+    f.configure(vec![f.targets[0]]).await;
+    f.lifecycle(LifecycleAction::Enable).await;
+    publish_keywords(&f, "global", &["诈骗"]).await;
+    let receipt = inbox(&f, "whitespace-keyword", 1, "content.upsert").await;
+    change_title(&f, receipt, "诈 \n骗").await;
+    RoutingRepository(f.pool.clone()).run_once().await.unwrap();
+    assert_eq!(
+        receipt_value(&f, receipt).await["reason_code"],
+        "keyword_blocked"
+    );
+    let sample: serde_json::Value = sqlx::query_scalar(
+        "SELECT samples FROM keyword_check_results WHERE receipt_id=$1 AND outcome='blocked'",
+    )
+    .bind(receipt)
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(sample[0]["start"], 0);
+    assert_eq!(sample[0]["end"], 4);
+    let tasks: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM source_execution_tasks WHERE receipt_id=$1")
+            .bind(receipt)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(tasks, 0);
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn policy_publication_does_not_recheck_previously_accepted_messages() {
     let f = Fixture::new().await;
     let worker = RoutingRepository(f.pool.clone());
     for n in 0..80 {
@@ -1080,7 +1001,7 @@ async fn policy_revision_recovery_uses_persistent_bounded_pages() {
     .fetch_one(&f.pool)
     .await
     .unwrap();
-    assert_eq!(first, 50);
+    assert_eq!(first, 0);
     RoutingRepository(f.pool.clone()).run_once().await.unwrap();
     let all: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM source_content_versions WHERE check_state='blocked'",
@@ -1088,14 +1009,27 @@ async fn policy_revision_recovery_uses_persistent_bounded_pages() {
     .fetch_one(&f.pool)
     .await
     .unwrap();
-    assert_eq!(all, 80);
+    assert_eq!(all, 0);
     let complete: bool =
-        sqlx::query_scalar("SELECT bool_and(complete) FROM keyword_recheck_batches")
+        sqlx::query_scalar("SELECT COALESCE(bool_and(complete),true) FROM keyword_recheck_batches")
             .fetch_one(&f.pool)
             .await
             .unwrap();
     assert!(complete);
     f.close().await;
+}
+
+async fn seed_legacy_workspace_words(f: &Fixture, scope: &str, word: &str) {
+    let id = Uuid::new_v4();
+    let mut tx = f.pool.begin().await.unwrap();
+    sqlx::query("INSERT INTO keyword_rule_versions(id,scope_id,revision,entries,reason) VALUES($1,$2,1,$3,'legacy')").bind(id).bind(scope).bind(json!([{"word":word,"enabled":true}])).execute(&mut *tx).await.unwrap();
+    sqlx::query("UPDATE keyword_scope_heads SET version_id=$2,revision=1 WHERE id=$1")
+        .bind(scope)
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
 }
 
 async fn publish_keywords(f: &Fixture, scope: &str, words: &[&str]) -> Value {
@@ -1133,99 +1067,38 @@ async fn publish_keywords(f: &Fixture, scope: &str, words: &[&str]) -> Value {
 
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn keyword_scopes_final_text_recovery_and_immutable_evidence() {
+async fn only_original_content_is_checked_and_evidence_is_immutable() {
     let f = Fixture::new().await;
     f.configure(vec![f.targets[0]]).await;
     f.lifecycle(LifecycleAction::Enable).await;
     let worker = RoutingRepository(f.pool.clone());
-    let r = inbox(&f, "final-url", 1, "content.upsert").await;
+    publish_keywords(&f, "global", &["EXAMPLE.COM"]).await;
+    let receipt = inbox(&f, "final-url", 1, "content.upsert").await;
     worker.run_once().await.unwrap();
-    let task: Uuid =
-        sqlx::query_scalar("SELECT task_id FROM source_execution_tasks WHERE receipt_id=$1")
-            .bind(r)
+    assert_eq!(
+        receipt_value(&f, receipt).await["processing_stage"],
+        "task_created"
+    );
+    let checks: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM keyword_check_results WHERE receipt_id=$1")
+            .bind(receipt)
             .fetch_one(&f.pool)
             .await
             .unwrap();
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>(
-            "SELECT count(*) FROM keyword_check_results WHERE receipt_id=$1"
-        )
-        .bind(r)
+    assert_eq!(checks, 1);
+    let id: Uuid = sqlx::query_scalar("SELECT id FROM keyword_check_results WHERE receipt_id=$1")
+        .bind(receipt)
         .fetch_one(&f.pool)
         .await
-        .unwrap(),
-        3
-    );
-    // First restriction on a formerly empty workspace invalidates its old qualification immediately.
-    publish_keywords(&f, &format!("mobile:{}", f.workspace), &["EXAMPLE.COM"]).await;
-    let mut tx = f.pool.begin().await.unwrap();
-    assert_eq!(
-        wekeeper_api::source_access::south::adapter::postgres::routing::guard_submission(
-            &mut tx,
-            r,
-            f.targets[0]
-        )
-        .await
-        .unwrap_err()
-        .0,
-        "content_check_pending"
-    );
-    tx.rollback().await.unwrap();
-    worker.run_once().await.unwrap();
-    assert_eq!(
-        receipt_value(&f, r).await["reason_code"],
-        "final_keyword_blocked"
-    );
-    assert_eq!(receipt_value(&f, r).await["sending"]["failed"], 1);
-    let check: Uuid = sqlx::query_scalar(
-        "SELECT id FROM keyword_check_results WHERE receipt_id=$1 AND outcome='blocked'",
-    )
-    .bind(r)
-    .fetch_one(&f.pool)
-    .await
-    .unwrap();
+        .unwrap();
     assert!(
-        sqlx::query("UPDATE keyword_check_results SET outcome='passed' WHERE id=$1")
-            .bind(check)
+        sqlx::query("UPDATE keyword_check_results SET outcome='blocked' WHERE id=$1")
+            .bind(id)
             .execute(&f.pool)
             .await
             .is_err()
     );
-    assert!(
-        !sqlx::query_scalar::<_, bool>("SELECT stopped FROM mobile_v9_tasks WHERE id=$1")
-            .bind(task)
-            .fetch_one(&f.pool)
-            .await
-            .unwrap()
-    );
-    // Loosening resumes the same task; no duplicate intent or task is created.
-    publish_keywords(&f, &format!("mobile:{}", f.workspace), &[]).await;
-    worker.run_once().await.unwrap();
-    assert_eq!(
-        receipt_value(&f, r).await["processing_stage"],
-        "task_created"
-    );
-    assert_eq!(
-        sqlx::query_scalar::<_, Uuid>(
-            "SELECT task_id FROM source_execution_tasks WHERE receipt_id=$1"
-        )
-        .bind(r)
-        .fetch_one(&f.pool)
-        .await
-        .unwrap(),
-        task
-    );
-    let mut tx = f.pool.begin().await.unwrap();
-    wekeeper_api::source_access::south::adapter::postgres::routing::guard_submission(
-        &mut tx,
-        r,
-        f.targets[0],
-    )
-    .await
-    .unwrap();
-    tx.rollback().await.unwrap();
-    // Upstream restrictions still apply when a workspace has no local words.
-    publish_keywords(&f, &format!("unit:{}", f.unit), &["ＳＴＲＡＳＳＥ"]).await;
+    publish_keywords(&f, "global", &["ＳＴＲＡＳＳＥ"]).await;
     let raw = inbox(&f, "raw-fullfold", 1, "content.upsert").await;
     change_title(&f, raw, "Straße").await;
     worker.run_once().await.unwrap();
@@ -1233,26 +1106,13 @@ async fn keyword_scopes_final_text_recovery_and_immutable_evidence() {
         receipt_value(&f, raw).await["reason_code"],
         "keyword_blocked"
     );
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>(
-            "SELECT count(*) FROM source_current_routing_decisions WHERE receipt_id=$1"
-        )
-        .bind(raw)
-        .fetch_one(&f.pool)
-        .await
-        .unwrap(),
-        0
-    );
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>(
-            "SELECT count(*) FROM source_execution_tasks WHERE receipt_id=$1"
-        )
-        .bind(raw)
-        .fetch_one(&f.pool)
-        .await
-        .unwrap(),
-        0
-    );
+    let tasks: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM source_execution_tasks WHERE receipt_id=$1")
+            .bind(raw)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(tasks, 0);
     f.close().await;
 }
 
@@ -1291,8 +1151,7 @@ async fn keyword_workspace_authorization_cas_and_receipt_check_ownership() {
     actor.platform_admin = false;
     let scope = format!("mobile:{}", f.workspace);
     let scopes = service.execute(&actor, Command::Scopes).await.unwrap();
-    assert_eq!(scopes["items"].as_array().unwrap().len(), 1);
-    assert_eq!(scopes["items"][0]["id"], scope);
+    assert_eq!(scopes["items"].as_array().unwrap().len(), 0);
     assert_eq!(
         service
             .execute(
@@ -1315,10 +1174,17 @@ async fn keyword_workspace_authorization_cas_and_receipt_check_ownership() {
             entries: vec![],
         },
     };
-    service.execute(&actor, publication()).await.unwrap();
     assert_eq!(
         service.execute(&actor, publication()).await.unwrap_err().0,
-        "revision_conflict"
+        "forbidden"
+    );
+    assert_eq!(
+        service
+            .execute(&f.actor, publication())
+            .await
+            .unwrap_err()
+            .0,
+        "forbidden"
     );
     assert_eq!(
         service
@@ -1437,7 +1303,7 @@ async fn keyword_store_failure_never_prevents_withdrawal_tombstone() {
 
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn keyword_scope_union_workspace_original_and_real_composition_boundaries() {
+async fn only_global_rules_filter_source_messages() {
     let f = Fixture::new().await;
     f.configure(vec![f.targets[0], f.targets[1]]).await;
     f.lifecycle(LifecycleAction::Enable).await;
@@ -1448,56 +1314,42 @@ async fn keyword_scope_union_workspace_original_and_real_composition_boundaries(
         .execute(&f.pool)
         .await
         .unwrap();
-    publish_keywords(&f, &format!("wecom:{}", f.workspace), &["正文"]).await;
+    seed_legacy_workspace_words(&f, &format!("wecom:{}", f.workspace), "正文").await;
     let free = inbox(&f, "other-channel", 1, "content.upsert").await;
     worker.run_once().await.unwrap();
     assert_eq!(
         receipt_value(&f, free).await["processing_stage"],
         "task_created"
     );
-    // Original fields never cross-match; the actual newline in final composition can match.
-    publish_keywords(&f, &format!("route:{}", f.route), &["通知\n正文"]).await;
-    let composed = inbox(&f, "composed-boundary", 1, "content.upsert").await;
-    worker.run_once().await.unwrap();
-    assert_eq!(receipt_value(&f, composed).await["status"], "applied");
-    assert_eq!(
-        receipt_value(&f, composed).await["reason_code"],
-        "final_keyword_blocked"
-    );
-    assert_eq!(sqlx::query_scalar::<_,String>("SELECT outcome FROM keyword_check_results WHERE receipt_id=$1 AND stage='original_common'").bind(composed).fetch_one(&f.pool).await.unwrap(),"passed");
-    publish_keywords(&f, &format!("route:{}", f.route), &[]).await;
-    for (n, scope) in [
-        "global".to_owned(),
+    // Historic caller, unit and route words remain readable but no longer filter.
+    for scope in [
         format!("source:{}", f.source),
         format!("unit:{}", f.unit),
         format!("route:{}", f.route),
-    ]
-    .iter()
-    .enumerate()
-    {
-        publish_keywords(&f, scope, &["正文"]).await;
-        let r = inbox(&f, &format!("union-{n}"), 1, "content.upsert").await;
-        worker.run_once().await.unwrap();
-        assert_eq!(receipt_value(&f, r).await["reason_code"], "keyword_blocked");
-        assert_eq!(
-            sqlx::query_scalar::<_, i64>(
-                "SELECT count(*) FROM source_execution_tasks WHERE receipt_id=$1"
-            )
-            .bind(r)
-            .fetch_one(&f.pool)
-            .await
-            .unwrap(),
-            0
-        );
-        publish_keywords(&f, scope, &[]).await;
+    ] {
+        seed_legacy_workspace_words(&f, &scope, "正文").await;
     }
-    publish_keywords(&f, &format!("mobile:{}", f.workspace), &["正文"]).await;
+    let legacy = inbox(&f, "legacy-scopes", 1, "content.upsert").await;
+    worker.run_once().await.unwrap();
+    assert_eq!(
+        receipt_value(&f, legacy).await["processing_stage"],
+        "task_created"
+    );
+    publish_keywords(&f, "global", &["正文"]).await;
+    let blocked = inbox(&f, "global-blocked", 1, "content.upsert").await;
+    worker.run_once().await.unwrap();
+    assert_eq!(
+        receipt_value(&f, blocked).await["reason_code"],
+        "keyword_blocked"
+    );
+    publish_keywords(&f, "global", &[]).await;
+    seed_legacy_workspace_words(&f, &format!("mobile:{}", f.workspace), "正文").await;
     let local = inbox(&f, "workspace-original", 1, "content.upsert").await;
     worker.run_once().await.unwrap();
     assert_eq!(receipt_value(&f, local).await["status"], "applied");
     assert_eq!(
-        receipt_value(&f, local).await["reason_code"],
-        "workspace_keyword_blocked"
+        receipt_value(&f, local).await["processing_stage"],
+        "task_created"
     );
     assert_eq!(
         sqlx::query_scalar::<_, i64>(
@@ -1518,6 +1370,24 @@ async fn keyword_scope_union_workspace_original_and_real_composition_boundaries(
         receipt_value(&f, free).await["sending"],
         json!({"sent":1,"unknown":1,"failed":0,"pending":0})
     );
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn wecom_workspace_legacy_keyword_rules_do_not_filter_source_messages() {
+    let f = Fixture::new().await;
+    let (workspace, _) = configure_official(&f).await;
+    seed_legacy_workspace_words(&f, &format!("wecom:{workspace}"), "正文").await;
+    f.lifecycle(LifecycleAction::Enable).await;
+    let receipt = inbox(&f, "wecom-independent-keywords", 1, "content.upsert").await;
+    RoutingRepository(f.pool.clone()).run_once().await.unwrap();
+    assert_eq!(
+        receipt_value(&f, receipt).await["processing_stage"],
+        "task_created"
+    );
+    let checks: i64 = sqlx::query_scalar("SELECT count(*) FROM keyword_check_results WHERE receipt_id=$1 AND stage <> 'original_common'").bind(receipt).fetch_one(&f.pool).await.unwrap();
+    assert_eq!(checks, 0);
     f.close().await;
 }
 
@@ -1783,9 +1653,9 @@ async fn advertisement_private_authorization_cas_preview_and_keyword_fallback() 
         .execute(
             &f.actor,
             k::Command::Publish {
-                scope: format!("mobile:{}", f.workspace),
+                scope: "global".into(),
                 input: k::Publication {
-                    expected_revision: 0,
+                    expected_revision: 1,
                     reason: "过滤广告".into(),
                     entries: vec![k::Entry {
                         word: "广告正文".into(),
@@ -1810,15 +1680,10 @@ async fn advertisement_private_authorization_cas_preview_and_keyword_fallback() 
         )
         .await
         .unwrap();
-    assert_eq!(preview["selection"]["composer"], "source-text/1");
+    assert_eq!(preview["selection"]["composer"], "source-ad-text/1");
     assert_eq!(preview["deliverable"], true);
-    assert_eq!(preview["checks"]["final"]["total_hits"], 0);
-    assert!(
-        preview["checks"]["excluded_final"]["total_hits"]
-            .as_i64()
-            .unwrap()
-            > 0
-    );
+    assert!(preview["checks"]["final"].is_null());
+    assert!(preview["content"].as_str().unwrap().contains("广告正文"));
     f.lifecycle(LifecycleAction::Enable).await;
     let r = inbox(&f, "keyword-ad", 1, "content.upsert").await;
     RoutingRepository(f.pool.clone()).run_once().await.unwrap();
@@ -2160,9 +2025,9 @@ async fn advertisement_configuration_wait_records_idempotent_decision_and_origin
         .execute(
             &f.actor,
             k::Command::Publish {
-                scope: format!("mobile:{}", f.workspace),
+                scope: "global".into(),
                 input: k::Publication {
-                    expected_revision: 0,
+                    expected_revision: 1,
                     reason: "原文先拦截".into(),
                     entries: vec![k::Entry {
                         word: "正文".into(),
@@ -2181,7 +2046,7 @@ async fn advertisement_configuration_wait_records_idempotent_decision_and_origin
     worker.run_once().await.unwrap();
     assert_eq!(
         receipt_value(&f, blocked).await["reason_code"],
-        "workspace_keyword_blocked"
+        "keyword_blocked"
     );
     let none: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM source_advertisement_decisions WHERE receipt_id=$1",
@@ -2812,144 +2677,27 @@ async fn ordered_pools_commit_independently_while_another_full_task_transaction_
 
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn ordered_pool_final_filter_skips_and_frozen_tasks_never_reselect() {
-    use wekeeper_api::advertising::domain as a;
-    use wekeeper_api::source_access::{
-        domain::keyword_filter as k, north::local::keyword_filter::Service as KeywordService,
-        south::adapter::postgres::keyword_filter::KeywordRepository,
-    };
+async fn ordered_pool_does_not_filter_advertising_text() {
     let f = Fixture::new().await;
     f.configure(vec![f.targets[0]]).await;
-    let (one, _two, _) = ordered_pool(&f).await;
+    let (_, two, _) = ordered_pool(&f).await;
+    publish_keywords(&f, "global", &["第二条广告"]).await;
     f.lifecycle(LifecycleAction::Enable).await;
-    let frozen = inbox(&f, "frozen", 1, "content.upsert").await;
-    let w = RoutingRepository(f.pool.clone());
-    w.run_once().await.unwrap();
-    let original = composition(&f, frozen).await;
-    disable_ad(&f, one).await;
-    // This original task is wholly unstarted: fixed would replace it, pool must not.
-    for _ in 0..3 {
-        w.run_once().await.unwrap();
-    }
-    assert_eq!(composition(&f, frozen).await, original);
+    let worker = RoutingRepository(f.pool.clone());
+    let first = inbox(&f, "ad-first", 1, "content.upsert").await;
+    worker.run_once().await.unwrap();
+    let second = inbox(&f, "ad-second", 1, "content.upsert").await;
+    worker.run_once().await.unwrap();
+    let result = composition(&f, second).await;
+    assert_eq!(result["selection"]["ad_id"], two.to_string());
+    assert!(result["content"].as_str().unwrap().contains("第二条广告"));
     assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM advertisement_pool_consumptions")
-            .fetch_one(&f.pool)
-            .await
-            .unwrap(),
-        1
-    );
-    let scope = format!("mobile:{}", f.workspace);
-    let revision: i64 = sqlx::query_scalar("SELECT revision FROM keyword_scope_heads WHERE id=$1")
-        .bind(&scope)
-        .fetch_one(&f.pool)
-        .await
-        .unwrap();
-    KeywordService(KeywordRepository(f.pool.clone()))
-        .execute(
-            &f.actor,
-            k::Command::Publish {
-                scope,
-                input: k::Publication {
-                    expected_revision: revision,
-                    reason: "拦截第二广告".into(),
-                    entries: vec![k::Entry {
-                        word: "第二条广告".into(),
-                        enabled: true,
-                    }],
-                },
-            },
-        )
-        .await
-        .unwrap();
-    let no_ad = inbox(&f, "final-filter", 1, "content.upsert").await;
-    for _ in 0..3 {
-        w.run_once().await.unwrap();
-    }
-    let c = composition(&f, no_ad).await;
-    assert!(c["selection"]["ad_id"].is_null());
-    let scans = c["selection"]["pool"]["scans"].as_array().unwrap();
-    assert_eq!(scans.len(), 4);
-    assert_eq!(scans[0]["exclusion"], "ad_final_keyword_blocked");
-    assert_eq!(scans[1]["exclusion"], "ad_final_keyword_blocked");
-    let pool = ads(&f)
-        .execute(&f.actor, a::Command::Pool(f.route.clone()))
-        .await
-        .unwrap();
-    assert_eq!(pool["cursor"]["selection_order"], 1);
-    // Restoring advertising does not turn a frozen no-ad task into a fresh pool selection.
-    let detail = ads(&f)
-        .execute(&f.actor, a::Command::Detail(one))
-        .await
-        .unwrap();
-    let mut policy: a::Policy = serde_json::from_value(detail["policy"].clone()).unwrap();
-    policy.enabled = true;
-    ads(&f)
-        .execute(
-            &f.actor,
-            a::Command::Policy(
-                one,
-                a::PolicyPublication {
-                    expected_revision: detail["revision"].as_i64().unwrap(),
-                    reason: "恢复投放".into(),
-                    policy,
-                },
-            ),
-        )
-        .await
-        .unwrap();
-    for _ in 0..3 {
-        w.run_once().await.unwrap();
-    }
-    assert_eq!(composition(&f, no_ad).await, c);
-    assert_eq!(composition(&f, frozen).await, original);
-    // A final-only cross-field match also blocks the no-ad fallback as a business
-    // outcome; it must not become an endless stale-proposal retry at the queue head.
-    let scope = format!("mobile:{}", f.workspace);
-    let revision: i64 = sqlx::query_scalar("SELECT revision FROM keyword_scope_heads WHERE id=$1")
-        .bind(&scope)
-        .fetch_one(&f.pool)
-        .await
-        .unwrap();
-    KeywordService(KeywordRepository(f.pool.clone()))
-        .execute(
-            &f.actor,
-            k::Command::Publish {
-                scope,
-                input: k::Publication {
-                    expected_revision: revision,
-                    reason: "阻止最终跨字段正文".into(),
-                    entries: vec![k::Entry {
-                        word: "通知\n正文".into(),
-                        enabled: true,
-                    }],
-                },
-            },
-        )
-        .await
-        .unwrap();
-    let blocked = inbox(&f, "no-ad-final-blocked", 1, "content.upsert").await;
-    w.run_once().await.unwrap();
-    assert_eq!(
-        receipt_value(&f, blocked).await["reason_code"],
-        "final_keyword_blocked"
+        receipt_value(&f, first).await["processing_stage"],
+        "task_created"
     );
     assert_eq!(
-        sqlx::query_scalar::<_, i64>(
-            "SELECT count(*) FROM source_execution_tasks WHERE receipt_id=$1"
-        )
-        .bind(blocked)
-        .fetch_one(&f.pool)
-        .await
-        .unwrap(),
-        0
-    );
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM advertisement_pool_consumptions")
-            .fetch_one(&f.pool)
-            .await
-            .unwrap(),
-        1
+        receipt_value(&f, second).await["processing_stage"],
+        "task_created"
     );
     f.close().await;
 }

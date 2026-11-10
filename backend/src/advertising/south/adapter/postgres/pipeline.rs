@@ -85,63 +85,20 @@ async fn can_replace(tx: &mut Tx<'_>, receipt: Uuid) -> Result<bool> {
     let stopped:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_execution_tasks l JOIN mobile_v9_tasks t ON t.id=l.task_id WHERE l.receipt_id=$1 AND (t.stopped OR t.confirmed_until<=clock_timestamp())) OR EXISTS(SELECT 1 FROM source_execution_tasks l JOIN broadcast_tasks t ON t.id=l.task_id WHERE l.receipt_id=$1 AND t.stopped)").bind(receipt).fetch_one(&mut **tx).await?;
     Ok(!stopped && !started(tx, receipt).await?)
 }
-async fn final_pass(
-    pool: &PgPool,
-    receipt: Uuid,
-    event: &Event,
-    snapshot: &RouteSnapshot,
-    text: &str,
-) -> Result<bool> {
-    let e = snapshot
-        .execution
-        .as_ref()
-        .ok_or(Fault("route_configuration_required"))?;
-    Ok(checks::check(
-        pool,
-        receipt,
-        event,
-        "final",
-        Some((e.channel.as_str(), e.workspace_id)),
-        &[("final", text)],
-    )
-    .await?
-    .1)
-}
 pub(crate) async fn prepare(
     pool: &PgPool,
     receipt: Uuid,
     event: &Event,
     snapshot: &RouteSnapshot,
 ) -> Result<Option<Prepared>> {
-    let e = snapshot
-        .execution
-        .as_ref()
-        .ok_or(Fault("route_configuration_required"))?;
-    let original = checks::check(
-        pool,
-        receipt,
-        event,
-        "original_workspace",
-        Some((e.channel.as_str(), e.workspace_id)),
-        &[
-            ("title", event.title.as_deref().unwrap_or("")),
-            ("content", event.content.as_deref().unwrap_or("")),
-        ],
-    )
-    .await?;
     let source = k::compose(
         event.title.as_deref(),
         event.content.as_deref(),
         &event.detail_url,
     );
-    if !original.1 {
-        checks::admit(pool, receipt, event, snapshot, &source, k::COMPOSER).await?;
-        return Ok(None);
-    }
     let mut tx = pool.begin().await?;
     let old=sqlx::query("SELECT c.id,c.selection,c.content FROM source_execution_tasks l JOIN source_message_compositions c ON c.id=l.composition_id WHERE l.receipt_id=$1").bind(receipt).fetch_optional(&mut *tx).await?;
-    let mut frozen = None;
-    let mut prepared = if let Some(old) = old {
+    let prepared = if let Some(old) = old {
         let id: Uuid = old.get("id");
         let selection: Selection = serde_json::from_value(old.get("selection"))?;
         let content: String = old.get("content");
@@ -153,7 +110,6 @@ pub(crate) async fn prepare(
             && selection.config.auto_recover
             && can_replace(&mut tx, receipt).await?;
         if valid {
-            frozen = Some((selection.clone(), id, replace));
             Prepared {
                 selection,
                 content,
@@ -203,87 +159,6 @@ pub(crate) async fn prepare(
     tx.commit().await?;
     if prepared.selection.unavailable() {
         hold(pool, receipt, "ad_unavailable", Some(&prepared.selection)).await?;
-        return Ok(None);
-    }
-    if !final_pass(pool, receipt, event, snapshot, &prepared.content).await? {
-        if prepared.selection.pool.is_some()
-            && prepared.base.is_none()
-            && prepared.selection.ad_id.is_some()
-        {
-            // A rule changed after the pool proposal: rescan the sequence, never silently
-            // consume a selected slot while falling back to a different body.
-            return Err(Fault("ad_selection_stale"));
-        }
-        if let Some((old_selection, id, replace)) = frozen {
-            if !replace {
-                checks::admit(
-                    pool,
-                    receipt,
-                    event,
-                    snapshot,
-                    &prepared.content,
-                    &prepared.selection.composer,
-                )
-                .await?;
-                return Ok(None);
-            }
-            let mut tx = pool.begin().await?;
-            prepared = select(
-                &mut tx,
-                snapshot,
-                old_selection.config_revision,
-                old_selection.config,
-                &source,
-                Some(id),
-            )
-            .await?;
-            tx.commit().await?;
-            if prepared.selection.unavailable() {
-                hold(pool, receipt, "ad_unavailable", Some(&prepared.selection)).await?;
-                return Ok(None);
-            }
-        }
-        if !final_pass(pool, receipt, event, snapshot, &prepared.content).await?
-            && prepared.selection.ad_id.is_some()
-        {
-            prepared
-                .selection
-                .exclusions
-                .push("ad_final_keyword_blocked".into());
-            for candidate in &mut prepared.selection.candidates {
-                if Some(candidate.ad_id) == prepared.selection.ad_id {
-                    candidate.exclusion = Some("ad_final_keyword_blocked".into());
-                }
-            }
-            if prepared.selection.config.unavailable_policy == "without_ad" {
-                prepared.selection.ad_id = None;
-                prepared.selection.content_version = None;
-                prepared.selection.policy_version = None;
-                prepared.selection.composer = k::COMPOSER.into();
-                prepared.content = source;
-                prepared.selection.measurement = measure(&prepared.content, e.channel.as_str());
-            } else {
-                hold(
-                    pool,
-                    receipt,
-                    "ad_final_keyword_blocked",
-                    Some(&prepared.selection),
-                )
-                .await?;
-                return Ok(None);
-            }
-        }
-    }
-    if !checks::admit(
-        pool,
-        receipt,
-        event,
-        snapshot,
-        &prepared.content,
-        &prepared.selection.composer,
-    )
-    .await?
-    {
         return Ok(None);
     }
     Ok(Some(prepared))
@@ -359,14 +234,9 @@ pub(crate) async fn current_guard(
     receipt: Uuid,
     snapshot: &RouteSnapshot,
 ) -> Result<()> {
-    let row=sqlx::query("SELECT c.selection,c.id,a.composition_id AS admission_id,a.composer FROM source_execution_tasks l JOIN source_message_compositions c ON c.id=l.composition_id LEFT JOIN keyword_admissions a ON a.receipt_id=l.receipt_id WHERE l.receipt_id=$1").bind(receipt).fetch_optional(&mut **tx).await?;
+    let row=sqlx::query("SELECT c.selection FROM source_execution_tasks l JOIN source_message_compositions c ON c.id=l.composition_id WHERE l.receipt_id=$1").bind(receipt).fetch_optional(&mut **tx).await?;
     if let Some(r) = row {
         let s: Selection = serde_json::from_value(r.get("selection"))?;
-        ensure(
-            r.get::<Option<Uuid>, _>("admission_id") == Some(r.get("id"))
-                && r.get::<String, _>("composer") == s.composer,
-            "content_check_pending",
-        )?;
         if let Some(id) = s.ad_id {
             ensure(
                 ad_exclusion(&ad_row(tx, id).await?, snapshot)?.is_none(),
@@ -395,13 +265,8 @@ pub(crate) async fn save(
     let id = Uuid::now_v7();
     let snap = Uuid::now_v7();
     sqlx::query("INSERT INTO distribution_message_snapshots(id,school_id,channel,content,content_hash) VALUES($1,$2,$3,$4,$5)").bind(snap).bind(e.workspace_id).bind(e.channel.as_str()).bind(&p.content).bind(crate::business::hash(&p.content)).execute(&mut **tx).await?;
-    let written=sqlx::query("INSERT INTO source_message_compositions(id,receipt_id,generation,supersedes,selection,content,content_digest,composer,message_snapshot_id,common_check,workspace_check,final_check,reason) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,common_check,workspace_check,final_check,$10 FROM keyword_admissions WHERE receipt_id=$2 AND content_digest=$7 AND composer=$8").bind(id).bind(receipt).bind(generation).bind(p.base).bind(json!(p.selection)).bind(&p.content).bind(p.digest()).bind(&p.selection.composer).bind(snap).bind(if p.replacement{"pre_execution_replacement"}else{"initial_selection"}).execute(&mut **tx).await?;
+    let written=sqlx::query("INSERT INTO source_message_compositions(id,receipt_id,generation,supersedes,selection,content,content_digest,composer,message_snapshot_id,common_check,reason) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,c.id,$10 FROM source_content_versions v JOIN LATERAL (SELECT id FROM keyword_check_results WHERE receipt_id=v.receipt_id AND stage='original_common' AND outcome='passed' AND payload_fingerprint=v.fingerprint ORDER BY created_at DESC LIMIT 1) c ON true JOIN source_receipts r ON r.receipt_id=v.receipt_id WHERE v.receipt_id=$2 AND NOT v.withdrawn AND v.check_state='passed' AND NOT r.keyword_terminal_rejected").bind(id).bind(receipt).bind(generation).bind(p.base).bind(json!(p.selection)).bind(&p.content).bind(p.digest()).bind(&p.selection.composer).bind(snap).bind(if p.replacement{"pre_execution_replacement"}else{"initial_selection"}).execute(&mut **tx).await?;
     ensure(written.rows_affected() == 1, "content_check_pending")?;
-    sqlx::query("UPDATE keyword_admissions SET composition_id=$2 WHERE receipt_id=$1")
-        .bind(receipt)
-        .bind(id)
-        .execute(&mut **tx)
-        .await?;
     decision(tx, receipt, &p.selection, "selected", Some(id)).await?;
     pools::consume(tx, receipt, id, p).await?;
     Ok((id, generation, snap))

@@ -174,22 +174,6 @@ pub(crate) async fn validate(tx: &mut Tx<'_>, receipt: Uuid, p: &Prepared) -> Re
         .fetch_one(&mut **tx)
         .await?,
     )?;
-    let e = snapshot
-        .execution
-        .as_ref()
-        .ok_or(Fault("route_configuration_required"))?;
-    let fingerprint =
-        crate::source_access::south::adapter::postgres::keyword_filter::context_for_scope(
-            tx,
-            snapshot.source_id,
-            snapshot.route_id.clone(),
-            Some(snapshot.unit_id),
-            Some((e.channel.as_str(), e.workspace_id)),
-        )
-        .await?
-        .0
-        .fingerprint();
-    ensure(fingerprint == pool.rule_fingerprint, "ad_selection_stale")?;
     let current = cursor(tx, pool.pool_id, true).await?;
     ensure(current == pool.before, "ad_selection_stale")?;
     let route: String =
@@ -262,9 +246,7 @@ pub(crate) async fn select(
     source: &str,
     receipt: Option<Uuid>,
 ) -> Result<Prepared> {
-    use crate::source_access::{
-        domain::keyword_filter as k, south::adapter::postgres::keyword_filter as checks,
-    };
+    use crate::source_access::domain::keyword_filter as k;
     let e = snapshot
         .execution
         .as_ref()
@@ -273,14 +255,6 @@ pub(crate) async fn select(
     let pool = id(&mut tx, &snapshot.route_id).await?;
     let before = cursor(&mut tx, pool, false).await?;
     let slots = slots(&mut tx, pool, before.pool_revision).await?;
-    let (ctx, rules) = checks::context_for_scope(
-        &mut tx,
-        snapshot.source_id,
-        snapshot.route_id.clone(),
-        Some(snapshot.unit_id),
-        Some((e.channel.as_str(), e.workspace_id)),
-    )
-    .await?;
     let receive_order = if let Some(receipt) = receipt {
         Some(
             sqlx::query_scalar::<_, i64>(
@@ -340,7 +314,7 @@ pub(crate) async fn select(
         selected_slot_id: None,
         selected_position: None,
         receive_order,
-        rule_fingerprint: ctx.fingerprint(),
+        rule_fingerprint: String::new(),
         scans: vec![],
     };
     let mut results = std::collections::HashMap::<Uuid, (Option<String>, String)>::new();
@@ -356,12 +330,8 @@ pub(crate) async fn select(
                 .as_ref()
                 .map(|ad| compose(source, Some(ad), &config.insertion_position))
                 .unwrap_or_else(|| source.into());
-            if exclusion.is_none() {
-                if !measure(&text, e.channel.as_str()).valid {
-                    exclusion = Some("ad_content_too_long".into());
-                } else if !k::evaluate(&rules, &[("final", &text)])?.passed() {
-                    exclusion = Some("ad_final_keyword_blocked".into());
-                }
+            if exclusion.is_none() && !measure(&text, e.channel.as_str()).valid {
+                exclusion = Some("ad_content_too_long".into());
             }
             results.insert(slot.ad_id, (exclusion.clone(), text.clone()));
             (exclusion, text)

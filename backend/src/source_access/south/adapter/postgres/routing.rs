@@ -813,7 +813,6 @@ pub async fn guard_submission(
     ensure(current, "content_version_superseded")?;
     crate::advertising::south::adapter::postgres::pipeline::current_guard(tx, receipt, &frozen)
         .await?;
-    super::keyword_filter::guard_admission(tx, receipt, &frozen).await?;
     let config = frozen
         .execution
         .as_ref()

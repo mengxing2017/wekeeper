@@ -243,9 +243,6 @@ impl RoutingRepository {
             sqlx::query("UPDATE source_inbox SET projected=true,state='waiting',next_attempt_at=now() WHERE receipt_id=$1 AND NOT EXISTS(SELECT 1 FROM source_content_versions WHERE receipt_id=$1 AND withdrawn)").bind(receipt).execute(&mut *tx).await?;
             tx.commit().await?;
         }
-        super::keyword_filter::KeywordRepository(self.0.clone())
-            .recover()
-            .await?;
         Ok(())
     }
 }
@@ -298,7 +295,7 @@ impl crate::source_access::south::port::ProjectionStore for ReceiptsRepository {
                 detail["history"]=json!(sqlx::query_scalar::<_,Value>("SELECT to_jsonb(h)-'receipt_id' FROM source_receipt_history h WHERE receipt_id=$1 ORDER BY revision DESC LIMIT 100").bind(receipt).fetch_all(&mut *tx).await?);
                 detail["checks"]=json!(sqlx::query_scalar::<_,Value>("SELECT to_jsonb(c)-'receipt_id' FROM source_content_checks c WHERE receipt_id=$1 ORDER BY created_at DESC LIMIT 100").bind(receipt).fetch_all(&mut *tx).await?);
                 detail["relations"]=json!(sqlx::query_scalar::<_,Value>("SELECT to_jsonb(l)-'receipt_id' FROM source_receipt_relations l WHERE receipt_id=$1").bind(receipt).fetch_all(&mut *tx).await?);
-                let current:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_content_versions WHERE receipt_id=$1 AND NOT withdrawn)").bind(receipt).fetch_one(&mut *tx).await?;
+                let current:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_content_versions v JOIN source_receipts r USING(receipt_id) WHERE v.receipt_id=$1 AND NOT v.withdrawn AND NOT r.keyword_terminal_rejected)").bind(receipt).fetch_one(&mut *tx).await?;
                 detail["can_recheck"] = json!(can_recheck && current);
                 detail
             }
@@ -316,13 +313,14 @@ impl crate::source_access::south::port::ProjectionStore for ReceiptsRepository {
                     .bind(source)
                     .fetch_one(&mut *tx)
                     .await?;
-                let row=sqlx::query("SELECT r.processing_revision,r.reason_code,v.withdrawn FROM source_receipts r JOIN source_content_versions v ON v.receipt_id=r.receipt_id WHERE r.receipt_id=$1 FOR UPDATE OF r,v").bind(receipt).fetch_optional(&mut *tx).await?.ok_or(Fault("content_version_superseded"))?;
+                let row=sqlx::query("SELECT r.processing_revision,r.reason_code,r.keyword_terminal_rejected,v.withdrawn FROM source_receipts r JOIN source_content_versions v ON v.receipt_id=r.receipt_id WHERE r.receipt_id=$1 FOR UPDATE OF r,v").bind(receipt).fetch_optional(&mut *tx).await?.ok_or(Fault("content_version_superseded"))?;
                 ensure(
                     row.get::<i64, _>("processing_revision") == input.revision,
                     "revision_conflict",
                 )?;
                 ensure(
                     !row.get::<bool, _>("withdrawn")
+                        && !row.get::<bool, _>("keyword_terminal_rejected")
                         && row
                             .get::<Option<String>, _>("reason_code")
                             .as_deref()
