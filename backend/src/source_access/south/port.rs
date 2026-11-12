@@ -10,6 +10,14 @@ pub trait AcceptedIdentityStore: Send + Sync {
         receipt_id: uuid::Uuid,
     ) -> impl std::future::Future<Output = Result<crate::source_access::domain::AcceptedIdentity>> + Send;
 }
+/// Loads a committed, authenticated receipt scoped to its platform.
+pub trait AcceptedEventStore: Send + Sync {
+    fn accepted_event(
+        &self,
+        platform_id: uuid::Uuid,
+        receipt_id: uuid::Uuid,
+    ) -> impl std::future::Future<Output = Result<crate::source_access::domain::AcceptedEvent>> + Send;
+}
 pub trait MachineStore {
     fn record_failure(
         &self,
@@ -65,4 +73,23 @@ pub trait OrchestrationStore: Clone + Send + Sync {
         actor: &crate::business::Actor,
         command: crate::source_access::domain::orchestration::Command,
     ) -> impl std::future::Future<Output = Result<Value>> + Send;
+}
+
+/// Persistence for a bounded, fenced handoff claim; a claim is not a delivery lease.
+pub trait MessageHandoffStore: Send + Sync {
+    fn claim(
+        &self,
+    ) -> impl std::future::Future<
+        Output = Result<Option<crate::source_access::domain::MessageHandoff>>,
+    > + Send;
+    fn complete(
+        &self,
+        claim: &crate::source_access::domain::MessageHandoff,
+        message_id: uuid::Uuid,
+    ) -> impl std::future::Future<Output = Result<()>> + Send;
+    fn retry(
+        &self,
+        claim: &crate::source_access::domain::MessageHandoff,
+        error: &'static str,
+    ) -> impl std::future::Future<Output = Result<()>> + Send;
 }

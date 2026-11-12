@@ -14,6 +14,20 @@ pub struct AcceptedIdentity {
     pub platform_id: Uuid,
     pub unit_id: Uuid,
 }
+/// Backend-worker coordination identity; never sent to mobile devices.
+#[derive(Clone, Debug)]
+pub struct MessageHandoff {
+    pub receipt_id: Uuid,
+    pub platform_id: Uuid,
+    pub claim_token: Uuid,
+}
+/// Committed source evidence; only intake can resolve this scoped record.
+#[derive(Debug)]
+pub struct AcceptedEvent {
+    pub identity: AcceptedIdentity,
+    pub receipt_id: Uuid,
+    pub event: Event,
+}
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct Document<T> {

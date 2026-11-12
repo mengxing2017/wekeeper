@@ -199,9 +199,36 @@ async fn serve_inner(
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         }
     });
+    let handoff_pool = application.pool.clone();
+    let handoff_worker = tokio::spawn(async move {
+        use crate::source_access::north::local::orchestration_intake::{
+            AcceptedMessageBridge, HandoffWorker,
+        };
+        let worker = HandoffWorker {
+            queue: crate::source_access::south::adapter::postgres::Repository(handoff_pool.clone()),
+            bridge: AcceptedMessageBridge {
+                receipts: crate::source_access::south::adapter::postgres::Repository(
+                    handoff_pool.clone(),
+                ),
+                messages: crate::message_orchestration::north::local::MessageIntake(
+                    crate::message_orchestration::south::adapter::postgres::Repository(
+                        handoff_pool,
+                    ),
+                ),
+            },
+        };
+        loop {
+            if worker.run_once().await.is_err() {
+                tracing::warn!("source message handoff will retry");
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
+    });
     let result = axum::serve(listener, http::app_router(application))
         .with_graceful_shutdown(shutdown_signal())
         .await;
+    handoff_worker.abort();
+    let _ = handoff_worker.await;
     summary_worker.abort();
     let _ = summary_worker.await;
     routing_worker.abort();

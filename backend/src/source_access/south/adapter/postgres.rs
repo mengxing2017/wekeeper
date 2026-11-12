@@ -20,6 +20,35 @@ impl crate::source_access::south::port::AcceptedIdentityStore for Repository {
         })
     }
 }
+impl crate::source_access::south::port::AcceptedEventStore for Repository {
+    async fn accepted_event(&self, platform_id: Uuid, receipt_id: Uuid) -> Result<AcceptedEvent> {
+        let row = sqlx::query("SELECT r.source_id,r.business_unit_id,r.event_id,r.route_id,r.body_sha256,i.request_body FROM source_receipts r JOIN source_inbox i USING(receipt_id) WHERE r.source_id=$1 AND r.receipt_id=$2")
+            .bind(platform_id).bind(receipt_id).fetch_optional(&self.0).await?.ok_or(Fault("receipt_not_found"))?;
+        let body: Vec<u8> = row.get("request_body");
+        if digest(&body) != row.get::<String, _>("body_sha256") {
+            return Err(Fault("evidence_mismatch"));
+        }
+        let document: Document<Event> =
+            serde_json::from_slice(&body).map_err(|_| Fault("evidence_mismatch"))?;
+        let event_id: Uuid = row.get("event_id");
+        if document.data.kind != "source-events"
+            || document.data.id != event_id
+            || document.data.attributes.event_id != event_id
+            || document.data.attributes.route_id != row.get::<String, _>("route_id")
+            || document.data.attributes.validate().is_err()
+        {
+            return Err(Fault("evidence_mismatch"));
+        }
+        Ok(AcceptedEvent {
+            identity: AcceptedIdentity {
+                platform_id: row.get("source_id"),
+                unit_id: row.get("business_unit_id"),
+            },
+            receipt_id,
+            event: document.data.attributes,
+        })
+    }
+}
 async fn audit(
     tx: &mut Transaction<'_, Postgres>,
     source: Uuid,
@@ -786,3 +815,5 @@ pub mod projection;
 pub mod keyword_filter;
 
 pub mod orchestration;
+
+pub mod message_handoff;
