@@ -1,0 +1,31 @@
+{
+  "request": {
+    "key_id": "fixture-key",
+    "business_unit_name": "示例单位",
+    "status": "active"
+  },
+  "serialized": {
+    "key_id": "fixture-key",
+    "unit_name": null,
+    "business_unit_name": "示例单位",
+    "remark": null,
+    "status": "active",
+    "revision": null,
+    "valid_from": null,
+    "valid_until": null,
+    "route_ids": null
+  },
+  "result": {
+    "id": "fixture-route",
+    "business_unit_id": "11111111-1111-4111-8111-111111111111"
+  },
+  "response": {
+    "data": {
+      "type": "source-routes",
+      "id": "fixture-route",
+      "attributes": {
+        "business_unit_id": "11111111-1111-4111-8111-111111111111"
+      }
+    }
+  }
+}

@@ -23,6 +23,7 @@ pub fn app_router(application: Application) -> Router {
         .route("/readyz", get(remote::readiness))
         .route("/api/v1/system", get(remote::system_info))
         .merge(crate::source_access::north::remote::router())
+        .merge(crate::business_directory::north::remote::router())
         .merge(crate::advertising::north::remote::router())
         .merge(crate::identity::north::remote::router())
 .merge(crate::distribution::north::remote::groups::router())

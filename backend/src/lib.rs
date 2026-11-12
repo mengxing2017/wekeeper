@@ -2,6 +2,7 @@ pub mod advertising;
 pub mod audit;
 pub mod bootstrap;
 pub mod business;
+pub mod business_directory;
 pub mod config;
 pub mod database;
 pub mod distribution;

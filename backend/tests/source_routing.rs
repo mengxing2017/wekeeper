@@ -74,7 +74,7 @@ impl Fixture {
             .await
             .unwrap();
         sqlx::query("INSERT INTO source_credentials(key_id,source_id,unit_name,encryption_version,status,valid_from,created_by) VALUES($1,$2,'Caller','v1','active',now()-interval '1 day',$3)").bind(&key).bind(source).bind(actor).execute(&pool).await.unwrap();
-        sqlx::query("INSERT INTO source_routes(route_id,source_id,route_name,status) VALUES($1,$2,'Route','active')").bind(&route).bind(source).execute(&pool).await.unwrap();
+        sqlx::query("WITH unit AS (INSERT INTO business_units(id,platform_id,name,created_by,updated_by) VALUES(gen_random_uuid(),$2,'Route',$3,$3) RETURNING id) INSERT INTO source_routes(route_id,source_id,business_unit_id,route_name,status) SELECT $1,$2,id,'Route','active' FROM unit").bind(&route).bind(source).bind(actor).execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO source_key_routes(key_id,route_id,source_id,status) VALUES($1,$2,$3,'active')").bind(&key).bind(&route).bind(source).execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO mobile_workspaces(id,name) VALUES($1,'Mobile')")
             .bind(workspace)
@@ -192,7 +192,7 @@ impl Fixture {
     }
     async fn receipt(&self) -> Uuid {
         let id = Uuid::new_v4();
-        sqlx::query("INSERT INTO source_receipts(receipt_id,source_id,event_id,route_id,body_sha256,schema_version) VALUES($1,$2,$3,$4,'hash',2)").bind(id).bind(self.source).bind(Uuid::new_v4()).bind(&self.route).execute(&self.pool).await.unwrap();
+        sqlx::query("INSERT INTO source_receipts(receipt_id,source_id,business_unit_id,event_id,route_id,body_sha256,schema_version) SELECT $1,source_id,business_unit_id,$3,route_id,'hash',2 FROM source_routes WHERE source_id=$2 AND route_id=$4").bind(id).bind(self.source).bind(Uuid::new_v4()).bind(&self.route).execute(&self.pool).await.unwrap();
         id
     }
     async fn close(self) {
@@ -403,7 +403,7 @@ async fn scope_cas_retirement_and_credential_deletion() {
     .await
     .unwrap();
     assert!(tombstone);
-    let reused=sqlx::query("INSERT INTO source_routes(route_id,source_id,route_name,status) VALUES($1,$2,'Reused','active')").bind(&f.route).bind(f.source).execute(&f.pool).await;
+    let reused=sqlx::query("INSERT INTO source_routes(route_id,source_id,business_unit_id,route_name,status) SELECT $1,$2,id,'Reused','active' FROM business_units WHERE platform_id=$2 AND name='Route'").bind(&f.route).bind(f.source).execute(&f.pool).await;
     assert!(reused.is_err());
     let history: i64 =
         sqlx::query_scalar("SELECT count(*) FROM source_route_revisions WHERE route_id=$1")
@@ -2710,7 +2710,7 @@ async fn ordered_pool_copy_has_new_progress_and_management_rejects_foreign_slots
     f.configure(vec![f.targets[0]]).await;
     let (_, _, original) = ordered_pool(&f).await;
     let target = Uuid::new_v4().to_string();
-    sqlx::query("INSERT INTO source_routes(route_id,source_id,route_name,status) VALUES($1,$2,'Copy','active')").bind(&target).bind(f.source).execute(&f.pool).await.unwrap();
+    sqlx::query("WITH unit AS (INSERT INTO business_units(id,platform_id,name,created_by,updated_by) VALUES(gen_random_uuid(),$2,'Copy',$3,$3) RETURNING id) INSERT INTO source_routes(route_id,source_id,business_unit_id,route_name,status) SELECT $1,$2,id,'Copy','active' FROM unit").bind(&target).bind(f.source).bind(f.actor.id).execute(&f.pool).await.unwrap();
     sqlx::query(
         "INSERT INTO source_key_routes(key_id,route_id,source_id,status) VALUES($1,$2,$3,'active')",
     )

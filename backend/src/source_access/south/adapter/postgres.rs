@@ -3,6 +3,23 @@ use serde_json::{Value, json};
 use sqlx::{PgPool, Postgres, Row, Transaction};
 use uuid::Uuid;
 pub struct Repository(pub PgPool);
+
+impl crate::source_access::south::port::AcceptedIdentityStore for Repository {
+    async fn find_identity(&self, platform_id: Uuid, receipt_id: Uuid) -> Result<AcceptedIdentity> {
+        let (platform_id, unit_id): (Uuid, Uuid) = sqlx::query_as(
+            "SELECT source_id,business_unit_id FROM source_receipts WHERE source_id=$1 AND receipt_id=$2",
+        )
+        .bind(platform_id)
+        .bind(receipt_id)
+        .fetch_optional(&self.0)
+        .await?
+        .ok_or(Fault("receipt_not_found"))?;
+        Ok(AcceptedIdentity {
+            platform_id,
+            unit_id,
+        })
+    }
+}
 async fn audit(
     tx: &mut Transaction<'_, Postgres>,
     source: Uuid,
@@ -203,7 +220,9 @@ impl Repository {
                 (id, false)
             } else {
                 let id = Uuid::now_v7();
-                sqlx::query("INSERT INTO source_receipts(receipt_id,source_id,event_id,route_id,body_sha256,schema_version) VALUES($1,$2,$3,$4,$5,2)").bind(id).bind(source).bind(s.identity).bind(&e.route_id).bind(hash).execute(&mut *tx).await?;
+                let inserted = sqlx::query("INSERT INTO source_receipts(receipt_id,source_id,business_unit_id,event_id,route_id,body_sha256,schema_version) SELECT $1,source_id,business_unit_id,$3,route_id,$5,2 FROM source_routes WHERE source_id=$2 AND route_id=$4")
+                    .bind(id).bind(source).bind(s.identity).bind(&e.route_id).bind(hash).execute(&mut *tx).await?;
+                ensure(inserted.rows_affected() == 1, "route_unavailable")?;
                 sqlx::query("INSERT INTO source_inbox(receipt_id,request_body) VALUES($1,$2)")
                     .bind(id)
                     .bind(&body)
@@ -303,8 +322,13 @@ impl Repository {
             } else {
                 "(SELECT c.key_id FROM source_credentials c WHERE c.source_id=t.source_id ORDER BY c.key_id LIMIT 1)"
             };
+            let unit_projection = if kind == "source-routes" {
+                "jsonb_build_object('business_unit_name',(SELECT u.name FROM business_units u WHERE u.id=t.business_unit_id))"
+            } else {
+                "'{}'::jsonb"
+            };
             let query = format!(
-                "SELECT to_jsonb(t) - 'encrypted_secret' - 'delivery_pending' - 'source_id' || jsonb_build_object('id',t.{pk},'key_id',{owner_key}) FROM {table} t JOIN source_callers p USING(source_id) WHERE ($1::text IS NULL OR {pk}::text=$1) AND ($2='' OR to_jsonb(t)->>'name' ILIKE $2 OR to_jsonb(t)->>'unit_name' ILIKE $2 OR to_jsonb(t)->>'route_name' ILIKE $2 OR {pk}::text ILIKE $2) AND ($3='' OR t.status=$3) AND ($4::uuid IS NULL OR source_id=$4) AND ($6::timestamptz IS NULL OR (to_jsonb(t)->>'valid_from')::timestamptz<=$6) AND ($7::timestamptz IS NULL OR (to_jsonb(t)->>'valid_until')::timestamptz<=$7) ORDER BY t.{pk} LIMIT 31 OFFSET $5"
+                "SELECT to_jsonb(t) - 'encrypted_secret' - 'delivery_pending' - 'source_id' || jsonb_build_object('id',t.{pk},'key_id',{owner_key}) || {unit_projection} FROM {table} t JOIN source_callers p USING(source_id) WHERE ($1::text IS NULL OR {pk}::text=$1) AND ($2='' OR to_jsonb(t)->>'name' ILIKE $2 OR to_jsonb(t)->>'unit_name' ILIKE $2 OR to_jsonb(t)->>'route_name' ILIKE $2 OR {pk}::text ILIKE $2) AND ($3='' OR t.status=$3) AND ($4::uuid IS NULL OR source_id=$4) AND ($6::timestamptz IS NULL OR (to_jsonb(t)->>'valid_from')::timestamptz<=$6) AND ($7::timestamptz IS NULL OR (to_jsonb(t)->>'valid_until')::timestamptz<=$7) ORDER BY t.{pk} LIMIT 31 OFFSET $5"
             );
             let pattern = if search.is_empty() {
                 String::new()
@@ -443,6 +467,13 @@ impl Repository {
                 .bind(&routes)
                 .execute(&mut *tx)
                 .await?;
+            // Keep the business identity for audit, but do not leave an active
+            // unit whose only source route is being removed with the credential.
+            sqlx::query("UPDATE business_units SET active=false,revision=revision+1,updated_by=$2,updated_at=now() WHERE id IN (SELECT business_unit_id FROM source_routes WHERE route_id=ANY($1)) AND active")
+                .bind(&routes)
+                .bind(a.id)
+                .execute(&mut *tx)
+                .await?;
             sqlx::query("DELETE FROM source_routes WHERE route_id=ANY($1)")
                 .bind(&routes)
                 .execute(&mut *tx)
@@ -464,12 +495,31 @@ impl Repository {
             .fetch_one(&mut *tx)
             .await?;
             ensure(!retired, "route_retired")?;
-            let name = v.route_name.ok_or(Fault("invalid_request"))?;
+            let name = v.business_unit_name.ok_or(Fault("invalid_request"))?;
+            let name = name.trim();
             ensure(
-                !name.trim().is_empty() && name.len() <= 512,
+                !name.is_empty() && name.chars().count() <= 120,
                 "invalid_request",
             )?;
-            sqlx::query("INSERT INTO source_routes(route_id,source_id,route_name,remark,status) VALUES($1,$2,$3,$4,$5) ON CONFLICT(route_id) DO UPDATE SET route_name=$3,remark=$4,status=$5,revision=source_routes.revision+1,updated_at=now()").bind(&object).bind(source).bind(name).bind(v.remark.unwrap_or_default()).bind(status).execute(&mut *tx).await?;
+            if id.is_none() {
+                let key = v.key_id.as_deref().ok_or(Fault("invalid_request"))?;
+                let business_unit = Uuid::now_v7();
+                sqlx::query("INSERT INTO business_units(id,platform_id,name,created_by,updated_by) VALUES($1,$2,$3,$4,$4)")
+                    .bind(business_unit).bind(source).bind(name).bind(a.id).execute(&mut *tx).await?;
+                sqlx::query("INSERT INTO source_routes(route_id,source_id,business_unit_id,route_name,remark,status) VALUES($1,$2,$3,$4,$5,$6)")
+                    .bind(&object).bind(source).bind(business_unit).bind(name).bind(v.remark.unwrap_or_default()).bind(status).execute(&mut *tx).await?;
+                sqlx::query("INSERT INTO source_key_routes(key_id,route_id,source_id,status) VALUES($1,$2,$3,'active')")
+                    .bind(key).bind(&object).bind(source).execute(&mut *tx).await?;
+                let credential_revision: i64 = sqlx::query_scalar("UPDATE source_credentials SET revision=revision+1,updated_at=now() WHERE key_id=$1 AND source_id=$2 RETURNING revision")
+                    .bind(key).bind(source).fetch_one(&mut *tx).await?;
+                audit(&mut tx, source, Some(key), Some(a.id), "source.association.update", &a.request_id,
+                    json!({"route_id":object,"status":"active","credential_revision":credential_revision})).await?;
+            } else {
+                sqlx::query("UPDATE source_routes SET route_name=$2,remark=$3,status=$4,revision=revision+1,updated_at=now() WHERE route_id=$1")
+                    .bind(&object).bind(name).bind(v.remark.unwrap_or_default()).bind(status).execute(&mut *tx).await?;
+                sqlx::query("UPDATE business_units SET name=$2,revision=revision+1,updated_by=$3,updated_at=now() WHERE id=(SELECT business_unit_id FROM source_routes WHERE route_id=$1) AND name IS DISTINCT FROM $2")
+                    .bind(&object).bind(name).bind(a.id).execute(&mut *tx).await?;
+            }
         } else {
             let unit = v.unit_name.ok_or(Fault("invalid_request"))?;
             ensure(
@@ -511,6 +561,18 @@ impl Repository {
         .execute(&mut *tx)
         .await?;
         let after: Option<Value> = sqlx::query_scalar(&format!("SELECT to_jsonb(t)-'encrypted_secret'-'delivery_pending' FROM {table} t JOIN source_callers p USING(source_id) WHERE {pk}::text=$1")).bind(&object).fetch_optional(&mut *tx).await?;
+        let route_unit = if kind == "source-routes" {
+            Some(
+                after
+                    .as_ref()
+                    .and_then(|v| v.get("business_unit_id"))
+                    .and_then(Value::as_str)
+                    .and_then(|s| Uuid::parse_str(s).ok())
+                    .ok_or(Fault("temporarily_unavailable"))?,
+            )
+        } else {
+            None
+        };
         audit(&mut tx,source,if kind=="source-credentials"{Some(&object)}else{None},Some(a.id),"source.management.write",&a.request_id,json!({"kind":kind,"id":object,"method":method,"before":previous.as_ref().map(|r|r.get::<Value,_>("snapshot")),"after":after})).await?;
         crate::audit::record(
             &mut tx,
@@ -526,7 +588,14 @@ impl Repository {
             Fault("temporarily_unavailable")
         })?;
         tx.commit().await?;
-        Ok(json!({"id":object}))
+        if let Some(business_unit_id) = route_unit {
+            Ok(serde_json::to_value(UnitRouteResult {
+                id: object,
+                business_unit_id,
+            })?)
+        } else {
+            Ok(json!({"id":object}))
+        }
     }
     pub async fn associations(
         &self,

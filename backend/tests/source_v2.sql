@@ -11,9 +11,12 @@ INSERT INTO source_callers(source_id) VALUES
 INSERT INTO source_credentials(key_id,source_id,unit_name,remark,encryption_version,status,valid_from,valid_until,created_by) VALUES
 ('k1','10000000-0000-0000-0000-000000000011','unit','credential remark','v1','active',now()-interval '1 day',now()+interval '1 day','10000000-0000-0000-0000-000000000001'),
 ('k2','10000000-0000-0000-0000-000000000012','unit','other platform','v1','active',now()-interval '1 day',now()+interval '1 day','10000000-0000-0000-0000-000000000001');
-INSERT INTO source_routes(route_id,source_id,route_name,remark,status) VALUES
-('m1','10000000-0000-0000-0000-000000000011','route','route remark','active'),
-('m2','10000000-0000-0000-0000-000000000012','route','other platform','active');
+INSERT INTO business_units(id,platform_id,name,created_by,updated_by) VALUES
+('10000000-0000-0000-0000-000000000021','10000000-0000-0000-0000-000000000011','route','10000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001'),
+('10000000-0000-0000-0000-000000000022','10000000-0000-0000-0000-000000000012','route','10000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001');
+INSERT INTO source_routes(route_id,source_id,business_unit_id,route_name,remark,status) VALUES
+('m1','10000000-0000-0000-0000-000000000011','10000000-0000-0000-0000-000000000021','route','route remark','active'),
+('m2','10000000-0000-0000-0000-000000000012','10000000-0000-0000-0000-000000000022','route','other platform','active');
 INSERT INTO source_key_routes(key_id,route_id,source_id,status) VALUES('k1','m1','10000000-0000-0000-0000-000000000011','active');
 DO $$ BEGIN
  BEGIN INSERT INTO source_key_routes(key_id,route_id,source_id,status) VALUES('k1','m2','10000000-0000-0000-0000-000000000011','active'); RAISE EXCEPTION 'cross-platform association accepted'; EXCEPTION WHEN foreign_key_violation THEN NULL; END;
@@ -24,7 +27,7 @@ END $$;
 INSERT INTO source_request_nonces VALUES('k1','10000000-0000-0000-0000-000000000011','10000000-0000-0000-0000-000000000101',now()+interval '6 minutes');
 INSERT INTO source_request_nonces(key_id,source_id,nonce,expires_at) VALUES('k1','10000000-0000-0000-0000-000000000011','10000000-0000-0000-0000-000000000101',now()) ON CONFLICT DO NOTHING;
 DO $$ BEGIN IF (SELECT count(*) FROM source_request_nonces WHERE key_id='k1')<>1 THEN RAISE EXCEPTION 'nonce not unique'; END IF; END $$;
-INSERT INTO source_receipts(receipt_id,source_id,event_id,route_id,body_sha256,schema_version) VALUES('10000000-0000-0000-0000-000000000201','10000000-0000-0000-0000-000000000011','10000000-0000-0000-0000-000000000301','m1','hash',2);
+INSERT INTO source_receipts(receipt_id,source_id,business_unit_id,event_id,route_id,body_sha256,schema_version) VALUES('10000000-0000-0000-0000-000000000201','10000000-0000-0000-0000-000000000011','10000000-0000-0000-0000-000000000021','10000000-0000-0000-0000-000000000301','m1','hash',2);
 INSERT INTO source_inbox(receipt_id,request_body) VALUES('10000000-0000-0000-0000-000000000201','body');
 -- Real NULL expiry, rather than a sentinel date; invalid bounded periods still fail.
 UPDATE source_credentials SET valid_until=NULL WHERE key_id='k1';

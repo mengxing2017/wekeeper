@@ -1,6 +1,15 @@
 //! Persistence port for independent API instances sharing the same durable state.
 use crate::source_access::domain::{Result, Signed};
 use serde_json::Value;
+
+/// Internal lookup scoped to the authenticated platform, not a public API.
+pub trait AcceptedIdentityStore: Send + Sync {
+    fn find_identity(
+        &self,
+        platform_id: uuid::Uuid,
+        receipt_id: uuid::Uuid,
+    ) -> impl std::future::Future<Output = Result<crate::source_access::domain::AcceptedIdentity>> + Send;
+}
 pub trait MachineStore {
     fn record_failure(
         &self,

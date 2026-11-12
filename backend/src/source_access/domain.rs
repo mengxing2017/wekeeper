@@ -7,6 +7,13 @@ pub const MAX_BODY: usize = 1_048_576;
 pub type Result<T> = std::result::Result<T, Fault>;
 #[derive(Debug)]
 pub struct Fault(pub &'static str);
+
+/// Business identity frozen when a source message was accepted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AcceptedIdentity {
+    pub platform_id: Uuid,
+    pub unit_id: Uuid,
+}
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct Document<T> {
@@ -259,7 +266,7 @@ pub fn credential_available(
 ) -> bool {
     status == "active" && start <= now && end.is_none_or(|end| end > now)
 }
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AdminInput {
     pub key_id: Option<String>,
@@ -267,10 +274,42 @@ pub struct AdminInput {
     pub remark: Option<String>,
     pub status: Option<String>,
     pub revision: Option<i64>,
-    pub route_name: Option<String>,
+    pub business_unit_name: Option<String>,
     pub valid_from: Option<chrono::DateTime<chrono::Utc>>,
     pub valid_until: Option<chrono::DateTime<chrono::Utc>>,
     pub route_ids: Option<Vec<String>>,
+}
+
+#[derive(Serialize)]
+pub struct UnitRouteResult {
+    pub id: String,
+    pub business_unit_id: Uuid,
+}
+
+#[cfg(test)]
+mod unit_management_contract_tests {
+    use super::{AdminInput, UnitRouteResult};
+
+    #[test]
+    fn unit_request_uses_shared_fixture_and_rejects_old_route_name() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../api-contract/fixtures/source-unit-management.json"
+        ))
+        .unwrap();
+        let input: AdminInput = serde_json::from_value(fixture["request"].clone()).unwrap();
+        assert_eq!(serde_json::to_value(input).unwrap(), fixture["serialized"]);
+        assert!(
+            serde_json::from_value::<AdminInput>(serde_json::json!({
+                "key_id": "fixture-key", "route_name": "legacy"
+            }))
+            .is_err()
+        );
+        let result = UnitRouteResult {
+            id: "fixture-route".into(),
+            business_unit_id: "11111111-1111-4111-8111-111111111111".parse().unwrap(),
+        };
+        assert_eq!(serde_json::to_value(result).unwrap(), fixture["result"]);
+    }
 }
 #[derive(Serialize)]
 pub struct CredentialSecret {

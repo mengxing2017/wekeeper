@@ -1,10 +1,21 @@
-use crate::source_access::south::port::MachineStore;
+use crate::source_access::south::port::{AcceptedIdentityStore, MachineStore};
 use crate::source_access::{domain::*, south::adapter::postgres::Repository};
 use serde_json::Value;
 use sqlx::PgPool;
 #[derive(Clone)]
 pub struct Service(pub PgPool);
 pub struct MachineService<S>(pub S);
+/// Internal identity lookup; callers supply an already authenticated platform.
+pub struct AcceptedIdentityService<S>(pub S);
+impl<S: AcceptedIdentityStore> AcceptedIdentityService<S> {
+    pub async fn find(
+        &self,
+        platform_id: uuid::Uuid,
+        receipt_id: uuid::Uuid,
+    ) -> Result<AcceptedIdentity> {
+        self.0.find_identity(platform_id, receipt_id).await
+    }
+}
 impl<S: MachineStore> MachineService<S> {
     pub async fn machine(&self, signed: Signed, body: Vec<u8>) -> Result<(bool, Value)> {
         let repo = &self.0;

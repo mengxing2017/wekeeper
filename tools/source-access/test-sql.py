@@ -23,7 +23,8 @@ with tempfile.TemporaryDirectory(prefix='source-access-sql-') as directory:
         ('source_credentials', 'key_id', 't.key_id'),
         ('source_routes', 'route_id', '(SELECT c.key_id FROM source_credentials c WHERE c.source_id=t.source_id ORDER BY c.key_id LIMIT 1)'),
     ]:
-        query = template.format(table=kind, pk=pk, owner_key=owner)
+        unit_projection = ("jsonb_build_object('business_unit_name',(SELECT u.name FROM business_units u WHERE u.id=t.business_unit_id))" if kind == 'source_routes' else "'{}'::jsonb")
+        query = template.format(table=kind, pk=pk, owner_key=owner, unit_projection=unit_projection)
         params = {'1': 'NULL', '2': "''", '3': "''", '4': "(SELECT source_id FROM source_credentials WHERE key_id='k1')", '5': '0', '6': 'NULL', '7': 'NULL'}
         query = re.sub(r'\$(\d+)', lambda match: params[match[1]], query)
         checks.append(f"CREATE TEMP TABLE check_{kind} AS SELECT q.value FROM ({query}) AS q(value);")
