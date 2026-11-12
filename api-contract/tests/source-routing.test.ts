@@ -11,11 +11,10 @@ it('sends an atomic typed configuration and decodes the Rust snapshot fixture',a
  await sourceRouting.configure('fixture-route',fixture.input as RouteConfigurationInput)
  expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({data:{type:'source-route-configurations',attributes:fixture.input}})
 })
-it('keeps lifecycle, organization, group membership and credential grant types distinct',()=>{
+it('keeps lifecycle, organization and credential grant types distinct',()=>{
  const routes:Record<string,string>={
   '/api/v2/admin/routing/routing-units':'routing-units',
   '/api/v2/admin/routing/routing-groups/group':'routing-groups',
-  '/api/v2/admin/routing-groups/group/targets':'routing-group-targets',
   '/api/v2/admin/source-routes/route/lifecycle':'source-route-lifecycle',
   '/api/v2/admin/source-routes/route/managers':'source-route-managers',
   '/api/v2/admin/source-routes/route/handoff':'source-route-handoffs',

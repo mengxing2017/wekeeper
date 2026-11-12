@@ -36,7 +36,7 @@
     "source-v2/errors.json": "053f7710c1e43e6438aba6afb600b3856fe40469cfde81d9e45593688192020f",
     "source-v2/event.schema.json": "3f2585b302a1ac54f209226e20cccd145104ec5c1571f45e3c15d86187d10657",
     "fixtures/source-routing.json": "080d775cac41783638c744132e7197bbd2d5ab2168e5f08a38cbc7e9fb1aef0a",
-    "source-v2/routing-management.json": "04939d41f5c061ed41f51ba758d5bbf4ce60951dd67ff0eaef0bf1f81e7b443e",
+    "source-v2/routing-management.json": "ed9af3155b22780d7b1b1d3b06a9ec6190cb5fd903e1041915b5633dbe2f2a7b",
     "fixtures/source-projection.json": "8c761f216e95047f182960e4e505286cf8142d0b977e3c86a058069ba438c3c9",
     "source-v2/receipt-projection.json": "95cfd6473efbb2abc7ce4bbc91999a4e2154b5b4e1e26a9e36be64483887a471",
     "fixtures/source-receipt-projection.json": "22dbb8da0ca9c8ae8b1f09d30313b7b1db04c165ee16718c2503269bce536780",

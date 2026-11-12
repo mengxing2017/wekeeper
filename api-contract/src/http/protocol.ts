@@ -110,7 +110,6 @@ export function resourceType(path: string): string {
     if (parts[3] === 'advertisements') return parts[5] ? `advertisement-${parts[5]}` : 'advertisements';
     if (parts[3] === 'routing-units' && parts[5] === 'advertisement-managers') return 'advertisement-managers';
     if (parts[3] === 'routing') return parts[4];
-    if (parts[3] === 'routing-groups' && parts[5] === 'targets') return 'routing-group-targets';
     if (parts[3] === 'source-routes' && parts[5] === 'receipts' && parts[7] === 'rechecks') return 'source-receipt-rechecks';
     if (parts[3] === 'source-routes' && parts[5] === 'advertisement-pool') return parts[6] ? `advertisement-pool-${parts[6]}` : 'advertisement-pool';
     if (parts[3] === 'source-routes' && parts[5]) {
