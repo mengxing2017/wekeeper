@@ -10,6 +10,7 @@
   "include": [
     "src/http/client.ts",
     "src/modules/identity/index.ts",
+    "src/modules/business-directory/client.ts",
     "src/modules/media/index.ts",
     "src/modules/distribution-content/index.ts",
     "src/modules/wecom-distribution/client.ts",

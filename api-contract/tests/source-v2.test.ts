@@ -4,6 +4,7 @@ import {readFileSync} from 'node:fs'
 import {resourceType,writeDocument} from '../src/http/protocol'
 import {sourceAccess} from '../src/modules/source-access'
 import secretFixture from '../fixtures/source-credential-secret.json'
+import unitFixture from '../fixtures/source-unit-management.json'
 afterEach(()=>vi.unstubAllGlobals())
 const fixture=JSON.parse(readFileSync(new URL('../fixtures/source-v2.json',import.meta.url),'utf8'))
 describe('published source-v2 bytes',()=>{
@@ -41,4 +42,13 @@ it('filters child routes by credential ID without requiring a second caller ID',
  const query=new URL(fetchMock.mock.calls[0][0],'https://keeper.example.com').searchParams
  expect(query.get('key_id')).toBe('key-1')
  expect(query.has('source_id')).toBe(false)
+})
+
+it('sends the unit name in the route management request',async()=>{
+ const fetchMock=vi.fn().mockResolvedValue(Response.json(unitFixture.response,{headers:{'content-type':'application/vnd.api+json'}}))
+ vi.stubGlobal('fetch',fetchMock)
+ expect(await sourceAccess.save('source-routes',unitFixture.request)).toEqual(unitFixture.result)
+ const [url,options]=fetchMock.mock.calls[0]
+ expect(url).toBe('/api/v2/admin/source-routes')
+ expect(JSON.parse(options.body)).toEqual({data:{type:'source-routes',attributes:unitFixture.request}})
 })

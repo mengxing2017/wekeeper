@@ -9,6 +9,8 @@
     "./system": "./src/modules/system/index.ts",
     "./health": "./src/modules/health/index.ts",
     "./business": "./src/modules/business/index.ts",
+    "./business-directory": "./src/modules/business-directory/index.ts",
+    "./business-directory/client": "./src/modules/business-directory/client.ts",
     "./client": "./src/http/client.ts",
     "./identity": "./src/modules/identity/index.ts",
     "./media": "./src/modules/media/index.ts",
