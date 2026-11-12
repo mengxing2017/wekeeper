@@ -28,15 +28,14 @@ export function CallerRoutes({caller,onChanged}:{caller:SourceRow;onChanged:()=>
    if(!result.has_more)throw new Error('调用方凭据不存在，请刷新列表')
   }
  }
- const open=(row:SourceRow|null)=>{setError('');form.resetFields();form.setFieldsValue({route_name:row?.route_name,remark:row?.remark,status:row?.status??'active'});setEditing(row)}
+ const open=(row:SourceRow|null)=>{setError('');form.resetFields();form.setFieldsValue({business_unit_name:row?.business_unit_name,remark:row?.remark,status:row?.status??'active'});setEditing(row)}
  const save=async()=>{
-  setBusy(true);setError('');let created=false
+  setBusy(true);setError('')
   try{
    const v=await form.validateFields()
-   const result=await sourceAccess.save('source-routes',{...v,key_id:caller.id,...(editing?{revision:editing.revision}:{})},editing?.id)
-   created=!editing;setEditing(undefined)
-   if(created)await associate(result.id,'active')
-  }catch(e){setError(`${created?'路由已创建，但授权未完成，可在列表中重新授权。':''}${(e as Error).message??'请核对输入'}`)}
+   await sourceAccess.save('source-routes',{...v,key_id:caller.id,...(editing?{revision:editing.revision}:{})},editing?.id)
+   setEditing(undefined)
+  }catch(e){setError((e as Error).message??'请核对输入')}
   finally{await refresh();setBusy(false)}
  }
  const toggle=async(route:string,state:'active'|'revoked')=>{
@@ -51,7 +50,7 @@ export function CallerRoutes({caller,onChanged}:{caller:SourceRow;onChanged:()=>
    <Select aria-label="路由状态筛选" value={status} onChange={value=>{setStatus(value);setPage(1)}} options={[{value:'',label:'全部状态'},{value:'active',label:'启用'},{value:'disabled',label:'停用'}]}/>
   </Space>
   <Table<SourceRow> rowKey="id" loading={q.isFetching||links.isFetching} dataSource={q.data?.items??[]} pagination={false} columns={[
-   {title:'路由名称',dataIndex:'route_name'},{title:'消息路由 ID（route_id）',dataIndex:'id'},{title:'路由备注',dataIndex:'remark'},
+   {title:'单位名称',dataIndex:'business_unit_name'},{title:'消息路由 ID（route_id）',dataIndex:'id'},{title:'路由备注',dataIndex:'remark'},
    {title:'状态',render:(_,r)=><Tag>{r.status==='active'?'启用':'停用'}</Tag>},
    {title:'自动运行',render:(_,r)=>r.retired_at?'已退役':({draft:'配置草稿',running:'运行中',paused:'已暂停'}[r.execution_state??'draft'])},
    {title:'当前凭据授权',render:(_,r)=>links.data?.some(a=>a.route_id===r.id&&a.status==='active')?'已授权':'未授权'},
@@ -60,7 +59,7 @@ export function CallerRoutes({caller,onChanged}:{caller:SourceRow;onChanged:()=>
   <Space><Button disabled={page===1} onClick={()=>setPage(page-1)}>上一页</Button><span>{page}</span><Button disabled={!q.data?.has_more} onClick={()=>setPage(page+1)}>下一页</Button></Space>
   <Modal open={editing!==undefined} title={editing?'编辑路由':'新增路由'} onCancel={()=>setEditing(undefined)} onOk={save} confirmLoading={busy} okText="保存" cancelText="取消">
    <Form form={form} layout="vertical">
-    <Form.Item name="route_name" label="路由名称" rules={[{required:true}]}><Input/></Form.Item>
+    <Form.Item name="business_unit_name" label="单位名称" rules={[{validator:(_,value:string|undefined)=>{const name=value?.trim()??'';return name&&Array.from(name).length<=120?Promise.resolve():Promise.reject(new Error('请输入 1 至 120 个字符的单位名称'))}}]}><Input/></Form.Item>
     <Form.Item name="remark" label="路由备注"><Input.TextArea/></Form.Item>
     <Form.Item name="status" label="路由状态"><Select options={[{value:'active',label:'启用'},{value:'disabled',label:'停用'}]}/></Form.Item>
    </Form>

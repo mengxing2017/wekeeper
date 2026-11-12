@@ -33,7 +33,7 @@ function CallerCredentials() {
  <Alert type="info" title="每个下游对应一条凭据：key_id 是唯一的调用方凭据 ID，secret 是配套签名密钥。下游只需填写 WeKeeper 地址、key_id 和 secret。"/>
  <Space wrap><Input.Search aria-label="搜索调用方" onSearch={s=>{setSearch(s);setPage(1)}}/><Input aria-label="凭据 ID 筛选" placeholder="调用方凭据 ID（key_id）" value={source} onChange={e=>{setSource(e.target.value);setPage(1)}}/><Input aria-label="有效期截止筛选" placeholder="失效时间不晚于（UTC）" onBlur={e=>{setExpiry(e.target.value);setPage(1)}}/><Select aria-label="状态筛选" value={status} onChange={s=>{setStatus(s);setPage(1)}} options={['','active','disabled','revoked'].map(value=>({value,label:value||'全部状态'}))}/></Space>
  <Table<SourceRow> rowKey="id" loading={q.isFetching} dataSource={q.data?.items??[]} pagination={false} columns={[
- {title:'名称',render:(_,r)=><Button type="link" onClick={()=>open(r)}>{r.unit_name??r.route_name}</Button>},
+ {title:'平台名称',render:(_,r)=><Button type="link" onClick={()=>open(r)}>{r.unit_name??r.route_name}</Button>},
  {title:'凭据 ID（key_id）',render:(_,r)=><Typography.Text copyable>{r.id}</Typography.Text>},{title:'备注',dataIndex:'remark'},
  {title:'状态',render:(_,r)=><Tag>{r.status}</Tag>},{title:'有效期至',render:(_,r)=>r.valid_until??'长期有效'},
  {title:'最近调用',dataIndex:'last_used_at'},
@@ -48,7 +48,7 @@ function CallerCredentials() {
  {editing&&<Descriptions title="记录信息" column={1} items={[{key:'revision',label:'版本',children:editing.revision},{key:'created',label:'创建时间',children:editing.created_at},{key:'updated',label:'更新时间',children:editing.updated_at}]}/>}
  <Alert type="info" title="下游填写 WeKeeper 服务地址、key_id 和 secret（点击“查看密钥”取得）；消息路由另选本凭据的 route_id。WeKeeper 不回调或检查下游在线状态。删除后凭据及其路由无法恢复，历史收件与任务保留。"/>
  <Form form={form} layout="vertical">
- <Form.Item name="unit_name" label="单位名称" rules={[{required:true}]}><Input/></Form.Item>
+ <Form.Item name="unit_name" label="平台名称" rules={[{required:true}]}><Input/></Form.Item>
  <Form.Item name="remark" label="凭据备注"><Input.TextArea/></Form.Item>
  <Form.Item name="status" label="状态"><Select options={['active','disabled','revoked'].map(value=>({value,label:value}))}/></Form.Item>
  <><Form.Item name="valid_from" label="生效时间 UTC" rules={[{required:true}]}><Input/></Form.Item><Form.Item name="long_term" valuePropName="checked"><Checkbox>长期有效</Checkbox></Form.Item>{!longTerm&&<Form.Item name="valid_until" label="失效时间 UTC" rules={[{required:true,message:'请输入失效时间 UTC'}]}><Input/></Form.Item>}<Table rowKey="route_id" dataSource={links} pagination={{pageSize:10}} columns={[{title:'消息路由 ID（route_id）',dataIndex:'route_id'},{title:'路由名称',dataIndex:'route_name'},{title:'路由备注',dataIndex:'remark'},{title:'关联状态',dataIndex:'status'}]}/></>

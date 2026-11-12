@@ -29,7 +29,7 @@ it('creates caller credentials without a separate platform or downstream URL',as
  render(<QueryClientProvider client={cache}><SourceAccess/></QueryClientProvider>)
  expect(screen.getByText('调用方凭据')).toBeTruthy()
  fireEvent.click(screen.getByRole('button',{name:/新\s*增/}))
- fireEvent.change(await screen.findByLabelText('单位名称'),{target:{value:'Linjian 调用方'}})
+ fireEvent.change(await screen.findByLabelText('平台名称'),{target:{value:'Linjian 调用方'}})
  expect(screen.queryByLabelText('所属平台 ID')).toBeNull()
  expect(screen.queryByLabelText(/可信|路径前缀/)).toBeNull()
  fireEvent.click(screen.getByRole('button',{name:/保\s*存/}))
@@ -46,7 +46,7 @@ it('creates caller credentials without a separate platform or downstream URL',as
 
 it('manages routes inside one caller and authorizes new routes with its current credential',async()=>{
  const caller={id:'key-1',unit_name:'运营单位',status:'active',revision:7}
- api.list.mockImplementation(async(kind)=>({items:kind==='source-routes'?[{id:'route-1',route_name:'当前调用方路由',status:'active',revision:1}]:[caller],has_more:false}))
+ api.list.mockImplementation(async(kind)=>({items:kind==='source-routes'?[{id:'route-1',business_unit_name:'当前调用方路由',status:'active',revision:1}]:[caller],has_more:false}))
  api.save.mockResolvedValue({id:'route-new'});api.associate.mockResolvedValue({})
  const cache=new QueryClient({defaultOptions:{queries:{retry:false}}})
  cache.setQueryData(['source-admin','source-credentials',1,'','','',''],{items:[caller],has_more:false})
@@ -55,11 +55,16 @@ it('manages routes inside one caller and authorizes new routes with its current 
  expect(await screen.findByText('当前调用方路由',{}, {timeout:15000})).toBeTruthy()
  expect(api.list).toHaveBeenCalledWith('source-routes',1,'','','key-1')
  fireEvent.click(screen.getByRole('button',{name:'新增路由'}))
- fireEvent.change(await screen.findByLabelText('路由名称'),{target:{value:'新的业务路由'}})
+ fireEvent.change(await screen.findByLabelText('单位名称'),{target:{value:'😀'.repeat(121)}})
+ fireEvent.click(screen.getByRole('button',{name:/保\s*存/}))
+ expect(await screen.findByText('请输入 1 至 120 个字符的单位名称')).toBeTruthy()
+ expect(api.save).not.toHaveBeenCalled()
+ fireEvent.change(await screen.findByLabelText('单位名称'),{target:{value:'新的业务路由'}})
  expect(screen.queryByLabelText('所属调用方')).toBeNull()
  fireEvent.click(screen.getByRole('button',{name:/保\s*存/}))
- await waitFor(()=>expect(api.associate).toHaveBeenCalledWith('key-1','route-new',7,'active'),{timeout:15000})
- expect(api.save).toHaveBeenCalledWith('source-routes',expect.objectContaining({key_id:'key-1',route_name:'新的业务路由'}),undefined)
+ await waitFor(()=>expect(api.save).toHaveBeenCalledWith('source-routes',expect.objectContaining({key_id:'key-1',business_unit_name:'新的业务路由'}),undefined),{timeout:15000})
+ expect(api.associate).not.toHaveBeenCalled()
+ expect(api.save).toHaveBeenCalledWith('source-routes',expect.objectContaining({key_id:'key-1',business_unit_name:'新的业务路由'}),undefined)
 })
 
 it('removes rotation and confirms permanent credential and child route deletion',async()=>{
