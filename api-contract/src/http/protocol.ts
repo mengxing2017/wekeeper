@@ -103,6 +103,8 @@ export function decodeResource(value: unknown): Record<string, unknown> {
 export function resourceType(path: string): string {
   const parts = path.split("?")[0].split("/").filter(Boolean);
   if (parts[1] === 'v2' && parts[2] === 'admin') {
+    if (parts[3] === 'ad-materials') return parts[5] === 'publications' ? 'ad-material-publications' : parts[5] === 'archive' ? 'ad-material-archives' : 'ad-materials';
+    if (parts[3] === 'ad-placement-rules') return parts[5] === 'state' ? 'ad-placement-rule-states' : 'ad-placement-rules';
     if (parts[3] === 'sensitive-words' && !parts[4]) return 'sensitive-words';
     if (parts[3] === 'source-automation-tasks') return parts[5] === 'stop' ? 'source-automation-task-stops' : parts[5] === 'retry-requests' ? 'source-automation-task-retry-requests' : 'source-automation-tasks';
     if (parts[3] === 'advertisements') return parts[5] ? `advertisement-${parts[5]}` : 'advertisements';
