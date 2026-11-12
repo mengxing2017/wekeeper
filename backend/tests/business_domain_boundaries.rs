@@ -10,6 +10,68 @@ fn visit(path: &Path, files: &mut Vec<std::path::PathBuf>) {
     }
 }
 #[test]
+fn business_directory_does_not_depend_on_source_routes() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/business_directory");
+    let mut files = Vec::new();
+    visit(&root, &mut files);
+    assert!(!files.is_empty());
+    for file in files {
+        let source = fs::read_to_string(&file).unwrap();
+        for forbidden in ["source_access::", "source_routes", "RouteSnapshot"] {
+            assert!(
+                !source.contains(forbidden),
+                "business directory depends on source routing: {}",
+                file.display()
+            );
+        }
+    }
+}
+
+#[test]
+fn new_advertising_scope_discovery_does_not_use_routes() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for file in [
+        "src/advertising/domain/targeting.rs",
+        "src/advertising/south/adapter/postgres/targeting.rs",
+    ] {
+        let source = fs::read_to_string(root.join(file)).unwrap();
+        // Negative serialization tests deliberately contain forbidden input names.
+        let source = source.split("#[cfg(test)]").next().unwrap();
+        for forbidden in [
+            "source_access::",
+            "source_routes",
+            "RouteSnapshot",
+            "route_id",
+        ] {
+            assert!(!source.contains(forbidden), "route dependency in {file}");
+        }
+    }
+}
+#[test]
+fn orchestration_message_intake_is_independent_of_source_routing_and_delivery() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/message_orchestration");
+    let mut files = Vec::new();
+    visit(&root, &mut files);
+    assert!(!files.is_empty());
+    for file in files {
+        let source = fs::read_to_string(&file).unwrap();
+        for forbidden in [
+            "source_access::",
+            "source_routes",
+            "RouteSnapshot",
+            "route_id",
+            "advertising::",
+            "distribution::",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "unexpected dependency in {}",
+                file.display()
+            );
+        }
+    }
+}
+#[test]
 fn distribution_has_no_dependency_on_removed_forum() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/distribution");
     let mut files = Vec::new();

@@ -107,12 +107,45 @@ async fn two_instances_replay_scope_lifetime_and_deletion() {
             .await
             .is_err()
     );
-    let route=svc.manage(&a,"source-routes",None,"POST",Some(serde_json::from_value(json!({"key_id":key,"route_name":"M1","remark":"route remark","status":"active"})).unwrap()),1,"","",None).await.unwrap();
+    let route=svc.manage(&a,"source-routes",None,"POST",Some(serde_json::from_value(json!({"key_id":key,"business_unit_name":"M1","remark":"route remark","status":"active"})).unwrap()),1,"","",None).await.unwrap();
+    let created_unit = Uuid::parse_str(route["business_unit_id"].as_str().unwrap()).unwrap();
     let route = route["id"].as_str().unwrap();
-    Repository(pool.clone())
-        .set_association(&a, key, route, "active", 1)
+    let listed = svc
+        .manage(
+            &a,
+            "source-routes",
+            Some(route),
+            "GET",
+            None,
+            1,
+            "",
+            "",
+            None,
+        )
         .await
         .unwrap();
+    assert_eq!(listed["items"][0]["business_unit_name"], "M1");
+    let (unit_id, platform, unit_name): (Uuid, String, String) = sqlx::query_as(
+        "SELECT u.id,u.platform_id::text,u.name FROM business_units u JOIN source_routes r ON r.business_unit_id=u.id WHERE r.route_id=$1",
+    )
+    .bind(route)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(platform, source);
+    assert_eq!(unit_name, "M1");
+    assert_eq!(created_unit, unit_id);
+    assert_eq!(listed["items"][0]["business_unit_id"], unit_id.to_string());
+    assert_ne!(unit_id.to_string(), route);
+    let duplicate = sqlx::query("INSERT INTO source_routes(route_id,source_id,business_unit_id,route_name,status) SELECT $1,source_id,business_unit_id,'duplicate','active' FROM source_routes WHERE route_id=$2")
+        .bind(Uuid::new_v4().to_string()).bind(route).execute(&pool).await;
+    assert!(duplicate.is_err());
+    let associations = Repository(pool.clone())
+        .associations(&a, key, 1)
+        .await
+        .unwrap();
+    assert_eq!(associations["items"][0]["route_id"], route);
+    assert_eq!(associations["items"][0]["status"], "active");
     let material = Repository(pool.clone())
         .deliver(key, "isolated-test")
         .await
@@ -168,6 +201,259 @@ async fn two_instances_replay_scope_lifetime_and_deletion() {
     } else {
         v2["data"]["id"].clone()
     };
+    let accepted_unit: Uuid =
+        sqlx::query_scalar("SELECT business_unit_id FROM source_receipts WHERE receipt_id=$1")
+            .bind(Uuid::parse_str(receipt.as_str().unwrap()).unwrap())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(accepted_unit, unit_id);
+    let lookup = wekeeper_api::source_access::north::local::AcceptedIdentityService(Repository(
+        pool.clone(),
+    ));
+    let identity = lookup
+        .find(
+            source.parse().unwrap(),
+            Uuid::parse_str(receipt.as_str().unwrap()).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(identity.platform_id.to_string(), source);
+    assert_eq!(identity.unit_id, unit_id);
+    let denied = lookup
+        .find(
+            Uuid::new_v4(),
+            Uuid::parse_str(receipt.as_str().unwrap()).unwrap(),
+        )
+        .await;
+    assert!(matches!(denied, Err(Fault("receipt_not_found"))));
+    let matcher = wekeeper_api::source_access::north::local::ad_targeting::ScopeMatcher(
+        Repository(pool.clone()),
+    );
+    let platform_id = source.parse::<Uuid>().unwrap();
+    let receipt_id = Uuid::parse_str(receipt.as_str().unwrap()).unwrap();
+    use wekeeper_api::message_orchestration::{
+        domain::EventKind, north::local::MessageIntake,
+        south::adapter::postgres::Repository as MessageRepository,
+    };
+    use wekeeper_api::source_access::north::local::orchestration_intake::{
+        AcceptedMessageBridge, BridgeError,
+    };
+    let bridge = AcceptedMessageBridge {
+        receipts: Repository(pool.clone()),
+        messages: MessageIntake(MessageRepository(pool.clone())),
+    };
+    // Ordinary writes cannot alter the accepted bytes or their digest.
+    assert!(
+        sqlx::query("UPDATE source_inbox SET request_body=$2 WHERE receipt_id=$1")
+            .bind(receipt_id)
+            .bind(b"tampered".as_slice())
+            .execute(&pool)
+            .await
+            .is_err()
+    );
+    assert!(
+        sqlx::query("UPDATE source_receipts SET body_sha256=$2 WHERE receipt_id=$1")
+            .bind(receipt_id)
+            .bind("0".repeat(64))
+            .execute(&pool)
+            .await
+            .is_err()
+    );
+    // Simulate damaged storage by bypassing just this guard in the isolated test database.
+    let mut damaged: Value = serde_json::from_slice(&body).unwrap();
+    damaged["data"]["attributes"]["content"] = json!("tampered");
+    sqlx::query("ALTER TABLE source_inbox DISABLE TRIGGER source_inbox_body_immutable")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE source_inbox SET request_body=$2 WHERE receipt_id=$1")
+        .bind(receipt_id)
+        .bind(serde_json::to_vec(&damaged).unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("ALTER TABLE source_inbox ENABLE TRIGGER source_inbox_body_immutable")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(matches!(
+        bridge.accept(platform_id, receipt_id).await,
+        Err(BridgeError::Source(Fault("evidence_mismatch")))
+    ));
+    let missing: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM orchestration_messages WHERE platform_id=$1 AND evidence_ref=$2",
+    )
+    .bind(platform_id)
+    .bind(receipt_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(missing, 0);
+    let damaged_worker =
+        wekeeper_api::source_access::north::local::orchestration_intake::HandoffWorker {
+            queue: Repository(pool.clone()),
+            bridge: AcceptedMessageBridge {
+                receipts: Repository(pool.clone()),
+                messages: MessageIntake(MessageRepository(pool.clone())),
+            },
+        };
+    damaged_worker.run_once().await.unwrap();
+    let failure: (String, Option<String>) =
+        sqlx::query_as("SELECT state,last_error FROM source_message_handoffs WHERE receipt_id=$1")
+            .bind(receipt_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        failure,
+        ("pending".into(), Some("evidence_mismatch".into()))
+    );
+    sqlx::query("ALTER TABLE source_inbox DISABLE TRIGGER source_inbox_body_immutable")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE source_inbox SET request_body=$2 WHERE receipt_id=$1")
+        .bind(receipt_id)
+        .bind(&body)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("ALTER TABLE source_inbox ENABLE TRIGGER source_inbox_body_immutable")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE source_message_handoffs SET next_attempt_at=clock_timestamp() WHERE receipt_id=$1",
+    )
+    .bind(receipt_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let accepted = bridge.accept(platform_id, receipt_id).await.unwrap();
+    assert_eq!(accepted.facts.unit_id, unit_id);
+    assert_eq!(accepted.facts.source_event_id, event);
+    assert_eq!(accepted.facts.original.event_kind, EventKind::Upsert);
+    assert_eq!(accepted.facts.original.external_content_id, "post-1");
+    assert_eq!(accepted.facts.original.sequence, 1);
+    assert_eq!(accepted.facts.original.content.as_deref(), Some("内容"));
+    assert_eq!(
+        bridge.accept(platform_id, receipt_id).await.unwrap().id,
+        accepted.id
+    );
+    assert!(matches!(
+        bridge.accept(Uuid::new_v4(), receipt_id).await,
+        Err(BridgeError::Source(Fault("receipt_not_found")))
+    ));
+    use wekeeper_api::source_access::north::local::orchestration_intake::HandoffWorker;
+    use wekeeper_api::source_access::south::port::MessageHandoffStore;
+    let queue = Repository(pool.clone());
+    let stale_claim = queue.claim().await.unwrap().unwrap();
+    assert_eq!(stale_claim.receipt_id, receipt_id);
+    sqlx::query("UPDATE source_message_handoffs SET claim_until=clock_timestamp()-interval '1 second' WHERE receipt_id=$1")
+        .bind(receipt_id).execute(&pool).await.unwrap();
+    let worker = || HandoffWorker {
+        queue: Repository(pool.clone()),
+        bridge: AcceptedMessageBridge {
+            receipts: Repository(pool.clone()),
+            messages: MessageIntake(MessageRepository(pool.clone())),
+        },
+    };
+    let worker_one = worker();
+    let worker_two = worker();
+    let (first, second) = tokio::join!(worker_one.run_once(), worker_two.run_once());
+    first.unwrap();
+    second.unwrap();
+    queue.complete(&stale_claim, Uuid::new_v4()).await.unwrap();
+    let handoff: (String, Uuid, i32) = sqlx::query_as(
+        "SELECT state,message_id,attempts FROM source_message_handoffs WHERE receipt_id=$1",
+    )
+    .bind(receipt_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(handoff.0, "complete");
+    assert_eq!(handoff.1, accepted.id);
+    assert_eq!(handoff.2, 3);
+    use wekeeper_api::advertising::domain::targeting::TargetScope;
+    let scopes = [
+        TargetScope::Global {},
+        TargetScope::Platform { platform_id },
+        TargetScope::Unit {
+            platform_id,
+            unit_id,
+        },
+        TargetScope::Unit {
+            platform_id,
+            unit_id: Uuid::new_v4(),
+        },
+        TargetScope::Platform {
+            platform_id: Uuid::new_v4(),
+        },
+    ];
+    assert_eq!(
+        matcher
+            .matching_indices(platform_id, receipt_id, &scopes)
+            .await
+            .unwrap(),
+        vec![0, 1, 2]
+    );
+    assert!(matches!(
+        matcher
+            .matching_indices(Uuid::new_v4(), receipt_id, &scopes)
+            .await,
+        Err(Fault("receipt_not_found"))
+    ));
+    // Discovery uses the frozen business identity, while the advertising
+    // repository itself does not inspect the source route.
+    let ad_material = Uuid::new_v4();
+    let material_version = Uuid::new_v4();
+    sqlx::query("INSERT INTO ad_materials(id,created_by) VALUES($1,$2)")
+        .bind(ad_material)
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO ad_material_versions(id,material_id,version,name,body,created_by) VALUES($1,$2,1,'素材','正文',$3)")
+        .bind(material_version).bind(ad_material).bind(id).execute(&pool).await.unwrap();
+    sqlx::query("UPDATE ad_materials SET current_version_id=$2 WHERE id=$1")
+        .bind(ad_material)
+        .bind(material_version)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let global_rule = Uuid::new_v4();
+    let platform_rule = Uuid::new_v4();
+    let unit_rule = Uuid::new_v4();
+    sqlx::query("INSERT INTO ad_placement_rules(id,name,material_id,scope_kind,platform_id,unit_id,enabled,valid_from,created_by,updated_by) VALUES($1,'global',$4,'global',NULL,NULL,true,now()-interval '1 hour',$7,$7),($2,'platform',$4,'platform',$5,NULL,true,now()-interval '1 hour',$7,$7),($3,'unit',$4,'unit',$5,$6,true,now()-interval '1 hour',$7,$7)")
+        .bind(global_rule).bind(platform_rule).bind(unit_rule).bind(ad_material).bind(platform_id).bind(unit_id).bind(id).execute(&pool).await.unwrap();
+    let discovery = wekeeper_api::source_access::north::local::ad_targeting::CandidateDiscovery {
+        identities: Repository(pool.clone()),
+        rules: wekeeper_api::advertising::north::local::MatchingRules(
+            wekeeper_api::advertising::south::adapter::postgres::Repository(pool.clone()),
+        ),
+    };
+    let matches = discovery
+        .page(platform_id, receipt_id, chrono::Utc::now(), None)
+        .await
+        .unwrap();
+    let matched: std::collections::HashSet<_> =
+        matches.items.iter().map(|item| item.rule_id).collect();
+    assert!(
+        [global_rule, platform_rule, unit_rule]
+            .iter()
+            .all(|id| matched.contains(id))
+    );
+    assert!(matches!(
+        discovery
+            .page(Uuid::new_v4(), receipt_id, chrono::Utc::now(), None)
+            .await,
+        Err(
+            wekeeper_api::source_access::north::local::ad_targeting::DiscoveryError::Identity(
+                Fault("receipt_not_found")
+            )
+        )
+    ));
     let (status, dup) = read(
         two.clone()
             .oneshot(signed(
