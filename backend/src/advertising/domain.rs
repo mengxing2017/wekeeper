@@ -1,9 +1,26 @@
 //! Advertising decisions and composition are independent of HTTP and persistence.
 use crate::source_access::domain::routing::RouteSnapshot;
-use crate::source_access::domain::{Fault, Result, digest, ensure};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 pub mod pool;
+pub mod targeting;
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct AdvertisingError(pub &'static str);
+pub type Result<T> = std::result::Result<T, AdvertisingError>;
+
+fn ensure(ok: bool, code: &'static str) -> Result<()> {
+    if ok {
+        Ok(())
+    } else {
+        Err(AdvertisingError(code))
+    }
+}
+
+pub(crate) fn digest(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Scope {
@@ -100,7 +117,7 @@ impl Content {
             "invalid_ad_content",
         )?;
         if let Some(link) = &self.link {
-            let u = url::Url::parse(link).map_err(|_| Fault("invalid_ad_link"))?;
+            let u = url::Url::parse(link).map_err(|_| AdvertisingError("invalid_ad_link"))?;
             ensure(
                 link.len() <= 2048
                     && !link.chars().any(|c| c.is_control() || c.is_whitespace())
@@ -312,6 +329,13 @@ pub enum Command {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn digest_uses_lowercase_sha256() {
+        assert_eq!(
+            super::digest(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
     use super::*;
     #[test]
     fn composition_and_scalar_byte_limits_are_exact() {

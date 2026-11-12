@@ -191,13 +191,6 @@ pub(super) async fn common(pool: &PgPool, receipt: Uuid, event: &Event) -> Resul
     tx.commit().await?;
     Ok(passed && !no_resend)
 }
-pub(crate) async fn frozen_text(tx: &mut Tx<'_>, receipt: Uuid) -> Result<Option<String>> {
-    let composed:Option<String>=sqlx::query_scalar("SELECT c.content FROM source_execution_tasks l JOIN source_message_compositions c ON c.id=l.composition_id WHERE l.receipt_id=$1").bind(receipt).fetch_optional(&mut **tx).await?;
-    if composed.is_some() {
-        return Ok(composed);
-    }
-    Ok(sqlx::query_scalar("SELECT content FROM (SELECT s.content FROM source_execution_tasks l JOIN mobile_v9_task_items i ON i.task_id=l.task_id JOIN mobile_v9_plans p ON p.item_id=i.id JOIN distribution_message_snapshots s ON s.id=p.snapshot_id WHERE l.receipt_id=$1 UNION ALL SELECT t.content FROM source_execution_tasks l JOIN broadcast_tasks t ON t.id=l.task_id WHERE l.receipt_id=$1) q LIMIT 1").bind(receipt).fetch_optional(&mut **tx).await?)
-}
 async fn scope_access(tx: &mut Tx<'_>, actor: Uuid, admin: bool, scope: &str) -> Result<()> {
     let row = sqlx::query("SELECT * FROM keyword_scope_heads WHERE id=$1")
         .bind(scope)

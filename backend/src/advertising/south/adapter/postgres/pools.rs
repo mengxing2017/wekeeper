@@ -69,7 +69,7 @@ pub(super) async fn publish(
     input: p::Publication,
     kind: &str,
 ) -> Result<Value> {
-    input.validate()?;
+    input.validate().map_err(|e| Fault(e.0))?;
     // Lock the route config in write mode from the start; never upgrade a shared config lock.
     sqlx::query("SELECT route_id FROM source_advertisement_configs WHERE route_id=$1 FOR UPDATE")
         .bind(route)

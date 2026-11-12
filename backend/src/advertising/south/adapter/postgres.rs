@@ -12,9 +12,11 @@ use uuid::Uuid;
 type Tx<'a> = Transaction<'a, Postgres>;
 #[derive(Clone)]
 pub struct Repository(pub PgPool);
+pub mod materials;
 pub mod pipeline;
 pub(crate) mod pools;
 pub(crate) mod queue;
+pub mod targeting;
 pub(crate) async fn guard(tx: &mut Tx<'_>) -> Result<()> {
     crate::distribution::south::adapter::postgres::routing::source_guard(tx)
         .await
@@ -174,7 +176,7 @@ async fn publish_policy(
     p: &Policy,
     reason: &str,
 ) -> Result<Uuid> {
-    p.validate()?;
+    p.validate().map_err(|e| Fault(e.0))?;
     for s in p.allows.iter().chain(&p.denies) {
         scope_validate(tx, s).await?;
     }
@@ -214,7 +216,18 @@ pub(crate) async fn enqueue(
     Ok(())
 }
 impl AdvertisingStore for Repository {
-    async fn execute(&self, actor: &Actor, command: Command) -> Result<Value> {
+    async fn execute(
+        &self,
+        actor: &Actor,
+        command: Command,
+    ) -> crate::advertising::domain::Result<Value> {
+        self.execute_inner(actor, command)
+            .await
+            .map_err(|e| crate::advertising::domain::AdvertisingError(e.0))
+    }
+}
+impl Repository {
+    async fn execute_inner(&self, actor: &Actor, command: Command) -> Result<Value> {
         if let Command::Preview(route, input) = command {
             return preview(&self.0, actor, &route, input).await;
         }
@@ -245,7 +258,7 @@ impl AdvertisingStore for Repository {
         };
         let mut audit_context = match &command {
             Command::Content(id, v) => {
-                json!({"ad_id":id,"expected_revision":v.expected_revision,"reason":v.reason,"body_digest":crate::source_access::domain::digest(v.content.body.as_bytes())})
+                json!({"ad_id":id,"expected_revision":v.expected_revision,"reason":v.reason,"body_digest":crate::advertising::domain::digest(v.content.body.as_bytes())})
             }
             Command::Policy(id, v) => {
                 json!({"ad_id":id,"expected_revision":v.expected_revision,"reason":v.reason,"policy":v.policy})
@@ -541,19 +554,7 @@ impl AdvertisingStore for Repository {
                 let rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(c) FROM source_message_compositions c WHERE receipt_id=$1 ORDER BY generation DESC LIMIT 31 OFFSET $2").bind(receipt).bind((page-1)*30).fetch_all(&mut *tx).await?;
                 let generations:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(g) FROM source_execution_generations g WHERE receipt_id=$1 ORDER BY generation DESC LIMIT 31 OFFSET $2").bind(receipt).bind((page-1)*30).fetch_all(&mut *tx).await?;
                 let decisions:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(d) FROM source_advertisement_decisions d WHERE receipt_id=$1 ORDER BY created_at DESC,id DESC LIMIT 31 OFFSET $2").bind(receipt).bind((page-1)*30).fetch_all(&mut *tx).await?;
-                let legacy = if page == 1
-                    && rows.is_empty()
-                    && generations.iter().any(|g| g["composition_id"].is_null())
-                {
-                    crate::source_access::south::adapter::postgres::keyword_filter::frozen_text(
-                        &mut tx, receipt,
-                    )
-                    .await?
-                    .map(|content| json!({"content":content}))
-                } else {
-                    None
-                };
-                json!({"items":rows.iter().take(30).collect::<Vec<_>>(),"has_more":rows.len()>30||decisions.len()>30,"decisions":decisions.iter().take(30).collect::<Vec<_>>(),"generations":generations,"legacy":legacy})
+                json!({"items":rows.iter().take(30).collect::<Vec<_>>(),"has_more":rows.len()>30||decisions.len()>30,"decisions":decisions.iter().take(30).collect::<Vec<_>>(),"generations":generations})
             }
         };
         audit_context["action"] = json!(action);

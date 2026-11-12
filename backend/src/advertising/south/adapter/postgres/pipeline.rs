@@ -1,9 +1,6 @@
 //! Existing inbox consumer owns the workflow; this adapter coordinates local atomic writes.
 use super::*;
-use crate::source_access::{
-    domain::{Event, keyword_filter as k, routing::RouteSnapshot},
-    south::adapter::postgres::keyword_filter as checks,
-};
+use crate::source_access::domain::{Event, keyword_filter as k, routing::RouteSnapshot};
 pub(crate) async fn config(tx: &mut Tx<'_>, route: &str) -> Result<(i64, Config)> {
     let (n, v): (i64, Value) = sqlx::query_as(
         "SELECT revision,config FROM source_advertisement_configs WHERE route_id=$1 FOR SHARE",
@@ -132,12 +129,7 @@ pub(crate) async fn prepare(
             return Ok(None);
         }
     } else {
-        let legacy = checks::frozen_text(&mut tx, receipt).await?;
-        let (revision, config) = if legacy.is_some() {
-            (0, Config::default())
-        } else {
-            config(&mut tx, &snapshot.route_id).await?
-        };
+        let (revision, config) = config(&mut tx, &snapshot.route_id).await?;
         if config.mode == "pool" {
             tx.commit().await?;
             let prepared =
@@ -145,15 +137,7 @@ pub(crate) async fn prepare(
             tx = pool.begin().await?;
             prepared
         } else {
-            select(
-                &mut tx,
-                snapshot,
-                revision,
-                config,
-                legacy.as_deref().unwrap_or(&source),
-                None,
-            )
-            .await?
+            select(&mut tx, snapshot, revision, config, &source, None).await?
         }
     };
     tx.commit().await?;
@@ -199,18 +183,10 @@ pub(crate) async fn validate(
             .flatten();
     ensure(current == p.base, "ad_selection_stale")?;
     if p.base.is_none() {
-        let legacy: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM source_execution_tasks WHERE receipt_id=$1)",
-        )
-        .bind(receipt)
-        .fetch_one(&mut **tx)
-        .await?;
-        if !legacy {
-            ensure(
-                config(tx, &snapshot.route_id).await?.0 == p.selection.config_revision,
-                "ad_selection_stale",
-            )?;
-        }
+        ensure(
+            config(tx, &snapshot.route_id).await?.0 == p.selection.config_revision,
+            "ad_selection_stale",
+        )?;
     }
     pools::validate(tx, receipt, p).await?;
     if p.replacement {
@@ -305,11 +281,8 @@ async fn decision(
     reason: &str,
     composition: Option<Uuid>,
 ) -> Result<()> {
-    let fingerprint = crate::source_access::domain::digest(&serde_json::to_vec(&(
-        selection,
-        reason,
-        composition,
-    ))?);
+    let fingerprint =
+        crate::advertising::domain::digest(&serde_json::to_vec(&(selection, reason, composition))?);
     sqlx::query("INSERT INTO source_advertisement_decisions(id,receipt_id,selection,reason,decision_digest,composition_id) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(receipt_id,decision_digest) DO NOTHING").bind(Uuid::now_v7()).bind(receipt).bind(json!(selection)).bind(reason).bind(fingerprint).bind(composition).execute(&mut **tx).await?;
     Ok(())
 }

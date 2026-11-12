@@ -1,3 +1,4 @@
+mod scoped_materials;
 use crate::{
     advertising::{domain::*, north::local::Service, south::adapter::postgres::Repository},
     bootstrap::Application,
@@ -26,7 +27,7 @@ async fn run(
     let v = Service(Repository(a.pool))
         .execute(&actor, c)
         .await
-        .map_err(|e| e.response(&actor.request_id))?;
+        .map_err(|e| Fault(e.0).response(&actor.request_id))?;
     Ok(management_response(kind, v))
 }
 fn management_response(kind: &str, v: serde_json::Value) -> Response {
@@ -296,6 +297,7 @@ async fn copy_pool(
 }
 pub fn router() -> Router<Application> {
     Router::new()
+        .merge(scoped_materials::router())
         .route(
             "/api/v2/admin/source-routes/{id}/advertisement-pool",
             get(pool_detail),

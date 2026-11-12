@@ -2,6 +2,7 @@ use crate::source_access::south::port::{AcceptedIdentityStore, MachineStore};
 use crate::source_access::{domain::*, south::adapter::postgres::Repository};
 use serde_json::Value;
 use sqlx::PgPool;
+pub mod ad_targeting;
 pub mod orchestration_intake;
 #[derive(Clone)]
 pub struct Service(pub PgPool);
