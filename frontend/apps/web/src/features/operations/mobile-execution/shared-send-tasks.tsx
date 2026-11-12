@@ -97,7 +97,7 @@ function SchoolSharedSendTasks({ school, admin }: { school: string; admin: boole
               const current=currentReadiness(snapshot,liveOverview,synchronized)
               return <div key={snapshot.binding_id}>
                 <SharedReadinessView snapshot={snapshot} current={current} blocked={!!i.blocker}/>
-                {preview.plan.dispatch_mode==='candidate_pool'&&<p>确认的授权候选：{i.candidates.filter(c=>c.confirmable!==false).map(c=>`${c.device_name}（${candidateGroupName(c)}）`).join('、')}；所选为首选，范围内允许自动换机。</p>}
+                <p>确认的授权候选：{i.candidates.filter(c=>c.confirmable!==false).map(c=>`${c.device_name}（${candidateGroupName(c)}）`).join('、')}；所选为首选，范围内允许自动换机。</p>
                 {admin&&snapshot.blockers.some(b=>isUsageBlocker(b.code))&&<Button onClick={()=>setUsageOpen(true)}>查看当前工作空间使用范围</Button>}
               </div>
             })}
@@ -119,7 +119,7 @@ function SchoolSharedSendTasks({ school, admin }: { school: string; admin: boole
       {!!detailQuery.dataUpdatedAt && <p>最近获取时间：{new Date(detailQuery.dataUpdatedAt).toLocaleString()}</p>}
       {detailQuery.error && <Alert type="warning" title="进度读取失败，以下为上次获取的快照" description={taskError(detailQuery.error)}/>}
       {detail && <p role="status">{taskProgressLabel(detail)}</p>}
-      {detail && <p>确认有效至：{detail.confirmed_until ?? '待核对'}；{detail.dispatch_mode==='candidate_pool'?'目标独立调度，候选范围内自动换机':`历史任务当前顺序：${(detail.cursor_position??0)+1}`}{taskNeedsPolling(detail)&&<>；最早安排：{detail.next_eligible_at??'待核对'}</>}。已到期的任务需要复制为新草稿并重新确认。</p>}
+      {detail && <p>确认有效至：{detail.confirmed_until ?? '待核对'}；目标独立调度，候选范围内自动换机{taskNeedsPolling(detail)&&<>；最早安排：{detail.next_eligible_at??'待核对'}</>}。已到期的任务需要复制为新草稿并重新确认。</p>}
       {detail?.items?.length && <Button onClick={()=>{const items=[...detail.items!].sort((a,b)=>a.position-b.position);const plans=items.map(i=>i.attempts.find(a=>a.current)?.plan);const first=plans[0];if(!first)return;setDraft(undefined);setTargets(items.map(i=>i.target_id));setTargetNames(Object.fromEntries(plans.filter(p=>!!p).map(p=>[p.target_id,candidateGroupName(p)])));setMessage(first.message);setGap(first.between_targets_seconds);setPreview(undefined);setDetail(undefined)}}>复制原意图为新草稿（需重新确认）</Button>}
       {detail && admin && taskNeedsPolling(detail) && <Button danger onClick={()=>setAction({kind:'stop'})}>停止尚未发放许可的任务</Button>}
       {!!detail?.items?.some(i=>i.dispatch?.state==='dispatch_failed') && <Alert type="error" title={`任务下发失败：${detail.items.filter(i=>i.dispatch?.state==='dispatch_failed').length} 个目标已耗尽 3 轮，停止自动下发`} description={taskNeedsPolling(detail)?"其他目标继续独立调度。部分历史尝试结果可能未知，仍可接收迟到结果。":"任务已停止自动下发，不再自动重试。历史尝试仍可补报结果，也可人工核对。"}/>}

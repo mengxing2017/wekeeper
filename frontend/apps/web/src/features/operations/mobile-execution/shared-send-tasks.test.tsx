@@ -43,7 +43,6 @@ it('当前工作空间管理员可点击确认，预览检查问题由提交接�
 it('手机授权状态未知与状态过期不阻止确认，也不要求重新授权',async()=>{
  const pending=structuredClone(preview)
  const phone:SharedCandidate={target_id:'target',target_name:'实际搜索文字',device_name:'测试手机',device_id:'phone',binding_id:'binding',binding_locator_revision:1,target_locator_revision:1,target:{kind:'group',search_query:'实际搜索文字',match_policy:'exact_unique',identity_constraints:[]},access_revision:null,credential_generation:1,delegation_id:null,release_id:null,flow_digest:null,flow:null,confirmable:true}
- pending.plan.dispatch_mode='candidate_pool'
  pending.plan.items[0]={...pending.plan.items[0],selected:phone,candidates:[phone],blocker:null,readiness:[{binding_id:'binding',device_id:'phone',target_id:'target',device_name:'测试手机',target_name:'实际搜索文字',search_text:'实际搜索文字',state:'runtime_stale',ready:false,plan_selectable:true,confirmable:true,execution_ready:false,automatic:true,blockers:[],inspection:null,inspection_state:'waiting_prerequisites',retry_at:null,retry_remaining:3,consent_state:'unknown',runtime_state:'stale',execution_conditions:[{code:'runtime_stale',message:'手机执行状态已过期，不要求重新授权',owner:'system',automatic:true}]}]}
  vi.mocked(sharedSend.taskPreview).mockResolvedValue(response(pending))
  vi.mocked(sharedSend.confirm).mockResolvedValue({id:'task',school_id:'school',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-03'})
@@ -213,7 +212,7 @@ it('群名变化必须重新预览，手机配置不是受理条件',async()=>{
 
 it('展示授权候选和自动换机轨迹，历史尝试结果冲突仍可核对',async()=>{
  const candidates:SharedCandidate[]=['甲','乙'].map((name,index)=>({target_id:'target',target_name:'实际搜索文字',device_id:`phone-${index}`,device_name:`候选${name}`,binding_id:`binding-${index}`,binding_locator_revision:1,target_locator_revision:1,target:{kind:'group',search_query:'实际搜索文字',match_policy:'exact_unique',identity_constraints:[]},access_revision:null,credential_generation:1,delegation_id:null}))
- const task={id:'task',school_id:'school',intent_id:'intent',dispatch_mode:'candidate_pool',revision:1,stopped:false,created_at:'2026-11-04',items:[{id:'item',target_id:'target',position:0,dispatch:{state:'needs_review',candidates,assignments:[{id:'assignment',source:'automatic',from_device_name:'候选甲',to_device_name:'候选乙',created_at:'2026-11-04T00:00:00Z'}]},attempts:[{id:'old',state:'unknown',current:false,attempt_no:1,revision:3,plan:{...candidates[0],message,between_targets_seconds:30}},{id:'new',state:'queued',current:true,attempt_no:2,revision:1,plan:{...candidates[1],message,between_targets_seconds:30}}]}]} as unknown as Awaited<ReturnType<typeof sharedSend.task>>
+ const task={id:'task',school_id:'school',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-04',items:[{id:'item',target_id:'target',position:0,dispatch:{state:'needs_review',candidates,assignments:[{id:'assignment',source:'automatic',from_device_name:'候选甲',to_device_name:'候选乙',created_at:'2026-11-04T00:00:00Z'}]},attempts:[{id:'old',state:'unknown',current:false,attempt_no:1,revision:3,plan:{...candidates[0],message,between_targets_seconds:30}},{id:'new',state:'queued',current:true,attempt_no:2,revision:1,plan:{...candidates[1],message,between_targets_seconds:30}}]}]} as unknown as Awaited<ReturnType<typeof sharedSend.task>>
  vi.mocked(sharedSend.overview).mockResolvedValue({id:'school',tasks:[task],drafts:[],readiness:[],pool:[],inspections:[]})
  vi.mocked(sharedSend.task).mockResolvedValue(task)
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}})
@@ -237,7 +236,7 @@ it('展示授权候选和自动换机轨迹，历史尝试结果冲突仍可核�
 
 
 it('页面识别失败显示实际原因，授权候选继续处理且不要求版本适配',async()=>{
- const task={id:'task',school_id:'school',intent_id:'intent',dispatch_mode:'candidate_pool',revision:1,stopped:false,created_at:'2026-11-05',items:[{id:'item',target_id:'target',position:0,dispatch:{state:'assigned',candidates:[{device_name:'候选乙',search_text:'乙备注群名'}],assignments:[]},attempts:[{id:'old',state:'failed_before_call',result_reason:'page_unrecognized',current:false,attempt_no:1,revision:3,plan:{search_text:'甲备注群名',device_name:'候选甲'}},{id:'new',state:'queued',current:true,attempt_no:2,revision:1,plan:{search_text:'乙备注群名',device_name:'候选乙'}}]}]} as unknown as Awaited<ReturnType<typeof sharedSend.task>>
+ const task={id:'task',school_id:'school',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-05',items:[{id:'item',target_id:'target',position:0,dispatch:{state:'assigned',candidates:[{device_name:'候选乙',search_text:'乙备注群名'}],assignments:[]},attempts:[{id:'old',state:'failed_before_call',result_reason:'page_unrecognized',current:false,attempt_no:1,revision:3,plan:{search_text:'甲备注群名',device_name:'候选甲'}},{id:'new',state:'queued',current:true,attempt_no:2,revision:1,plan:{search_text:'乙备注群名',device_name:'候选乙'}}]}]} as unknown as Awaited<ReturnType<typeof sharedSend.task>>
  vi.mocked(sharedSend.overview).mockResolvedValue({id:'school',tasks:[task],drafts:[],readiness:[],pool:[],inspections:[]})
  vi.mocked(sharedSend.task).mockResolvedValue(task)
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}})
@@ -253,7 +252,7 @@ it('页面识别失败显示实际原因，授权候选继续处理且不要求�
 
 it('三轮耗尽自动显示整任务停止，领取记录不再显示准备中，手动刷新仍可获取迟到结果',async()=>{
  vi.useFakeTimers({toFake:['setInterval','clearInterval']})
- const running={id:'task',school_id:'school',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-08',dispatch_mode:'candidate_pool',next_eligible_at:'2026-11-08T00:00:00Z',items:[{id:'item',target_id:'target',position:0,dispatch:{state:'executing',max_rounds:3,completed_rounds:2,candidates:[],assignments:[]},attempts:[{id:'attempt',state:'leased',revision:1,current:true,attempt_no:3,plan:{target_name:'冻结群名',device_name:'测试手机',device_id:'phone',message,between_targets_seconds:30}}]}]} as unknown as Awaited<ReturnType<typeof sharedSend.task>>
+ const running={id:'task',school_id:'school',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-08',next_eligible_at:'2026-11-08T00:00:00Z',items:[{id:'item',target_id:'target',position:0,dispatch:{state:'executing',max_rounds:3,completed_rounds:2,candidates:[],assignments:[]},attempts:[{id:'attempt',state:'leased',revision:1,current:true,attempt_no:3,plan:{target_name:'冻结群名',device_name:'测试手机',device_id:'phone',message,between_targets_seconds:30}}]}]} as unknown as Awaited<ReturnType<typeof sharedSend.task>>
  const failed=structuredClone(running)
  failed.items![0].dispatch!.state='dispatch_failed'
  failed.items![0].dispatch!.completed_rounds=3
