@@ -18,7 +18,6 @@ impl<R: RoutingStore> Service<R> {
                     c.normalize()?;
                 }
             }
-            Command::SetGroupTargets { input, .. } => input.execution.normalize()?,
             Command::Lifecycle { input, .. } => input.validate()?,
             _ => {}
         }

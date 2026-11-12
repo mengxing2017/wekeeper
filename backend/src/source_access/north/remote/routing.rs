@@ -214,36 +214,6 @@ async fn resources(
     )
     .await
 }
-async fn group_targets(
-    State(a): State<Application>,
-    actor: Actor,
-    Path(group): Path<uuid::Uuid>,
-) -> std::result::Result<Response, Response> {
-    run(
-        a,
-        actor,
-        Command::GroupTargets { group },
-        "routing-group-targets",
-    )
-    .await
-}
-async fn set_group_targets(
-    State(a): State<Application>,
-    actor: Actor,
-    Path(group): Path<uuid::Uuid>,
-    input: crate::http::jsonapi::Input,
-) -> std::result::Result<Response, Response> {
-    let v = input
-        .decode::<GroupTargetInput>("routing-group-targets")
-        .map_err(|_| Fault("invalid_request").response(&actor.request_id))?;
-    run(
-        a,
-        actor,
-        Command::SetGroupTargets { group, input: v },
-        "routing-group-targets",
-    )
-    .await
-}
 async fn handoff(
     State(a): State<Application>,
     actor: Actor,
@@ -293,8 +263,4 @@ pub fn router() -> Router<Application> {
         )
         .route("/api/v2/admin/source-routes/{route}/handoff", post(handoff))
         .route("/api/v2/admin/source-route-resources", get(resources))
-        .route(
-            "/api/v2/admin/routing-groups/{group}/targets",
-            get(group_targets).put(set_group_targets),
-        )
 }

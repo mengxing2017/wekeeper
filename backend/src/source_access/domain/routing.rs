@@ -113,12 +113,6 @@ pub struct ManagerInput {
     #[serde(default)]
     pub can_recheck: bool,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct GroupTargetInput {
-    pub revision: i64,
-    pub execution: ExecutionConfig,
-}
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct TargetSnapshot {
@@ -243,13 +237,6 @@ pub enum Command {
     Resources {
         channel: Channel,
         workspace: Option<Uuid>,
-    },
-    GroupTargets {
-        group: Uuid,
-    },
-    SetGroupTargets {
-        group: Uuid,
-        input: GroupTargetInput,
     },
     Handoff {
         route: String,

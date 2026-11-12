@@ -40,7 +40,7 @@ pub async fn create(
         }
         items.push(json!({"position":position,"target_id":target.id,"selected":candidates[0],"candidates":candidates}));
     }
-    let plan = json!({"schema":SCHEMA,"dispatch_mode":"candidate_pool","school_id":s,"intent_id":intent,"draft_id":draft,"draft_revision":1,"between_targets_seconds":input.between_targets_seconds,"message":input.message,"content_digest":hash(&input.message),"items":items,"policy_id":null,"authorization_kind":"source_route","route_id":snapshot.route_id,"config_revision":snapshot.revision});
+    let plan = json!({"schema":SCHEMA,"school_id":s,"intent_id":intent,"draft_id":draft,"draft_revision":1,"between_targets_seconds":input.between_targets_seconds,"message":input.message,"content_digest":hash(&input.message),"items":items,"policy_id":null,"authorization_kind":"source_route","route_id":snapshot.route_id,"config_revision":snapshot.revision});
     sqlx::query("INSERT INTO mobile_v9_previews(id,school_id,draft_id,draft_revision,plan,digest) VALUES($1,$2,$3,1,$4,$5)").bind(preview).bind(s).bind(draft).bind(&plan).bind(digest(&plan)?).execute(&mut **tx).await?;
     let p = json!({"id":preview,"plan":plan,"policy_id":null,"source_snapshot_id":snapshot_id});
     let task = tasks::create_authorized_task(tx, authorizer, s, &p).await?;

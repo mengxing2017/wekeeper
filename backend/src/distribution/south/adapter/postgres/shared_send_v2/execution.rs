@@ -170,11 +170,7 @@ pub(super) async fn grant(tx: &mut Tx<'_>, c: &Credential, v: GrantRequest) -> R
             }
             Err(error) => return Err(error),
         }
-        // A frozen historical sequence is a business dependency, not a v9 executable protocol.
-        let blocked:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_task_items i JOIN mobile_v9_tasks t ON t.id=i.task_id JOIN mobile_v9_task_items previous ON previous.task_id=t.id AND previous.position<i.position WHERE i.id=$1 AND t.dispatch_mode='legacy_sequence' AND NOT EXISTS(SELECT 1 FROM mobile_v9_attempts a WHERE a.item_id=previous.id AND a.state IN ('observed_sent','manually_confirmed_sent')))").bind(uid(&row,"item_id")?).fetch_one(&mut **tx).await?;
-        if blocked
-            || !device::quota(tx, school, c.device_id, uid(&row, "target_id")?, aid, false).await?
-        {
+        if !device::quota(tx, school, c.device_id, uid(&row, "target_id")?, aid, false).await? {
             continue;
         }
         let usages =

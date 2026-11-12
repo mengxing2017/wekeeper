@@ -50,6 +50,16 @@ async fn removed_compatibility_routes_are_absent() {
             StatusCode::NOT_FOUND,
         ),
         (
+            "GET",
+            format!("/api/v2/admin/routing-groups/{school}/targets"),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "PUT",
+            format!("/api/v2/admin/routing-groups/{school}/targets"),
+            StatusCode::NOT_FOUND,
+        ),
+        (
             "POST",
             "/api/v9/device-execution/human-samples".into(),
             StatusCode::NOT_FOUND,

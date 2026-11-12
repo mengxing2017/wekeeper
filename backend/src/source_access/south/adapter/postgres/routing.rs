@@ -249,7 +249,11 @@ async fn entity(
             "revision_conflict",
         )?;
         if group && input.unit_id != Some(old.get("unit_id")) {
-            let referenced:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_routes WHERE group_id=$1 UNION ALL SELECT 1 FROM routing_group_targets WHERE group_id=$1 AND removed_at IS NULL)").bind(object).fetch_one(&mut **tx).await?;
+            let referenced: bool =
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_routes WHERE group_id=$1)")
+                    .bind(object)
+                    .fetch_one(&mut **tx)
+                    .await?;
             ensure(!referenced, "group_in_use")?;
         }
         let query = if group {
@@ -486,51 +490,6 @@ impl RoutingRepository {
                 } else {
                     json!({"items":resources::workspaces(&mut tx,actor.id,channel.as_str()).await.map_err(resource_error)?})
                 }
-            }
-            Command::GroupTargets { group } => {
-                ensure(admin, "forbidden")?;
-                let items:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(t) FROM routing_group_targets t WHERE group_id=$1 AND removed_at IS NULL ORDER BY added_at,id").bind(group).fetch_all(&mut *tx).await?;
-                json!({"items":items})
-            }
-            Command::SetGroupTargets { group, input } => {
-                ensure(admin, "forbidden")?;
-                let revision: i64 = sqlx::query_scalar(
-                    "SELECT revision FROM routing_groups WHERE id=$1 FOR UPDATE",
-                )
-                .bind(group)
-                .fetch_optional(&mut *tx)
-                .await?
-                .ok_or(Fault("not_found"))?;
-                ensure(revision == input.revision, "revision_conflict")?;
-                let c = &input.execution;
-                resources::authorize(&mut tx, actor.id, c.channel.as_str(), c.workspace_id)
-                    .await
-                    .map_err(resource_error)?;
-                let targets = current_targets(&mut tx, c).await?;
-                ensure(
-                    c.target_ids
-                        .iter()
-                        .all(|id| targets.iter().any(|t| t.id == *id)),
-                    "target_unavailable",
-                )?;
-                let removed:Vec<Uuid>=sqlx::query_scalar("SELECT target_id FROM routing_group_targets WHERE group_id=$1 AND channel=$2 AND workspace_id=$3 AND removed_at IS NULL AND NOT(target_id=ANY($4))").bind(group).bind(c.channel.as_str()).bind(c.workspace_id).bind(&c.target_ids).fetch_all(&mut *tx).await?;
-                let used:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_route_targets t JOIN source_routes r USING(route_id) WHERE r.group_id=$1 AND t.channel=$2 AND t.workspace_id=$3 AND t.target_id=ANY($4) AND t.removed_at IS NULL)").bind(group).bind(c.channel.as_str()).bind(c.workspace_id).bind(removed).fetch_one(&mut *tx).await?;
-                ensure(!used, "group_in_use")?;
-                sqlx::query("UPDATE routing_group_targets SET removed_at=now() WHERE group_id=$1 AND channel=$2 AND workspace_id=$3 AND removed_at IS NULL AND NOT(target_id=ANY($4))").bind(group).bind(c.channel.as_str()).bind(c.workspace_id).bind(&c.target_ids).execute(&mut *tx).await?;
-                for target in &c.target_ids {
-                    sqlx::query("INSERT INTO routing_group_targets(id,group_id,channel,workspace_id,target_id,added_by) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING").bind(Uuid::now_v7()).bind(group).bind(c.channel.as_str()).bind(c.workspace_id).bind(target).bind(actor.id).execute(&mut *tx).await?;
-                }
-                let snapshot:Value=sqlx::query_scalar("UPDATE routing_groups SET revision=revision+1,updated_by=$2,updated_at=now() WHERE id=$1 RETURNING to_jsonb(routing_groups)").bind(group).bind(actor.id).fetch_one(&mut *tx).await?;
-                sqlx::query("INSERT INTO routing_entity_history(id,kind,entity_id,revision,snapshot,actor_id) VALUES($1,'group',$2,$3,$4,$5)").bind(Uuid::now_v7()).bind(group).bind(input.revision+1).bind(&snapshot).bind(actor.id).execute(&mut *tx).await?;
-                record(
-                    &mut tx,
-                    actor,
-                    None,
-                    "routing.group.targets",
-                    json!({"group_id":group,"execution":c}),
-                )
-                .await?;
-                snapshot
             }
             other => {
                 let route = match &other {

@@ -2222,7 +2222,6 @@ async fn offline_preference_dispatches_authorized_phone_and_never_expands_scope(
     let b = pool_phone(&f, "B").await;
     let (_cb, _eb) = pool_ready(&f, b).await;
     let task = pool_confirm(&f, vec![f.targets[0]]).await;
-    assert_eq!(task["dispatch_mode"], "candidate_pool");
     assert_eq!(
         pool_current(&task["items"][0])["plan"]["device_id"],
         json!(b)
@@ -3421,50 +3420,6 @@ async fn dispatch_exhausted_target_does_not_block_other_targets() {
     assert_eq!(detail["items"][0]["dispatch"]["state"], "dispatch_failed");
     assert_eq!(detail["items"][1]["dispatch"]["state"], "assigned");
     assert_eq!(detail["items"][1]["dispatch"]["completed_rounds"], 0);
-    f.close().await;
-}
-
-#[tokio::test]
-#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn dispatch_historical_singleton_budget_preserves_sequence_wait() {
-    let f = Fixture::with_adapter(false).await;
-    pool_ready(&f, f.device).await;
-    let task = pool_confirm(&f, f.targets.clone()).await;
-    sqlx::query("UPDATE mobile_v9_tasks SET dispatch_mode='legacy_sequence'")
-        .execute(&f.pool)
-        .await
-        .unwrap();
-    // Historical singleton scopes use the same persistent budget, never a larger pool.
-    for round in 0..3 {
-        let before = pool_detail(&f, &task).await;
-        let first = pool_current(&before["items"][0]);
-        sqlx::query("UPDATE mobile_v9_attempts SET state='failed_before_call' WHERE id=$1")
-            .bind(serde_json::from_value::<Uuid>(first["id"].clone()).unwrap())
-            .execute(&f.pool)
-            .await
-            .unwrap();
-        pool_expire_round(&f).await;
-        let after = pool_detail(&f, &task).await;
-        assert_eq!(after["items"][0]["dispatch"]["completed_rounds"], round + 1);
-        assert_eq!(
-            after["items"][1]["dispatch"]["completed_rounds"], 0,
-            "waiting for a business predecessor cannot consume a round"
-        );
-        if round < 2 {
-            pool_tick(&f).await;
-        }
-    }
-    assert_eq!(
-        pool_detail(&f, &task).await["items"][0]["dispatch"]["state"],
-        "dispatch_failed"
-    );
-    let attempts: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM mobile_v9_attempts WHERE item_id=$1")
-            .bind(serde_json::from_value::<Uuid>(task["items"][0]["id"].clone()).unwrap())
-            .fetch_one(&f.pool)
-            .await
-            .unwrap();
-    assert_eq!(attempts, 3);
     f.close().await;
 }
 
