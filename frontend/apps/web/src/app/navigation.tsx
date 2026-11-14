@@ -64,6 +64,8 @@ export const navigation: NavigationItem[] = [
   { key: 'shared-mobile-resources', icon: <MobileOutlined />, label: '手机群消息使用管理', description: '两步开通移动分发工作空间的手机群消息使用范围，处理申请和使用问题。', domain: 'mobile', scope: 'global', capability: 'global.manage' },
   { key: 'mobile-execution-tasks', icon: <MessageOutlined />, label: '手机任务', description: '独立管理手机发送任务，预览、确认并查看执行记录。', domain: 'mobile', scope: 'mobile', capability: 'mobile.operate' },
   { key: 'mobile-targets', icon: <MessageOutlined />, label: '手机目标群', description: '管理独立手机搜索目标和设备绑定，与官方客户群隔离。', domain: 'mobile', scope: 'mobile', capability: 'mobile.operate' },
+  { key: 'mobile-receiving-configurations', icon: <MessageOutlined />, label: '手机接收配置', description: '按业务单位维护接收群与候选手机。', domain: 'mobile', scope:'global', capability:'global.manage' },
+  { key: 'wecom-receiving-configurations', icon: <MessageOutlined />, label: '企业微信接收配置', description: '按业务单位维护接收群与发送账号。', domain: 'wecom', scope:'global', capability:'global.manage' },
   { key: 'wecom-senders', icon: <UserOutlined />, label: '发送账号', description: '查看已核实的官方成员及分发工作空间发送资格，与手机账号无关。', domain: 'wecom', scope: 'selectable', capability: 'resources.read' },
   {
     key: 'audit',
@@ -103,18 +105,17 @@ export const navigation: NavigationItem[] = [
     capability: 'global.manage',
   },
   {key:'source-credentials',label:'调用方凭据',description:'签发下游消息推送凭据，维护消息分发路由。',domain:'source',scope:'global',capability:'global.manage',icon:<SafetyCertificateOutlined/>},
-  {key:'source-routing-directory',label:'业务单位与分组',description:'维护消息路由使用的业务单位、受众分组及目标目录。',domain:'source',scope:'global',capability:'global.manage',icon:<ApartmentOutlined/>},
-  {key:'advertisements',label:'广告素材与共享',description:'维护单位广告、授权共享和正文版本，接收方主动选用。',domain:'source',scope:'global',capability:'advertising.manage',icon:<SnippetsOutlined/>},
-  {key:'advertisement-rotations',label:'广告序列轮询',description:'选择授权路由，配置自动广告序列、轮询进度和投放模式。',domain:'source',scope:'global',capability:'routing.configure',icon:<SnippetsOutlined/>},
+  {key:'advertisements',label:'广告素材与投放',description:'维护广告正文及业务单位、平台、全局投放绑定。',domain:'source',scope:'global',capability:'global.manage',icon:<SnippetsOutlined/>},
+  {key:'advertisement-rotations',label:'广告序列轮询',description:'绑定全局、平台或业务单位的广告；按业务单位分别记录广告轮询进度。',domain:'source',scope:'global',capability:'global.manage',icon:<SnippetsOutlined/>},
   {key:'keyword-rules',label:'敏感词拦截',description:'维护来源消息的敏感词拦截规则。',domain:'source',scope:'global',capability:'global.manage',icon:<SafetyCertificateOutlined/>},
-  {key:'source-automation-tasks',label:'自动链路任务',description:'查看自动任务、通道执行结果与执行证据，停止或推进可恢复目标。',domain:'source',scope:'global',capability:'automation.read',icon:<SendOutlined/>},
-  {key:'source-receipts',label:'收件与回执',description:'按获授权路由查看消息收件、版本处理、检查记录及实际发送结果。',domain:'source',scope:'global',capability:'routing.configure',icon:<MessageOutlined/>},
-  {key:'source-route-configurations',label:'路由执行配置',description:'配置获授权路由的发送通道、工作空间、目标群及自动运行状态。',domain:'source',scope:'global',capability:'routing.configure',icon:<SendOutlined/>},
+  {key:'source-automation-tasks',label:'即时消息与发送结果',description:'查看即时消息、通道委托及实际发送结果。',domain:'source',scope:'global',capability:'automation.read',icon:<SendOutlined/>},
+  {key:'source-receipts',label:'收件与回执',description:'按获授权路由查看消息收件与实际发送结果。',domain:'source',scope:'global',capability:'routing.configure',icon:<MessageOutlined/>},
+  {key:'source-route-configurations',label:'路由执行配置',description:'按业务单位维护通道接收配置和消息查看授权。',domain:'source',scope:'global',capability:'routing.configure',icon:<SendOutlined/>},
 ]
 
 export function canNavigate(item: NavigationItem, platformAdmin: boolean, schoolRole?: string, mobileRole?: string, routingAdmin = false, advertisingAdmin = false): boolean {
   switch (item.capability) {
-    case 'automation.read': return platformAdmin || ['admin','operator'].includes(schoolRole??'') || ['admin','operator'].includes(mobileRole??'')
+    case 'automation.read': return platformAdmin || routingAdmin || ['admin','operator'].includes(schoolRole??'') || ['admin','operator'].includes(mobileRole??'')
     case 'advertising.manage': return platformAdmin || advertisingAdmin || routingAdmin || schoolRole === 'admin' || mobileRole === 'admin'
     case 'routing.configure': return platformAdmin || routingAdmin || schoolRole === 'admin' || mobileRole === 'admin'
     case 'mobile.operate': return platformAdmin || mobileRole === 'admin' || mobileRole === 'operator'

@@ -64,17 +64,15 @@ test('消息分发路由是调用方凭据的子项，不注册独立导航', ()
 })
 
 
-test('消息接收管理提供独立目录与路由执行配置入口，按权限展示', () => {
-  const directory = navigation.find(item => item.key === 'source-routing-directory')!
+test('消息接收管理保留路由执行配置，移除独立单位分组入口', () => {
+  expect(navigation.find(item => item.key === 'source-routing-directory')).toBeUndefined()
   const configuration = navigation.find(item => item.key === 'source-route-configurations')!
-  expect(directory.label).toBe('业务单位与分组')
   expect(configuration.label).toBe('路由执行配置')
-  for (const item of [directory, configuration]) {
+  for (const item of [configuration]) {
     expect(item.domain).toBe('source')
     expect(canNavigate(item, true)).toBe(true)
     expect(canNavigate(item, false, 'operator', 'operator')).toBe(false)
   }
-  expect(canNavigate(directory, false, 'admin', 'admin')).toBe(false)
   expect(canNavigate(configuration, false, 'admin')).toBe(true)
   expect(canNavigate(configuration, false, undefined, 'admin')).toBe(true)
   expect(visibleNavigationKeys(false, 'operator', 'operator', true)).toContain(configuration.key)
@@ -100,27 +98,30 @@ test('敏感词拦截仅向系统管理员开放',()=>{
  expect(canNavigate(item,false,'operator','operator')).toBe(false)
 })
 
-test('广告素材有直接入口，单位专项管理不依赖分发工作空间角色',()=>{
+test('广告投放管理使用系统管理授权，不依赖工作空间角色',()=>{
  const item=navigation.find(item=>item.key==='advertisements')!
- expect(item.label).toBe('广告素材与共享');expect(item.domain).toBe('source')
- expect(canNavigate(item,false,undefined,undefined,false,true)).toBe(true)
- expect(canNavigate(item,false,undefined,undefined,false,false)).toBe(false)
- expect(canNavigate(item,false,undefined,'admin')).toBe(true)
- expect(visibleNavigationKeys(false,undefined,undefined,false,true)).toContain('advertisements')
+ expect(item.label).toBe('广告素材与投放');expect(item.domain).toBe('source')
+ expect(canNavigate(item,true)).toBe(true)
+ expect(canNavigate(item,false,undefined,undefined,false,true)).toBe(false)
+ expect(canNavigate(item,false,undefined,'admin')).toBe(false)
+ expect(visibleNavigationKeys(false,undefined,undefined,false,true)).not.toContain('advertisements')
 })
 
-test('广告序列轮询提供独立入口并要求路由配置权限',()=>{
+test('广告轮询入口使用系统管理授权',()=>{
  const item=navigation.find(item=>item.key==='advertisement-rotations')!
- expect(item.label).toBe('广告序列轮询')
- expect(item.domain).toBe('source')
- expect(canNavigate(item,true)).toBe(true)
- expect(canNavigate(item,false,undefined,'admin')).toBe(true)
- expect(canNavigate(item,false,'operator','operator')).toBe(false)
- expect(canNavigate(item,false,undefined,undefined,false,true)).toBe(false)
+ expect(item.label).toBe('广告序列轮询');expect(canNavigate(item,true)).toBe(true)
+ expect(canNavigate(item,false,undefined,'admin')).toBe(false)
 })
 
 test('makes automatic tasks discoverable to both workspace operators without granting route configuration',()=>{
  expect(visibleNavigationKeys(false,'operator','operator')).toContain('source-automation-tasks')
  expect(visibleNavigationKeys(false,undefined,'operator')).toContain('source-automation-tasks')
  expect(visibleNavigationKeys(false,'operator','operator')).not.toContain('source-route-configurations')
+})
+
+test('路由授权可进入执行与回执页面，不依赖工作空间角色',()=>{
+ const keys=visibleNavigationKeys(false,undefined,undefined,true)
+ expect(keys).toContain('source-route-configurations')
+ expect(keys).toContain('source-receipts')
+ expect(keys).toContain('source-automation-tasks')
 })
