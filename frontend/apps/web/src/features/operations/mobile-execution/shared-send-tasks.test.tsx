@@ -17,7 +17,7 @@ beforeEach(() => {
 })
 async function compose(admin = true) {
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SharedSendTasks school="school" admin={admin} /></QueryClientProvider>)
-  expect(screen.getByRole('link',{name:'自动链路执行与证据'}).getAttribute('href')).toBe('/admin?view=source-automation-tasks&channel=mobile&workspace_id=school')
+  expect(screen.getByRole('link',{name:'自动链路执行与证据'}).getAttribute('href')).toBe('/admin?view=source-automation-tasks')
   fireEvent.mouseDown(screen.getByLabelText('手机目标群'))
   fireEvent.click(await screen.findByText('实际搜索文字'))
   fireEvent.change(screen.getByLabelText('发送文字'), { target: { value: message } })

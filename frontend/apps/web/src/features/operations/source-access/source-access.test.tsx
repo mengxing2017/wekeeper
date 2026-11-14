@@ -28,6 +28,7 @@ it('creates caller credentials without a separate platform or downstream URL',as
  api.list.mockResolvedValue({items:[],has_more:false});api.save.mockResolvedValue({id:'key-new'})
  render(<QueryClientProvider client={cache}><SourceAccess/></QueryClientProvider>)
  expect(screen.getByText('调用方凭据')).toBeTruthy()
+ expect(screen.queryByRole('button',{name:'业务单位与分组'})).toBeNull()
  fireEvent.click(screen.getByRole('button',{name:/新\s*增/}))
  fireEvent.change(await screen.findByLabelText('平台名称'),{target:{value:'Linjian 调用方'}})
  expect(screen.queryByLabelText('所属平台 ID')).toBeNull()

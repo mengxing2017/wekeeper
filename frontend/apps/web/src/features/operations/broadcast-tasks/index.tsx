@@ -94,7 +94,7 @@ export default function BroadcastTasks({
   }
   return (
     <section>
-      <Button href={`/admin?view=source-automation-tasks&channel=wecom&workspace_id=${encodeURIComponent(school)}`}>自动链路执行与证据</Button>
+      <Button href={'/admin?view=source-automation-tasks'}>自动链路执行与证据</Button>
       <Alert type="info" title="企业微信分发管理 · 官方接口" description="客户群、模板、官方发送身份和结果属于官方渠道；失败不会自动改用手机。" />
       {capability.data && !capability.data.broadcast_available && (
         <Alert type="warning" title={capability.data.reason} />

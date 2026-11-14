@@ -8,11 +8,11 @@ import { identity } from '../../identity/api'
 import { workspace } from './api'
 import { wecomWorkspaces } from '../../operations/wecom-senders/api'
 import { mobileWorkspaces } from '../../operations/mobile-execution/api'
-import { sourceRouting, sourceReceipts, sourceAutomation } from '../../operations/source-access/api'
-import {advertising} from '../../operations/advertising/api'
+import { sourceRouting, sourceReceipts, businessMessages } from '../../operations/source-access/api'
+import {scopedMaterials,adPlacements,advertisingScopes} from '../../operations/advertising/api'
 import { auditEvents } from '../audit/api'
 
-vi.mock('../../operations/advertising/api',()=>({advertising:{directory:vi.fn(),list:vi.fn(),config:vi.fn(),pool:vi.fn(),candidates:vi.fn()},advertisementReasonLabels:{}}))
+vi.mock('../../operations/advertising/api',()=>({scopedMaterials:{list:vi.fn()},adPlacements:{list:vi.fn()},advertisingScopes:vi.fn(),advertising:{},advertisementReasonLabels:{}}))
 vi.mock('../../identity/api', () => ({ identity: { session: vi.fn() }, subscribeUnauthorized: () => () => {} }))
 vi.mock('./api', () => ({ workspace: { list: vi.fn() } }))
 vi.mock('../../operations/wecom-senders', () => ({ OfficialSenders: ({school}:{school:string}) => <p>发送账号范围：{school}</p> }))
@@ -21,15 +21,15 @@ vi.mock('./template-manager', () => ({ TemplateManager: ({school}:{school:string
 vi.mock('../audit/api', () => ({ auditEvents: { list: vi.fn() } }))
 vi.mock('../../operations/wecom-senders/api', () => ({ wecomWorkspaces: { list: vi.fn(), save: vi.fn(), members: vi.fn(), grant: vi.fn() } }))
 vi.mock('../../operations/mobile-execution/api', () => ({ mobileWorkspaces: { list: vi.fn() } }))
-vi.mock('../../operations/source-access/api', () => ({ sourceRouting: { entities: vi.fn(), assigned: vi.fn() }, sourceReceipts: {list:vi.fn()}, sourceAutomation:{list:vi.fn()}, executionEvidenceLabels:{}, automationStateLabels:{}, receiptStatusLabels:{},receiptStageLabels:{},receiptReasonLabels:{},routingIssueLabels:{} }))
+vi.mock('../../operations/source-access/api', () => ({ sourceRouting: { entities: vi.fn(), assigned: vi.fn() }, sourceReceipts: {list:vi.fn()}, businessMessages:{list:vi.fn()}, executionEvidenceLabels:{}, automationStateLabels:{}, receiptStatusLabels:{},receiptStageLabels:{},receiptReasonLabels:{},routingIssueLabels:{} }))
 afterEach(() => { cleanup(); vi.resetAllMocks() })
 // Async React Query renders need the same allowance as other form-heavy suites.
 configure({asyncUtilTimeout:5000})
 beforeEach(() => {
-  vi.mocked(advertising.directory).mockResolvedValue({units:[],scopes:[],workspaces:[],routes:[],system_admin:false})
-  vi.mocked(advertising.list).mockResolvedValue({items:[],has_more:false})
-  vi.mocked(sourceAutomation.list).mockResolvedValue({items:[],has_more:false})
-  vi.mocked(sourceRouting.entities).mockResolvedValue({items:[]})
+  vi.mocked(scopedMaterials.list).mockResolvedValue({items:[],has_more:false})
+  vi.mocked(adPlacements.list).mockResolvedValue({items:[],has_more:false})
+  vi.mocked(advertisingScopes).mockResolvedValue({platforms:[],units:[]})
+  vi.mocked(businessMessages.list).mockResolvedValue({items:[],has_more:false})
   vi.mocked(sourceRouting.assigned).mockResolvedValue({items:[]})
   vi.mocked(identity.session).mockResolvedValue({csrf:'csrf',user:{id:'admin',username:'admin',display_name:'管理员',platform_admin:true,bound_school_id:null,grants:[],wecom_authenticated:false}})
   vi.mocked(wecomWorkspaces.list).mockResolvedValue({items:[{id:'one',name:'分发一',role:'admin'},{id:'two',name:'分发二',role:'admin'}]})
@@ -126,35 +126,30 @@ it('authorized operators can switch their workspaces without creation or permiss
 
 
 it.each([
-  ['业务单位与分组', '新增单位'],
-  ['路由执行配置', '路由执行配置'],
+  ['路由执行配置', '业务单位接收配置'],
   ['收件与回执', '收件与回执'],
 ])('opens the actual %s page from the sidebar', async (entry, content) => {
   show('audit')
   await screen.findByText('identity.password.reset')
   fireEvent.click(screen.getByRole('menuitem', {name: entry}))
-  if (entry === '业务单位与分组') {
-    expect(await screen.findByRole('button', {name: content})).toBeTruthy()
-    expect(sourceRouting.entities).toHaveBeenCalledWith('routing-units')
-  } else {
-    expect(await screen.findByText(content, {selector: '.ant-card-head-title'})).toBeTruthy()
-    await waitFor(() => expect(sourceRouting.assigned).toHaveBeenCalled())
-  }
+  expect(await screen.findByText(content, {selector: '.ant-card-head-title'})).toBeTruthy()
+  await waitFor(() => expect(sourceRouting.assigned).toHaveBeenCalled())
 })
-it('opens route configuration for an admin of another workspace without exposing credentials', async () => {
+it('opens route configuration with explicit route authorization and no workspace role', async () => {
   const session = await vi.mocked(identity.session)()
   vi.mocked(identity.session).mockResolvedValue({...session,user:{...session.user,platform_admin:false}})
-  vi.mocked(wecomWorkspaces.list).mockResolvedValue({items:[{id:'one',name:'分发一',role:'operator'},{id:'two',name:'分发二',role:'admin'}]})
+  vi.mocked(wecomWorkspaces.list).mockResolvedValue({items:[]})
+  vi.mocked(sourceRouting.assigned).mockResolvedValue({items:[{id:'route-1',route_name:'授权路由',caller_name:'平台',business_unit_id:'unit',status:'active'}]})
   show('source-route-configurations')
-  expect(await screen.findByText('路由执行配置', {selector: '.ant-card-head-title'})).toBeTruthy()
+  expect(await screen.findByText('业务单位接收配置', {selector: '.ant-card-head-title'})).toBeTruthy()
   await waitFor(() => expect(sourceRouting.assigned).toHaveBeenCalled())
   expect(screen.queryByRole('menuitem', {name:'调用方凭据'})).toBeNull()
   expect(screen.queryByRole('menuitem', {name:'业务单位与分组'})).toBeNull()
 })
 
 it('opens scoped receipts from the direct sidebar entry through the route row',async()=>{
- vi.mocked(sourceRouting.assigned).mockResolvedValue({items:[{id:'route-1',route_name:'通知路由',caller_name:'调用方一',execution_state:'draft',retired_at:null}]})
- vi.mocked(sourceReceipts.list).mockResolvedValue({items:[],has_more:false,can_recheck:true})
+ vi.mocked(sourceRouting.assigned).mockResolvedValue({items:[{id:'route-1',route_name:'通知路由',caller_name:'调用方一',business_unit_id:'unit',status:'active'}]})
+ vi.mocked(sourceReceipts.list).mockResolvedValue({items:[],has_more:false})
  show('audit')
  await screen.findByText('identity.password.reset')
  fireEvent.click(screen.getByRole('menuitem',{name:'收件与回执'}))
@@ -164,31 +159,21 @@ it('opens scoped receipts from the direct sidebar entry through the route row',a
  expect(screen.queryByRole('button',{name:'执行配置'})).toBeNull()
 })
 
-it('opens automatic advertisement rotation from the sidebar through an authorized route',async()=>{
- vi.mocked(sourceRouting.assigned).mockResolvedValue({items:[{id:'route-1',route_name:'通知路由',caller_name:'调用方一',execution_state:'draft',retired_at:null}]})
- vi.mocked(advertising.config).mockResolvedValue({id:'route-1',revision:0,config:{mode:'none',fixed_ad_id:null,insertion_position:'after',unavailable_policy:'without_ad',auto_recover:true}})
- vi.mocked(advertising.pool).mockResolvedValue({id:'route-1',pool_id:null,revision:0,slots:[],cursor:null,transitions:[]})
- vi.mocked(advertising.candidates).mockResolvedValue({items:[],has_more:false})
+it('opens advertisement rotation as direct scope bindings without route pools',async()=>{
  show('audit')
  await screen.findByText('identity.password.reset')
  fireEvent.click(screen.getByRole('menuitem',{name:'广告序列轮询'}))
- fireEvent.click(await screen.findByRole('button',{name:'配置广告序列轮询'}))
- const editor=await screen.findByRole('dialog',{name:'广告序列轮询配置'},{timeout:15000})
- expect(await within(editor).findByRole('button',{name:'发布序列'},{timeout:15000})).toBeTruthy()
- expect(screen.getByLabelText('广告模式')).toBeTruthy()
- expect(advertising.pool).toHaveBeenCalledWith('route-1')
- expect(advertising.config).toHaveBeenCalledWith('route-1')
- expect(screen.queryByRole('button',{name:'保存执行配置'})).toBeNull()
+ expect(await screen.findByRole('button',{name:'绑定投放范围'})).toBeTruthy()
+ expect(screen.queryByLabelText('广告模式')).toBeNull()
+ expect(scopedMaterials.list).toHaveBeenCalledWith(1)
+ expect(adPlacements.list).toHaveBeenCalledWith(1)
 })
 
-it('opens the actual advertising page from its sidebar without a workspace dependency',async()=>{
- const session=await vi.mocked(identity.session)()
- vi.mocked(identity.session).mockResolvedValue({...session,user:{...session.user,platform_admin:false}})
+it('opens the actual advertising page without a workspace dependency',async()=>{
  vi.mocked(wecomWorkspaces.list).mockResolvedValue({items:[]})
- vi.mocked(advertising.directory).mockResolvedValue({units:[{id:'ad-unit',name:'广告单位',can_edit:true,can_share:false}],scopes:[],workspaces:[],routes:[],system_admin:false})
  show('advertisements')
  expect(await screen.findByRole('button',{name:'新增广告'}, {timeout:15000})).toBeTruthy()
- expect(await screen.findByRole('menuitem',{name:'广告素材与共享'}, {timeout:15000})).toBeTruthy()
+ expect(await screen.findByRole('menuitem',{name:'广告素材与投放'}, {timeout:15000})).toBeTruthy()
  expect(screen.queryByLabelText('企业微信分发工作空间')).toBeNull()
  expect(screen.queryByLabelText('移动分发工作空间')).toBeNull()
 })
@@ -196,8 +181,9 @@ it('opens the actual advertising page from its sidebar without a workspace depen
 it('opens automatic execution results from the actual sidebar',async()=>{
  show('audit')
  await screen.findByText('identity.password.reset')
- fireEvent.click(screen.getByRole('menuitem',{name:'自动链路任务'}))
- expect(await screen.findByRole('button',{name:'刷新任务'},{timeout:15000})).toBeTruthy()
- await waitFor(()=>expect(sourceAutomation.list).toHaveBeenCalled())
- expect(screen.getByLabelText('执行通道')).toBeTruthy()
+ fireEvent.click(screen.getByRole('menuitem',{name:'即时消息与发送结果'}))
+ expect(await screen.findByRole('button',{name:'刷新消息'},{timeout:15000})).toBeTruthy()
+ await waitFor(()=>expect(businessMessages.list).toHaveBeenCalled())
+ expect(screen.queryByLabelText('执行通道')).toBeNull()
+ expect(screen.queryByLabelText('移动分发工作空间')).toBeNull()
 })
