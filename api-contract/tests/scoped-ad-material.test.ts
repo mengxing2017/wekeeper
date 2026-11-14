@@ -1,5 +1,5 @@
 import {afterEach,expect,it,vi} from 'vitest'
-import {placementRules,scopedMaterials} from '../src/modules/advertising'
+import {adPlacements,scopedMaterials} from '../src/modules/advertising'
 import fixture from '../fixtures/scoped-ad-material.json'
 
 afterEach(()=>vi.unstubAllGlobals())
@@ -17,26 +17,26 @@ it('uses the independent material resources and shared payloads',async()=>{
  expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({data:{type:'ad-material-publications',attributes:fixture.publish}})
 })
 
-it('creates a unit-scoped rule without route or workspace fields',async()=>{
- const fetchMock=vi.fn().mockImplementationOnce(async()=>Response.json(fixture.rule_response,{headers:{'content-type':'application/vnd.api+json'}})).mockImplementationOnce(async()=>Response.json(fixture.rule_response,{headers:{'content-type':'application/vnd.api+json'}})).mockImplementationOnce(async()=>Response.json(fixture.rule_state_response,{headers:{'content-type':'application/vnd.api+json'}}))
+it('creates a direct unit-scoped advertisement placement without route or workspace fields',async()=>{
+ const fetchMock=vi.fn().mockImplementationOnce(async()=>Response.json(fixture.placement_response,{headers:{'content-type':'application/vnd.api+json'}})).mockImplementationOnce(async()=>Response.json(fixture.placement_response,{headers:{'content-type':'application/vnd.api+json'}})).mockImplementationOnce(async()=>Response.json(fixture.placement_state_response,{headers:{'content-type':'application/vnd.api+json'}}))
  vi.stubGlobal('fetch',fetchMock)
- expect(await placementRules.create(fixture.rule_create as Parameters<typeof placementRules.create>[0])).toEqual(fixture.rule_view)
- expect(await placementRules.get(fixture.rule_view.id)).toEqual(fixture.rule_view)
- expect(await placementRules.setState(fixture.rule_view.id,fixture.rule_state)).toEqual(fixture.rule_state_view)
- expect(fetchMock.mock.calls[0][0]).toBe('/api/v2/admin/ad-placement-rules')
- expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({data:{type:'ad-placement-rules',attributes:fixture.rule_create}})
- expect(fetchMock.mock.calls[1][0]).toBe(`/api/v2/admin/ad-placement-rules/${fixture.rule_view.id}`)
- expect(fetchMock.mock.calls[2][0]).toBe(`/api/v2/admin/ad-placement-rules/${fixture.rule_view.id}/state`)
- expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({data:{type:'ad-placement-rule-states',attributes:fixture.rule_state}})
+ expect(await adPlacements.create(fixture.placement_create as Parameters<typeof adPlacements.create>[0])).toEqual(fixture.placement_view)
+ expect(await adPlacements.get(fixture.placement_view.id)).toEqual(fixture.placement_view)
+ expect(await adPlacements.setState(fixture.placement_view.id,fixture.placement_state)).toEqual(fixture.placement_state_view)
+ expect(fetchMock.mock.calls[0][0]).toBe('/api/v2/admin/ad-placements')
+ expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({data:{type:'ad-placements',attributes:fixture.placement_create}})
+ expect(fetchMock.mock.calls[1][0]).toBe(`/api/v2/admin/ad-placements/${fixture.placement_view.id}`)
+ expect(fetchMock.mock.calls[2][0]).toBe(`/api/v2/admin/ad-placements/${fixture.placement_view.id}/state`)
+ expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({data:{type:'ad-placement-states',attributes:fixture.placement_state}})
 })
 
 it('lists independent material and placement resources',async()=>{
- const fetchMock=vi.fn().mockImplementationOnce(async()=>Response.json({data:{type:'ad-materials',id:'list',attributes:{items:[fixture.material],has_more:false}}},{headers:{'content-type':'application/vnd.api+json'}})).mockImplementationOnce(async()=>Response.json({data:{type:'ad-placement-rules',id:'list',attributes:{items:[fixture.rule_view],has_more:false}}},{headers:{'content-type':'application/vnd.api+json'}}))
+ const fetchMock=vi.fn().mockImplementationOnce(async()=>Response.json({data:{type:'ad-materials',id:'list',attributes:{items:[fixture.material],has_more:false}}},{headers:{'content-type':'application/vnd.api+json'}})).mockImplementationOnce(async()=>Response.json({data:{type:'ad-placements',id:'list',attributes:{items:[fixture.placement_view],has_more:false}}},{headers:{'content-type':'application/vnd.api+json'}}))
  vi.stubGlobal('fetch',fetchMock)
  expect(await scopedMaterials.list()).toMatchObject({items:[fixture.material],has_more:false})
- expect(await placementRules.list(2)).toMatchObject({items:[fixture.rule_view],has_more:false})
+ expect(await adPlacements.list(2)).toMatchObject({items:[fixture.placement_view],has_more:false})
  expect(fetchMock.mock.calls[0][0]).toBe('/api/v2/admin/ad-materials?page=1')
- expect(fetchMock.mock.calls[1][0]).toBe('/api/v2/admin/ad-placement-rules?page=2')
+ expect(fetchMock.mock.calls[1][0]).toBe('/api/v2/admin/ad-placements?page=2')
 })
 
 it('archives an independent material with its revision and reason',async()=>{
