@@ -271,18 +271,21 @@ impl Repository {
             t.get::<Option<Uuid>, _>("authorized_by")
                 .unwrap_or(t.get("creator_id")),
         );
-        authorize(
-            tx,
-            actor,
-            s,
-            t.get::<String, _>("content_source") == "text"
-                && t.get::<Option<Uuid>, _>("confirmed_by").is_some(),
-        )
-        .await?;
+        let automatic = t.get::<String, _>("authorization_kind") == "source_route";
+        if !automatic {
+            authorize(
+                tx,
+                actor,
+                s,
+                t.get::<String, _>("content_source") == "text"
+                    && t.get::<Option<Uuid>, _>("confirmed_by").is_some(),
+            )
+            .await?;
+        }
         sqlx::query("SELECT singleton FROM wecom_directory_state WHERE corp_id=$1 AND credential_generation=$2 FOR SHARE").bind(t.get::<String,_>("corp_id")).bind(t.get::<i64,_>("generation")).fetch_optional(&mut **tx).await?.ok_or(Error::Conflict)?;
         super::content::validate_task(&mut *tx, task).await?;
-        let groups=sqlx::query("SELECT g.id FROM broadcast_targets x JOIN broadcast_batches b ON b.id=x.batch_id JOIN wecom_groups g ON g.id=x.group_id JOIN wecom_asset_objects o ON o.id=g.directory_group_id JOIN accounts a ON a.id=b.sender_account JOIN wecom_members m ON m.id=a.wecom_member_id JOIN wecom_workspace_members sm ON sm.account_id=a.id AND sm.school_id=x.school_id WHERE x.task_id=$1 AND ($3::uuid IS NULL OR x.batch_id=$3) AND g.school_id=x.school_id AND g.active AND g.revision=x.group_revision AND g.chat_id=x.chat_id AND g.corp_id=b.corp_id AND o.credential_generation=$2 AND o.verification='verified' AND o.visibility='visible' AND o.checked_at>now()-interval '24 hours' AND lower(o.data->>'owner' COLLATE \"C\")=m.userid_key AND lower(b.sender COLLATE \"C\")=m.userid_key AND a.active AND a.wecom_binding_revision=b.binding_revision AND m.verification='verified' AND m.status=1 AND sm.role IN ('operator','admin') AND NOT EXISTS(SELECT 1 FROM wecom_sender_qualifications q WHERE q.school_id=g.school_id AND q.account_id=a.id AND NOT q.enabled) ORDER BY g.id FOR UPDATE OF g FOR SHARE OF a,m,sm,o")
-            .bind(task).bind(t.get::<i64,_>("generation")).bind(batch).fetch_all(&mut **tx).await?;
+        let groups=sqlx::query("SELECT g.id FROM broadcast_targets x JOIN broadcast_batches b ON b.id=x.batch_id JOIN wecom_groups g ON g.id=x.group_id JOIN wecom_asset_objects o ON o.id=g.directory_group_id JOIN accounts a ON a.id=b.sender_account JOIN wecom_members m ON m.id=a.wecom_member_id LEFT JOIN wecom_workspace_members sm ON sm.account_id=a.id AND sm.school_id=x.school_id WHERE x.task_id=$1 AND ($3::uuid IS NULL OR x.batch_id=$3) AND g.school_id=x.school_id AND g.active AND g.revision=x.group_revision AND g.chat_id=x.chat_id AND g.corp_id=b.corp_id AND o.credential_generation=$2 AND o.verification='verified' AND o.visibility='visible' AND o.checked_at>now()-interval '24 hours' AND lower(o.data->>'owner' COLLATE \"C\")=m.userid_key AND lower(b.sender COLLATE \"C\")=m.userid_key AND a.active AND a.wecom_binding_revision=b.binding_revision AND m.verification='verified' AND m.status=1 AND ($4 OR sm.role IN ('operator','admin')) AND ($4 OR NOT EXISTS(SELECT 1 FROM wecom_sender_qualifications q WHERE q.school_id=g.school_id AND q.account_id=a.id AND NOT q.enabled)) ORDER BY g.id FOR UPDATE OF g FOR SHARE OF a,m,o")
+            .bind(task).bind(t.get::<i64,_>("generation")).bind(batch).bind(automatic).fetch_all(&mut **tx).await?;
         let count: i64 =
             sqlx::query_scalar("SELECT count(*) FROM broadcast_targets WHERE task_id=$1 AND ($2::uuid IS NULL OR batch_id=$2)")
                 .bind(task)
@@ -806,29 +809,6 @@ impl Store for Repository {
             }
         }
 
-        if w.operation == "create" {
-            let source:Option<(Uuid,Uuid)>=sqlx::query_as("SELECT l.receipt_id,x.group_id FROM source_execution_generations l JOIN broadcast_targets x ON x.task_id=l.task_id WHERE x.batch_id=$1").bind(w.id).fetch_optional(&mut *tx).await?;
-            if let Some((receipt, _)) = source {
-                let current:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_execution_tasks WHERE receipt_id=$1 AND task_id=$2)").bind(receipt).bind(w.task_id).fetch_one(&mut *tx).await?;
-                if !current {
-                    return Ok(false);
-                }
-            }
-            if let Some((receipt, target)) = source
-                && let Err(error) =
-                    crate::source_access::south::adapter::postgres::routing::guard_submission(
-                        &mut tx, receipt, target,
-                    )
-                    .await
-            {
-                if error.0 == "temporarily_unavailable" {
-                    return Err(Error::Unavailable);
-                }
-                sqlx::query("UPDATE broadcast_batches SET next_sync_at=now()+interval '30 seconds',error_code=$2,state=CASE WHEN $2 IN ('content_version_superseded','route_retired','target_removed','target_identity_changed','not_found') THEN 'cancelled' ELSE state END WHERE id=$1 AND state='queued'").bind(w.id).bind(error.0).execute(&mut *tx).await?;
-                tx.commit().await?;
-                return Ok(false);
-            }
-        }
         // Task lock serializes edits, confirmation, stopping, and all batch claims.
         let t = sqlx::query("SELECT * FROM broadcast_tasks WHERE id=$1 FOR UPDATE")
             .bind(w.task_id)

@@ -9,7 +9,7 @@ pub(super) async fn raw_candidates(tx: &mut Tx<'_>, s: Uuid, target: Uuid) -> Re
  'credential_generation',d.credential_generation,'delegation_id',m.id,'accepted',coalesce(c.accepted,false),'consent_state',CASE WHEN c.accepted IS NULL THEN 'unknown' WHEN c.accepted THEN 'accepted' ELSE 'revoked' END,
  'execution',jsonb_build_object('contract','device_owned/1','capability','wecom.group_text'))
  FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id AND t.school_id=b.school_id
- JOIN mobile_workspaces s ON s.id=t.school_id AND s.active JOIN execution_devices d ON d.id=b.device_id
+ JOIN execution_devices d ON d.id=b.device_id
  LEFT JOIN mobile_shared_delegations m ON m.device_id=d.id AND m.credential_generation=d.credential_generation
  LEFT JOIN LATERAL(SELECT * FROM mobile_shared_delegation_decisions c WHERE c.delegation_id=m.id ORDER BY revision DESC LIMIT 1)c ON true
  WHERE t.school_id=$1 AND t.id=$2 AND t.enabled AND t.archived_at IS NULL AND b.enabled AND d.enabled
@@ -671,7 +671,15 @@ pub(super) async fn create_authorized_task(
     } else {
         require(sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM distribution_message_snapshots WHERE id=$1 AND school_id=$2 AND channel='mobile' AND content=$3 AND content_hash=$4)").bind(snap).bind(s).bind(message).bind(hash(message)).fetch_one(&mut **tx).await?,"source_snapshot_mismatch")?;
     }
-    sqlx::query("INSERT INTO mobile_v9_tasks(id,school_id,draft_id,intent_id,preview_id,confirmed_by,confirmed_until) VALUES($1,$2,$3,$4,$5,$6,clock_timestamp()+make_interval(secs=>$7::double precision))").bind(id).bind(s).bind(uid(plan,"draft_id")?).bind(uid(plan,"intent_id")?).bind(uid(p,"id")?).bind(principal).bind(current["confirmation_seconds"].as_i64().ok_or(Error::Conflict)? as f64).execute(&mut **tx).await?;
+    // Initial reconciliation runs below, so persist the actual authorization
+    // kind before creating attempts; an automatic task is never briefly manual.
+    let authorization_kind =
+        if plan["authorization_kind"] == "source_route" && p.get("source_snapshot_id").is_some() {
+            "source_route"
+        } else {
+            "manual"
+        };
+    sqlx::query("INSERT INTO mobile_v9_tasks(id,school_id,draft_id,intent_id,preview_id,confirmed_by,confirmed_until,authorization_kind) VALUES($1,$2,$3,$4,$5,$6,clock_timestamp()+make_interval(secs=>$7::double precision),$8)").bind(id).bind(s).bind(uid(plan,"draft_id")?).bind(uid(plan,"intent_id")?).bind(uid(p,"id")?).bind(principal).bind(current["confirmation_seconds"].as_i64().ok_or(Error::Conflict)? as f64).bind(authorization_kind).execute(&mut **tx).await?;
     for item in items {
         let iid = Uuid::now_v7();
         let pid = Uuid::now_v7();

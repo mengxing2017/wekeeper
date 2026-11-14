@@ -63,6 +63,7 @@ mod tests {
 pub mod broadcast;
 pub mod dispatch;
 pub mod execution_evidence;
+pub mod receiving;
 
 pub mod device_registry;
 

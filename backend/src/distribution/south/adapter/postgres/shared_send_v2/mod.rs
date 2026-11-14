@@ -432,7 +432,3 @@ pub(crate) async fn source_guard(tx: &mut Tx<'_>) -> Result<()> {
         .await?;
     Ok(())
 }
-
-pub(crate) fn routing_candidate_identity(candidate: &Value) -> Value {
-    tasks::dependencies(candidate)
-}

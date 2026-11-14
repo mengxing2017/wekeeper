@@ -74,18 +74,20 @@ pub async fn save_snapshot(
     Ok(())
 }
 pub async fn validate_task(tx: &mut Tx<'_>, task: Uuid) -> Result<()> {
-    let row=sqlx::query("SELECT t.content_source,t.source_namespace,t.authorization_kind,t.school_id,t.content,s.enabled,s.max_pending FROM broadcast_tasks t JOIN distribution_sources s ON s.namespace=t.source_namespace WHERE t.id=$1 FOR SHARE OF s")
+    let row=sqlx::query("SELECT t.state,t.content_source,t.source_namespace,t.authorization_kind,t.school_id,t.content,s.enabled,s.max_pending FROM broadcast_tasks t JOIN distribution_sources s ON s.namespace=t.source_namespace WHERE t.id=$1 FOR SHARE OF s")
         .bind(task).fetch_one(&mut **tx).await?;
-    require(row.get("enabled"), "内容来源已暂停")?;
+    let frozen = row.get::<String, _>("state") == "confirmed";
+    if !frozen {
+        require(row.get("enabled"), "内容来源已暂停")?;
+    }
     let refs=sqlx::query("SELECT r.*,m.version AS current_version,m.allowed,o.enabled AS organization_enabled FROM broadcast_content_references r LEFT JOIN distribution_materials m USING(namespace,external_organization_id,external_content_id,school_id) LEFT JOIN distribution_source_organizations o USING(namespace,external_organization_id,school_id) WHERE r.task_id=$1 ORDER BY r.position")
         .bind(task).fetch_all(&mut **tx).await?;
     let namespace: String = row.get("source_namespace");
     if row.get::<String, _>("content_source") == "text" {
-        // Automatic messages use the frozen route generation, never a manual
-        // confirmation or a namespace supplied by the caller.
+        // Automatic messages use the durable delegation and frozen snapshot.
         let source_route = namespace == "builtin.source-route"
             && row.get::<String, _>("authorization_kind") == "source_route"
-            && sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM source_execution_generations WHERE task_id=$1 AND channel='wecom' AND workspace_id=$2)")
+            && sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM orchestration_delegates WHERE task_id=$1 AND channel='wecom' AND storage_scope=$2)")
                 .bind(task).bind(row.get::<Uuid,_>("school_id")).fetch_one(&mut **tx).await?;
         require(
             refs.is_empty() && (namespace == "builtin.direct" || source_route),
@@ -93,11 +95,13 @@ pub async fn validate_task(tx: &mut Tx<'_>, task: Uuid) -> Result<()> {
         )?;
     } else {
         require(!refs.is_empty(), "缺少来源资格证据")?;
-        // Lock projection rows as the final local barrier. The transactional forum
-        // producer cannot revoke these rows until this claim transaction ends.
+        // Before confirmation check the selected material. Confirmed messages use
+        // their immutable content and references even if the source later changes.
         for r in &refs {
-            sqlx::query("SELECT m.version FROM distribution_materials m JOIN distribution_source_organizations o USING(namespace,external_organization_id,school_id) WHERE m.namespace=$1 AND m.external_organization_id=$2 AND m.external_content_id=$3 AND m.school_id=$4 AND m.version=$5 AND m.allowed AND o.enabled FOR SHARE OF m,o")
+            if !frozen {
+                sqlx::query("SELECT m.version FROM distribution_materials m JOIN distribution_source_organizations o USING(namespace,external_organization_id,school_id) WHERE m.namespace=$1 AND m.external_organization_id=$2 AND m.external_content_id=$3 AND m.school_id=$4 AND m.version=$5 AND m.allowed AND o.enabled FOR SHARE OF m,o")
                 .bind(r.get::<String,_>("namespace")).bind(r.get::<String,_>("external_organization_id")).bind(r.get::<String,_>("external_content_id")).bind(row.get::<Uuid,_>("school_id")).bind(r.get::<String,_>("version")).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("source_content_unavailable"))?;
+            }
             require(r.get::<String, _>("namespace") == namespace, "来源不匹配")?;
         }
     }
@@ -165,9 +169,7 @@ pub async fn consume_events(pool: &PgPool) -> Result<()> {
     super::broadcast::guard(&mut tx).await?;
     let events=sqlx::query("SELECT * FROM distribution_source_events WHERE processed_at IS NULL ORDER BY created_at,id LIMIT 100 FOR UPDATE SKIP LOCKED").fetch_all(&mut *tx).await?;
     for event in events {
-        // Read latest projection, never replay a stale 'allowed' event over it.
-        sqlx::query("UPDATE broadcast_batches b SET state='cancelled',error_code='source_content_withdrawn' FROM broadcast_content_references r JOIN distribution_materials m USING(namespace,external_organization_id,external_content_id,school_id) WHERE b.task_id=r.task_id AND b.state='queued' AND r.namespace=$1 AND r.external_organization_id=$2 AND r.external_content_id=$3 AND (NOT m.allowed OR m.version<>r.version)")
-            .bind(event.get::<String,_>("namespace")).bind(event.get::<String,_>("external_organization_id")).bind(event.get::<String,_>("external_content_id")).execute(&mut *tx).await?;
+        // Updated projections affect new drafts only; confirmed messages retain their content.
         sqlx::query("UPDATE distribution_source_events SET processed_at=now() WHERE id=$1")
             .bind(event.get::<Uuid, _>("id"))
             .execute(&mut *tx)

@@ -1,17 +1,16 @@
 use super::*;
-use crate::source_access::domain::routing::RouteSnapshot;
+use crate::distribution::domain::receiving::DeliveryPlan;
 /// Automatic source tasks use an explicit route authorization, never a fabricated
 /// browser session, preview approval or Confirmation command.
 pub async fn create(
     tx: &mut Tx<'_>,
-    snapshot: &RouteSnapshot,
+    snapshot: &DeliveryPlan,
     message: &str,
     authorizer: Uuid,
     snapshot_id: Uuid,
 ) -> Result<Uuid> {
-    let config = snapshot.execution.as_ref().ok_or(Error::Conflict)?;
-    let s = config.workspace_id;
-    authorize(tx, authorizer, Some(s), true).await?;
+    let s = snapshot.workspace_id;
+    // Explicit source-route authorization was checked before this internal call.
     let input = DraftInput {
         target_ids: snapshot.targets.iter().map(|t| t.id).collect(),
         message: message.into(),
@@ -40,14 +39,10 @@ pub async fn create(
         }
         items.push(json!({"position":position,"target_id":target.id,"selected":candidates[0],"candidates":candidates}));
     }
-    let plan = json!({"schema":SCHEMA,"school_id":s,"intent_id":intent,"draft_id":draft,"draft_revision":1,"between_targets_seconds":input.between_targets_seconds,"message":input.message,"content_digest":hash(&input.message),"items":items,"policy_id":null,"authorization_kind":"source_route","route_id":snapshot.route_id,"config_revision":snapshot.revision});
+    let plan = json!({"schema":SCHEMA,"school_id":s,"intent_id":intent,"draft_id":draft,"draft_revision":1,"between_targets_seconds":input.between_targets_seconds,"message":input.message,"content_digest":hash(&input.message),"items":items,"policy_id":null,"authorization_kind":"source_route","executed_by":"message-orchestration","delegate_id":snapshot.id,"configuration_id":snapshot.configuration_id});
     sqlx::query("INSERT INTO mobile_v9_previews(id,school_id,draft_id,draft_revision,plan,digest) VALUES($1,$2,$3,1,$4,$5)").bind(preview).bind(s).bind(draft).bind(&plan).bind(digest(&plan)?).execute(&mut **tx).await?;
     let p = json!({"id":preview,"plan":plan,"policy_id":null,"source_snapshot_id":snapshot_id});
     let task = tasks::create_authorized_task(tx, authorizer, s, &p).await?;
     let id = uid(&task, "id")?;
-    sqlx::query("UPDATE mobile_v9_tasks SET authorization_kind='source_route' WHERE id=$1")
-        .bind(id)
-        .execute(&mut **tx)
-        .await?;
     Ok(id)
 }

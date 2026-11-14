@@ -34,3 +34,4 @@ pub mod mobile_workspaces;
 pub mod wecom_workspaces;
 
 pub mod groups;
+pub mod receiving;

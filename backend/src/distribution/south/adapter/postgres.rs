@@ -50,4 +50,5 @@ pub mod wecom_workspaces;
 
 pub mod groups;
 
+pub mod receiving;
 pub mod routing;

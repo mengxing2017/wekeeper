@@ -422,16 +422,9 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
             }
             return Ok(());
         }
-        let source_ok = if matches!(w.operation.as_str(), "create" | "remind") {
-            let task = self.store.task(w.school_id, w.task_id).await?;
-            self.sources
-                .check(w.school_id, &task.materials)
-                .await
-                .is_ok()
-        } else {
-            true
-        };
-        if !source_ok || self.client.verify(&w).await.is_err() {
+        // Confirmed work uses frozen content. Only the actual channel/resource
+        // preflight is current; material edits never revoke an existing message.
+        if self.client.verify(&w).await.is_err() {
             let preflight = Work {
                 operation: if w.operation == "create" {
                     "preflight".into()
