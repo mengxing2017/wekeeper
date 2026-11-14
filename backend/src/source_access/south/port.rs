@@ -39,11 +39,6 @@ pub trait RoutingStore: Clone + Send + Sync {
         actor: &crate::business::Actor,
         command: crate::source_access::domain::routing::Command,
     ) -> impl std::future::Future<Output = Result<serde_json::Value>> + Send;
-    fn resolve(
-        &self,
-        receipt: uuid::Uuid,
-    ) -> impl std::future::Future<Output = Result<crate::source_access::domain::routing::Resolution>>
-    + Send;
 }
 
 pub trait ProjectionStore: Clone + Send + Sync {
@@ -54,24 +49,11 @@ pub trait ProjectionStore: Clone + Send + Sync {
     ) -> impl std::future::Future<Output = crate::source_access::domain::Result<serde_json::Value>> + Send;
 }
 
-/// One bounded durable consumer tick. Scheduling belongs to the application runtime.
-pub trait InboxWorker: Send + Sync {
-    fn tick(&self) -> impl std::future::Future<Output = Result<()>> + Send;
-}
-
 pub trait KeywordStore: Clone + Send + Sync {
     fn execute(
         &self,
         actor: &crate::business::Actor,
         command: crate::source_access::domain::keyword_filter::Command,
-    ) -> impl std::future::Future<Output = Result<Value>> + Send;
-}
-
-pub trait OrchestrationStore: Clone + Send + Sync {
-    fn execute(
-        &self,
-        actor: &crate::business::Actor,
-        command: crate::source_access::domain::orchestration::Command,
     ) -> impl std::future::Future<Output = Result<Value>> + Send;
 }
 

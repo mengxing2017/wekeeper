@@ -1173,7 +1173,7 @@ async fn two_sources_share_official_resource_budget_and_unknown_does_not_release
 }
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn forum_withdrawal_is_transactional_and_preserves_snapshot_and_history() {
+async fn source_material_changes_do_not_revoke_confirmed_messages_or_snapshots() {
     let (pool, a, s, input, fake) = setup().await;
     let service = Service {
         store: Repository(pool.clone()),
@@ -1201,7 +1201,7 @@ async fn forum_withdrawal_is_transactional_and_preserves_snapshot_and_history() 
     .unwrap();
     assert!(pending > 0);
     service.run_once().await.unwrap();
-    assert_eq!(fake.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(fake.calls.load(Ordering::SeqCst), 1);
     assert_eq!(
         service.task(&a, s, task.id).await.unwrap().content,
         task.content
@@ -1219,7 +1219,7 @@ async fn forum_withdrawal_is_transactional_and_preserves_snapshot_and_history() 
         .fetch_one(&pool)
         .await
         .unwrap(),
-        1
+        0
     );
 }
 #[tokio::test]

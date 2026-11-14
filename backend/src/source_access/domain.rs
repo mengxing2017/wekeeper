@@ -198,21 +198,14 @@ impl Event {
             "invalid_request",
         )?;
         ensure(
-            matches!(
-                self.event_type.as_str(),
-                "content.upsert" | "content.withdrawn"
-            ),
+            matches!(self.event_type.as_str(), "content.upsert"),
             "invalid_request",
         )?;
-        if self.event_type == "content.upsert" {
-            ensure(
-                self.title.as_ref().is_some_and(|v| !v.trim().is_empty())
-                    && self.content.as_ref().is_some_and(|v| !v.trim().is_empty()),
-                "invalid_request",
-            )?;
-        } else {
-            ensure(self.content.is_none(), "invalid_request")?;
-        }
+        ensure(
+            self.title.as_ref().is_some_and(|v| !v.trim().is_empty())
+                && self.content.as_ref().is_some_and(|v| !v.trim().is_empty()),
+            "invalid_request",
+        )?;
         ensure(
             self.title.as_ref().is_none_or(|v| v.chars().count() <= 512)
                 && self
@@ -455,5 +448,3 @@ pub mod routing;
 pub mod projection;
 
 pub mod keyword_filter;
-
-pub mod orchestration;

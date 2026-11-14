@@ -31,7 +31,6 @@ impl<S: MessageStore> MessageIntake<S> {
                             .as_ref()
                             .is_none_or(|v| v.trim().is_empty())
                 }
-                EventKind::Withdrawn => input.original.content.is_some(),
             }
             || input.original.title.as_ref().map_or(0, String::len)
                 + input.original.content.as_ref().map_or(0, String::len)

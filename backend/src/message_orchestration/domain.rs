@@ -5,8 +5,6 @@ use uuid::Uuid;
 pub enum EventKind {
     #[serde(rename = "content.upsert")]
     Upsert,
-    #[serde(rename = "content.withdrawn")]
-    Withdrawn,
 }
 
 /// Facts supplied only by a trusted, authenticated intake use case.
@@ -47,3 +45,52 @@ pub enum Error {
     Unavailable,
 }
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// Public result projection, shared with the TypeScript client through a fixture.
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct MessageView {
+    pub id: Uuid,
+    pub platform_id: Uuid,
+    pub business_unit_id: Uuid,
+    pub receipt_id: Uuid,
+    pub event_id: Uuid,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub state: String,
+    pub reason_code: Option<String>,
+    pub content: Option<String>,
+    pub decision: Option<crate::advertising::domain::decision::Decision>,
+    pub sending: Option<MessageCounts>,
+    pub delegates: Vec<DelegateView>,
+}
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct MessageCounts {
+    pub pending: i64,
+    pub sent: i64,
+    pub failed: i64,
+    pub unknown: i64,
+}
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct DelegateView {
+    pub id: Uuid,
+    pub channel: String,
+    pub task_id: Option<Uuid>,
+    pub configuration_id: Uuid,
+    pub target_count: i64,
+    pub state: String,
+    pub reason_code: Option<String>,
+}
+#[cfg(test)]
+mod contract_tests {
+    #[test]
+    fn message_results_roundtrip_with_rust_serialization() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../api-contract/fixtures/business-message.json"
+        ))
+        .unwrap();
+        let typed: super::MessageView = serde_json::from_value(fixture.clone()).unwrap();
+        assert_eq!(serde_json::to_value(typed).unwrap(), fixture);
+    }
+}

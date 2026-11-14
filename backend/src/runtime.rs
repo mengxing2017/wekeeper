@@ -175,26 +175,13 @@ async fn serve_inner(
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         }
     });
-    let summaries = crate::source_access::south::adapter::postgres::routing::RoutingRepository(
+    let messages = crate::message_orchestration::south::adapter::postgres::Repository(
         application.pool.clone(),
     );
-    let summary_worker = tokio::spawn(async move {
+    let message_worker = tokio::spawn(async move {
         loop {
-            if summaries.aggregate().await.is_err() {
-                tracing::warn!("source result projection will retry");
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        }
-    });
-    let routing = crate::source_access::north::local::projection::Worker(
-        crate::source_access::south::adapter::postgres::routing::RoutingRepository(
-            application.pool.clone(),
-        ),
-    );
-    let routing_worker = tokio::spawn(async move {
-        loop {
-            if routing.run_once().await.is_err() {
-                tracing::warn!("routing configuration recovery will retry");
+            if let Err(error) = messages.run_once().await {
+                tracing::warn!(error=?error,"message orchestration will retry");
             }
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         }
@@ -229,10 +216,8 @@ async fn serve_inner(
         .await;
     handoff_worker.abort();
     let _ = handoff_worker.await;
-    summary_worker.abort();
-    let _ = summary_worker.await;
-    routing_worker.abort();
-    let _ = routing_worker.await;
+    message_worker.abort();
+    let _ = message_worker.await;
     health_worker.abort();
     let _ = health_worker.await;
     wait_worker.abort();

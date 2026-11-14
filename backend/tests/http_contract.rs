@@ -16,9 +16,113 @@ fn app() -> axum::Router {
 }
 
 #[tokio::test]
+async fn receiving_configuration_routes_require_identity_and_serialize_channel_resources() {
+    use axum::response::IntoResponse;
+    use wekeeper_api::distribution::domain::receiving::{Channel, Configuration};
+    let unit = "00000000-0000-4000-8000-000000000001";
+    let id = "00000000-0000-4000-8000-000000000002";
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/receiving-configuration.json"
+    ))
+    .unwrap();
+    for (base, channel, key) in [
+        ("mobile-execution", Channel::Mobile, "configuration"),
+        ("wecom-distribution", Channel::Wecom, "wecom_configuration"),
+    ] {
+        let path = format!("/api/v1/{base}/business-units/{unit}/receiving-configurations");
+        for (method, uri) in [
+            ("GET", path.clone()),
+            ("GET", format!("{path}/{id}")),
+            (
+                "GET",
+                format!("/api/v1/{base}/business-units/{unit}/receiving-resources"),
+            ),
+            (
+                "PUT",
+                format!("/api/v1/{base}/business-units/{unit}/receiving-targets/{id}"),
+            ),
+            ("PUT", format!("{path}/{id}")),
+        ] {
+            let response = app()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        }
+        let config: Configuration = serde_json::from_value(fixture[key].clone()).unwrap();
+        let response = http::jsonapi::resource(channel.kind(), config).into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let document: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(document["data"]["type"], channel.kind());
+        assert_eq!(document["data"]["id"], fixture[key]["id"]);
+        let mut attributes = fixture[key].as_object().unwrap().clone();
+        attributes.remove("id");
+        assert_eq!(document["data"]["attributes"], Value::Object(attributes));
+    }
+}
+
+#[tokio::test]
 async fn removed_compatibility_routes_are_absent() {
     let school = "00000000-0000-4000-8000-000000000001";
     for (method, path, expected) in [
+        (
+            "GET",
+            format!("/api/v1/mobile-execution/workspaces/{school}/receiving-configurations"),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "GET",
+            format!("/api/v1/wecom-distribution/workspaces/{school}/receiving-configurations"),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "GET",
+            "/api/v2/admin/source-automation-tasks".into(),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "POST",
+            "/api/v2/admin/source-routes/route/receipts/receipt/rechecks".into(),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "GET",
+            "/api/v2/admin/advertisements".into(),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "GET",
+            "/api/v2/admin/source-routes/route/version-policy".into(),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "PUT",
+            "/api/v2/admin/source-routes/route/version-policy".into(),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "GET",
+            "/api/v2/admin/ad-placement-rules".into(),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "POST",
+            "/api/v2/admin/ad-placement-rules".into(),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "GET",
+            format!("/api/v2/admin/ad-placement-rules/{school}"),
+            StatusCode::NOT_FOUND,
+        ),
         (
             "GET",
             format!("/api/v1/schools/{school}/delivery-drafts"),

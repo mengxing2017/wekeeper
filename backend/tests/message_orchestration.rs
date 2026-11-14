@@ -93,19 +93,9 @@ async fn intake_is_idempotent_immutable_and_scoped_to_business_identity() {
     let mut bad = input.clone();
     bad.evidence_ref = Uuid::nil();
     assert_eq!(service.accept(bad).await, Err(Error::InvalidInput));
-    let mut withdrawal = input.clone();
-    withdrawal.source_event_id = Uuid::new_v4();
-    withdrawal.evidence_ref = Uuid::new_v4();
-    withdrawal.original.event_kind = EventKind::Withdrawn;
-    withdrawal.original.sequence = 2;
-    withdrawal.original.content = None;
-    let accepted_withdrawal = service.accept(withdrawal.clone()).await.unwrap();
-    assert_eq!(
-        accepted_withdrawal.facts.original.event_kind,
-        EventKind::Withdrawn
-    );
-    withdrawal.original.content = Some("not allowed".into());
-    assert_eq!(service.accept(withdrawal).await, Err(Error::InvalidInput));
+    let mut invalid_body = input.clone();
+    invalid_body.original.content = None;
+    assert_eq!(service.accept(invalid_body).await, Err(Error::InvalidInput));
     let update = sqlx::query("UPDATE orchestration_messages SET original='{}' WHERE id=$1")
         .bind(ids[0])
         .execute(&pool)
@@ -117,5 +107,5 @@ async fn intake_is_idempotent_immutable_and_scoped_to_business_identity() {
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(count, 2);
+    assert_eq!(count, 1);
 }

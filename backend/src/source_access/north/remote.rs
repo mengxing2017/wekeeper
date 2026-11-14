@@ -25,25 +25,8 @@ impl Fault {
             "authentication_failed" | "credential_unavailable" | "timestamp_expired" => 401,
             "forbidden" | "source_disabled" | "route_unavailable" => 403,
             "not_found" | "receipt_not_found" => 404,
-            "replay_detected"
-            | "event_conflict"
-            | "revision_conflict"
-            | "cursor_stale"
-            | "route_retired"
-            | "group_in_use"
-            | "scope_immutable"
-            | "invalid_transition"
-            | "route_configuration_required"
-            | "target_unavailable"
-            | "content_version_superseded"
-            | "recheck_not_allowed"
-            | "ad_selection_stale"
-            | "ad_unavailable"
-            | "ad_pool_missing"
-            | "ad_pool_copy_target_exists"
-            | "ad_queue_ownership_lost"
-            | "ad_queue_head_changed"
-            | "ad_archived" => 409,
+            "replay_detected" | "event_conflict" | "revision_conflict" | "cursor_stale"
+            | "scope_immutable" | "invalid_transition" | "target_unavailable" => 409,
             "temporarily_unavailable"
             | "source_key_configuration_required"
             | "keyword_rules_unavailable"
@@ -65,22 +48,6 @@ impl Fault {
             "调用方凭据加密服务未配置，请联系部署人员完成配置"
         } else {
             match self.0 {
-                "ad_unavailable" => "所选广告当前不可投放，请调整广告授权或路由选用配置",
-                "ad_pool_missing" => "请先发布广告序列，再启用序列模式",
-                "ad_pool_wrong_route" => "广告池不属于当前路由",
-                "ad_pool_invalid_slot" => "槽位已变更或不属于当前广告池，请核对最新序列",
-                "ad_pool_duplicate_slot" => "槽位标识不能重复，重复投放请新增独立槽位",
-                "ad_pool_slot_limit" => "一个广告池最多保存 1000 个槽位",
-                "ad_pool_copy_target_exists" => "目标路由已有独立广告池，请选择尚未创建池的路由",
-                "ad_archived" => "广告已归档，不能继续发布",
-                "invalid_ad_content" => {
-                    "广告名称不能为空且最多 120 个字符，正文不能为空且最多 8000 字节"
-                }
-                "invalid_ad_link" => "请填写有效的 HTTPS 链接",
-                "invalid_ad_scope" => "请选择有效的单位、分组或路由以及对应工作空间",
-                "invalid_ad_policy" => "请核对广告有效期与共享范围",
-                "invalid_ad_configuration" => "请核对广告模式与固定广告选择",
-                "ad_configuration_unavailable" => "广告配置暂时不可用，请稍后重试",
                 "invalid_keyword" => {
                     "关键字不能为空白，原始长度最多 512 字节，规范化后最多 128 个字符"
                 }
@@ -237,6 +204,15 @@ async fn list(
         .map_err(|e| e.response(&actor.request_id))?;
     Ok(crate::http::jsonapi::singleton(&kind, "list", v).into_response())
 }
+
+// Generic source-management routes must not capture removed or unrelated APIs.
+async fn management_resource(request: Request, next: axum::middleware::Next) -> Response {
+    let kind = request.uri().path().split('/').nth(4);
+    if !matches!(kind, Some("source-credentials" | "source-routes")) {
+        return crate::http::error::response(StatusCode::NOT_FOUND, "not_found", "接口不存在");
+    }
+    next.run(request).await
+}
 async fn detail(
     State(a): State<Application>,
     actor: Actor,
@@ -344,7 +320,6 @@ async fn association(
 pub fn router() -> Router<Application> {
     Router::new()
         .merge(projection::router())
-        .merge(orchestration::router())
         .merge(keyword_filter::router())
         .merge(routing::router())
         .route(
@@ -359,10 +334,18 @@ pub fn router() -> Router<Application> {
         .route("/api/v2/source-route-checks", post(machine))
         .route("/api/v2/source-events", post(machine))
         .route("/api/v2/source-receipts/{id}", get(machine))
-        .route("/api/v2/admin/{kind}", get(list).post(create))
+        .route(
+            "/api/v2/admin/{kind}",
+            get(list)
+                .post(create)
+                .route_layer(axum::middleware::from_fn(management_resource)),
+        )
         .route(
             "/api/v2/admin/{kind}/{id}",
-            get(detail).patch(update).delete(delete),
+            get(detail)
+                .patch(update)
+                .delete(delete)
+                .route_layer(axum::middleware::from_fn(management_resource)),
         )
         .route(
             "/api/v2/admin/source-credentials/{key}/routes",
@@ -507,5 +490,3 @@ mod response_tests {
 }
 
 pub mod keyword_filter;
-
-pub mod orchestration;

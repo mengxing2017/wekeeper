@@ -50,11 +50,10 @@ fn new_advertising_scope_discovery_does_not_use_routes() {
 #[test]
 fn orchestration_message_intake_is_independent_of_source_routing_and_delivery() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/message_orchestration");
-    let mut files = Vec::new();
-    visit(&root, &mut files);
-    assert!(!files.is_empty());
-    for file in files {
-        let source = fs::read_to_string(&file).unwrap();
+    // Intake remains independent. The orchestration adapter now intentionally
+    // coordinates advertising and channel delegation through their business inputs.
+    for file in ["north/local.rs", "south/port.rs"] {
+        let source = fs::read_to_string(root.join(file)).unwrap();
         for forbidden in [
             "source_access::",
             "source_routes",
@@ -65,12 +64,24 @@ fn orchestration_message_intake_is_independent_of_source_routing_and_delivery() 
         ] {
             assert!(
                 !source.contains(forbidden),
-                "unexpected dependency in {}",
-                file.display()
+                "unexpected intake dependency in {file}: {forbidden}"
             );
         }
     }
+    let domain = fs::read_to_string(root.join("domain.rs")).unwrap();
+    for forbidden in ["sqlx", "axum", "source_access::", "RouteSnapshot"] {
+        assert!(
+            !domain.contains(forbidden),
+            "orchestration domain dependency: {forbidden}"
+        );
+    }
+    assert!(
+        !Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/source_access/south/adapter/postgres/routing_worker.rs")
+            .exists()
+    );
 }
+
 #[test]
 fn distribution_has_no_dependency_on_removed_forum() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/distribution");

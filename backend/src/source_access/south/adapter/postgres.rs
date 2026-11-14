@@ -152,7 +152,7 @@ impl Repository {
                 ensure(value.starts_with(&prefix), "cursor_stale")?;
                 after = value[prefix.len()..].into();
             }
-            let rows=sqlx::query("SELECT r.route_id,r.route_name,r.status,r.execution_state,r.retired_at FROM source_key_routes k JOIN source_routes r USING(route_id,source_id) WHERE k.key_id=$1 AND k.source_id=$2 AND k.status='active' AND r.route_id>$3 AND ($4::text IS NULL OR r.route_id=$4) ORDER BY r.route_id LIMIT $5").bind(&s.key_id).bind(source).bind(after).bind(&check.route_id).bind((limit+1) as i64).fetch_all(&mut *tx).await?;
+            let rows=sqlx::query("SELECT r.route_id,r.route_name,r.status,CASE WHEN EXISTS(SELECT 1 FROM channel_receiving_configurations cc WHERE cc.business_unit_id=r.business_unit_id AND (cc.configuration->>'enabled')::boolean) THEN 'running' ELSE 'paused' END AS execution_state,r.retired_at FROM source_key_routes k JOIN source_routes r USING(route_id,source_id) WHERE k.key_id=$1 AND k.source_id=$2 AND k.status='active' AND r.route_id>$3 AND ($4::text IS NULL OR r.route_id=$4) ORDER BY r.route_id LIMIT $5").bind(&s.key_id).bind(source).bind(after).bind(&check.route_id).bind((limit+1) as i64).fetch_all(&mut *tx).await?;
             let next = if rows.len() > limit {
                 Some(encode(
                     format!(
@@ -232,16 +232,8 @@ impl Repository {
                 tx.commit().await?;
                 return Ok((false, value));
             }
-            let retired:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_route_tombstones WHERE route_id=$1 AND source_id=$2)").bind(&e.route_id).bind(source).fetch_one(&mut *tx).await?;
-            if retired && e.event_type == "content.withdrawn" {
-                self.route(&mut tx, source, &s.key_id, &e.route_id, false)
-                    .await?;
-                let historical:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_inbox i JOIN source_receipts r USING(receipt_id) WHERE r.source_id=$1 AND r.route_id=$2 AND convert_from(i.request_body,'UTF8')::jsonb #>> '{data,attributes,external_content_id}'=$3)").bind(source).bind(&e.route_id).bind(&e.external_content_id).fetch_one(&mut *tx).await?;
-                ensure(historical, "route_unavailable")?;
-            } else {
-                self.route(&mut tx, source, &s.key_id, &e.route_id, true)
-                    .await?;
-            }
+            self.route(&mut tx, source, &s.key_id, &e.route_id, true)
+                .await?;
             let hash = digest(&body);
             let old:Option<(Uuid,String)>=sqlx::query_as("SELECT receipt_id,body_sha256 FROM source_receipts WHERE source_id=$1 AND event_id=$2").bind(source).bind(s.identity).fetch_optional(&mut *tx).await?;
             let (id, fresh) = if let Some((id, old_hash)) = old {
@@ -311,7 +303,7 @@ impl Repository {
         source: Uuid,
         id: Uuid,
     ) -> Result<Value> {
-        let value:Value=sqlx::query_scalar("SELECT jsonb_build_object('event_id',r.event_id,'status',COALESCE(c.status,r.status),'reason_code',CASE WHEN c.receipt_id IS NOT NULL THEN c.reason_code ELSE r.reason_code END,'processing_stage',r.processing_stage,'received_at',r.received_at,'updated_at',greatest(r.updated_at,c.updated_at,w.updated_at),'retryable',false,'sending',COALESCE(c.sending,r.sending,w.sending),'observed_sequence',r.observed_sequence) FROM source_receipts r LEFT JOIN source_receipts c ON c.receipt_id=r.canonical_receipt_id LEFT JOIN LATERAL (SELECT linked.sending,linked.updated_at FROM source_receipt_relations l JOIN source_receipts linked ON linked.receipt_id=l.related_receipt_id JOIN source_execution_tasks t ON t.receipt_id=linked.receipt_id WHERE l.receipt_id=COALESCE(r.canonical_receipt_id,r.receipt_id) AND l.kind='withdrawal' ORDER BY linked.received_at DESC LIMIT 1) w ON true WHERE r.source_id=$1 AND r.receipt_id=$2").bind(source).bind(id).fetch_one(&mut **tx).await?;
+        let value:Value=sqlx::query_scalar("SELECT jsonb_build_object('event_id',r.event_id,'status',COALESCE(c.status,r.status),'reason_code',CASE WHEN c.receipt_id IS NOT NULL THEN c.reason_code ELSE r.reason_code END,'processing_stage',r.processing_stage,'received_at',r.received_at,'updated_at',greatest(r.updated_at,c.updated_at),'retryable',false,'sending',COALESCE(c.sending,r.sending),'observed_sequence',r.observed_sequence) FROM source_receipts r LEFT JOIN source_receipts c ON c.receipt_id=r.canonical_receipt_id WHERE r.source_id=$1 AND r.receipt_id=$2").bind(source).bind(id).fetch_one(&mut **tx).await?;
         let value: crate::source_access::domain::projection::Receipt =
             serde_json::from_value(value)?;
         Ok(json!({"data":{"type":"source-receipts","id":id,"attributes":value}}))
@@ -808,12 +800,9 @@ impl Repository {
 }
 
 pub mod routing;
-pub mod routing_worker;
 
 pub mod projection;
 
 pub mod keyword_filter;
-
-pub mod orchestration;
 
 pub mod message_handoff;

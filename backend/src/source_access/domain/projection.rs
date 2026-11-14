@@ -1,26 +1,5 @@
 //! Version decisions and receipt wire types; no transport or database dependencies.
 use super::*;
-#[derive(Debug, PartialEq, Eq)]
-pub enum Decision {
-    Apply,
-    Stale,
-    Duplicate,
-    Conflict,
-}
-pub fn decide(sequence: i64, fingerprint: &str, previous: Option<(i64, &str)>) -> Decision {
-    match previous {
-        None => Decision::Apply,
-        Some((watermark, _)) if sequence < watermark => Decision::Stale,
-        Some((watermark, old)) if sequence == watermark => {
-            if fingerprint == old {
-                Decision::Duplicate
-            } else {
-                Decision::Conflict
-            }
-        }
-        _ => Decision::Apply,
-    }
-}
 pub fn fingerprint(event: &Event) -> String {
     #[derive(Serialize)]
     struct Payload<'a> {
@@ -73,26 +52,9 @@ pub struct Receipt {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observed_sequence: Option<i64>,
 }
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RecheckInput {
-    pub revision: i64,
-    pub reason: String,
-}
 pub enum Command {
-    List {
-        route: String,
-        page: i64,
-    },
-    Detail {
-        route: String,
-        receipt: Uuid,
-    },
-    Recheck {
-        route: String,
-        receipt: Uuid,
-        input: RecheckInput,
-    },
+    List { route: String, page: i64 },
+    Detail { route: String, receipt: Uuid },
 }
 #[cfg(test)]
 mod tests {
@@ -111,13 +73,6 @@ mod tests {
         assert_eq!(fingerprint(&event), expected);
         event.content = Some(format!("{} ", event.content.unwrap()));
         assert_ne!(fingerprint(&event), expected);
-    }
-    #[test]
-    fn versions_never_use_arrival_time() {
-        assert_eq!(decide(7, "a", Some((8, "b"))), Decision::Stale);
-        assert_eq!(decide(8, "b", Some((8, "b"))), Decision::Duplicate);
-        assert_eq!(decide(8, "a", Some((8, "b"))), Decision::Conflict);
-        assert_eq!(decide(10, "a", Some((8, "b"))), Decision::Apply);
     }
     #[test]
     fn all_receipt_projection_states_roundtrip_with_typed_rust_serialization() {

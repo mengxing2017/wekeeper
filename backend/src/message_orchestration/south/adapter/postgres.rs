@@ -54,3 +54,25 @@ impl MessageStore for Repository {
         Ok(result)
     }
 }
+
+impl Repository {
+    pub async fn list(
+        &self,
+        actor: &crate::business::Actor,
+        route: Option<String>,
+        receipt: Option<Uuid>,
+        page: crate::business::Page,
+    ) -> crate::business::Result<serde_json::Value> {
+        let (limit, offset) = page.fetch_bounds()?;
+        let rows:Vec<serde_json::Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',m.id,'platform_id',m.platform_id,'business_unit_id',m.unit_id,'receipt_id',m.evidence_ref,'event_id',m.source_event_id,'created_at',m.accepted_at,'state',COALESCE(d.state,'received'),'reason_code',d.reason_code,'content',d.content,'decision',NULLIF(d.decision,'{}'::jsonb),'sending',r.sending,'delegates',COALESCE((SELECT jsonb_agg(jsonb_build_object('id',x.id,'channel',x.channel,'task_id',x.task_id,'configuration_id',x.configuration_id,'state',x.state,'reason_code',x.reason_code,'target_count',jsonb_array_length(x.plan->'targets'))) FROM orchestration_delegates x WHERE x.message_id=m.id),'[]')) FROM orchestration_messages m JOIN source_receipts r ON r.receipt_id=m.evidence_ref JOIN accounts a ON a.id=$1 LEFT JOIN orchestration_dispatches d ON d.message_id=m.id WHERE a.active AND (a.platform_admin OR EXISTS(SELECT 1 FROM source_routes sr JOIN source_route_managers sm USING(route_id) WHERE sr.business_unit_id=m.unit_id AND sm.account_id=a.id)) AND ($2::text IS NULL OR r.route_id=$2) AND ($3::uuid IS NULL OR r.receipt_id=$3) ORDER BY m.accepted_at DESC,m.id DESC LIMIT $4 OFFSET $5")
+            .bind(actor.id).bind(route).bind(receipt).bind(limit).bind(offset).fetch_all(&self.0).await?;
+        let more = rows.len() >= limit as usize;
+        let items: Vec<crate::message_orchestration::domain::MessageView> = rows
+            .into_iter()
+            .take(limit as usize - 1)
+            .map(serde_json::from_value)
+            .collect::<std::result::Result<_, _>>()
+            .map_err(|_| crate::business::Error::Unavailable)?;
+        Ok(serde_json::json!({"items":items,"has_more":more}))
+    }
+}

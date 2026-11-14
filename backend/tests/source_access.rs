@@ -425,11 +425,11 @@ async fn two_instances_replay_scope_lifetime_and_deletion() {
     let global_rule = Uuid::new_v4();
     let platform_rule = Uuid::new_v4();
     let unit_rule = Uuid::new_v4();
-    sqlx::query("INSERT INTO ad_placement_rules(id,name,material_id,scope_kind,platform_id,unit_id,enabled,valid_from,created_by,updated_by) VALUES($1,'global',$4,'global',NULL,NULL,true,now()-interval '1 hour',$7,$7),($2,'platform',$4,'platform',$5,NULL,true,now()-interval '1 hour',$7,$7),($3,'unit',$4,'unit',$5,$6,true,now()-interval '1 hour',$7,$7)")
+    sqlx::query("INSERT INTO ad_placements(id,material_id,scope_kind,platform_id,unit_id,enabled,valid_from,created_by,updated_by) VALUES($1,$4,'global',NULL,NULL,true,now()-interval '1 hour',$7,$7),($2,$4,'platform',$5,NULL,true,now()-interval '1 hour',$7,$7),($3,$4,'unit',$5,$6,true,now()-interval '1 hour',$7,$7)")
         .bind(global_rule).bind(platform_rule).bind(unit_rule).bind(ad_material).bind(platform_id).bind(unit_id).bind(id).execute(&pool).await.unwrap();
     let discovery = wekeeper_api::source_access::north::local::ad_targeting::CandidateDiscovery {
         identities: Repository(pool.clone()),
-        rules: wekeeper_api::advertising::north::local::MatchingRules(
+        advertisements: wekeeper_api::advertising::north::local::MatchingAds(
             wekeeper_api::advertising::south::adapter::postgres::Repository(pool.clone()),
         ),
     };
@@ -438,7 +438,7 @@ async fn two_instances_replay_scope_lifetime_and_deletion() {
         .await
         .unwrap();
     let matched: std::collections::HashSet<_> =
-        matches.items.iter().map(|item| item.rule_id).collect();
+        matches.items.iter().map(|item| item.placement_id).collect();
     assert!(
         [global_rule, platform_rule, unit_rule]
             .iter()
@@ -599,8 +599,20 @@ async fn two_instances_replay_scope_lifetime_and_deletion() {
         200
     );
     // Exercise the actual signed POST -> durable inbox -> worker -> signed GET path.
-    use wekeeper_api::source_access::south::adapter::postgres::routing::RoutingRepository;
-    let worker = RoutingRepository(pool.clone());
+    let handoff = HandoffWorker {
+        queue: Repository(pool.clone()),
+        bridge: AcceptedMessageBridge {
+            receipts: Repository(pool.clone()),
+            messages: wekeeper_api::message_orchestration::north::local::MessageIntake(
+                wekeeper_api::message_orchestration::south::adapter::postgres::Repository(
+                    pool.clone(),
+                ),
+            ),
+        },
+    };
+    let worker =
+        wekeeper_api::message_orchestration::south::adapter::postgres::Repository(pool.clone());
+    handoff.run_once().await.unwrap();
     worker.run_once().await.unwrap();
     let (_, state) = read(
         one.clone()
@@ -620,17 +632,17 @@ async fn two_instances_replay_scope_lifetime_and_deletion() {
     assert_eq!(state["data"]["attributes"]["status"], "applied");
     assert_eq!(
         state["data"]["attributes"]["processing_stage"],
-        "configuration_wait"
+        "not_dispatched"
     );
     assert_eq!(state["data"]["attributes"]["retryable"], false);
-    assert_eq!(state["data"]["attributes"]["observed_sequence"], 1);
+    assert!(state["data"]["attributes"]["observed_sequence"].is_null());
     let conflicts:Value=sqlx::query_scalar("SELECT detail FROM source_access_audit WHERE source_id=$1 AND action='source.event.conflict' LIMIT 1").bind(source.parse::<Uuid>().unwrap()).fetch_one(&pool).await.unwrap();
     assert_ne!(conflicts["first_digest"], conflicts["conflicting_digest"]);
     for (seq, title, expected) in [
         (1, "中文🌸", "applied"),
-        (1, "另一份正文", "rejected"),
+        (1, "另一份正文", "applied"),
         (6, "更高版本", "applied"),
-        (5, "迟到旧版", "ignored_stale"),
+        (5, "迟到旧版", "applied"),
     ] {
         let eid = Uuid::new_v4();
         let mut payload: Value = serde_json::from_slice(&body).unwrap();
@@ -655,6 +667,7 @@ async fn two_instances_replay_scope_lifetime_and_deletion() {
         )
         .await;
         assert_eq!(status, 202, "{accepted}");
+        handoff.run_once().await.unwrap();
         worker.run_once().await.unwrap();
         let getpath = format!(
             "/api/v2/source-receipts/{}",

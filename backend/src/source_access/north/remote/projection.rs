@@ -1,7 +1,6 @@
 use super::*;
 use crate::source_access::{
-    domain::projection::{Command, RecheckInput},
-    north::local::projection::Service as ProjectionService,
+    domain::projection::Command, north::local::projection::Service as ProjectionService,
     south::adapter::postgres::projection::ReceiptsRepository,
 };
 #[derive(Default, serde::Deserialize)]
@@ -51,36 +50,11 @@ async fn detail(
     )
     .await
 }
-async fn recheck(
-    State(a): State<Application>,
-    actor: Actor,
-    Path((route, receipt)): Path<(String, uuid::Uuid)>,
-    input: crate::http::jsonapi::Input,
-) -> std::result::Result<Response, Response> {
-    let input = input
-        .decode::<RecheckInput>("source-receipt-rechecks")
-        .map_err(|_| Fault("invalid_request").response(&actor.request_id))?;
-    execute(
-        a,
-        actor,
-        Command::Recheck {
-            route,
-            receipt,
-            input,
-        },
-        "source-receipt-rechecks",
-    )
-    .await
-}
 pub fn router() -> Router<Application> {
     Router::new()
         .route("/api/v2/admin/source-routes/{route}/receipts", get(list))
         .route(
             "/api/v2/admin/source-routes/{route}/receipts/{receipt}",
             get(detail),
-        )
-        .route(
-            "/api/v2/admin/source-routes/{route}/receipts/{receipt}/rechecks",
-            post(recheck),
         )
 }

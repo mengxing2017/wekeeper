@@ -35,7 +35,6 @@ impl<I: AcceptedEventStore, S: MessageStore> AcceptedMessageBridge<I, S> {
         let event = accepted.event;
         let kind = match event.event_type.as_str() {
             "content.upsert" => EventKind::Upsert,
-            "content.withdrawn" => EventKind::Withdrawn,
             _ => return Err(BridgeError::Source(Fault("temporarily_unavailable"))),
         };
         self.messages
