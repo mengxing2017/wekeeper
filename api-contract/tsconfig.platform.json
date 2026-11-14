@@ -8,6 +8,7 @@
     "skipLibCheck": false
   },
   "include": [
+    "src/modules/receiving-configurations/client.ts",
     "src/http/client.ts",
     "src/modules/identity/index.ts",
     "src/modules/business-directory/client.ts",

@@ -5,6 +5,8 @@
   "type": "module",
   "packageManager": "pnpm@11.22.0",
   "exports": {
+    "./receiving-configurations": "./src/modules/receiving-configurations/index.ts",
+    "./receiving-configurations/client": "./src/modules/receiving-configurations/client.ts",
     "./http": "./src/http/index.ts",
     "./system": "./src/modules/system/index.ts",
     "./health": "./src/modules/health/index.ts",
