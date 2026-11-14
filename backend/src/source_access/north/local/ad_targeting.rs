@@ -1,14 +1,11 @@
-//! Internal orchestration of source identity and advertising scope matching.
-//!
-//! This only determines which scopes match. It does not select, authorize or
-//! publish an advertisement, and must not be used as a delivery decision.
+//! Source-owned identity resolution for advertising discovery and frozen decisions.
 use crate::advertising::{
     domain::{
         AdvertisingError,
         targeting::{ScopeMatchPage, SourceIdentity, TargetScope},
     },
-    north::local::MatchingRules,
-    south::port::TargetRuleReader,
+    north::local::MatchingAds,
+    south::port::AdPlacementReader,
 };
 use crate::source_access::{domain::Result, south::port::AcceptedIdentityStore};
 use uuid::Uuid;
@@ -23,10 +20,10 @@ pub enum DiscoveryError {
 /// not authorize a material, select a winner, or create a delivery decision.
 pub struct CandidateDiscovery<I, R> {
     pub identities: I,
-    pub rules: MatchingRules<R>,
+    pub advertisements: MatchingAds<R>,
 }
 
-impl<I: AcceptedIdentityStore, R: TargetRuleReader> CandidateDiscovery<I, R> {
+impl<I: AcceptedIdentityStore, R: AdPlacementReader> CandidateDiscovery<I, R> {
     pub async fn page(
         &self,
         platform_id: Uuid,
@@ -39,7 +36,7 @@ impl<I: AcceptedIdentityStore, R: TargetRuleReader> CandidateDiscovery<I, R> {
             .find_identity(platform_id, receipt_id)
             .await
             .map_err(DiscoveryError::Identity)?;
-        self.rules
+        self.advertisements
             .page(
                 SourceIdentity {
                     platform_id: identity.platform_id,

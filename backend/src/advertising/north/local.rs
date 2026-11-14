@@ -1,4 +1,4 @@
-use super::super::{domain::*, south::port::AdvertisingStore};
+use super::super::domain::*;
 use crate::business::Actor;
 
 fn ensure(ok: bool, code: &'static str) -> Result<()> {
@@ -8,7 +8,22 @@ fn ensure(ok: bool, code: &'static str) -> Result<()> {
         Err(AdvertisingError(code))
     }
 }
-pub struct Service<S>(pub S);
+
+pub struct AdDecisionService<S>(pub S);
+impl<S: super::super::south::port::AdDecisionStore> AdDecisionService<S> {
+    pub async fn decide(&self, input: decision::DecisionInput) -> Result<decision::Decision> {
+        ensure(
+            !input.source.platform_id.is_nil()
+                && !input.source.unit_id.is_nil()
+                && !input.message_id.is_nil()
+                && !input.original.trim().is_empty()
+                && matches!(input.channel.as_str(), "mobile" | "wecom")
+                && measure(&input.original, &input.channel).valid,
+            "invalid_request",
+        )?;
+        self.0.decide(input).await
+    }
+}
 
 pub struct MaterialService<S>(pub S);
 impl<S: super::super::south::port::MaterialStore> MaterialService<S> {
@@ -86,19 +101,15 @@ fn validate_material(content: &Content, reason: &str) -> Result<()> {
     )
 }
 
-pub struct PlacementRuleService<S>(pub S);
-impl<S: super::super::south::port::PlacementRuleStore> PlacementRuleService<S> {
+pub struct AdPlacementService<S>(pub S);
+impl<S: super::super::south::port::AdPlacementStore> AdPlacementService<S> {
     pub async fn create(
         &self,
         actor: &Actor,
-        input: targeting::CreatePlacementRule,
-    ) -> Result<targeting::PlacementRuleView> {
+        input: targeting::CreateAdPlacement,
+    ) -> Result<targeting::AdPlacementView> {
         use targeting::TargetScope;
         ensure(actor.platform_admin, "forbidden")?;
-        ensure(
-            !input.name.trim().is_empty() && input.name.trim().chars().count() <= 120,
-            "invalid_request",
-        )?;
         ensure(
             !input.reason.trim().is_empty() && input.reason.chars().count() <= 2000,
             "invalid_request",
@@ -117,12 +128,12 @@ impl<S: super::super::south::port::PlacementRuleStore> PlacementRuleService<S> {
             } => !platform_id.is_nil() && !unit_id.is_nil(),
         };
         ensure(valid_scope, "invalid_ad_scope")?;
-        self.0.create_rule(actor, input).await
+        self.0.create_placement(actor, input).await
     }
-    pub async fn get(&self, actor: &Actor, id: uuid::Uuid) -> Result<targeting::PlacementRuleView> {
+    pub async fn get(&self, actor: &Actor, id: uuid::Uuid) -> Result<targeting::AdPlacementView> {
         ensure(actor.platform_admin, "forbidden")?;
         self.0
-            .rule(actor, id)
+            .placement(actor, id)
             .await?
             .ok_or(AdvertisingError("not_found"))
     }
@@ -130,23 +141,23 @@ impl<S: super::super::south::port::PlacementRuleStore> PlacementRuleService<S> {
         &self,
         actor: &Actor,
         page: i64,
-    ) -> Result<targeting::ManagementPage<targeting::PlacementRuleView>> {
+    ) -> Result<targeting::ManagementPage<targeting::AdPlacementView>> {
         let offset = management_offset(actor, page)?;
-        Ok(management_page(self.0.rules(actor, offset).await?))
+        Ok(management_page(self.0.placements(actor, offset).await?))
     }
     pub async fn set_state(
         &self,
         actor: &Actor,
         id: uuid::Uuid,
         input: targeting::SetPlacementState,
-    ) -> Result<targeting::PlacementRuleView> {
+    ) -> Result<targeting::AdPlacementView> {
         ensure(actor.platform_admin, "forbidden")?;
         ensure(input.expected_revision > 0, "invalid_request")?;
         ensure(
             !input.reason.trim().is_empty() && input.reason.chars().count() <= 2000,
             "invalid_request",
         )?;
-        self.0.set_rule_state(actor, id, input).await
+        self.0.set_placement_state(actor, id, input).await
     }
 }
 
@@ -164,8 +175,28 @@ fn management_page<T>(mut items: Vec<T>) -> targeting::ManagementPage<T> {
 
 /// Read-only discovery; callers still need to authorize and decide delivery.
 /// Pages read current versions independently and are not a transactional snapshot.
-pub struct MatchingRules<S>(pub S);
-impl<S: super::super::south::port::TargetRuleReader> MatchingRules<S> {
+pub struct MatchingAds<S>(pub S);
+impl<S: super::super::south::port::AdPlacementReader> MatchingAds<S> {
+    /// Read all discovery pages before resolving scope precedence. Retain all
+    /// ties; this is not a frozen decision or a reservation of advertising slots.
+    pub async fn preferred_candidates(
+        &self,
+        identity: targeting::SourceIdentity,
+        at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<targeting::ScopeMatch>> {
+        let mut candidates = Vec::new();
+        let mut after = None;
+        loop {
+            let page = self.page(identity, at, after).await?;
+            candidates.extend(page.items);
+            candidates = targeting::preferred_candidates(identity, candidates);
+            match page.next_after {
+                Some(cursor) => after = Some(cursor),
+                None => return Ok(candidates),
+            }
+        }
+    }
+
     pub async fn page(
         &self,
         identity: targeting::SourceIdentity,
@@ -177,76 +208,5 @@ impl<S: super::super::south::port::TargetRuleReader> MatchingRules<S> {
             "invalid_request",
         )?;
         self.0.matching_page(identity, at, after).await
-    }
-}
-impl<S: AdvertisingStore> Service<S> {
-    pub async fn execute(&self, actor: &Actor, command: Command) -> Result<serde_json::Value> {
-        let revision = match &command {
-            Command::Create(v) => {
-                v.content.validate()?;
-                ensure(v.workspaces.len() <= 100, "invalid_ad_scope")?;
-                Some((0, v.reason.as_str()))
-            }
-            Command::Content(_, v) => {
-                v.content.validate()?;
-                Some((v.expected_revision, v.reason.as_str()))
-            }
-            Command::Policy(_, v) => {
-                v.policy.validate()?;
-                Some((v.expected_revision, v.reason.as_str()))
-            }
-            Command::Archive(_, v) => Some((v.expected_revision, v.reason.as_str())),
-            Command::Configure(_, v) => {
-                v.config.validate()?;
-                Some((v.expected_revision, v.reason.as_str()))
-            }
-            Command::PublishPool(_, v) => {
-                v.validate()?;
-                Some((v.expected_revision, v.reason.as_str()))
-            }
-            Command::ResetPool(_, v) => {
-                ensure(v.expected_cursor_version >= 0, "invalid_request")?;
-                Some((v.expected_revision, v.reason.as_str()))
-            }
-            Command::CopyPool(_, v) => {
-                ensure(!v.target_route_id.is_empty(), "invalid_request")?;
-                Some((v.expected_revision, v.reason.as_str()))
-            }
-            Command::Consumptions(_, page)
-            | Command::List { page, .. }
-            | Command::Versions(_, page)
-            | Command::Candidates(_, page)
-            | Command::Compositions(_, _, page) => {
-                ensure((1..=100000).contains(page), "invalid_request")?;
-                None
-            }
-            Command::Preview(_, v) => {
-                let link = Content {
-                    name: "preview".into(),
-                    body: "preview".into(),
-                    link: Some(v.detail_url.clone()),
-                };
-                link.validate()?;
-                ensure(
-                    v.title.as_ref().map_or(0, String::len)
-                        + v.content.as_ref().map_or(0, String::len)
-                        <= 100000,
-                    "invalid_request",
-                )?;
-                None
-            }
-            Command::Manager(_, v) => {
-                ensure(v.expected_revision >= 0, "invalid_request")?;
-                None
-            }
-            _ => None,
-        };
-        if let Some((r, reason)) = revision {
-            ensure(
-                r >= 0 && !reason.trim().is_empty() && reason.len() <= 2000,
-                "invalid_request",
-            )?;
-        }
-        self.0.execute(actor, command).await
     }
 }

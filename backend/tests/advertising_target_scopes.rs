@@ -4,12 +4,32 @@ use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 use wekeeper_api::advertising::{
     domain::targeting::{SourceIdentity, TargetScope},
-    north::local::MatchingRules,
+    north::local::MatchingAds,
     south::adapter::postgres::Repository,
 };
 
+async fn published_material(pool: &PgPool, actor: Uuid) -> Uuid {
+    let material = Uuid::new_v4();
+    let version = Uuid::new_v4();
+    sqlx::query("INSERT INTO ad_materials(id,created_by) VALUES($1,$2)")
+        .bind(material)
+        .bind(actor)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO ad_material_versions(id,material_id,version,name,body,created_by) VALUES($1,$2,1,'广告','正文',$3)")
+        .bind(version).bind(material).bind(actor).execute(pool).await.unwrap();
+    sqlx::query("UPDATE ad_materials SET current_version_id=$2 WHERE id=$1")
+        .bind(material)
+        .bind(version)
+        .execute(pool)
+        .await
+        .unwrap();
+    material
+}
+
 #[allow(clippy::too_many_arguments)]
-async fn rule(
+async fn placement(
     pool: &PgPool,
     actor: Uuid,
     material: Uuid,
@@ -21,7 +41,7 @@ async fn rule(
     end: Option<chrono::DateTime<Utc>>,
 ) -> Uuid {
     let id = Uuid::new_v4();
-    sqlx::query("INSERT INTO ad_placement_rules(id,name,material_id,scope_kind,platform_id,unit_id,enabled,valid_from,valid_until,created_by,updated_by) VALUES($1,'rule',$2,$3,$4,$5,$6,$7,$8,$9,$9)")
+    sqlx::query("INSERT INTO ad_placements(id,material_id,scope_kind,platform_id,unit_id,enabled,valid_from,valid_until,created_by,updated_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)")
         .bind(id).bind(material).bind(kind).bind(platform).bind(unit).bind(enabled).bind(start).bind(end).bind(actor).execute(pool).await.unwrap();
     id
 }
@@ -184,27 +204,32 @@ async fn matches_business_scopes_without_routes_or_selection() {
     let audited: i64 = sqlx::query_scalar("SELECT count(*) FROM audit_events WHERE object_id=$1 AND action IN ('advertising.material.create','advertising.material.publish') AND actor_id=$2")
         .bind(created_id).bind(actor).fetch_one(&pool).await.unwrap();
     assert_eq!(audited, 2);
-    let rule_path = "/api/v2/admin/ad-placement-rules";
-    let mut new_rule = fixture["rule_create"].clone();
-    new_rule["material_id"] = serde_json::json!(created_id);
-    new_rule["valid_from"] = serde_json::json!((Utc::now() - Duration::hours(1)).to_rfc3339());
-    let mut created_rules = Vec::new();
+    let placement_path = "/api/v2/admin/ad-placements";
+    let mut new_placement = fixture["placement_create"].clone();
+    new_placement["material_id"] = serde_json::json!(created_id);
+    new_placement["valid_from"] = serde_json::json!((Utc::now() - Duration::hours(1)).to_rfc3339());
+    let mut created_placements = Vec::new();
     for scope in [
         serde_json::json!({"kind":"global"}),
         serde_json::json!({"kind":"platform","platform_id":platform}),
         serde_json::json!({"kind":"unit","platform_id":platform,"unit_id":unit}),
     ] {
-        new_rule["scope"] = scope.clone();
-        let body = serde_json::json!({"data":{"type":"ad-placement-rules","attributes":new_rule}});
+        new_placement["scope"] = scope.clone();
+        let body = serde_json::json!({"data":{"type":"ad-placements","attributes":new_placement}});
         let denied = router
             .clone()
-            .oneshot(post(rule_path, &other_token, &other_session.csrf, &body))
+            .oneshot(post(
+                placement_path,
+                &other_token,
+                &other_session.csrf,
+                &body,
+            ))
             .await
             .unwrap();
         assert_eq!(denied.status(), 403);
         let response = router
             .clone()
-            .oneshot(post(rule_path, &token, &session.csrf, &body))
+            .oneshot(post(placement_path, &token, &session.csrf, &body))
             .await
             .unwrap();
         assert_eq!(response.status(), 200);
@@ -212,11 +237,42 @@ async fn matches_business_scopes_without_routes_or_selection() {
             serde_json::from_slice(&to_bytes(response.into_body(), 100_000).await.unwrap())
                 .unwrap();
         assert_eq!(response["data"]["attributes"]["scope"], scope);
-        created_rules.push(Uuid::parse_str(response["data"]["id"].as_str().unwrap()).unwrap());
+        assert!(response["data"]["attributes"].get("name").is_none());
+        created_placements.push(Uuid::parse_str(response["data"]["id"].as_str().unwrap()).unwrap());
+        // A direct material/scope binding cannot be created a second time,
+        // including scopes with NULL platform/unit components.
+        let duplicate = router
+            .clone()
+            .oneshot(post(placement_path, &token, &session.csrf, &body))
+            .await
+            .unwrap();
+        assert_eq!(duplicate.status(), 409);
     }
+    let old_endpoint = Request::builder()
+        .uri("/api/v2/admin/ad-placement-rules")
+        .header("cookie", format!("wekeeper_session={token}"))
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        router.clone().oneshot(old_endpoint).await.unwrap().status(),
+        404
+    );
+    let mut named_binding = new_placement.clone();
+    named_binding["name"] = serde_json::json!("不再存在的规则名称");
+    let named_binding =
+        serde_json::json!({"data":{"type":"ad-placements","attributes":named_binding}});
+    assert_eq!(
+        router
+            .clone()
+            .oneshot(post(placement_path, &token, &session.csrf, &named_binding))
+            .await
+            .unwrap()
+            .status(),
+        400
+    );
     for (path, expected_id) in [
         ("/api/v2/admin/ad-materials", created_id),
-        (rule_path, created_rules[0]),
+        (placement_path, created_placements[0]),
     ] {
         for (session_token, expected_status) in [(&token, 200), (&other_token, 403)] {
             let request = Request::builder()
@@ -248,24 +304,24 @@ async fn matches_business_scopes_without_routes_or_selection() {
             .unwrap();
         assert_eq!(router.clone().oneshot(invalid).await.unwrap().status(), 400);
     }
-    new_rule["scope"] =
+    new_placement["scope"] =
         serde_json::json!({"kind":"unit","platform_id":platform,"unit_id":other_unit});
     let invalid_body =
-        serde_json::json!({"data":{"type":"ad-placement-rules","attributes":new_rule}});
+        serde_json::json!({"data":{"type":"ad-placements","attributes":new_placement}});
     let invalid_scope = router
         .clone()
-        .oneshot(post(rule_path, &token, &session.csrf, &invalid_body))
+        .oneshot(post(placement_path, &token, &session.csrf, &invalid_body))
         .await
         .unwrap();
     assert_eq!(invalid_scope.status(), 400);
-    let read_rule = Request::builder()
-        .uri(format!("{rule_path}/{}", created_rules[0]))
+    let read_placement = Request::builder()
+        .uri(format!("{placement_path}/{}", created_placements[0]))
         .header("cookie", format!("wekeeper_session={token}"))
         .body(Body::empty())
         .unwrap();
-    let read_rule = router.clone().oneshot(read_rule).await.unwrap();
-    assert_eq!(read_rule.status(), 200);
-    let discovered = MatchingRules(Repository(pool.clone()))
+    let read_placement = router.clone().oneshot(read_placement).await.unwrap();
+    assert_eq!(read_placement.status(), 200);
+    let discovered = MatchingAds(Repository(pool.clone()))
         .page(
             SourceIdentity {
                 platform_id: platform,
@@ -276,12 +332,19 @@ async fn matches_business_scopes_without_routes_or_selection() {
         )
         .await
         .unwrap();
-    let discovered_ids: std::collections::HashSet<_> =
-        discovered.items.iter().map(|item| item.rule_id).collect();
-    assert!(created_rules.iter().all(|id| discovered_ids.contains(id)));
-    let rule_audit: i64 = sqlx::query_scalar("SELECT count(*) FROM audit_events WHERE object_id=ANY($1) AND action='advertising.placement.create' AND actor_id=$2")
-        .bind(&created_rules).bind(actor).fetch_one(&pool).await.unwrap();
-    assert_eq!(rule_audit, 3);
+    let discovered_ids: std::collections::HashSet<_> = discovered
+        .items
+        .iter()
+        .map(|item| item.placement_id)
+        .collect();
+    assert!(
+        created_placements
+            .iter()
+            .all(|id| discovered_ids.contains(id))
+    );
+    let placement_audit: i64 = sqlx::query_scalar("SELECT count(*) FROM audit_events WHERE object_id=ANY($1) AND action='advertising.placement.create' AND actor_id=$2")
+        .bind(&created_placements).bind(actor).fetch_one(&pool).await.unwrap();
+    assert_eq!(placement_audit, 3);
     let mut archive = fixture["archive"].clone();
     archive["expected_revision"] = serde_json::json!(2);
     let archive_body =
@@ -335,7 +398,7 @@ async fn matches_business_scopes_without_routes_or_selection() {
     .unwrap();
     assert_eq!(archived["data"]["attributes"]["archived"], true);
     assert_eq!(archived["data"]["attributes"]["revision"], 3);
-    let after_archive = MatchingRules(Repository(pool.clone()))
+    let after_archive = MatchingAds(Repository(pool.clone()))
         .page(
             SourceIdentity {
                 platform_id: platform,
@@ -350,7 +413,7 @@ async fn matches_business_scopes_without_routes_or_selection() {
         after_archive
             .items
             .iter()
-            .all(|item| !created_rules.contains(&item.rule_id))
+            .all(|item| !created_placements.contains(&item.placement_id))
     );
     let versions_uri = format!("/api/v2/admin/ad-materials/{created_id}/versions?page=1");
     for (session_token, status) in [(&token, 200), (&other_token, 403)] {
@@ -407,11 +470,11 @@ async fn matches_business_scopes_without_routes_or_selection() {
             .status(),
         409
     );
-    let state_body = serde_json::json!({"data":{"type":"ad-placement-rule-states","attributes":fixture["rule_state"]}});
-    let put_state = |rule: Uuid, token: &str, csrf: &str| {
+    let state_body = serde_json::json!({"data":{"type":"ad-placement-states","attributes":fixture["placement_state"]}});
+    let put_state = |placement: Uuid, token: &str, csrf: &str| {
         Request::builder()
             .method("PUT")
-            .uri(format!("{rule_path}/{rule}/state"))
+            .uri(format!("{placement_path}/{placement}/state"))
             .header("cookie", format!("wekeeper_session={token}"))
             .header("origin", "http://localhost:5173")
             .header("x-csrf-token", csrf)
@@ -422,28 +485,28 @@ async fn matches_business_scopes_without_routes_or_selection() {
     let denied = router
         .clone()
         .oneshot(put_state(
-            created_rules[0],
+            created_placements[0],
             &other_token,
             &other_session.csrf,
         ))
         .await
         .unwrap();
     assert_eq!(denied.status(), 403);
-    for rule in &created_rules {
+    for placement in &created_placements {
         let response = router
             .clone()
-            .oneshot(put_state(*rule, &token, &session.csrf))
+            .oneshot(put_state(*placement, &token, &session.csrf))
             .await
             .unwrap();
         assert_eq!(response.status(), 200);
     }
     let stale = router
         .clone()
-        .oneshot(put_state(created_rules[0], &token, &session.csrf))
+        .oneshot(put_state(created_placements[0], &token, &session.csrf))
         .await
         .unwrap();
     assert_eq!(stale.status(), 409);
-    let disabled = MatchingRules(Repository(pool.clone()))
+    let disabled = MatchingAds(Repository(pool.clone()))
         .page(
             SourceIdentity {
                 platform_id: platform,
@@ -458,12 +521,12 @@ async fn matches_business_scopes_without_routes_or_selection() {
         disabled
             .items
             .iter()
-            .all(|item| !created_rules.contains(&item.rule_id))
+            .all(|item| !created_placements.contains(&item.placement_id))
     );
     let state_audit: i64 = sqlx::query_scalar("SELECT count(*) FROM audit_events WHERE object_id=ANY($1) AND action='advertising.placement.state' AND actor_id=$2")
-        .bind(&created_rules).bind(actor).fetch_one(&pool).await.unwrap();
+        .bind(&created_placements).bind(actor).fetch_one(&pool).await.unwrap();
     assert_eq!(state_audit, 3);
-    // No source routes exist; material and rules use only business identities.
+    // No source routes exist; material and placements use only business identities.
     let material = Uuid::new_v4();
     let version = Uuid::new_v4();
     sqlx::query("INSERT INTO ad_materials(id,created_by) VALUES($1,$2)")
@@ -481,11 +544,11 @@ async fn matches_business_scopes_without_routes_or_selection() {
         .unwrap();
     let at = Utc::now();
     let start = at - Duration::hours(1);
-    let global = rule(
+    let global = placement(
         &pool, actor, material, "global", None, None, true, start, None,
     )
     .await;
-    let platform_rule = rule(
+    let platform_placement = placement(
         &pool,
         actor,
         material,
@@ -497,7 +560,7 @@ async fn matches_business_scopes_without_routes_or_selection() {
         None,
     )
     .await;
-    let unit_rule = rule(
+    let unit_placement = placement(
         &pool,
         actor,
         material,
@@ -509,7 +572,7 @@ async fn matches_business_scopes_without_routes_or_selection() {
         None,
     )
     .await;
-    let other_rule = rule(
+    let other_placement = placement(
         &pool,
         actor,
         material,
@@ -521,14 +584,22 @@ async fn matches_business_scopes_without_routes_or_selection() {
         None,
     )
     .await;
-    rule(
-        &pool, actor, material, "global", None, None, false, start, None,
-    )
-    .await;
-    rule(
+    placement(
         &pool,
         actor,
-        material,
+        published_material(&pool, actor).await,
+        "global",
+        None,
+        None,
+        false,
+        start,
+        None,
+    )
+    .await;
+    placement(
+        &pool,
+        actor,
+        published_material(&pool, actor).await,
         "global",
         None,
         None,
@@ -537,10 +608,10 @@ async fn matches_business_scopes_without_routes_or_selection() {
         Some(at),
     )
     .await;
-    rule(
+    placement(
         &pool,
         actor,
-        material,
+        published_material(&pool, actor).await,
         "global",
         None,
         None,
@@ -556,7 +627,7 @@ async fn matches_business_scopes_without_routes_or_selection() {
         .execute(&pool)
         .await
         .unwrap();
-    rule(
+    placement(
         &pool,
         actor,
         unpublished,
@@ -594,32 +665,34 @@ async fn matches_business_scopes_without_routes_or_selection() {
         .execute(&pool)
         .await
         .unwrap();
-    rule(
+    placement(
         &pool, actor, archived, "global", None, None, true, start, None,
     )
     .await;
-    let invalid = sqlx::query("INSERT INTO ad_placement_rules(id,name,material_id,scope_kind,platform_id,unit_id,enabled,valid_from,created_by,updated_by) VALUES($1,'rule',$2,'unit',$3,$4,true,$5,$6,$6)")
+    let invalid = sqlx::query("INSERT INTO ad_placements(id,material_id,scope_kind,platform_id,unit_id,enabled,valid_from,created_by,updated_by) VALUES($1,$2,'unit',$3,$4,true,$5,$6,$6)")
         .bind(Uuid::new_v4()).bind(material).bind(platform).bind(other_unit).bind(start).bind(actor).execute(&pool).await.unwrap_err();
     assert_eq!(
         invalid.as_database_error().unwrap().code().as_deref(),
         Some("23503")
     );
-    let legacy = sqlx::query("INSERT INTO ad_placement_rules(id,name,material_id,scope_kind,enabled,valid_from,created_by,updated_by) VALUES($1,'rule',$2,'route',true,$3,$4,$4)")
+    let legacy = sqlx::query("INSERT INTO ad_placements(id,material_id,scope_kind,enabled,valid_from,created_by,updated_by) VALUES($1,$2,'route',true,$3,$4,$4)")
         .bind(Uuid::new_v4()).bind(material).bind(start).bind(actor).execute(&pool).await.unwrap_err();
     assert_eq!(
         legacy.as_database_error().unwrap().code().as_deref(),
         Some("23514")
     );
-    let matcher = MatchingRules(Repository(pool.clone()));
+    let matcher = MatchingAds(Repository(pool.clone()));
     let identity = SourceIdentity {
         platform_id: platform,
         unit_id: unit,
     };
     let page = matcher.page(identity, at, None).await.unwrap();
-    let ids: std::collections::HashSet<_> = page.items.iter().map(|x| x.rule_id).collect();
+    let ids: std::collections::HashSet<_> = page.items.iter().map(|x| x.placement_id).collect();
     assert_eq!(
         ids,
-        [global, platform_rule, unit_rule].into_iter().collect()
+        [global, platform_placement, unit_placement]
+            .into_iter()
+            .collect()
     );
     assert!(page.items.iter().any(|item| item.scope
         == TargetScope::Unit {
@@ -644,9 +717,9 @@ async fn matches_business_scopes_without_routes_or_selection() {
         sibling_page
             .items
             .iter()
-            .map(|x| x.rule_id)
+            .map(|x| x.placement_id)
             .collect::<std::collections::HashSet<_>>(),
-        [global, platform_rule].into_iter().collect()
+        [global, platform_placement].into_iter().collect()
     );
     let other_page = matcher
         .page(
@@ -663,9 +736,9 @@ async fn matches_business_scopes_without_routes_or_selection() {
         other_page
             .items
             .iter()
-            .map(|x| x.rule_id)
+            .map(|x| x.placement_id)
             .collect::<std::collections::HashSet<_>>(),
-        [global, other_rule].into_iter().collect()
+        [global, other_placement].into_iter().collect()
     );
     assert!(
         matcher
@@ -687,10 +760,18 @@ async fn matches_business_scopes_without_routes_or_selection() {
         .execute(&pool)
         .await;
     assert!(changed.is_err());
-    // Multiple rules can match; pagination does not impose delivery precedence.
+    // Multiple advertisements can match; pagination does not impose delivery precedence.
     for _ in 0..31 {
-        rule(
-            &pool, actor, material, "global", None, None, true, start, None,
+        placement(
+            &pool,
+            actor,
+            published_material(&pool, actor).await,
+            "global",
+            None,
+            None,
+            true,
+            start,
+            None,
         )
         .await;
     }
@@ -699,8 +780,242 @@ async fn matches_business_scopes_without_routes_or_selection() {
     let second = matcher.page(identity, at, first.next_after).await.unwrap();
     assert_eq!(second.items.len(), 4);
     assert!(second.next_after.is_none());
-    let first_ids: std::collections::HashSet<_> = first.items.iter().map(|x| x.rule_id).collect();
-    assert!(second.items.iter().all(|x| !first_ids.contains(&x.rule_id)));
+    let first_ids: std::collections::HashSet<_> =
+        first.items.iter().map(|x| x.placement_id).collect();
+    assert!(
+        second
+            .items
+            .iter()
+            .all(|x| !first_ids.contains(&x.placement_id))
+    );
+
+    // Force the preferred unit placement onto the last page of discovery.
+    let last_unit_placement = Uuid::from_u128(u128::MAX);
+    sqlx::query("UPDATE ad_placements SET id=$2 WHERE id=$1")
+        .bind(unit_placement)
+        .bind(last_unit_placement)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let preferred = matcher.preferred_candidates(identity, at).await.unwrap();
+    assert_eq!(preferred.len(), 1);
+    assert_eq!(preferred[0].placement_id, last_unit_placement);
+
+    // Multiple advertisements may share a scope; discovery is not multi-ad composition.
+    let tied_unit_placement = placement(
+        &pool,
+        actor,
+        published_material(&pool, actor).await,
+        "unit",
+        Some(platform),
+        Some(unit),
+        true,
+        start,
+        None,
+    )
+    .await;
+    let preferred = matcher.preferred_candidates(identity, at).await.unwrap();
+    assert_eq!(
+        preferred
+            .iter()
+            .map(|item| item.placement_id)
+            .collect::<std::collections::HashSet<_>>(),
+        [last_unit_placement, tied_unit_placement]
+            .into_iter()
+            .collect()
+    );
+    let preferred_sibling = matcher
+        .preferred_candidates(
+            SourceIdentity {
+                platform_id: platform,
+                unit_id: sibling,
+            },
+            at,
+        )
+        .await
+        .unwrap();
+    assert_eq!(preferred_sibling.len(), 1);
+    assert_eq!(preferred_sibling[0].placement_id, platform_placement);
+    assert!(
+        matcher
+            .preferred_candidates(
+                SourceIdentity {
+                    platform_id: other_platform,
+                    unit_id: unit,
+                },
+                at
+            )
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    // Disabling all higher scopes leaves only the valid global candidates.
+    sqlx::query("UPDATE ad_placements SET enabled=false WHERE scope_kind != 'global'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let preferred_global = matcher.preferred_candidates(identity, at).await.unwrap();
+    assert_eq!(preferred_global.len(), 32);
+    assert!(
+        preferred_global
+            .iter()
+            .all(|item| item.scope == TargetScope::Global {})
+    );
+    sqlx::query("UPDATE ad_placements SET enabled=false")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(
+        matcher
+            .preferred_candidates(identity, at)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    // HTTP validation counts Han characters rather than their UTF-8 bytes.
+    for (length, status) in [(140, 200), (141, 400)] {
+        let mut attributes = fixture["create"].clone();
+        attributes["content"]["body"] = serde_json::json!("汉".repeat(length));
+        let body = serde_json::json!({"data":{"type":"ad-materials","attributes":attributes}});
+        let req = post("/api/v2/admin/ad-materials", &token, &session.csrf, &body);
+        let response = router.clone().oneshot(req).await.unwrap();
+        assert_eq!(response.status(), status);
+        if status == 400 {
+            let body: serde_json::Value =
+                serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                    .unwrap();
+            assert_eq!(body["errors"][0]["code"], "invalid_ad_content");
+        }
+    }
+    // Immediate decisions use business-unit counters, never route/workspace counters.
+    use wekeeper_api::advertising::{
+        domain::decision::DecisionInput, north::local::AdDecisionService,
+    };
+    let service = AdDecisionService(Repository(pool.clone()));
+    let input = DecisionInput {
+        source: identity,
+        message_id: Uuid::new_v4(),
+        original: "即时消息".into(),
+        channel: "mobile".into(),
+    };
+    let none = service.decide(input.clone()).await.unwrap();
+    assert!(none.selected_ad.is_none());
+    assert_eq!(none.content, input.original);
+    assert_eq!(none.selection_count, 0);
+    sqlx::query("UPDATE ad_placements SET enabled=true WHERE id=ANY($1)")
+        .bind(vec![
+            last_unit_placement,
+            tied_unit_placement,
+            platform_placement,
+        ])
+        .execute(&pool)
+        .await
+        .unwrap();
+    // Replaying a no-ad message does not retroactively insert advertising.
+    assert_eq!(service.decide(input.clone()).await.unwrap(), none);
+    let mut input = DecisionInput {
+        message_id: Uuid::new_v4(),
+        ..input
+    };
+    let first_message_id = input.message_id;
+    let first = service.decide(input.clone()).await.unwrap();
+    assert_eq!(first.selection_count, 1);
+    let selected = first.selected_ad.as_ref().unwrap();
+    assert!([last_unit_placement, tied_unit_placement].contains(&selected.placement_id));
+    let mut jobs = tokio::task::JoinSet::new();
+    for _ in 0..8 {
+        let input = input.clone();
+        let pool = pool.clone();
+        jobs.spawn(async move {
+            AdDecisionService(Repository(pool))
+                .decide(input)
+                .await
+                .unwrap()
+        });
+    }
+    while let Some(result) = jobs.join_next().await {
+        assert_eq!(result.unwrap(), first);
+    }
+    let mut conflicting = input.clone();
+    conflicting.original.push('变');
+    assert_eq!(
+        service.decide(conflicting).await.unwrap_err().0,
+        "message_conflict"
+    );
+    input.message_id = Uuid::new_v4();
+    let second = service.decide(input.clone()).await.unwrap();
+    assert_eq!(second.selection_count, 2);
+    assert_ne!(
+        second.selected_ad.as_ref().unwrap().placement_id,
+        selected.placement_id
+    );
+    let sibling_input = DecisionInput {
+        source: SourceIdentity {
+            platform_id: platform,
+            unit_id: sibling,
+        },
+        message_id: Uuid::new_v4(),
+        ..input.clone()
+    };
+    let sibling_first = service.decide(sibling_input).await.unwrap();
+    assert_eq!(sibling_first.selection_count, 1);
+    assert_eq!(
+        sibling_first.selected_ad.unwrap().placement_id,
+        platform_placement
+    );
+    // Channel overflow preserves the complete original and does not consume a selection.
+    let overflow = service
+        .decide(DecisionInput {
+            original: "x".repeat(4000),
+            channel: "wecom".into(),
+            message_id: Uuid::new_v4(),
+            ..input.clone()
+        })
+        .await
+        .unwrap();
+    assert_eq!(overflow.content, "x".repeat(4000));
+    assert_eq!(overflow.selection_count, 2);
+    assert!(overflow.selected_ad.is_none());
+    for _ in 0..8 {
+        let input = DecisionInput {
+            message_id: Uuid::new_v4(),
+            ..input.clone()
+        };
+        let pool = pool.clone();
+        jobs.spawn(async move {
+            AdDecisionService(Repository(pool))
+                .decide(input)
+                .await
+                .unwrap()
+        });
+    }
+    let mut counts = Vec::new();
+    while let Some(result) = jobs.join_next().await {
+        counts.push(result.unwrap().selection_count);
+    }
+    counts.sort();
+    assert_eq!(counts, (3..=10).collect::<Vec<_>>());
+    sqlx::query("UPDATE ad_placements SET enabled=false")
+        .execute(&pool)
+        .await
+        .unwrap();
+    // Decisions are immutable message facts; changing availability never recalls them.
+    input.message_id = Uuid::new_v4();
+    let unavailable = service.decide(input.clone()).await.unwrap();
+    assert_eq!(unavailable.content, input.original);
+    assert_eq!(unavailable.selection_count, 10);
+    assert!(unavailable.selected_ad.is_none());
+    assert_eq!(
+        service
+            .decide(DecisionInput {
+                message_id: first_message_id,
+                ..input
+            })
+            .await
+            .unwrap(),
+        first
+    );
     pool.close().await;
     sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
         .execute(&base)

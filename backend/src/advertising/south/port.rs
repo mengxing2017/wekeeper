@@ -1,16 +1,16 @@
-use super::super::domain::{Command, Result};
+use super::super::domain::Result;
 use crate::business::Actor;
 
-pub trait AdvertisingStore: Clone + Send + Sync {
-    fn execute(
+/// Trusted immediate-message use case; no configuration-version or revocation flow.
+pub trait AdDecisionStore: Send + Sync {
+    fn decide(
         &self,
-        actor: &Actor,
-        command: Command,
-    ) -> impl std::future::Future<Output = Result<serde_json::Value>> + Send;
+        input: crate::advertising::domain::decision::DecisionInput,
+    ) -> impl std::future::Future<Output = Result<crate::advertising::domain::decision::Decision>> + Send;
 }
 
 /// Read-only matching. Final authorization and selection require their own use case.
-pub trait TargetRuleReader: Send + Sync {
+pub trait AdPlacementReader: Send + Sync {
     fn matching_page(
         &self,
         identity: crate::advertising::domain::targeting::SourceIdentity,
@@ -70,34 +70,34 @@ pub trait MaterialStore: Send + Sync {
     > + Send;
 }
 
-pub trait PlacementRuleStore: Send + Sync {
-    fn create_rule(
+pub trait AdPlacementStore: Send + Sync {
+    fn create_placement(
         &self,
         actor: &Actor,
-        input: crate::advertising::domain::targeting::CreatePlacementRule,
+        input: crate::advertising::domain::targeting::CreateAdPlacement,
     ) -> impl std::future::Future<
-        Output = Result<crate::advertising::domain::targeting::PlacementRuleView>,
+        Output = Result<crate::advertising::domain::targeting::AdPlacementView>,
     > + Send;
-    fn rule(
+    fn placement(
         &self,
         actor: &Actor,
         id: uuid::Uuid,
     ) -> impl std::future::Future<
-        Output = Result<Option<crate::advertising::domain::targeting::PlacementRuleView>>,
+        Output = Result<Option<crate::advertising::domain::targeting::AdPlacementView>>,
     > + Send;
-    fn rules(
+    fn placements(
         &self,
         actor: &Actor,
         offset: i64,
     ) -> impl std::future::Future<
-        Output = Result<Vec<crate::advertising::domain::targeting::PlacementRuleView>>,
+        Output = Result<Vec<crate::advertising::domain::targeting::AdPlacementView>>,
     > + Send;
-    fn set_rule_state(
+    fn set_placement_state(
         &self,
         actor: &Actor,
         id: uuid::Uuid,
         input: crate::advertising::domain::targeting::SetPlacementState,
     ) -> impl std::future::Future<
-        Output = Result<crate::advertising::domain::targeting::PlacementRuleView>,
+        Output = Result<crate::advertising::domain::targeting::AdPlacementView>,
     > + Send;
 }

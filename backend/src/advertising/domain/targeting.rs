@@ -10,7 +10,7 @@ pub struct SourceIdentity {
     pub unit_id: Uuid,
 }
 
-/// A rule has exactly one source scope. Unit identity includes its platform.
+/// An advertisement is bound directly to a source scope. Unit identity includes its platform.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TargetScope {
@@ -20,6 +20,15 @@ pub enum TargetScope {
 }
 
 impl TargetScope {
+    /// Business precedence: unit > platform > global. Selection within this scope chooses one advertisement.
+    fn priority(self) -> u8 {
+        match self {
+            Self::Global {} => 0,
+            Self::Platform { .. } => 1,
+            Self::Unit { .. } => 2,
+        }
+    }
+
     /// Callers must independently verify that a unit belongs to its platform.
     pub fn matches(self, source: SourceIdentity) -> bool {
         match self {
@@ -33,12 +42,12 @@ impl TargetScope {
     }
 }
 
-/// A matching rule and its current material version. Matching alone does not
+/// A matching advertisement placement and its current material version. Matching alone does not
 /// authorize use, reserve a rotation slot, or create a delivery decision.
 #[derive(Clone, Debug)]
 pub struct ScopeMatch {
-    pub rule_id: Uuid,
-    pub rule_revision: i64,
+    pub placement_id: Uuid,
+    pub placement_revision: i64,
     pub scope: TargetScope,
     pub material_id: Uuid,
     pub material_version_id: Uuid,
@@ -49,6 +58,18 @@ pub struct ScopeMatch {
 pub struct ScopeMatchPage {
     pub items: Vec<ScopeMatch>,
     pub next_after: Option<Uuid>,
+}
+
+/// Keep every candidate at the highest matching scope. Same-scope selection,
+/// composition and delivery authorization belong to the later decision use case.
+pub fn preferred_candidates(
+    source: SourceIdentity,
+    mut candidates: Vec<ScopeMatch>,
+) -> Vec<ScopeMatch> {
+    candidates.retain(|candidate| candidate.scope.matches(source));
+    let priority = candidates.iter().map(|item| item.scope.priority()).max();
+    candidates.retain(|candidate| Some(candidate.scope.priority()) == priority);
+    candidates
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -100,8 +121,7 @@ pub struct ManagementPage<T> {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CreatePlacementRule {
-    pub name: String,
+pub struct CreateAdPlacement {
     pub material_id: Uuid,
     pub scope: TargetScope,
     pub enabled: bool,
@@ -111,9 +131,8 @@ pub struct CreatePlacementRule {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct PlacementRuleView {
+pub struct AdPlacementView {
     pub id: Uuid,
-    pub name: String,
     pub material_id: Uuid,
     pub scope: TargetScope,
     pub enabled: bool,
@@ -133,6 +152,58 @@ pub struct SetPlacementState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn precedence_ignores_foreign_scopes_and_preserves_same_scope_candidates() {
+        let source = SourceIdentity {
+            platform_id: Uuid::new_v4(),
+            unit_id: Uuid::new_v4(),
+        };
+        let candidate = |scope| ScopeMatch {
+            placement_id: Uuid::new_v4(),
+            placement_revision: 1,
+            scope,
+            material_id: Uuid::new_v4(),
+            material_version_id: Uuid::new_v4(),
+            content: Content {
+                name: "ad".into(),
+                body: "body".into(),
+                link: None,
+            },
+        };
+        let platform = candidate(TargetScope::Platform {
+            platform_id: source.platform_id,
+        });
+        let foreign_unit = candidate(TargetScope::Unit {
+            platform_id: Uuid::new_v4(),
+            unit_id: source.unit_id,
+        });
+        let candidates = preferred_candidates(
+            source,
+            vec![
+                candidate(TargetScope::Global {}),
+                foreign_unit.clone(),
+                platform.clone(),
+            ],
+        );
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].placement_id, platform.placement_id);
+        let unit = candidate(TargetScope::Unit {
+            platform_id: source.platform_id,
+            unit_id: source.unit_id,
+        });
+        let tied = candidate(unit.scope);
+        let candidates = preferred_candidates(source, vec![platform, unit.clone(), tied.clone()]);
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|item| item.placement_id)
+                .collect::<Vec<_>>(),
+            vec![unit.placement_id, tied.placement_id]
+        );
+        assert!(preferred_candidates(source, vec![foreign_unit]).is_empty());
+        assert!(preferred_candidates(source, Vec::new()).is_empty());
+    }
 
     #[test]
     fn scopes_match_business_identity_without_crossing_platforms() {
@@ -223,15 +294,14 @@ mod tests {
             serde_json::to_value(version).unwrap(),
             fixture["material_version"]
         );
-        let request: CreatePlacementRule =
-            serde_json::from_value(fixture["rule_create"].clone()).unwrap();
+        let request: CreateAdPlacement =
+            serde_json::from_value(fixture["placement_create"].clone()).unwrap();
         assert_eq!(
             serde_json::to_value(&request).unwrap(),
-            fixture["rule_create"]
+            fixture["placement_create"]
         );
-        let placement = PlacementRuleView {
+        let placement = AdPlacementView {
             id: "55555555-5555-4555-8555-555555555555".parse().unwrap(),
-            name: request.name,
             material_id: request.material_id,
             scope: request.scope,
             enabled: request.enabled,
@@ -241,11 +311,14 @@ mod tests {
         };
         assert_eq!(
             serde_json::to_value(placement).unwrap(),
-            fixture["rule_view"]
+            fixture["placement_view"]
         );
         let state: SetPlacementState =
-            serde_json::from_value(fixture["rule_state"].clone()).unwrap();
-        assert_eq!(serde_json::to_value(state).unwrap(), fixture["rule_state"]);
+            serde_json::from_value(fixture["placement_state"].clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(state).unwrap(),
+            fixture["placement_state"]
+        );
         let mut invalid = fixture["create"].clone();
         invalid["route_id"] = serde_json::json!("not-allowed");
         assert!(serde_json::from_value::<CreateMaterial>(invalid).is_err());

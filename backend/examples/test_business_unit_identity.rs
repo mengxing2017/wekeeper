@@ -16,20 +16,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     postgres.start().await?;
     let result = async {
         postgres.create_database("business_unit_test").await?;
-        let status = Command::new("cargo")
-            .args([
-                "test",
-                "--test",
+        let phone_test_key = format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        );
+        let source_routing_only = std::env::args()
+            .skip(1)
+            .any(|arg| arg == "--source-routing");
+        let broadcast_only = std::env::args().skip(1).any(|arg| arg == "--broadcast");
+        let suites: &[&str] = if broadcast_only {
+            &["broadcast"]
+        } else if source_routing_only {
+            &["source_routing"]
+        } else {
+            &[
                 "business_unit_identity",
-                "--test",
                 "source_access",
-                "--test",
                 "advertising_target_scopes",
-                "--test",
                 "message_orchestration",
-                "--",
-                "--ignored",
-            ])
+                "receiving_configurations",
+                "source_routing",
+                "shared_mobile_v9",
+                "broadcast",
+            ]
+        };
+        let mut arguments = vec!["test"];
+        for suite in suites {
+            arguments.extend(["--test", suite]);
+        }
+        arguments.extend(["--", "--ignored", "--test-threads=2"]);
+        let status = Command::new("cargo")
+            .args(arguments)
             .current_dir(env!("CARGO_MANIFEST_DIR"))
             .env(
                 "WEKEEPER_TEST_DATABASE_URL",
@@ -40,35 +58,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "WEKEEPER_SOURCE_MASTER_KEY_V1",
                 "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
             )
+            .env("WEKEEPER_SHARED_SEND_KEY", phone_test_key)
             .status()?;
         if !status.success() {
             return Err("business-unit integration test failed".into());
-        }
-        for (test, filter) in [
-            (
-                "shared_mobile_v9",
-                "dispatch_exhausted_target_does_not_block_other_targets",
-            ),
-            (
-                "source_routing",
-                "ordered_pool_bounded_skips_no_candidate_no_consumption_and_preview",
-            ),
-        ] {
-            let status = Command::new("cargo")
-                .args(["test", "--test", test, filter, "--", "--ignored"])
-                .current_dir(env!("CARGO_MANIFEST_DIR"))
-                .env(
-                    "WEKEEPER_TEST_DATABASE_URL",
-                    postgres.settings().url("business_unit_test"),
-                )
-                .env(
-                    "WEKEEPER_SOURCE_MASTER_KEY_V1",
-                    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-                )
-                .status()?;
-            if !status.success() {
-                return Err(format!("{test}: {filter} integration test failed").into());
-            }
         }
         Ok::<(), Box<dyn std::error::Error>>(())
     }

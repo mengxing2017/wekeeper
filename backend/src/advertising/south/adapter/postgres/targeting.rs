@@ -4,13 +4,13 @@ use crate::advertising::{
         AdvertisingError, Content, Result,
         targeting::{ScopeMatch, ScopeMatchPage, SourceIdentity, TargetScope},
     },
-    south::{adapter::postgres::Repository, port::TargetRuleReader},
+    south::{adapter::postgres::Repository, port::AdPlacementReader},
 };
 use chrono::{DateTime, Utc};
 use sqlx::Row;
 use uuid::Uuid;
 
-impl TargetRuleReader for Repository {
+impl AdPlacementReader for Repository {
     async fn matching_page(
         &self,
         identity: SourceIdentity,
@@ -20,7 +20,7 @@ impl TargetRuleReader for Repository {
         let rows = sqlx::query(
             "SELECT r.id,r.revision,r.scope_kind,r.platform_id,r.unit_id,\
                     m.id AS material_id,v.id AS version_id,v.name,v.body,v.link \
-             FROM ad_placement_rules r \
+             FROM ad_placements r \
              JOIN ad_materials m ON m.id=r.material_id \
              JOIN ad_material_versions v ON v.material_id=m.id AND v.id=m.current_version_id \
              WHERE EXISTS(SELECT 1 FROM business_units u WHERE u.platform_id=$1 AND u.id=$2) \
@@ -56,8 +56,8 @@ impl TargetRuleReader for Repository {
                 _ => return Err(AdvertisingError("temporarily_unavailable")),
             };
             items.push(ScopeMatch {
-                rule_id: row.get("id"),
-                rule_revision: row.get("revision"),
+                placement_id: row.get("id"),
+                placement_revision: row.get("revision"),
                 scope,
                 material_id: row.get("material_id"),
                 material_version_id: row.get("version_id"),
@@ -69,7 +69,7 @@ impl TargetRuleReader for Repository {
             });
         }
         let next_after = if has_more {
-            items.last().map(|item| item.rule_id)
+            items.last().map(|item| item.placement_id)
         } else {
             None
         };

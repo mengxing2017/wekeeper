@@ -3,11 +3,11 @@ use crate::{
         domain::{
             AdvertisingError,
             targeting::{
-                ArchiveMaterial, CreateMaterial, CreatePlacementRule, PublishMaterial,
+                ArchiveMaterial, CreateAdPlacement, CreateMaterial, PublishMaterial,
                 SetPlacementState,
             },
         },
-        north::local::{MaterialService, PlacementRuleService},
+        north::local::{AdPlacementService, MaterialService},
         south::adapter::postgres::Repository,
     },
     bootstrap::Application,
@@ -28,9 +28,14 @@ fn failure(error: AdvertisingError) -> Response {
         "forbidden" => (StatusCode::FORBIDDEN, "没有广告管理权限"),
         "not_found" => (StatusCode::NOT_FOUND, "资源不存在"),
         "revision_conflict" => (StatusCode::CONFLICT, "记录已更新，请刷新后重试"),
+        "placement_exists" => (StatusCode::CONFLICT, "该广告已绑定此投放范围"),
         "material_archived" => (StatusCode::CONFLICT, "素材已归档"),
         "material_unpublished" => (StatusCode::CONFLICT, "素材尚未发布"),
-        "invalid_request" | "invalid_ad_content" | "invalid_ad_link" | "invalid_ad_scope" => {
+        "invalid_ad_content" => (
+            StatusCode::BAD_REQUEST,
+            "广告正文不能为空且最多 140 字，名称不能为空且最多 120 字",
+        ),
+        "invalid_request" | "invalid_ad_link" | "invalid_ad_scope" => {
             (StatusCode::BAD_REQUEST, "广告内容或请求不合法")
         }
         _ => (StatusCode::SERVICE_UNAVAILABLE, "广告服务暂不可用"),
@@ -55,16 +60,16 @@ async fn list_materials(
         .map_err(failure)?;
     Ok(crate::http::jsonapi::singleton("ad-materials", "list", result).into_response())
 }
-async fn list_rules(
+async fn list_placements(
     State(app): State<Application>,
     actor: Actor,
     Query(query): Query<ListQuery>,
 ) -> Result<Response, Response> {
-    let result = PlacementRuleService(Repository(app.pool))
+    let result = AdPlacementService(Repository(app.pool))
         .list(&actor, query.page.unwrap_or(1))
         .await
         .map_err(failure)?;
-    Ok(crate::http::jsonapi::singleton("ad-placement-rules", "list", result).into_response())
+    Ok(crate::http::jsonapi::singleton("ad-placements", "list", result).into_response())
 }
 
 async fn create(
@@ -134,45 +139,45 @@ async fn publish(
         .map_err(failure)?;
     Ok(crate::http::jsonapi::resource("ad-materials", result).into_response())
 }
-async fn create_rule(
+async fn create_placement(
     State(app): State<Application>,
     actor: Actor,
     input: Input,
 ) -> Result<Response, Response> {
     let input = input
-        .decode::<CreatePlacementRule>("ad-placement-rules")
+        .decode::<CreateAdPlacement>("ad-placements")
         .map_err(|_| failure(AdvertisingError("invalid_request")))?;
-    let result = PlacementRuleService(Repository(app.pool))
+    let result = AdPlacementService(Repository(app.pool))
         .create(&actor, input)
         .await
         .map_err(failure)?;
-    Ok(crate::http::jsonapi::resource("ad-placement-rules", result).into_response())
+    Ok(crate::http::jsonapi::resource("ad-placements", result).into_response())
 }
-async fn get_rule(
+async fn get_placement(
     State(app): State<Application>,
     actor: Actor,
     Path(id): Path<Uuid>,
 ) -> Result<Response, Response> {
-    let result = PlacementRuleService(Repository(app.pool))
+    let result = AdPlacementService(Repository(app.pool))
         .get(&actor, id)
         .await
         .map_err(failure)?;
-    Ok(crate::http::jsonapi::resource("ad-placement-rules", result).into_response())
+    Ok(crate::http::jsonapi::resource("ad-placements", result).into_response())
 }
-async fn set_rule_state(
+async fn set_placement_state(
     State(app): State<Application>,
     actor: Actor,
     Path(id): Path<Uuid>,
     input: Input,
 ) -> Result<Response, Response> {
     let input = input
-        .decode::<SetPlacementState>("ad-placement-rule-states")
+        .decode::<SetPlacementState>("ad-placement-states")
         .map_err(|_| failure(AdvertisingError("invalid_request")))?;
-    let result = PlacementRuleService(Repository(app.pool))
+    let result = AdPlacementService(Repository(app.pool))
         .set_state(&actor, id, input)
         .await
         .map_err(failure)?;
-    Ok(crate::http::jsonapi::resource("ad-placement-rules", result).into_response())
+    Ok(crate::http::jsonapi::resource("ad-placements", result).into_response())
 }
 pub fn router() -> Router<Application> {
     Router::new()
@@ -188,12 +193,12 @@ pub fn router() -> Router<Application> {
             post(publish),
         )
         .route(
-            "/api/v2/admin/ad-placement-rules",
-            get(list_rules).post(create_rule),
+            "/api/v2/admin/ad-placements",
+            get(list_placements).post(create_placement),
         )
-        .route("/api/v2/admin/ad-placement-rules/{id}", get(get_rule))
+        .route("/api/v2/admin/ad-placements/{id}", get(get_placement))
         .route(
-            "/api/v2/admin/ad-placement-rules/{id}/state",
-            put(set_rule_state),
+            "/api/v2/admin/ad-placements/{id}/state",
+            put(set_placement_state),
         )
 }

@@ -304,13 +304,13 @@ fn decode_scope(
     }
 }
 
-impl crate::advertising::south::port::PlacementRuleStore for Repository {
-    async fn create_rule(
+impl crate::advertising::south::port::AdPlacementStore for Repository {
+    async fn create_placement(
         &self,
         actor: &Actor,
-        input: crate::advertising::domain::targeting::CreatePlacementRule,
-    ) -> Result<crate::advertising::domain::targeting::PlacementRuleView> {
-        use crate::advertising::domain::targeting::PlacementRuleView;
+        input: crate::advertising::domain::targeting::CreateAdPlacement,
+    ) -> Result<crate::advertising::domain::targeting::AdPlacementView> {
+        use crate::advertising::domain::targeting::AdPlacementView;
         let mut tx = self.0.begin().await.map_err(unavailable)?;
         authorize(&mut tx, actor).await?;
         let material = sqlx::query(
@@ -332,18 +332,20 @@ impl crate::advertising::south::port::PlacementRuleStore for Repository {
         }
         let id = Uuid::now_v7();
         let (kind, platform, unit) = scope_parts(input.scope);
-        let name = input.name.trim().to_owned();
-        sqlx::query("INSERT INTO ad_placement_rules(id,name,material_id,scope_kind,platform_id,unit_id,enabled,valid_from,valid_until,created_by,updated_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)")
-            .bind(id).bind(&name).bind(input.material_id).bind(kind).bind(platform).bind(unit).bind(input.enabled).bind(input.valid_from).bind(input.valid_until).bind(actor.id)
+        sqlx::query("INSERT INTO ad_placements(id,material_id,scope_kind,platform_id,unit_id,enabled,valid_from,valid_until,created_by,updated_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)")
+            .bind(id).bind(input.material_id).bind(kind).bind(platform).bind(unit).bind(input.enabled).bind(input.valid_from).bind(input.valid_until).bind(actor.id)
             .execute(&mut *tx).await.map_err(|error| {
-                if error.as_database_error().is_some_and(|db| db.code().as_deref() == Some("23503")) { AdvertisingError("invalid_ad_scope") } else { unavailable(error) }
+                match error.as_database_error().and_then(|db| db.code()).as_deref() {
+                    Some("23503") => AdvertisingError("invalid_ad_scope"),
+                    Some("23505") => AdvertisingError("placement_exists"),
+                    _ => unavailable(error),
+                }
             })?;
         crate::audit::record(&mut tx, actor, Uuid::nil(), "advertising.placement.create", id,
             json!({"material_id":input.material_id,"scope":input.scope,"enabled":input.enabled,"reason":input.reason})).await.map_err(unavailable)?;
         tx.commit().await.map_err(unavailable)?;
-        Ok(PlacementRuleView {
+        Ok(AdPlacementView {
             id,
-            name,
             material_id: input.material_id,
             scope: input.scope,
             enabled: input.enabled,
@@ -352,21 +354,20 @@ impl crate::advertising::south::port::PlacementRuleStore for Repository {
             revision: 1,
         })
     }
-    async fn rule(
+    async fn placement(
         &self,
         actor: &Actor,
         id: Uuid,
-    ) -> Result<Option<crate::advertising::domain::targeting::PlacementRuleView>> {
-        use crate::advertising::domain::targeting::PlacementRuleView;
+    ) -> Result<Option<crate::advertising::domain::targeting::AdPlacementView>> {
+        use crate::advertising::domain::targeting::AdPlacementView;
         let mut tx = self.0.begin().await.map_err(unavailable)?;
         authorize(&mut tx, actor).await?;
-        let row = sqlx::query("SELECT id,name,material_id,scope_kind,platform_id,unit_id,enabled,valid_from,valid_until,revision FROM ad_placement_rules WHERE id=$1")
+        let row = sqlx::query("SELECT id,material_id,scope_kind,platform_id,unit_id,enabled,valid_from,valid_until,revision FROM ad_placements WHERE id=$1")
             .bind(id).fetch_optional(&mut *tx).await.map_err(unavailable)?;
         let result = row
-            .map(|r| -> Result<PlacementRuleView> {
-                Ok(PlacementRuleView {
+            .map(|r| -> Result<AdPlacementView> {
+                Ok(AdPlacementView {
                     id: r.get("id"),
-                    name: r.get("name"),
                     material_id: r.get("material_id"),
                     scope: decode_scope(
                         r.get::<String, _>("scope_kind").as_str(),
@@ -384,22 +385,21 @@ impl crate::advertising::south::port::PlacementRuleStore for Repository {
         Ok(result)
     }
 
-    async fn rules(
+    async fn placements(
         &self,
         actor: &Actor,
         offset: i64,
-    ) -> Result<Vec<crate::advertising::domain::targeting::PlacementRuleView>> {
-        use crate::advertising::domain::targeting::PlacementRuleView;
+    ) -> Result<Vec<crate::advertising::domain::targeting::AdPlacementView>> {
+        use crate::advertising::domain::targeting::AdPlacementView;
         let mut tx = self.0.begin().await.map_err(unavailable)?;
         authorize(&mut tx, actor).await?;
-        let rows = sqlx::query("SELECT id,name,material_id,scope_kind,platform_id,unit_id,enabled,valid_from,valid_until,revision FROM ad_placement_rules ORDER BY id LIMIT 31 OFFSET $1")
+        let rows = sqlx::query("SELECT id,material_id,scope_kind,platform_id,unit_id,enabled,valid_from,valid_until,revision FROM ad_placements ORDER BY id LIMIT 31 OFFSET $1")
             .bind(offset).fetch_all(&mut *tx).await.map_err(unavailable)?;
         let items = rows
             .into_iter()
-            .map(|r| -> Result<PlacementRuleView> {
-                Ok(PlacementRuleView {
+            .map(|r| -> Result<AdPlacementView> {
+                Ok(AdPlacementView {
                     id: r.get("id"),
-                    name: r.get("name"),
                     material_id: r.get("material_id"),
                     scope: decode_scope(
                         r.get::<String, _>("scope_kind").as_str(),
@@ -417,17 +417,17 @@ impl crate::advertising::south::port::PlacementRuleStore for Repository {
         Ok(items)
     }
 
-    async fn set_rule_state(
+    async fn set_placement_state(
         &self,
         actor: &Actor,
         id: Uuid,
         input: crate::advertising::domain::targeting::SetPlacementState,
-    ) -> Result<crate::advertising::domain::targeting::PlacementRuleView> {
-        use crate::advertising::domain::targeting::PlacementRuleView;
+    ) -> Result<crate::advertising::domain::targeting::AdPlacementView> {
+        use crate::advertising::domain::targeting::AdPlacementView;
         let mut tx = self.0.begin().await.map_err(unavailable)?;
         authorize(&mut tx, actor).await?;
         let current = sqlx::query(
-            "SELECT revision,enabled,material_id FROM ad_placement_rules WHERE id=$1 FOR UPDATE",
+            "SELECT revision,enabled,material_id FROM ad_placements WHERE id=$1 FOR UPDATE",
         )
         .bind(id)
         .fetch_optional(&mut *tx)
@@ -459,11 +459,10 @@ impl crate::advertising::south::port::PlacementRuleStore for Repository {
         let next = revision
             .checked_add(1)
             .ok_or(AdvertisingError("temporarily_unavailable"))?;
-        let row = sqlx::query("UPDATE ad_placement_rules SET enabled=$2,revision=$3,updated_by=$4,updated_at=now() WHERE id=$1 RETURNING id,name,material_id,scope_kind,platform_id,unit_id,enabled,valid_from,valid_until,revision")
+        let row = sqlx::query("UPDATE ad_placements SET enabled=$2,revision=$3,updated_by=$4,updated_at=now() WHERE id=$1 RETURNING id,material_id,scope_kind,platform_id,unit_id,enabled,valid_from,valid_until,revision")
             .bind(id).bind(input.enabled).bind(next).bind(actor.id).fetch_one(&mut *tx).await.map_err(unavailable)?;
-        let result = PlacementRuleView {
+        let result = AdPlacementView {
             id: row.get("id"),
-            name: row.get("name"),
             material_id: row.get("material_id"),
             scope: decode_scope(
                 row.get::<String, _>("scope_kind").as_str(),
