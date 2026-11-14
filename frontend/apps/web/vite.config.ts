@@ -13,8 +13,8 @@ export default defineConfig({
     }])),
   },
   test: {
-    // Ant Design form interactions can exceed 20s on constrained build hosts.
-    testTimeout: 60000,
+    // Fail slow interactions promptly instead of allowing minute-long waits.
+    testTimeout: 15000,
     // Run JSDOM/Ant Design suites serially: concurrent form-heavy files exceed
     // reasonable per-test waits on constrained CI hosts even when isolated checks pass.
     maxWorkers: 1,

@@ -78,7 +78,7 @@ make compose-down
 
 ## 本地源码开发
 
-工程固定 Rust 1.97.1、Node.js 22、pnpm 11.22.0，可使用已配置的 Devbox。
+工程固定 Rust 1.97.1、Node.js 26、pnpm 11.22.0，可使用已配置的 Devbox。
 旧根 package.json 属于 FastAdmin；不要在根目录执行 npm install 启动新前端。
 子项目 `.npmrc` 显式使用 HTTPS npm 源与证书校验，避免继承旧根配置的 HTTP 镜像。
 

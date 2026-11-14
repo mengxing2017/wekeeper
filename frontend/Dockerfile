@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
-FROM node:22-bookworm-slim AS builder
+FROM node:26-bookworm-slim AS builder
 WORKDIR /workspace/frontend
-RUN corepack enable
+RUN npm install --global pnpm@11.22.0
 COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml frontend/.npmrc ./
 COPY frontend/apps/web/package.json apps/web/package.json
 COPY api-contract ../api-contract
@@ -11,9 +11,9 @@ RUN pnpm --dir ../api-contract install --frozen-lockfile \
 COPY frontend/apps/web apps/web
 RUN pnpm build:web
 
-FROM node:22-bookworm-slim AS docs-builder
+FROM node:26-bookworm-slim AS docs-builder
 WORKDIR /workspace/docs
-RUN corepack enable
+RUN npm install --global pnpm@11.22.0
 COPY docs/package.json docs/pnpm-lock.yaml docs/pnpm-workspace.yaml docs/.npmrc ./
 RUN pnpm install --frozen-lockfile
 COPY docs/ ./
