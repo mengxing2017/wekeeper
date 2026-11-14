@@ -101,24 +101,25 @@ export function decodeResource(value: unknown): Record<string, unknown> {
 }
 /** Explicit aliases for action routes whose target resource differs from the URL leaf. */
 export function resourceType(path: string): string {
+  const unitPath=path.split('?')[0].split('/').filter(Boolean);
+  if(unitPath[3]==='business-units' && ['mobile-execution','wecom-distribution'].includes(unitPath[2])) {
+    if(unitPath[5]==='receiving-configurations')return unitPath[2]==='mobile-execution'?'mobile-receiving-configurations':'wecom-receiving-configurations';
+    if(unitPath[5]==='receiving-targets')return 'receiving-targets';
+    if(unitPath[5]==='receiving-resources')return 'receiving-resources';
+  }
   const parts = path.split("?")[0].split("/").filter(Boolean);
   if (parts[1] === 'v2' && parts[2] === 'admin') {
     if (parts[3] === 'ad-materials') return parts[5] === 'publications' ? 'ad-material-publications' : parts[5] === 'archive' ? 'ad-material-archives' : 'ad-materials';
-    if (parts[3] === 'ad-placement-rules') return parts[5] === 'state' ? 'ad-placement-rule-states' : 'ad-placement-rules';
+    if (parts[3] === 'ad-placements') return parts[5] === 'state' ? 'ad-placement-states' : 'ad-placements';
     if (parts[3] === 'sensitive-words' && !parts[4]) return 'sensitive-words';
-    if (parts[3] === 'source-automation-tasks') return parts[5] === 'stop' ? 'source-automation-task-stops' : parts[5] === 'retry-requests' ? 'source-automation-task-retry-requests' : 'source-automation-tasks';
-    if (parts[3] === 'advertisements') return parts[5] ? `advertisement-${parts[5]}` : 'advertisements';
-    if (parts[3] === 'routing-units' && parts[5] === 'advertisement-managers') return 'advertisement-managers';
-    if (parts[3] === 'routing') return parts[4];
-    if (parts[3] === 'source-routes' && parts[5] === 'receipts' && parts[7] === 'rechecks') return 'source-receipt-rechecks';
-    if (parts[3] === 'source-routes' && parts[5] === 'advertisement-pool') return parts[6] ? `advertisement-pool-${parts[6]}` : 'advertisement-pool';
     if (parts[3] === 'source-routes' && parts[5]) {
-      const types:Record<string,string>={'version-policy':'source-route-version-policies','advertisement-configuration':'advertisement-configurations','composition-previews':'composition-previews',configuration:'source-route-configurations',lifecycle:'source-route-lifecycle',managers:'source-route-managers',handoff:'source-route-handoffs'};
+      const types:Record<string,string>={configuration:'source-route-configurations',managers:'source-route-managers',handoff:'source-route-handoffs'};
       if (types[parts[5]]) return types[parts[5]];
     }
     if (['source-routes','source-credentials'].includes(parts[3])) return parts[5] === 'routes' ? 'source-key-routes' : parts[5] === 'secret-reveals' ? 'source-credential-secret-reveals' : parts[3];
   }
   if (parts[2] === 'wecom-distribution' && parts[3] === 'workspaces') {
+    if (parts[5] === 'receiving-configurations') return 'wecom-receiving-configurations';
     if (!parts[5]) return 'wecom-workspaces';
     if (parts[5] === 'members') return 'wecom-workspace-members';
     const kind = parts[5];
@@ -144,6 +145,7 @@ export function resourceType(path: string): string {
     if(rawKind==="shared-v2-support")return "mobile-v9-support";
     if(rawKind==="shared-v2-management")return "mobile-v9-management";
     switch (kind) {
+      case "receiving-configurations": return "mobile-receiving-configurations";
       case "usage-options": return "mobile-usage-options";
       case "usage-previews": return "mobile-usage-previews";
       case "usage-requests": return "mobile-usages";

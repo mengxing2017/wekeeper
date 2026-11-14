@@ -1,5 +1,5 @@
 {
-  "release": "source-v2-5",
+  "release": "source-v2-6",
   "signature_versions": [
     2
   ],
@@ -27,22 +27,20 @@
     "/api/v2/source-authentications",
     "/api/v2/source-route-checks"
   ],
-  "fixtures_sha256": "2265c1496fc64d2360328cb822e8bbd02d24abe6e5e1663e002262e85241496e",
+  "fixtures_sha256": "4aa2dbde779fd8127da8dca09bfaa8ec08fa09a1f1b42d2313e17026d0e774aa",
   "files_sha256": {
     "fixtures/source-authentication-v2.json": "7770052f2e1d940965eb463d944239e37cee280c0f211bf9b0da61dcbdc270ce",
     "fixtures/source-errors-v2.json": "9663ee0d3e1ac0734a9532b28805fba9f58479076772349e53ae1366d88a2471",
     "fixtures/source-receipt-v2.json": "f642da5c011a31b5d40b915c91ce5460fa52202cafcb10e70aac1b50f06a080c",
-    "fixtures/source-v2.json": "2265c1496fc64d2360328cb822e8bbd02d24abe6e5e1663e002262e85241496e",
+    "fixtures/source-v2.json": "4aa2dbde779fd8127da8dca09bfaa8ec08fa09a1f1b42d2313e17026d0e774aa",
     "source-v2/errors.json": "053f7710c1e43e6438aba6afb600b3856fe40469cfde81d9e45593688192020f",
-    "source-v2/event.schema.json": "3f2585b302a1ac54f209226e20cccd145104ec5c1571f45e3c15d86187d10657",
-    "fixtures/source-routing.json": "080d775cac41783638c744132e7197bbd2d5ab2168e5f08a38cbc7e9fb1aef0a",
-    "source-v2/routing-management.json": "ed9af3155b22780d7b1b1d3b06a9ec6190cb5fd903e1041915b5633dbe2f2a7b",
+    "source-v2/event.schema.json": "ff5c5bad1421008012c60cf85c12b6013f02e82b7de2a7fbc6f128383bedc5bf",
+    "source-v2/routing-management.json": "ebde7825658cfadb24778c31812189abea580dbfb2dc592286a8e7a8316d16c6",
     "fixtures/source-projection.json": "8c761f216e95047f182960e4e505286cf8142d0b977e3c86a058069ba438c3c9",
-    "source-v2/receipt-projection.json": "95cfd6473efbb2abc7ce4bbc91999a4e2154b5b4e1e26a9e36be64483887a471",
+    "source-v2/receipt-projection.json": "319c374c86e6ec3eb26dd512da1c5b21a1600e7496c175fb8c4d3bad56dd894f",
     "fixtures/source-receipt-projection.json": "22dbb8da0ca9c8ae8b1f09d30313b7b1db04c165ee16718c2503269bce536780",
     "fixtures/source-keywords.json": "2b4926685537d42053b721cf9a7fc64232aaba51ef816e7430e454e14372d43c",
-    "source-v2/keyword-filter.json": "5e5ad40a36762eaf07456b12c0ad0665374e6a3cd3af705eddd9ffbd384583ea",
-    "fixtures/source-advertising.json": "79ae98286dc3c83bf6124c783fb237e4eea6d895a81a12ad4fe81e6e562001f5",
-    "source-v2/advertising.json": "5b030d64645eccc02525ba916bff296e1783affb6f23dc2ef5ddf6c1ab649146"
+    "source-v2/keyword-filter.json": "5fbb9a0ce5a1074d4844e359d9fdd1206ad775056698706c37030333f265c5d8",
+    "source-v2/advertising.json": "772a9f2a3508aa38eceed62c55e06981cfc9f7788f2f569faba59b3643549549"
   }
 }

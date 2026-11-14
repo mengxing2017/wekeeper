@@ -4,22 +4,16 @@
   "unicode_version": "18.0.0",
   "composer": "source-text/1",
   "scopes": [
-    "global",
-    "source",
-    "unit",
-    "route",
-    "workspace"
+    "global"
   ],
   "stages": [
-    "original_common",
-    "original_workspace",
-    "final"
+    "original"
   ],
   "sample_offsets": "normalized Unicode scalar offsets, [start,end)",
   "page_size": 30,
   "sample_limit": 100,
   "publication_type": "keyword-rule-publications",
-  "empty_scope": "persisted head and immutable empty version required",
-  "sending_boundary": "platform signing or official submission; delivered device packages execute locally",
-  "advertisement_integration": "candidate exclusion port only; real sequence/cursor integration belongs to 07/08"
+  "empty_scope": "empty rules allow the message",
+  "sending_boundary": "Evaluate new messages once before freezing targets and content; existing messages are never rechecked",
+  "advertisement_integration": "One durable scoped advertisement decision per message; unavailable advertisement sends original content"
 }

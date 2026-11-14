@@ -55,8 +55,7 @@
             },
             "event_type": {
               "enum": [
-                "content.upsert",
-                "content.withdrawn"
+                "content.upsert"
               ]
             },
             "external_content_id": {
