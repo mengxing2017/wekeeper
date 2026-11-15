@@ -4,11 +4,6 @@ use crate::source_access::{
     north::local::keyword_filter::Service,
     south::adapter::postgres::keyword_filter::KeywordRepository,
 };
-#[derive(Default, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Page {
-    page: Option<i64>,
-}
 async fn execute(
     a: Application,
     actor: Actor,
@@ -75,58 +70,11 @@ async fn update_words(
     )
     .await
 }
-async fn checks(
-    State(a): State<Application>,
-    actor: Actor,
-    Path((route, receipt)): Path<(String, Uuid)>,
-    Query(page): Query<Page>,
-) -> std::result::Result<Response, Response> {
-    execute(
-        a,
-        actor,
-        Command::Checks {
-            route,
-            receipt,
-            page: page.page.unwrap_or(1),
-        },
-        "keyword-check-results",
-    )
-    .await
-}
-async fn hits(
-    State(a): State<Application>,
-    actor: Actor,
-    Path((route, receipt, check)): Path<(String, Uuid, Uuid)>,
-    Query(page): Query<Page>,
-) -> std::result::Result<Response, Response> {
-    execute(
-        a,
-        actor,
-        Command::Hits {
-            route,
-            receipt,
-            check,
-            page: page.page.unwrap_or(1),
-        },
-        "keyword-check-hits",
-    )
-    .await
-}
-use uuid::Uuid;
 pub fn router() -> Router<Application> {
-    Router::new()
-        .route(
-            "/api/v2/admin/sensitive-words",
-            get(words).put(update_words),
-        )
-        .route(
-            "/api/v2/admin/source-routes/{route}/receipts/{receipt}/checks",
-            get(checks),
-        )
-        .route(
-            "/api/v2/admin/source-routes/{route}/receipts/{receipt}/checks/{check}/hits",
-            get(hits),
-        )
+    Router::new().route(
+        "/api/v2/admin/sensitive-words",
+        get(words).put(update_words),
+    )
 }
 
 #[cfg(test)]

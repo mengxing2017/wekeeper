@@ -51,11 +51,11 @@ async fn scoped_advertising_rotates_once_with_inactive_storage_partition() {
         .await
         .unwrap();
     assert_eq!(tasks, 2);
-    let old: i64 = sqlx::query_scalar("SELECT count(*) FROM source_execution_tasks")
+    let retired: bool = sqlx::query_scalar("SELECT to_regclass('source_execution_tasks') IS NULL")
         .fetch_one(&f.pool)
         .await
         .unwrap();
-    assert_eq!(old, 0);
+    assert!(retired);
     let _ = f.scope;
     f.close().await;
 }
@@ -72,6 +72,25 @@ async fn no_targets_is_terminal_and_new_messages_continue() {
             .await
             .unwrap();
     assert_eq!(reason, "route_no_targets");
+    let receipts = wekeeper_api::source_access::north::local::projection::Service(
+        wekeeper_api::source_access::south::adapter::postgres::projection::ReceiptsRepository(
+            f.pool.clone(),
+        ),
+    )
+    .execute(
+        &f.actor,
+        wekeeper_api::source_access::domain::projection::Command::List {
+            route: f.route.clone(),
+            page: 1,
+        },
+    )
+    .await
+    .unwrap();
+    let row = &receipts["items"][0];
+    assert_eq!(row["id"], receipt.to_string());
+    assert_eq!(row["reason_code"], "route_no_targets");
+    assert!(row.get("automation_task_id").is_none());
+
     f.configure(vec![f.target]).await;
     f.run().await;
     let tasks: i64 =

@@ -68,25 +68,6 @@ async fn scope_access(tx: &mut Tx<'_>, actor: Uuid, admin: bool, scope: &str) ->
     ensure(admin && row.get::<String, _>("id") == "global", "forbidden")?;
     Ok(())
 }
-async fn receipt_access(
-    tx: &mut Tx<'_>,
-    actor: Uuid,
-    admin: bool,
-    route: &str,
-    receipt: Uuid,
-) -> Result<()> {
-    super::routing::access(tx, actor, route, admin).await?;
-    ensure(
-        sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM source_receipts WHERE receipt_id=$1 AND route_id=$2)",
-        )
-        .bind(receipt)
-        .bind(route)
-        .fetch_one(&mut **tx)
-        .await?,
-        "receipt_not_found",
-    )
-}
 impl KeywordStore for KeywordRepository {
     async fn execute(&self, actor: &crate::business::Actor, command: k::Command) -> Result<Value> {
         let mut tx = self.0.begin().await?;
@@ -98,15 +79,6 @@ impl KeywordStore for KeywordRepository {
             k::Command::Scopes => json!({"action":"list_scopes"}),
             k::Command::Versions { scope, .. } => json!({"action":"versions","scope_id":scope}),
             k::Command::Publish { scope, .. } => json!({"action":"publish","scope_id":scope}),
-            k::Command::Checks { route, receipt, .. } => {
-                json!({"action":"checks","route_id":route,"receipt_id":receipt})
-            }
-            k::Command::Hits {
-                route,
-                receipt,
-                check,
-                ..
-            } => json!({"action":"hits","route_id":route,"receipt_id":receipt,"check_id":check}),
         };
         let value = match command {
             k::Command::Scopes => {
@@ -162,33 +134,6 @@ impl KeywordStore for KeywordRepository {
                 .await?;
 
                 json!({"id":scope,"revision":revision+1,"version_id":version})
-            }
-            k::Command::Checks {
-                route,
-                receipt,
-                page,
-            } => {
-                receipt_access(&mut tx, actor.id, admin, &route, receipt).await?;
-                let rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(c)-'matched_rules'-'samples' FROM keyword_check_results c WHERE receipt_id=$1 ORDER BY created_at DESC,id DESC LIMIT 31 OFFSET $2").bind(receipt).bind((page-1)*30).fetch_all(&mut *tx).await?;
-                let items = rows
-                    .iter()
-                    .take(30)
-                    .map(|v| serde_json::from_value::<k::CheckRecord>(v.clone()))
-                    .collect::<std::result::Result<Vec<_>, _>>()?;
-                json!({"items":items,"has_more":rows.len()>30})
-            }
-            k::Command::Hits {
-                route,
-                receipt,
-                check,
-                page,
-            } => {
-                receipt_access(&mut tx, actor.id, admin, &route, receipt).await?;
-                let row=sqlx::query("SELECT samples,matched_rules,total_hits,truncated FROM keyword_check_results WHERE id=$1 AND receipt_id=$2").bind(check).bind(receipt).fetch_optional(&mut *tx).await?.ok_or(Fault("receipt_not_found"))?;
-                let rules: Value = row.get("matched_rules");
-                let rules = rules.as_array().ok_or(Fault("temporarily_unavailable"))?;
-                let start = ((page - 1) * 30) as usize;
-                json!({"items":rules.iter().skip(start).take(30).collect::<Vec<_>>(),"has_more":rules.len()>start+30,"samples":row.get::<Value,_>("samples"),"total_hits":row.get::<i64,_>("total_hits"),"truncated":row.get::<bool,_>("truncated")})
             }
         };
         crate::audit::record(

@@ -37,24 +37,6 @@ async fn list(
     )
     .await
 }
-async fn detail(
-    State(a): State<Application>,
-    actor: Actor,
-    Path((route, receipt)): Path<(String, uuid::Uuid)>,
-) -> std::result::Result<Response, Response> {
-    execute(
-        a,
-        actor,
-        Command::Detail { route, receipt },
-        "source-receipt-details",
-    )
-    .await
-}
 pub fn router() -> Router<Application> {
-    Router::new()
-        .route("/api/v2/admin/source-routes/{route}/receipts", get(list))
-        .route(
-            "/api/v2/admin/source-routes/{route}/receipts/{receipt}",
-            get(detail),
-        )
+    Router::new().route("/api/v2/admin/source-routes/{route}/receipts", get(list))
 }

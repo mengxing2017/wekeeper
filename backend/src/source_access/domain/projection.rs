@@ -54,7 +54,6 @@ pub struct Receipt {
 }
 pub enum Command {
     List { route: String, page: i64 },
-    Detail { route: String, receipt: Uuid },
 }
 #[cfg(test)]
 mod tests {

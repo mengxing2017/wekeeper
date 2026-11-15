@@ -63,10 +63,6 @@ impl RoutingStore for RoutingRepository {
                 .await?;
                 json!({"id":route})
             }
-            Command::Handoff { route } => {
-                access(&mut tx, actor.id, &route, admin).await?;
-                json!({"id":route,"route_id":route,"receiver_path":"/api/v2/source-events","authentication":"HMAC-SHA256","signature_versions":[2],"schema_versions":[2],"contract_version":"source/2"})
-            }
         };
         tx.commit().await?;
         Ok(value)

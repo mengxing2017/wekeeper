@@ -269,25 +269,8 @@ pub struct Publication {
 }
 pub enum Command {
     Scopes,
-    Versions {
-        scope: String,
-        page: i64,
-    },
-    Publish {
-        scope: String,
-        input: Publication,
-    },
-    Checks {
-        route: String,
-        receipt: Uuid,
-        page: i64,
-    },
-    Hits {
-        route: String,
-        receipt: Uuid,
-        check: Uuid,
-        page: i64,
-    },
+    Versions { scope: String, page: i64 },
+    Publish { scope: String, input: Publication },
 }
 #[cfg(test)]
 mod tests {
@@ -378,25 +361,6 @@ mod tests {
     }
 }
 
-/// Public evidence DTO, shared by HTTP serialization and contract fixtures.
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CheckRecord {
-    pub id: Uuid,
-    pub receipt_id: Uuid,
-    pub stage: String,
-    pub payload_fingerprint: String,
-    pub context: Context,
-    pub effective_fingerprint: String,
-    pub input_digest: String,
-    pub normalized_digest: String,
-    pub algorithm: String,
-    pub unicode_version: String,
-    pub outcome: String,
-    pub total_hits: i64,
-    pub truncated: bool,
-    pub created_at: String,
-}
 #[cfg(test)]
 mod contract_tests {
     use super::*;
@@ -406,8 +370,6 @@ mod contract_tests {
             "../../../../api-contract/fixtures/source-keywords.json"
         ))
         .unwrap();
-        let record: CheckRecord = serde_json::from_value(v["check"].clone()).unwrap();
-        assert_eq!(serde_json::to_value(record).unwrap(), v["check"]);
         let publication: Publication = serde_json::from_value(v["publication"].clone()).unwrap();
         validate(&publication.entries).unwrap();
         assert_eq!(serde_json::to_value(publication).unwrap(), v["publication"]);

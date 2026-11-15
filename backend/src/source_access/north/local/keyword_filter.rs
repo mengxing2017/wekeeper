@@ -21,9 +21,9 @@ impl<S: KeywordStore> Service<S> {
                 )?;
                 keyword_filter::validate(&input.entries)?;
             }
-            Command::Versions { page, .. }
-            | Command::Checks { page, .. }
-            | Command::Hits { page, .. } => ensure((1..=100000).contains(page), "invalid_request")?,
+            Command::Versions { page, .. } => {
+                ensure((1..=100000).contains(page), "invalid_request")?
+            }
             _ => {}
         }
         self.0.execute(actor, command).await

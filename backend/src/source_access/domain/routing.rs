@@ -18,7 +18,6 @@ pub enum Command {
     Configuration { route: String },
     Managers { route: String },
     Manager { route: String, input: ManagerInput },
-    Handoff { route: String },
 }
 /// Machine-visible metadata deliberately excludes internal organization and resources.
 #[derive(Debug, Serialize, Deserialize)]

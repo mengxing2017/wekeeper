@@ -64,19 +64,6 @@ async fn manager(
     )
     .await
 }
-async fn handoff(
-    State(a): State<Application>,
-    actor: Actor,
-    Path(route): Path<String>,
-) -> std::result::Result<Response, Response> {
-    run(
-        a,
-        actor,
-        Command::Handoff { route },
-        "source-route-handoffs",
-    )
-    .await
-}
 pub fn router() -> Router<Application> {
     Router::new()
         .route("/api/v2/admin/source-route-assignments", get(assigned))
@@ -88,5 +75,4 @@ pub fn router() -> Router<Application> {
             "/api/v2/admin/source-routes/{route}/managers",
             get(managers).put(manager),
         )
-        .route("/api/v2/admin/source-routes/{route}/handoff", post(handoff))
 }
