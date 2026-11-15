@@ -8,7 +8,6 @@ export const pageHelp: Record<string, string> = {
   'source-receipts': 'operator/source-access',
   'source-route-configurations': 'operator/source-access',
 
-  'wecom-workspaces': 'workspaces',
   'mobile-receiving-configurations': 'workspaces',
   'wecom-receiving-configurations': 'workspaces',
   groups: 'operator/groups-and-templates',

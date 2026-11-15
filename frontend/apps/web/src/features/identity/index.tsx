@@ -78,7 +78,7 @@ export function SessionGate({
             <span className="brand-mark">W</span> WeKeeper
           </div>
           <div>
-            <h1>登录工作空间</h1>
+            <h1>登录管理后台</h1>
             <p>企业微信分发 · 移动端分发</p>
           </div>
           {error && <Alert type="error" title={error} showIcon />}
@@ -104,7 +104,7 @@ export function SessionGate({
             </Button>
           </Form>
           {wecom && <a href="/api/v1/wecom/oauth/start">使用企业微信身份登录</a>}
-          <p className="auth-caption">使用管理员分配的账号进入工作空间</p>
+          <p className="auth-caption">使用管理员分配的账号进入管理后台</p>
           <a href="/docs/guide/quick-start">登录与使用帮助</a>
         </section>
       </div>

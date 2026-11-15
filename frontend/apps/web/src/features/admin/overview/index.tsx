@@ -3,7 +3,7 @@ import { Alert, Button, Card, Descriptions, Space, Tag, Typography } from 'antd'
 import { getReadiness, getSystemInfo } from './api'
 
 const modules = [
-  { name: '工作空间与权限', detail: '独立分发范围、成员身份与运营角色' },
+  { name: '全局分发管理', detail: '系统管理员统一管理资源、任务与执行授权' },
   { name: '分发与调度', detail: '官方群发、手机任务与执行进度' },
   { name: '模板与分享', detail: '模板版本、内容预览与人工确认' },
   { name: '记录与核对', detail: '发送尝试、异常核对与操作审计' },

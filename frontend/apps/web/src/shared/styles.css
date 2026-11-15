@@ -207,9 +207,6 @@ a:focus-visible {
   font-size: 14px;
   font-weight: 400;
 }
-.school-select {
-  width: 240px;
-}
 .mobile-bar {
   display: none;
 }
@@ -636,9 +633,6 @@ code {
   }
   .page-heading {
     flex-wrap: wrap;
-  }
-  .school-select {
-    width: min(240px, 65vw);
   }
   .query-filter .ant-space {
     max-width: 100%;
