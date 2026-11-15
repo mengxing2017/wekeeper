@@ -19,8 +19,6 @@ it('validates login fields and submits the entered credentials through the exist
       username: 'operator',
       display_name: '运营',
       platform_admin: false,
-      bound_school_id: null,
-      grants: [],
       wecom_authenticated: false,
     },
   })

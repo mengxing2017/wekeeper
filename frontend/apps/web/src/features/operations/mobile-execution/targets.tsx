@@ -6,7 +6,7 @@ import { Alert, Button, Card, Form, Input, Modal, Space, Switch, Table, Tag } fr
 import { api, type MobileTarget, type TargetInput } from './api'
 import { PaginationControls } from '../../../shared/pagination-controls'
 
-export function MobileTargets({ school, admin }: { school: string; admin: boolean }) {
+export function MobileTargets({  admin }: { admin: boolean }) {
   const client = useQueryClient()
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
@@ -15,16 +15,16 @@ export function MobileTargets({ school, admin }: { school: string; admin: boolea
   const [editingEnabled, setEditingEnabled] = useState(true)
   const [pendingDuplicate, setPendingDuplicate] = useState<{ input: TargetInput; token: string }>()
   const [form] = Form.useForm<TargetInput>()
-  const targets = useQuery({ queryKey: ['mobile-execution', school, 'targets', page, search], queryFn: () => api.targets(school, page, search) })
-  const invalidate = () => client.invalidateQueries({ queryKey: ['mobile-execution', school] })
+  const targets = useQuery({ queryKey: ['mobile-execution', 'targets', page, search], queryFn: () => api.targets(page, search) })
+  const invalidate = () => client.invalidateQueries({ queryKey: ['mobile-execution'] })
   const save = useMutation({ mutationFn: async (input: TargetInput) => {
-    if (editing) return api.updateTarget(school, editing.id, { search_text: input.search_text, remark: input.remark ?? '', enabled: editingEnabled, expected_revision: editing.metadata_revision }, createIdempotencyKey())
-    return api.createTarget(school, input, createIdempotencyKey())
+    if (editing) return api.updateTarget(editing.id, { search_text: input.search_text, remark: input.remark ?? '', enabled: editingEnabled, expected_revision: editing.metadata_revision }, createIdempotencyKey())
+    return api.createTarget(input, createIdempotencyKey())
   }, onSuccess: (result, input) => {
     if ('confirmation_required' in result) { setPendingDuplicate({ input, token: result.duplicate_confirmation }); return }
     setPendingDuplicate(undefined); setOpen(false); form.resetFields(); void invalidate()
   } })
-  const archive = useMutation({ mutationFn: (row: MobileTarget) => api.archiveTarget(school, row.id, row.metadata_revision, '管理员归档目标', createIdempotencyKey()), onSuccess: invalidate })
+  const archive = useMutation({ mutationFn: (row: MobileTarget) => api.archiveTarget(row.id, row.metadata_revision, '管理员归档目标', createIdempotencyKey()), onSuccess: invalidate })
   return <><Card title="手机目标群" extra={admin && <Button type="primary" onClick={() => { setEditing(undefined); form.resetFields(); setOpen(true) }}>新增目标群</Button>}>
     <Alert type="info" showIcon title="手机目标群独立于官方客户群" description="填写一个群名称即可。手机自行搜索并识别目标，识别失败只影响本次设备尝试。" />
     <Input.Search aria-label="搜索手机目标群" placeholder="搜索群名称" allowClear onSearch={value => { setSearch(value); setPage(1) }} />
@@ -45,5 +45,5 @@ export function MobileTargets({ school, admin }: { school: string; admin: boolea
     <Modal title="存在相同群名称的目标" open={!!pendingDuplicate} confirmLoading={save.isPending} okText="仍作为独立目标新增" onCancel={() => setPendingDuplicate(undefined)} onOk={() => pendingDuplicate && save.mutate({ ...pendingDuplicate.input, duplicate_confirmation: pendingDuplicate.token })}>
       相同群名称不代表同一真实群。确认后将新增独立记录。
     </Modal>
-  </Card><MobileTargetBindings school={school} admin={admin} /></>
+  </Card><MobileTargetBindings admin={admin} /></>
 }

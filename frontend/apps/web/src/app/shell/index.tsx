@@ -6,11 +6,6 @@ export { navigation } from '../navigation'
 import { Link } from 'react-router-dom'
 import { helpHref } from './help'
 
-export const schoolRoleLabel = (role?: string) =>
-  ({ member: '普通成员', operator: '运营', admin: '分发管理员', revoked: '已撤销分发授权' })[
-    role ?? ''
-  ] ?? '无分发授权'
-
 export function AppShell({
   children,
   active,
@@ -18,8 +13,6 @@ export function AppShell({
   username,
   platformAdmin,
   allowedKeys,
-  schoolRole,
-  mobileRole,
   onLogout,
   pageExtra,
 }: {
@@ -29,8 +22,6 @@ export function AppShell({
   username: string
   platformAdmin: boolean
   allowedKeys: string[]
-  schoolRole?: string
-  mobileRole?: string
   onLogout: () => Promise<void>
   pageExtra?: ReactNode
 }) {
@@ -41,8 +32,8 @@ export function AppShell({
   const sidebar = useRef<HTMLElement>(null)
   const current = navigation.find((item) => item.key === active) ?? {
     domain: 'support',
-    label: '分发工作空间',
-    description: '选择分发工作空间后使用已授权功能。',
+    label: '分发管理',
+    description: '统一管理分发资源与任务。',
   }
   useEffect(() => {
     if (!open) return
@@ -77,7 +68,7 @@ export function AppShell({
               items: [
                 {
                   key: 'role',
-                  label: platformAdmin ? '系统管理员' : current.domain === 'mobile' ? (mobileRole === 'admin' ? '移动分发管理员' : mobileRole === 'operator' ? '移动分发运营' : '无移动分发授权') : schoolRoleLabel(schoolRole),
+                  label: platformAdmin ? '系统管理员' : '未授权账号',
                   disabled: true,
                 },
                 { type: 'divider' },

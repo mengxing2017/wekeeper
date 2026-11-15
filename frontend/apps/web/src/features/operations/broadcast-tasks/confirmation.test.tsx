@@ -11,7 +11,7 @@ Object.defineProperty(window,'matchMedia',{writable:true,value:()=>({matches:fal
 configure({asyncUtilTimeout:5000})
 afterEach(()=>{cleanup();vi.clearAllMocks()})
 it('one confirmation submits a draft and immediately displays server-confirmed state',async()=>{
- const task:BroadcastTask={id:'task-123456',school_id:'school',creator_id:'admin',content_source:'text',source_namespace:'builtin.direct',materials:[],template_version_id:null,content:'测试通知',revision:1,state:'draft',stopped:false,created_at:'2026-10-22T00:00:00Z',total:1,sent:0,rejected:0,uncertain:0,pending:1,batch_count:1,post_ids:[],source_task_id:null,draft_input:{content_source:'text',text_content:'测试通知',group_ids:['group']},resend_reason:''}
+ const task:BroadcastTask={id:'task-123456',creator_id:'admin',content_source:'text',source_namespace:'builtin.direct',materials:[],template_version_id:null,content:'测试通知',revision:1,state:'draft',stopped:false,created_at:'2026-10-22T00:00:00Z',total:1,sent:0,rejected:0,uncertain:0,pending:1,batch_count:1,post_ids:[],source_task_id:null,draft_input:{content_source:'text',text_content:'测试通知',group_ids:['group']},resend_reason:''}
  vi.mocked(broadcast.preview).mockResolvedValue({id:task.id,revision:1,digest:'preview-digest',expires_at:'2026-11-01T00:00:00Z',content:task.content,target_count:task.total,channel:'wecom'})
  vi.mocked(broadcast.list).mockResolvedValue({items:[task]})
  vi.mocked(broadcast.task).mockResolvedValue(task)
@@ -23,12 +23,12 @@ it('one confirmation submits a draft and immediately displays server-confirmed s
   vi.mocked(broadcast.task).mockResolvedValue(confirmed)
   return confirmed
  })
- render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><BroadcastTasks school="school" admin/></QueryClientProvider>)
+ render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><BroadcastTasks admin/></QueryClientProvider>)
  fireEvent.click(await screen.findByRole('button',{name:'查看任务 123456'}))
  await screen.findByText('已选为目标群，等待确认提交')
  expect(screen.queryByText(/成员任务：/)).toBeNull()
  fireEvent.click(await screen.findByRole('button',{name:'确认创建企业微信群发任务'}))
- await waitFor(()=>expect(broadcast.action).toHaveBeenCalledWith('school',task.id,'confirm',expect.any(String),{revision:1,preview_digest:'preview-digest'}))
+ await waitFor(()=>expect(broadcast.action).toHaveBeenCalledWith(task.id,'confirm',expect.any(String),{revision:1,preview_digest:'preview-digest'}))
  await screen.findByText(/已确认提交，后台正在创建/)
  expect(screen.queryByText(/草稿尚未提交到企业微信/)).toBeNull()
  expect(screen.queryByText(/成员任务：/)).toBeNull()

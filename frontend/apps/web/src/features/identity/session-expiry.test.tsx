@@ -5,8 +5,7 @@ import { SessionGate } from './index'
 import { identity, type User } from './api'
 
 const user: User = {
-  id: 'user', username: 'operator', display_name: '运营', platform_admin: false,
-  bound_school_id: null, grants: [], wecom_authenticated: false,
+  id: 'user', username: 'operator', display_name: '运营', platform_admin: false, wecom_authenticated: false,
 }
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
@@ -33,7 +32,7 @@ function mount(status: number, background = false) {
 
 it('returns to login and clears private caches when a background request gets 401', async () => {
   const { cache, fetcher } = mount(401, true)
-  expect(await screen.findByRole('heading', { name: '登录工作空间' })).toBeTruthy()
+  expect(await screen.findByRole('heading', { name: '登录管理后台' })).toBeTruthy()
   expect(screen.queryByText('受保护工作区')).toBeNull()
   expect(cache.getQueryData(['private-data'])).toBeUndefined()
   expect(cache.getQueryData(['session'])).toBeNull()
@@ -43,7 +42,7 @@ it('returns to login and clears private caches when a background request gets 40
 it('returns to login for directly awaited writes and allows logging in again', async () => {
   const { fetcher } = mount(401)
   fireEvent.click(screen.getByRole('button', { name: '提交业务操作' }))
-  expect(await screen.findByRole('heading', { name: '登录工作空间' })).toBeTruthy()
+  expect(await screen.findByRole('heading', { name: '登录管理后台' })).toBeTruthy()
   expect(screen.getByText('登录已失效，请重新登录')).toBeTruthy()
   fetcher.mockResolvedValue(Response.json(
     { data: { type: 'sessions', id: 'current', attributes: { csrf: 'new-csrf', user } } },
@@ -62,5 +61,5 @@ it('keeps the session when a request is forbidden rather than unauthenticated', 
   await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1))
   expect(screen.getByText('受保护工作区')).toBeTruthy()
   expect(cache.getQueryData(['session'])).toEqual({ csrf: 'old-csrf', user })
-  expect(screen.queryByRole('heading', { name: '登录工作空间' })).toBeNull()
+  expect(screen.queryByRole('heading', { name: '登录管理后台' })).toBeNull()
 })

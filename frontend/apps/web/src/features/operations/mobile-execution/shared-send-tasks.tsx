@@ -10,8 +10,8 @@ import { SharedReadinessView } from './shared-readiness-view'
 import { UsageManagement } from '../../admin/mobile-resources/usage-management'
 
 const stateLabels:Record<string,string>={queued:'已入队，等待执行',leased:'手机已领取，准备中',prepared:'手机正在本地准备执行',invocation_issued:'已发单次许可，等待手机结果',observed_sent:'手机观察到新的已发消息，未证明对方送达',unknown:'结果不确定，保留风险并按授权候选调度',failed_before_call:'本次尝试未发出实际调用',invalidated:'执行依据已失效',cancelled:'未执行部分已取消',verified_not_sent:'人工核对确认未发送',manually_confirmed_sent:'人工核对确认已发送'}
-export function SharedSendTasks(props:{school:string;admin:boolean}) { return <SchoolSharedSendTasks key={props.school} {...props}/> }
-function SchoolSharedSendTasks({ school, admin }: { school: string; admin: boolean }) {
+export function SharedSendTasks(props:{admin:boolean}) { return <TaskList {...props}/> }
+function TaskList({  admin }: { admin: boolean }) {
   const cache = useQueryClient()
   const [errorModal, errorContext] = Modal.useModal()
   const requestKeys=useRef(new Map<string,string>())
@@ -30,41 +30,41 @@ function SchoolSharedSendTasks({ school, admin }: { school: string; admin: boole
   const [targets, setTargets] = useState<string[]>([])
   const [draft, setDraft] = useState<SharedDraft>()
   const [preview, setPreview] = useState<SharedPreview>()
-  const [selected, setSelected] = useState<{school:string;id:string}>()
-  const detailKey=['mobile-execution',school,'shared-task',selected?.school===school?selected.id:undefined]
-  const detailQuery=useQuery({queryKey:detailKey,queryFn:()=>sharedSend.task(school,selected!.id),enabled:!!selected&&selected.school===school,refetchInterval:query=>taskNeedsPolling(query.state.data)?5_000:false,refetchOnWindowFocus:'always'})
-  const detail=selected?.school===school?detailQuery.data:undefined
+  const [selected, setSelected] = useState<{id:string}>()
+  const detailKey=['mobile-execution','shared-task',selected?.id]
+  const detailQuery=useQuery({queryKey:detailKey,queryFn:()=>sharedSend.task(selected!.id),enabled:!!selected,refetchInterval:query=>taskNeedsPolling(query.state.data)?5_000:false,refetchOnWindowFocus:'always'})
+  const detail=selected?detailQuery.data:undefined
   function setDetail(value:SharedTask|undefined) {
-    if(value){cache.setQueryData(['mobile-execution',school,'shared-task',value.id],value);setSelected({school,id:value.id})}
+    if(value){cache.setQueryData(['mobile-execution','shared-task',value.id],value);setSelected({id:value.id})}
     else setSelected(undefined)
   }
-  const bindings=useQuery({queryKey:['mobile-execution',school,'shared-reassign-bindings'],queryFn:()=>api.bindings(school,1),enabled:action?.kind==='reassign'})
-  const overview = useQuery({ queryKey: ['mobile-execution', school, 'shared-tasks'], queryFn: () => sharedSend.overview(school), refetchInterval: 20_000 })
-  const options = useQuery({ queryKey: ['mobile-execution', school, 'shared-targets',targetPage,targetSearch], queryFn: () => api.targets(school, targetPage,targetSearch) })
-  const refresh = () => cache.invalidateQueries({ queryKey: ['mobile-execution', school] })
+  const bindings=useQuery({queryKey:['mobile-execution','shared-reassign-bindings'],queryFn:()=>api.bindings(1),enabled:action?.kind==='reassign'})
+  const overview = useQuery({ queryKey: ['mobile-execution', 'shared-tasks'], queryFn: () => sharedSend.overview(), refetchInterval: 20_000 })
+  const options = useQuery({ queryKey: ['mobile-execution', 'shared-targets',targetPage,targetSearch], queryFn: () => api.targets(targetPage,targetSearch) })
+  const refresh = () => cache.invalidateQueries({ queryKey: ['mobile-execution'] })
   async function generatePreview(selections:Array<{target_id:string;device_id:string}>) {
     const input={draft_id:draft?.id,expected_revision:draft?.revision,target_ids:targets,message,between_targets_seconds:gap,selections}
-    const result=await sharedSend.taskPreview(school,input,keyFor('preview',input))
+    const result=await sharedSend.taskPreview(input,keyFor('preview',input))
     setDraft(result.draft)
     setTargetNames(n=>({...n,...Object.fromEntries(result.draft.targets.map(t=>[t.id,t.name]))}))
     requestKeys.current.delete(JSON.stringify(['preview',input]))
     return result.preview
   }
   const inspect = useMutation({ mutationFn: () => generatePreview([]), onSuccess:p=>{setPreview(p);void refresh()} })
-  const confirm = useMutation({ mutationFn: () => sharedSend.confirm(school, preview!, keyFor("confirm",preview!.id)), onError: error => { errorModal.error({ title: '确认发送失败', content: taskError(error), okText: '知道了' }) }, onSuccess: t => { setDetail(t);  setDraft(undefined); setPreview(undefined); setMessage(''); setTargets([]); void refresh() } })
+  const confirm = useMutation({ mutationFn: () => sharedSend.confirm(preview!, keyFor("confirm",preview!.id)), onError: error => { errorModal.error({ title: '确认发送失败', content: taskError(error), okText: '知道了' }) }, onSuccess: t => { setDetail(t);  setDraft(undefined); setPreview(undefined); setMessage(''); setTargets([]); void refresh() } })
   const reselect=useMutation({mutationFn:(selections:Array<{target_id:string;device_id:string}>)=>generatePreview(selections),onSuccess:setPreview})
   const mutate=useMutation({mutationFn:async()=>{
-    if(action!.kind==='stop')return sharedSend.stop(school,detail!.id,detail!.revision,reason,keyFor('stop',[detail!.id,detail!.revision,reason]))
+    if(action!.kind==='stop')return sharedSend.stop(detail!.id,detail!.revision,reason,keyFor('stop',[detail!.id,detail!.revision,reason]))
     const a=action!.attempt!
-    if(action!.kind==='review'){await sharedSend.review(school,a.id,a.revision,decision,reason,keyFor('review',[a.id,a.revision,decision,reason]));return sharedSend.task(school,detail!.id)}
-    return sharedSend.reassign(school,a.id,a.revision,device!,reason,keyFor('reassign',[a.id,a.revision,device,reason]))
+    if(action!.kind==='review'){await sharedSend.review(a.id,a.revision,decision,reason,keyFor('review',[a.id,a.revision,decision,reason]));return sharedSend.task(detail!.id)}
+    return sharedSend.reassign(a.id,a.revision,device!,reason,keyFor('reassign',[a.id,a.revision,device,reason]))
   },onSuccess:t=>{setDetail(t);setAction(undefined);setReason('');setDevice(undefined);void refresh()}})
   const error = overview.error || options.error || inspect.error || confirm.error || detailQuery.error || reselect.error || mutate.error || bindings.error
   const dirty = !!draft && (message.replace(/\r\n?/g, '\n') !== draft.message || targets.join() !== draft.target_ids.join() || gap!==draft.between_targets_seconds)
   const synchronized=overview.isSuccess&&!overview.isError
   const liveOverview=synchronized ? overview.data : undefined
   const resourcesChanged=preview ? previewResourcesChanged(preview,liveOverview) : false
-  const confirmationIssues = !admin ? ['当前账号没有当前工作空间管理员发送权限'] : preview?.plan.items.flatMap(i => !i.selected ? [`${i.target.name}：请选择已绑定手机`] : i.blocker ? [`${i.target.name}：${i.blocker}`] : []) ?? []
+  const confirmationIssues = !admin ? ['当前账号没有管理员发送权限'] : preview?.plan.items.flatMap(i => !i.selected ? [`${i.target.name}：请选择已绑定手机`] : i.blocker ? [`${i.target.name}：${i.blocker}`] : []) ?? []
   return <Card title="手机共享发送">
     {errorContext}
     <Space orientation="vertical" style={{ width: '100%' }}>
@@ -73,8 +73,8 @@ function SchoolSharedSendTasks({ school, admin }: { school: string; admin: boole
       {overview.data?.sending_status&&<Alert type={overview.data.sending_status.can_confirm?'info':'warning'} title={overview.data.sending_status.message}/>}
       {overview.isError&&<Alert type="warning" title="当前状态同步失败，预览快照不能作为实时状态" description={<Button onClick={()=>void overview.refetch()}>重试同步当前状态</Button>}/>}
       {error && <Alert type="error" title={taskError(error)} />}
-      <Input.Search aria-label="搜索手机目标群" placeholder="搜索当前工作空间群名称" onSearch={value=>{setTargetSearch(value);setTargetPage(1)}} />
-      <Select labelInValue mode="multiple" aria-label="手机目标群" placeholder="选择当前工作空间手机目标群" style={{ width: '100%' }} value={targets.map(value=>({value,label:targetNames[value] ?? draft?.targets.find(t=>t.id===value)?.name ?? '目标信息待核对'}))} onChange={values=>{setTargets(values.map(v=>v.value));setTargetNames(names=>({...names,...Object.fromEntries(values.map(v=>[v.value,String(v.label)]))}))}} options={(options.data?.items ?? []).filter(t => t.enabled && !t.archived_at).map(t => ({ value: t.id, label: t.search_text }))} />
+      <Input.Search aria-label="搜索手机目标群" placeholder="搜索群名称" onSearch={value=>{setTargetSearch(value);setTargetPage(1)}} />
+      <Select labelInValue mode="multiple" aria-label="手机目标群" placeholder="选择手机目标群" style={{ width: '100%' }} value={targets.map(value=>({value,label:targetNames[value] ?? draft?.targets.find(t=>t.id===value)?.name ?? '目标信息待核对'}))} onChange={values=>{setTargets(values.map(v=>v.value));setTargetNames(names=>({...names,...Object.fromEntries(values.map(v=>[v.value,String(v.label)]))}))}} options={(options.data?.items ?? []).filter(t => t.enabled && !t.archived_at).map(t => ({ value: t.id, label: t.search_text }))} />
       <PaginationControls page={targetPage} more={options.data?.page?.has_more} change={setTargetPage} subject="可选手机目标群" />
       {!!overview.data?.drafts.length && <Select aria-label="恢复共享发送草稿" placeholder="恢复已保存草稿" style={{width:'100%'}} options={overview.data.drafts.map(d=>({value:d.id,label:`${d.message.slice(0,30)}（${d.target_ids.length} 个目标群）`}))} onChange={id=>{const d=overview.data!.drafts.find(x=>x.id===id)!;setDraft(d);setTargetNames(n=>({...n,...Object.fromEntries(d.targets.map(t=>[t.id,t.name]))}));setTargets(d.target_ids);setMessage(d.message);setGap(d.between_targets_seconds);setPreview(undefined)}} />}
       <label>逐群间隔（秒）<InputNumber aria-label="逐群间隔秒数" value={gap} min={1} max={86400} precision={0} onChange={v=>setGap(v??30)}/></label>
@@ -98,22 +98,22 @@ function SchoolSharedSendTasks({ school, admin }: { school: string; admin: boole
               return <div key={snapshot.binding_id}>
                 <SharedReadinessView snapshot={snapshot} current={current} blocked={!!i.blocker}/>
                 <p>确认的授权候选：{i.candidates.filter(c=>c.confirmable!==false).map(c=>`${c.device_name}（${candidateGroupName(c)}）`).join('、')}；所选为首选，范围内允许自动换机。</p>
-                {admin&&snapshot.blockers.some(b=>isUsageBlocker(b.code))&&<Button onClick={()=>setUsageOpen(true)}>查看当前工作空间使用范围</Button>}
+                {admin&&snapshot.blockers.some(b=>isUsageBlocker(b.code))&&<Button onClick={()=>setUsageOpen(true)}>查看使用范围</Button>}
               </div>
             })}
-            {i.blocker&&!(i.readiness?.length)&&<p>没有可选绑定，请核对当前工作空间目标群与手机的关联</p>}
+            {i.blocker&&!(i.readiness?.length)&&<p>没有可选绑定，请核对目标群与手机的关联</p>}
           </Space> },
         ]} />
-        {confirmationIssues.length > 0 && <Alert type="warning" title={admin ? "提交时需要核对以下问题" : "没有工作空间管理员发送权限"} description={admin ? `${confirmationIssues.length} 个目标需要处理受理问题，请查看上表。` : confirmationIssues[0]}/>}
+        {confirmationIssues.length > 0 && <Alert type="warning" title={admin ? "提交时需要核对以下问题" : "没有系统管理员发送权限"} description={admin ? `${confirmationIssues.length} 个目标需要处理受理问题，请查看上表。` : confirmationIssues[0]}/>}
         <Button type="primary" loading={confirm.isPending} disabled={!admin || resourcesChanged || reselect.isPending || inspect.isPending} onClick={() => confirm.mutate()}>确认发送</Button>
       </>}
       <Table<SharedTask> rowKey="id" loading={overview.isFetching} dataSource={overview.data?.tasks ?? []} pagination={{ pageSize: 10 }} columns={[
         { title: '任务', dataIndex: 'id' }, { title: '创建时间', dataIndex: 'created_at' }, { title: '状态', render: (_, t) => taskProgressLabel(t) ?? '状态待同步' },
-        { title: '操作', render: (_, t) => <Button onClick={() => setSelected({school,id:t.id})}>查看计划与结果</Button> },
+        { title: '操作', render: (_, t) => <Button onClick={() => setSelected({id:t.id})}>查看计划与结果</Button> },
       ]} />
     </Space>
-    <Modal title="手机群消息使用管理" open={usageOpen} footer={null} width={1000} onCancel={()=>setUsageOpen(false)}><UsageManagement school={school} admin={admin}/></Modal>
-    <Modal title="共享任务逐群进度" open={!!selected && selected.school===school} footer={null} onCancel={() => setDetail(undefined)}>
+    <Modal title="手机群消息使用管理" open={usageOpen} footer={null} width={1000} onCancel={()=>setUsageOpen(false)}><UsageManagement admin={admin}/></Modal>
+    <Modal title="共享任务逐群进度" open={!!selected && !!selected} footer={null} onCancel={() => setDetail(undefined)}>
       <Button onClick={()=>void detailQuery.refetch()} loading={detailQuery.isFetching}>刷新任务结果</Button>
       {detailQuery.isPending && <p>正在读取逐群进度…</p>}
       {!!detailQuery.dataUpdatedAt && <p>最近获取时间：{new Date(detailQuery.dataUpdatedAt).toLocaleString()}</p>}

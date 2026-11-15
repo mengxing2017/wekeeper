@@ -25,7 +25,7 @@ Object.defineProperty(window, 'matchMedia', {
   }),
 })
 afterEach(cleanup)
-function show(platformAdmin = false) {
+function show(platformAdmin = true) {
   const onNavigate = vi.fn()
   const onLogout = vi.fn().mockResolvedValue(undefined)
   render(
@@ -35,8 +35,7 @@ function show(platformAdmin = false) {
         onNavigate={onNavigate}
         username="测试运营"
         platformAdmin={platformAdmin}
-        mobileRole="operator"
-        allowedKeys={visibleNavigationKeys(platformAdmin, 'operator', 'operator')}
+        allowedKeys={visibleNavigationKeys(platformAdmin)}
         onLogout={onLogout}
       >
         <p>学校内容</p>
@@ -56,7 +55,7 @@ it('shows role-appropriate navigation and routes business selections', () => {
   expect(screen.queryByRole('menuitem', { name: '历史手机发送任务' })).toBeNull()
   fireEvent.click(screen.getByRole('menuitem', { name: '手机任务' }))
   expect(onNavigate).toHaveBeenCalledWith('mobile-execution-tasks')
-  expect(screen.queryByRole('menuitem', { name: '手机设备' })).toBeNull()
+  expect(screen.getByRole('menuitem', { name: '手机设备' })).toBeTruthy()
   expect(screen.getByRole('menuitem', { name: '发送账号' })).toBeTruthy()
 })
 it('provides platform management and logout for an administrator', async () => {

@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-quer
 import { SessionGate } from './index'
 import { type User } from './api'
 
-const user: User = {id:'admin',username:'admin',display_name:'管理员',platform_admin:true,bound_school_id:null,grants:[],wecom_authenticated:false}
+const user: User = {id:'admin',username:'admin',display_name:'管理员',platform_admin:true,wecom_authenticated:false}
 const headers = {'Content-Type':'application/vnd.api+json'}
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 function mount(background?: React.ReactNode) {
@@ -24,7 +24,7 @@ it('shows login immediately after logout succeeds without a second session round
   vi.stubGlobal('fetch', fetcher)
   const cache = mount()
   fireEvent.click(screen.getByRole('button',{name:'退出登录'}))
-  expect(await screen.findByRole('heading',{name:'登录工作空间'})).toBeTruthy()
+  expect(await screen.findByRole('heading',{name:'登录管理后台'})).toBeTruthy()
   expect(fetcher).toHaveBeenCalledTimes(1)
   expect(fetcher.mock.calls[0][1]?.method).toBe('DELETE')
   expect(cache.getQueryData(['session'])).toBeNull()
@@ -47,7 +47,7 @@ it('cancels protected queries before submitting logout', async () => {
   mount(<Background />)
   fireEvent.click(screen.getByRole('button',{name:'退出登录'}))
   await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1))
-  expect(await screen.findByRole('heading',{name:'登录工作空间'})).toBeTruthy()
+  expect(await screen.findByRole('heading',{name:'登录管理后台'})).toBeTruthy()
 })
 it('reports failed logout without claiming success and permits retry', async () => {
   const fetcher = vi.fn().mockRejectedValueOnce(new Error('network unavailable')).mockImplementation(async () => Response.json({data:null},{headers}))
@@ -58,7 +58,7 @@ it('reports failed logout without claiming success and permits retry', async () 
   expect(screen.getByText('受保护工作区')).toBeTruthy()
   expect(cache.getQueryData(['session'])).toEqual({csrf:'csrf',user})
   fireEvent.click(screen.getByRole('button',{name:'退出登录'}))
-  expect(await screen.findByRole('heading',{name:'登录工作空间'})).toBeTruthy()
+  expect(await screen.findByRole('heading',{name:'登录管理后台'})).toBeTruthy()
   expect(fetcher).toHaveBeenCalledTimes(2)
 })
 it('deduplicates logout while awaiting revocation and does not exit before success', async () => {
@@ -72,5 +72,5 @@ it('deduplicates logout while awaiting revocation and does not exit before succe
   await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1))
   expect(screen.getByText('受保护工作区')).toBeTruthy()
   finish(Response.json({data:null},{headers}))
-  expect(await screen.findByRole('heading',{name:'登录工作空间'})).toBeTruthy()
+  expect(await screen.findByRole('heading',{name:'登录管理后台'})).toBeTruthy()
 })

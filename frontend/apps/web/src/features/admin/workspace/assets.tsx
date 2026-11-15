@@ -255,14 +255,14 @@ export function Assets() {
           )}
           {kind === 'groups' && (
             <Select
-              aria-label="分发工作空间关联状态"
+              aria-label="分发目标关联状态"
               placeholder="全部关联状态"
               allowClear
               style={{ minWidth: 160 }}
               value={filter.associated === undefined ? undefined : String(filter.associated)}
               options={[
-                { value: 'true', label: '已关联分发工作空间' },
-                { value: 'false', label: '未关联分发工作空间' },
+                { value: 'true', label: '已关联分发目标' },
+                { value: 'false', label: '未关联分发目标' },
               ]}
               onChange={(value) =>
                 update({ associated: value === undefined ? undefined : value === 'true' })
@@ -335,8 +335,8 @@ export function Assets() {
                     ? [
                         { title: '人数', dataIndex: 'member_count' },
                         {
-                          title: '分发工作空间关联',
-                          render: (_: unknown, r: Row) => (r.school_id ? '已关联' : '未关联'),
+                          title: '分发目标关联',
+                          render: (_: unknown, r: Row) => (r.associated ? '已关联' : '未关联'),
                         },
                       ]
                     : []),
@@ -502,7 +502,7 @@ function AssetDetail({
     </Drawer>
   )
 }
-export function GroupPicker({ school, onSaved }: { school: string; onSaved: () => Promise<void> }) {
+export function GroupPicker({  onSaved }: { onSaved: () => Promise<void> }) {
   const [page, setPage] = useState(1),
     [search, setSearch] = useState(''),
     [selected, setSelected] = useState<GroupCandidate>(),
@@ -510,8 +510,8 @@ export function GroupPicker({ school, onSaved }: { school: string; onSaved: () =
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false)
   const q = useQuery({
-    queryKey: ['wecom-group-candidates', school, page, search],
-    queryFn: () => assets.candidates(school, { page, search }),
+    queryKey: ['wecom-group-candidates', page, search],
+    queryFn: () => assets.candidates({ page, search }),
     retry: false,
   })
   async function save() {
@@ -519,7 +519,7 @@ export function GroupPicker({ school, onSaved }: { school: string; onSaved: () =
     setBusy(true)
     setError('')
     try {
-      await assets.bind(school, {
+      await assets.bind({
         directory_group_id: selected.id,
         expected_generation: selected.credential_generation,
         expected_checked_at: selected.checked_at,
@@ -539,7 +539,7 @@ export function GroupPicker({ school, onSaved }: { school: string; onSaved: () =
   }
   return (
     <Card size="small" title="从同步目录选择客户群">
-      <p>分发工作空间管理员仅可选择自己担任群主的群。未绑定企业成员时，请联系系统管理员配置。</p>
+      <p>请选择已核实的企业微信客户群。发送时继续核验真实群主及发送账号资格。</p>
       <Input
         aria-label="搜索候选客户群"
         value={search}
@@ -563,7 +563,7 @@ export function GroupPicker({ school, onSaved }: { school: string; onSaved: () =
         dataSource={q.error ? [] : q.data?.items}
         pagination={false}
         locale={{
-          emptyText: '暂无可选群：请检查同步状态、绑定身份及群主范围；其他分发工作空间已关联的群不会显示',
+          emptyText: '暂无可选群：请检查同步状态、绑定身份及群主范围；已关联为分发目标的群不会重复显示',
         }}
         columns={[
           { title: '官方群名', dataIndex: 'name' },
@@ -580,7 +580,7 @@ export function GroupPicker({ school, onSaved }: { school: string; onSaved: () =
                   setName(g.name ?? '')
                 }}
               >
-                {g.already_associated ? '已关联当前工作空间' : '选择群'}
+                {g.already_associated ? '已关联' : '选择群'}
               </Button>
             ),
           },
@@ -593,13 +593,13 @@ export function GroupPicker({ school, onSaved }: { school: string; onSaved: () =
             已选 {selected.name ?? selected.chat_id} · {selected.corp_id} · {selected.chat_id}
           </p>
           <Input
-            aria-label="分发工作空间群显示名"
+            aria-label="客户群显示名"
             value={name}
             onChange={(e) => setName(e.target.value)}
             maxLength={200}
           />
           <Button type="primary" loading={busy} onClick={() => void save()}>
-            关联到当前分发工作空间
+            关联为分发目标
           </Button>
         </Space>
       )}

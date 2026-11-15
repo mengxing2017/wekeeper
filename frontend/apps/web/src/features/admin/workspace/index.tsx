@@ -1,4 +1,3 @@
-import {sourceRouting} from '../../operations/source-access/api'
 import {SourceAutomationTasks} from '../../operations/source-access/automation'
 import {ReceivingConfigurations} from '../../operations/receiving-configurations'
 import {Advertising} from '../../operations/advertising'
@@ -11,8 +10,6 @@ import { MobileExecutionTasks } from '../../operations/mobile-execution/tasks'
 import { SharedMobileResources } from '../mobile-resources'
 import { MobileTargets } from '../../operations/mobile-execution/targets'
 import { navigation, visibleNavigationKeys } from '../../../app/navigation'
-import { MobileWorkspacePanel } from '../../operations/mobile-execution/workspaces'
-import { mobileWorkspaces } from '../../operations/mobile-execution/api'
 import { ListPanel } from '../../../shared/list-panel'
 import { formatDate } from '../../../shared/format-date'
 import { Disclosure } from '../../../shared/disclosure'
@@ -29,7 +26,6 @@ import {
   Space,
   Table,
   Tag,
-  Empty,
 } from 'antd'
 import { ExecutionDevices } from '../../admin/devices'
 import BroadcastTasks from '../../operations/broadcast-tasks'
@@ -38,8 +34,6 @@ import { Assets, GroupPicker } from './assets'
 import { Editor } from './editor'
 import { Administrators } from './administrators'
 import { AuditEvents } from '../audit'
-import { WecomWorkspacePanel } from '../../operations/wecom-senders/workspaces'
-import { wecomWorkspaces, type WecomWorkspace } from '../../operations/wecom-senders/api'
 import { workspace, type Row, type Json, type Resource, type User } from './api'
 export { label } from '../../../shared/label'
 import { label } from '../../../shared/label'
@@ -69,29 +63,15 @@ export function Workspace() {
 function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
   const cache = useQueryClient()
   const [params, setParams] = useSearchParams()
-  const official = useQuery({ queryKey: ['wecom-workspaces'], queryFn: wecomWorkspaces.list, enabled: params.get('view') !== 'audit' })
-  const mobile = useQuery({ queryKey: ['mobile-workspaces'], queryFn: mobileWorkspaces.list, enabled: params.get('view') !== 'audit' })
-  const wecom = official.data?.items.find(w => w.id === params.get('wecom_workspace')) ?? official.data?.items[0]
-  const phone = mobile.data?.items.find(w => w.id === params.get('workspace')) ?? mobile.data?.items[0]
-  const routes=useQuery({queryKey:['assigned-source-routes'],queryFn:sourceRouting.assigned,enabled:!user.platform_admin&&params.get('view')!=='audit'})
-  const routingAdmin = !!routes.data?.items.length
-  const allowedKeys = visibleNavigationKeys(user.platform_admin, wecom?.role, phone?.role, routingAdmin)
+  const allowedKeys = visibleNavigationKeys(user.platform_admin)
   const tab = params.get('view') ?? allowedKeys[0] ?? ''
   const knownPage = navigation.find(n => n.key === tab)
-  const navigate = (view: string) => setParams(previous => { const next = new URLSearchParams(previous); next.set('view',view); next.delete('subview'); next.delete('school'); return next })
-  const selectWorkspace = (kind: 'workspace' | 'wecom_workspace', id: string) => setParams(previous => { const next = new URLSearchParams(previous); next.set(kind,id); next.delete('school'); return next })
+  const navigate = (view: string) => setParams(previous => { const next = new URLSearchParams(previous); next.set('view',view); next.delete('subview'); return next })
   const refresh = async () => { await cache.invalidateQueries({queryKey:['business']}) }
   const setSubview = (view: string) => setParams(previous => { const next = new URLSearchParams(previous); next.set('subview',view); return next })
   let page
-  if ((knownPage?.scope !== 'global' || knownPage?.capability === 'resources.read' || knownPage?.capability === 'routing.configure' || knownPage?.capability === 'advertising.manage') && (official.isPending || mobile.isPending || (knownPage?.capability==='routing.configure'&&routes.isPending&&!user.platform_admin)) && (!knownPage || !allowedKeys.includes(tab))) page = <Empty description="正在加载分发权限…" />
-  else if (!tab) page = <Alert type="info" title="当前账号暂无分发授权，请联系系统管理员。" />
+  if (!user.platform_admin) page = <Alert type="warning" title="当前账号没有此功能的访问权限" />
   else if (!knownPage) page = <Alert type="warning" title="页面不存在" />
-  else if (knownPage.scope === 'mobile' && mobile.error) page = <Alert type="error" title={mobile.error.message} />
-  else if ((knownPage.scope === 'wecom' || knownPage.scope === 'selectable') && official.error) page = <Alert type="error" title={official.error.message} />
-  else if (!allowedKeys.includes(tab)) page = <Alert type="warning" title="当前账号没有此功能的访问权限" />
-  else if (tab === 'wecom-workspaces') page = <WecomWorkspacePanel manage platformAdmin={user.platform_admin} workspaces={official.data?.items ?? []} selected={wecom} loading={official.isPending} error={official.error} onSelect={id=>selectWorkspace('wecom_workspace',id)}>
-    <p>管理当前企业微信分发工作空间及成员授权。客户群、消息模板和群发任务在对应业务页面操作。</p>
-  </WecomWorkspacePanel>
   else if (tab === 'source-credentials') page = <SourceAccess platformAdmin={user.platform_admin} />
   else if (tab === 'advertisements') page = <Advertising />
   else if (tab === 'advertisement-rotations') page = <Advertising />
@@ -102,33 +82,29 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
   else if (tab === 'audit') page = <AuditEvents />
   else if (tab === 'mobile-receiving-configurations') page = <ReceivingConfigurations channel="mobile" admin={user.platform_admin} platformAdmin={user.platform_admin}/>
   else if (tab === 'wecom-receiving-configurations') page = <ReceivingConfigurations channel="wecom" admin={user.platform_admin} platformAdmin={user.platform_admin}/>
-  else if (knownPage.scope === 'mobile') page = <MobileWorkspacePanel platformAdmin={user.platform_admin} workspaces={mobile.data?.items ?? []} selected={phone} loading={mobile.isPending} error={mobile.error} onSelect={id=>selectWorkspace('workspace',id)}>
-    {phone && (tab === 'mobile-execution-tasks' ? <MobileExecutionTasks key={phone.id} school={phone.id} admin={phone.role==='admin'} onNavigate={navigate} /> : <MobileTargets key={phone.id} school={phone.id} admin={phone.role==='admin'} />)}
-  </MobileWorkspacePanel>
-  else if (knownPage.scope === 'wecom' || knownPage.scope === 'selectable') page = <WecomWorkspacePanel platformAdmin={user.platform_admin} workspaces={official.data?.items ?? []} selected={wecom} loading={official.isPending} error={official.error} onSelect={id=>selectWorkspace('wecom_workspace',id)}>
-    {wecom && (tab === 'wecom-senders' ? <OfficialSenders key={wecom.id} school={wecom.id} global={user.platform_admin} /> : tab === 'broadcast-tasks' ? <BroadcastTasks key={wecom.id} school={wecom.id} admin={wecom.role==='admin'} platformAdmin={user.platform_admin} /> : <Panel key={`${wecom.id}:${tab}`} school={wecom} schoolAdmin={wecom.role==='admin'} platformAdmin={user.platform_admin} resource={tab as Resource} refresh={refresh} />)}
-  </WecomWorkspacePanel>
+  else if (tab === 'mobile-execution-tasks') page = <MobileExecutionTasks admin onNavigate={navigate} />
+  else if (tab === 'mobile-targets') page = <MobileTargets admin />
+  else if (tab === 'wecom-senders') page = <OfficialSenders />
+  else if (tab === 'broadcast-tasks') page = <BroadcastTasks admin platformAdmin />
+  else if (tab === 'groups' || tab === 'templates') page = <Panel administrator platformAdmin resource={tab} refresh={refresh} />
   else if (tab === 'execution-devices') page = <ExecutionDevices view={params.get('subview')==='usage'?'usage':'devices'} onViewChange={setSubview} />
   else if (tab === 'shared-mobile-resources') page = <SharedMobileResources />
   else if (tab === 'wecom-assets') page = <Assets />
   else if (tab === 'wecom-directory') page = <Directory />
   else if (tab === 'administrators') page = <Administrators user={user} />
-  return <AppShell active={tab} onNavigate={navigate} username={user.display_name} platformAdmin={user.platform_admin} allowedKeys={allowedKeys} schoolRole={wecom?.role} mobileRole={phone?.role} onLogout={logout}>{page}</AppShell>
+  return <AppShell active={tab} onNavigate={navigate} username={user.display_name} platformAdmin={user.platform_admin} allowedKeys={allowedKeys} onLogout={logout}>{page}</AppShell>
 }
 function Panel({
-  school,
   resource,
   refresh,
-  schoolAdmin,
+  administrator,
   platformAdmin,
 }: {
   platformAdmin: boolean
-  schoolAdmin: boolean
-  school: WecomWorkspace
+  administrator: boolean
   resource: Resource
   refresh: () => Promise<void>
 }) {
-  const s = school.id
   const [page, setPage] = useState(1),
     [search, setSearch] = useState('')
   const [editing, setEditing] = useState<Row>()
@@ -136,33 +112,33 @@ function Panel({
   const [creating, setCreating] = useState(false)
   const query = `?${new URLSearchParams({ 'page[number]': String(page), 'page[size]': '30', ...(search ? { search } : {}) })}`
   const q = useQuery({
-    queryKey: ['business', s, resource, query],
-    queryFn: ({ signal }) => workspace.list(s, resource, query, signal),
+    queryKey: ['business', resource, query],
+    queryFn: ({ signal }) => workspace.list(resource, query, signal),
   })
   const mutation = async (path: string, body: unknown, method = 'POST') => {
-    await workspace.mutate(s, path, body, method)
+    await workspace.mutate(path, body, method)
     await refresh()
   }
-  if(resource==='templates')return <TemplateManager school={s}/>
+  if(resource==='templates')return <TemplateManager/>
   return (
     <>
       {q.error && <Alert type="error" title={q.error.message} />}
-      {resource === 'groups' && schoolAdmin && (
+      {resource === 'groups' && administrator && (
         <>
           {(creating || editing) && (
             <Drawer
               open
               size="large"
-              title={editing ? '编辑分发工作空间群' : '关联客户群'}
+              title={editing ? '编辑客户群' : '关联客户群'}
               onClose={() => {
                 setCreating(false)
                 setEditing(undefined)
               }}
             >
-              {!editing && <GroupPicker key={school.id} school={school.id} onSaved={refresh} />}
+              {!editing && <GroupPicker onSaved={refresh} />}
               {(editing || platformAdmin) && (
                 <Disclosure
-                  title={<>{editing ? '编辑分发工作空间群' : '平台例外：手填已知群标识'}</>}
+                  title={<>{editing ? '编辑客户群' : '平台例外：手填已知群标识'}</>}
                   open={!!editing}
                 >
                   <Editor
@@ -226,7 +202,7 @@ function Panel({
         }
         title="查询结果"
         actions={
-          resource === 'groups' && schoolAdmin && (
+          resource === 'groups' && administrator && (
             <Button
               type="primary"
               onClick={() => {
@@ -300,7 +276,7 @@ function Panel({
                   <Button type="link" onClick={() => setSelectedId(r.id)}>
                     详情
                   </Button>
-                  {resource === 'groups' && schoolAdmin && (
+                  {resource === 'groups' && administrator && (
                     <Button type="link" onClick={() => setEditing(r)}>
                       编辑
                     </Button>
@@ -354,7 +330,7 @@ function Panel({
                   </a>
                 </p>
               )}
-              {resource === 'groups' && schoolAdmin && (
+              {resource === 'groups' && administrator && (
                 <Button
                   type="primary"
                   onClick={() => {
