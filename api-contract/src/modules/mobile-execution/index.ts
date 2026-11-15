@@ -8,16 +8,13 @@ export interface TargetInput {
   duplicate_confirmation?: string;
 }
 export interface DuplicateConfirmation {
-  id: string; confirmation_required: true; duplicate_confirmation: string; candidate_ids: string[];
+  id: string; confirmation_required: true; duplicate_confirmation: string;
 }
 export interface MobileDevice {
   id: string; name: string; enabled: boolean; last_seen_at: string | null;
-  control_state: 'online' | 'connecting' | 'suspect' | 'offline' | 'unauthorized' | 'disabled' | null;
-  last_control_heartbeat_at: string | null;
 }
 export interface PlatformDevice {
   id: string; name: string; enabled: boolean; last_seen_at: string | null;
-  remark: string; custodian_actor_id: string | null; metadata_revision: number;
 }
 export interface PlatformTarget {
   id: string; school_id: string; school_name: string; search_text: string; enabled: boolean;
