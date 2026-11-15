@@ -164,20 +164,6 @@ pub async fn reserve_resource(tx: &mut Tx<'_>, work: &Work) -> Result<bool> {
     sqlx::query("INSERT INTO distribution_source_turns SELECT source_namespace,now() FROM broadcast_tasks WHERE id=$1 ON CONFLICT(source_namespace) DO UPDATE SET last_claimed_at=excluded.last_claimed_at").bind(work.task_id).execute(&mut **tx).await?;
     Ok(true)
 }
-pub async fn consume_events(pool: &PgPool) -> Result<()> {
-    let mut tx = pool.begin().await?;
-    super::broadcast::guard(&mut tx).await?;
-    let events=sqlx::query("SELECT * FROM distribution_source_events WHERE processed_at IS NULL ORDER BY created_at,id LIMIT 100 FOR UPDATE SKIP LOCKED").fetch_all(&mut *tx).await?;
-    for event in events {
-        // Updated projections affect new drafts only; confirmed messages retain their content.
-        sqlx::query("UPDATE distribution_source_events SET processed_at=now() WHERE id=$1")
-            .bind(event.get::<Uuid, _>("id"))
-            .execute(&mut *tx)
-            .await?;
-    }
-    tx.commit().await?;
-    Ok(())
-}
 fn draft_namespace(input: &crate::distribution::domain::broadcast::DraftInput) -> &str {
     use crate::distribution::domain::broadcast::ContentSource;
     match input.content_source {

@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 impl Repository {
     pub async fn run_once(&self) -> Result<()> {
-        let ids:Vec<Uuid>=sqlx::query_scalar("SELECT m.id FROM orchestration_messages m LEFT JOIN orchestration_dispatches d ON d.message_id=m.id WHERE (d.message_id IS NULL OR (d.state IN ('preparing','ready') AND d.next_attempt_at<=clock_timestamp())) AND NOT EXISTS(SELECT 1 FROM source_execution_tasks t WHERE t.receipt_id=m.evidence_ref) ORDER BY m.accepted_at,m.id LIMIT 50")
+        let ids:Vec<Uuid>=sqlx::query_scalar("SELECT m.id FROM orchestration_messages m LEFT JOIN orchestration_dispatches d ON d.message_id=m.id WHERE (d.message_id IS NULL OR (d.state IN ('preparing','ready') AND d.next_attempt_at<=clock_timestamp())) ORDER BY m.accepted_at,m.id LIMIT 50")
             .fetch_all(&self.0).await?;
         for id in ids {
             if let Err(error) = self.process(id).await {

@@ -738,7 +738,6 @@ impl Store for Repository {
         }
     }
     async fn work(&self, task: Option<Uuid>) -> Result<Vec<Work>> {
-        super::content::consume_events(&self.0).await?;
         // Recovery never returns a previously claimed write to the queue.
         sqlx::query("UPDATE broadcast_batches SET state='unknown',error_code='interrupted' WHERE state='submitting' AND claimed_at<now()-interval '2 minutes'").execute(&self.0).await?;
         sqlx::query("UPDATE broadcast_operations SET state='unknown',error_code='interrupted' WHERE state='calling' AND claimed_at<now()-interval '2 minutes'").execute(&self.0).await?;

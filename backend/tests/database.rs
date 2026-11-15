@@ -21,66 +21,6 @@ fn embedded_migration_versions_are_unique_and_ordered() {
 
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL; run make test-integration"]
-async fn enabled_default_migration_preserves_existing_disabled_devices() {
-    let url = std::env::var("WEKEEPER_TEST_DATABASE_URL")
-        .expect("WEKEEPER_TEST_DATABASE_URL must point to an isolated disposable database");
-    let pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&url)
-        .await
-        .unwrap();
-    let schema = format!("device_default_{}", uuid::Uuid::new_v4().simple());
-    sqlx::raw_sql(&format!(
-        "CREATE SCHEMA {schema}; SET search_path TO {schema};"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    for migration in database::MIGRATOR
-        .iter()
-        .filter(|m| m.version < 202610310105)
-    {
-        sqlx::raw_sql(&migration.sql).execute(&pool).await.unwrap();
-    }
-    let old = uuid::Uuid::new_v4();
-    sqlx::query("INSERT INTO execution_devices(id,name) VALUES($1,'Previously disabled')")
-        .bind(old)
-        .execute(&pool)
-        .await
-        .unwrap();
-    let migration = database::MIGRATOR
-        .iter()
-        .find(|m| m.version == 202610310105)
-        .unwrap();
-    sqlx::raw_sql(&migration.sql).execute(&pool).await.unwrap();
-    let enabled: bool = sqlx::query_scalar("SELECT enabled FROM execution_devices WHERE id=$1")
-        .bind(old)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert!(
-        !enabled,
-        "existing disabled devices must not be enabled by the migration"
-    );
-    let enabled: bool = sqlx::query_scalar(
-        "INSERT INTO execution_devices(id,name) VALUES($1,'New registration') RETURNING enabled",
-    )
-    .bind(uuid::Uuid::new_v4())
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert!(enabled);
-    sqlx::raw_sql(&format!(
-        "SET search_path TO public; DROP SCHEMA {schema} CASCADE;"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    pool.close().await;
-}
-
-#[tokio::test]
-#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL; run make test-integration"]
 async fn migrations_handle_residual_objects_after_table_only_reset() {
     let url = std::env::var("WEKEEPER_TEST_DATABASE_URL")
         .expect("WEKEEPER_TEST_DATABASE_URL must point to an isolated disposable database");
@@ -164,35 +104,151 @@ async fn migrations_are_repeatable_and_readiness_checks_schema() {
 }
 
 #[tokio::test]
-#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn retiring_old_phone_channels_preserves_current_identity_consent_and_tasks() {
-    let url = std::env::var("WEKEEPER_TEST_DATABASE_URL").expect("isolated database required");
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL; run make test-integration"]
+async fn unused_storage_upgrade_preserves_current_business_and_trigger_behavior() {
+    let url = std::env::var("WEKEEPER_TEST_DATABASE_URL")
+        .expect("explicit isolated test database required");
     let pool = PgPoolOptions::new()
         .max_connections(1)
         .connect(&url)
         .await
         .unwrap();
-    let schema = format!("retire_phone_{}", uuid::Uuid::new_v4().simple());
+    let schema = format!("unused_fields_{}", uuid::Uuid::new_v4().simple());
     sqlx::raw_sql(&format!(
         "CREATE SCHEMA {schema}; SET search_path TO {schema},public;"
     ))
     .execute(&pool)
     .await
     .unwrap();
-    for m in database::MIGRATOR
+    for migration in database::MIGRATOR
         .iter()
-        .filter(|m| m.version < 202611040124)
+        .filter(|m| m.version < 202611150183)
     {
-        sqlx::raw_sql(&m.sql).execute(&pool).await.unwrap();
+        sqlx::raw_sql(&migration.sql).execute(&pool).await.unwrap();
     }
-    let fixture = include_str!("sql/legacy_mobile_retirement.sql");
-    let (before, after) = fixture.split_once("-- APPLY MIGRATION 124").unwrap();
-    sqlx::raw_sql(before).execute(&pool).await.unwrap();
+    sqlx::raw_sql(r#"
+DO $$
+DECLARE actor uuid=gen_random_uuid(); platform uuid=gen_random_uuid(); unit uuid=gen_random_uuid();
+ workspace uuid=gen_random_uuid(); device uuid=gen_random_uuid(); receipt uuid=gen_random_uuid();
+ related uuid=gen_random_uuid(); draft uuid=gen_random_uuid(); preview uuid=gen_random_uuid(); intent uuid=gen_random_uuid();
+BEGIN
+ INSERT INTO accounts(id,username,display_name,platform_admin) VALUES(actor,'upgrade-admin','Admin',true);
+ INSERT INTO source_callers(source_id) VALUES(platform);
+ INSERT INTO business_units(id,platform_id,name,created_by,updated_by) VALUES(unit,platform,'Receipt unit',actor,actor);
+ INSERT INTO source_routes(route_id,source_id,business_unit_id,route_name,status,config_revision) VALUES('receipt-route',platform,unit,'Receipt route','active',12);
+ INSERT INTO source_route_tombstones(route_id,source_id,reason,config_revision) VALUES('already-retired',platform,'credential_deleted',9);
+ INSERT INTO source_receipts(receipt_id,source_id,business_unit_id,event_id,route_id,body_sha256,schema_version)
+ VALUES(receipt,platform,unit,gen_random_uuid(),'receipt-route','original',2),(related,platform,unit,gen_random_uuid(),'receipt-route','duplicate',2);
+ INSERT INTO source_content_checks(receipt_id,rule_revision,fingerprint,outcome) VALUES(receipt,7,'original','passed');
+ INSERT INTO source_receipt_relations(receipt_id,related_receipt_id,kind) VALUES(related,receipt,'duplicate');
+ INSERT INTO mobile_workspaces(id,name) VALUES(workspace,'Upgrade workspace');
+ INSERT INTO execution_devices(id,name,enabled,remark,custodian_actor_id,metadata_revision) VALUES(device,'Existing phone',false,'unused',actor,8);
+ INSERT INTO mobile_v9_task_drafts(id,school_id,intent_id,actor_id,target_ids,message,content_digest,between_targets_seconds) VALUES(draft,workspace,intent,actor,'{}','Business text','digest',30);
+ INSERT INTO mobile_v9_previews(id,school_id,draft_id,draft_revision,plan,digest) VALUES(preview,workspace,draft,1,'{}','digest');
+ INSERT INTO mobile_v9_tasks(id,school_id,draft_id,intent_id,preview_id,confirmed_by,confirmed_until,cursor_position) VALUES(gen_random_uuid(),workspace,draft,intent,preview,actor,clock_timestamp()+interval '1 hour',4);
+END $$;
+"#).execute(&pool).await.unwrap();
     let migration = database::MIGRATOR
         .iter()
-        .find(|m| m.version == 202611040124)
+        .find(|m| m.version == 202611150183)
         .unwrap();
     sqlx::raw_sql(&migration.sql).execute(&pool).await.unwrap();
-    sqlx::raw_sql(after).execute(&pool).await.unwrap();
+    let remaining: i64 = sqlx::query_scalar(r#"
+SELECT count(*) FROM information_schema.columns c
+JOIN (VALUES ('execution_devices','remark'),('execution_devices','custodian_actor_id'),
+ ('execution_devices','metadata_revision'),('source_routes','config_revision'),
+ ('source_route_tombstones','config_revision'),('mobile_v9_tasks','cursor_position')) removed(table_name,column_name)
+USING(table_name,column_name) WHERE c.table_schema=current_schema()
+"#).fetch_one(&pool).await.unwrap();
+    assert_eq!(remaining, 0);
+    let retired: bool = sqlx::query_scalar("SELECT to_regclass('source_content_checks') IS NULL AND to_regclass('source_receipt_relations') IS NULL")
+        .fetch_one(&pool).await.unwrap();
+    assert!(retired);
+    let facts: i64 = sqlx::query_scalar("SELECT count(*) FROM retired_distribution_evidence WHERE kind IN ('source_content_checks','source_receipt_relations')")
+        .fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        facts, 2,
+        "intermediate migration contains evidence before the final archive retirement"
+    );
+    sqlx::raw_sql(r#"
+DO $$ DECLARE unit uuid=gen_random_uuid(); source uuid; actor uuid; BEGIN
+ IF NOT EXISTS(SELECT 1 FROM execution_devices WHERE name='Existing phone' AND NOT enabled) THEN RAISE EXCEPTION 'device changed'; END IF;
+ IF NOT EXISTS(SELECT 1 FROM mobile_v9_tasks t JOIN mobile_v9_task_drafts d ON d.id=t.draft_id WHERE d.message='Business text' AND NOT t.stopped) THEN RAISE EXCEPTION 'task changed'; END IF;
+ IF NOT EXISTS(SELECT 1 FROM source_route_tombstones WHERE route_id='already-retired') THEN RAISE EXCEPTION 'tombstone lost'; END IF;
+ SELECT source_id INTO source FROM source_routes WHERE route_id='receipt-route';
+ SELECT id INTO actor FROM accounts WHERE username='upgrade-admin';
+ INSERT INTO business_units(id,platform_id,name,created_by,updated_by) VALUES(unit,source,'Delete unit',actor,actor);
+ INSERT INTO source_routes(route_id,source_id,business_unit_id,route_name,status) VALUES('delete-route',source,unit,'Delete route','active');
+ DELETE FROM source_routes WHERE route_id='delete-route';
+ IF NOT EXISTS(SELECT 1 FROM source_route_tombstones WHERE route_id='delete-route' AND source_id=source) THEN RAISE EXCEPTION 'delete did not create tombstone'; END IF;
+ BEGIN
+  INSERT INTO source_routes(route_id,source_id,business_unit_id,route_name,status) VALUES('delete-route',source,unit,'Reused route','active');
+  RAISE EXCEPTION 'retired route reused';
+ EXCEPTION WHEN raise_exception THEN
+  IF SQLERRM<>'retired route identifier' THEN RAISE; END IF;
+ END;
+END $$;
+UPDATE mobile_v9_tasks SET revision=revision+1;
+UPDATE mobile_v9_tasks SET stopped=true;
+"#).execute(&pool).await.unwrap();
+    let migration = database::MIGRATOR
+        .iter()
+        .find(|m| m.version == 202611150184)
+        .unwrap();
+    sqlx::raw_sql(&migration.sql).execute(&pool).await.unwrap();
+    let removed = [
+        "distribution_source_events",
+        "keyword_admissions",
+        "keyword_check_results",
+        "receiving_configuration_evidence",
+        "retired_distribution_evidence",
+        "retired_message_handoffs",
+        "source_advertisement_decisions",
+        "source_automation_task_events",
+        "source_automation_tasks",
+        "source_check_policy",
+        "source_check_scan",
+        "source_content_history",
+        "source_execution_generations",
+        "source_message_compositions",
+        "source_receipt_history",
+        "source_route_revisions",
+        "source_routing_decisions",
+        "source_summary_queue",
+        "source_execution_tasks",
+    ];
+    for table in removed {
+        let absent: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NULL")
+            .bind(table)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(absent, "unused table {table} must be physically removed");
+    }
+    let dangling: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=current_schema() AND EXISTS(SELECT 1 FROM unnest($1::text[]) retired(name) WHERE position(retired.name in p.prosrc)>0)",
+    ).bind(removed.to_vec()).fetch_one(&pool).await.unwrap();
+    assert_eq!(dangling, 0, "functions must not reference retired storage");
+    sqlx::raw_sql(r#"
+DO $$ DECLARE old_revision bigint; old_updated timestamptz; receipt uuid; BEGIN
+ SELECT receipt_id,processing_revision,updated_at INTO receipt,old_revision,old_updated
+ FROM source_receipts WHERE body_sha256='original';
+ UPDATE source_receipts SET reason_code='upgrade_test' WHERE receipt_id=receipt;
+ IF NOT EXISTS(SELECT 1 FROM source_receipts WHERE receipt_id=receipt AND processing_revision=old_revision+1 AND updated_at>old_updated) THEN
+  RAISE EXCEPTION 'receipt transition stopped working';
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM execution_devices WHERE name='Existing phone' AND NOT enabled) THEN RAISE EXCEPTION 'device lost'; END IF;
+ IF NOT EXISTS(SELECT 1 FROM mobile_v9_tasks t JOIN mobile_v9_task_drafts d ON d.id=t.draft_id WHERE d.message='Business text' AND t.stopped) THEN RAISE EXCEPTION 'current task lost'; END IF;
+ IF NOT EXISTS(SELECT 1 FROM source_route_tombstones WHERE route_id='delete-route') THEN RAISE EXCEPTION 'tombstone lost'; END IF;
+END $$;
+UPDATE mobile_v9_tasks SET revision=revision+1,stopped=false;
+UPDATE mobile_v9_tasks SET stopped=true;
+"#).execute(&pool).await.unwrap();
+    sqlx::raw_sql(&format!(
+        "SET search_path TO public; DROP SCHEMA {schema} CASCADE;"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
     pool.close().await;
 }

@@ -393,7 +393,7 @@ async fn offline_binding_is_selectable_and_confirmable_without_environment_or_co
         reservations, 0,
         "reading live waiting status must never reserve quota"
     );
-    assert_eq!(task["cursor_position"], 0);
+    assert!(task.get("cursor_position").is_none());
     assert_eq!(task["items"].as_array().unwrap().len(), 2);
     assert_eq!(
         task["items"][0]["attempts"][0]["plan"]["message"],
