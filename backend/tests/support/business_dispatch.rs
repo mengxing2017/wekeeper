@@ -102,6 +102,9 @@ impl Fixture {
         id
     }
     pub async fn message(&self, sequence: i64) -> (Uuid, Uuid) {
+        self.message_with_content(sequence, "原消息").await
+    }
+    pub async fn message_with_content(&self, sequence: i64, content: &str) -> (Uuid, Uuid) {
         let receipt = Uuid::new_v4();
         let event = Uuid::new_v4();
         let original = OriginalMessage {
@@ -111,7 +114,7 @@ impl Fixture {
             sequence,
             occurred_at: chrono::Utc::now(),
             title: Some("标题".into()),
-            content: Some("原消息".into()),
+            content: Some(content.into()),
             detail_url: "https://example.org/message".into(),
         };
         let body=serde_json::to_vec(&json!({"data":{"type":"source-events","id":event,"attributes":{"event_id":event,"schema_version":2,"route_id":self.route,"event_type":"content.upsert","external_content_id":original.external_content_id,"version":original.version,"sequence":sequence,"occurred_at":original.occurred_at,"title":original.title,"content":original.content,"detail_url":original.detail_url}}})).unwrap();
