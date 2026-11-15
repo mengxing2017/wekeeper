@@ -1398,7 +1398,15 @@ async fn product_member_policy_reuses_existing_key_and_usage_ledger() {
     assert_eq!(count, 1);
     assert_eq!(after["enabled"], false);
     assert_eq!(after["window_seconds"], 7200);
-    assert!(service.options(&a).await.is_err());
+    let options = service.options(&a).await.unwrap();
+    let member_options = options["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == member.to_string())
+        .unwrap();
+    assert_eq!(member_options["policy"]["enabled"], false);
+    assert_eq!(member_options["used"], 1);
     assert!(
         service.channel(&a, true, "scope").await.unwrap()["broadcast_available"]
             .as_bool()
@@ -1706,4 +1714,109 @@ async fn global_official_usage_revalidates_identity_and_confirmation_is_idempote
             .unwrap(),
         result
     );
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn sender_options_include_member_groups_without_unused_association_fields() {
+    use wekeeper_api::distribution::south::port::workflows::Store as _;
+    let (pool, a, _, _, fake) = setup().await;
+    let id = Uuid::new_v4();
+    sqlx::query("INSERT INTO wecom_asset_objects(id,kind,corp_id,key,data,checked_at,credential_generation,visibility,verification) VALUES($1,'groups',$2,'unbound',jsonb_build_object('owner','owner','name','未关联群'),now(),1,'visible','verified')")
+        .bind(id).bind(fake.corp).execute(&pool).await.unwrap();
+    let options =
+        wekeeper_api::distribution::south::adapter::postgres::workflows::Repository(pool.clone())
+            .options(&a)
+            .await
+            .unwrap();
+    let groups = options["groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 3);
+    assert!(groups.iter().all(|g| g.get("associated").is_none()));
+    assert!(groups.iter().any(|g| g["id"] == id.to_string()));
+    pool.close().await;
+}
+
+#[derive(Clone)]
+struct SlowRead {
+    inner: Fake,
+    started: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+}
+impl Client for SlowRead {
+    async fn generation(&self) -> Result<(String, i64)> {
+        self.inner.generation().await
+    }
+    async fn verify(&self, w: &Work) -> Result<()> {
+        self.inner.verify(w).await
+    }
+    async fn invoke(&self, w: &Work) -> Outcome {
+        self.inner.invoke(w).await
+    }
+    async fn results(&self, w: &Work) -> Result<Results> {
+        self.started.notify_one();
+        self.release.notified().await;
+        self.inner.results(w).await
+    }
+    async fn candidates(&self, start: i64, end: i64) -> Result<Vec<Value>> {
+        self.inner.candidates(start, end).await
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn blocked_official_read_does_not_delay_newly_confirmed_create() {
+    let (pool, a, s, mut input, fake) = setup_with_forum(false).await;
+    let client = SlowRead {
+        inner: fake.clone(),
+        started: Arc::new(tokio::sync::Notify::new()),
+        release: Arc::new(tokio::sync::Notify::new()),
+    };
+    let service = Service {
+        store: Repository(pool.clone()),
+        sources: NoticeSource,
+        client: client.clone(),
+        management_available: true,
+        origin: String::new(),
+    };
+    input.content_source = ContentSource::Materials;
+    input.template_version_id = None;
+    input.post_ids.clear();
+    sqlx::query("INSERT INTO distribution_resource_policies(resource_key,window_seconds,max_calls) VALUES($1,3600,10)")
+        .bind(format!("wecom:{}:owner",fake.corp)).execute(&pool).await.unwrap();
+    let mut read_job = None;
+    for namespace in ["test.first", "test.second"] {
+        input.materials = vec![notice(&pool, s, namespace).await];
+        let task = service.save(&a, None, input.clone()).await.unwrap();
+        let mut body = action(Some(task.revision));
+        body.preview_digest = Some(service.preview(&a, task.id).await.unwrap().digest);
+        service
+            .action(&a, task.id, "confirm", namespace, body)
+            .await
+            .unwrap();
+        if namespace == "test.first" {
+            service.run_lane_once(false).await.unwrap();
+        } else {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                service.run_lane_once(false),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(fake.calls.load(Ordering::SeqCst), 2);
+            break;
+        }
+        let reader = service.clone();
+        let job = tokio::spawn(async move { reader.run_lane_once(true).await });
+        tokio::time::timeout(std::time::Duration::from_secs(2), client.started.notified())
+            .await
+            .unwrap();
+        // Keep this read blocked while a later task is confirmed and created.
+        // The spawned task is released and checked after the loop below.
+        read_job = Some(job);
+    }
+    client.release.notify_one();
+    let job = read_job.unwrap();
+    job.await.unwrap().unwrap();
+    pool.close().await;
 }

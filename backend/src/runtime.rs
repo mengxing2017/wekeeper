@@ -130,10 +130,19 @@ async fn serve_inner(
         }
     });
     let broadcast = application.broadcast();
+    let broadcast_reads = broadcast.clone();
     let broadcast_worker = tokio::spawn(async move {
         loop {
-            if broadcast.run_once().await.is_err() {
+            if broadcast.run_lane_once(false).await.is_err() {
                 tracing::warn!("broadcast worker failed; inspect persisted task state");
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
+    });
+    let broadcast_read_worker = tokio::spawn(async move {
+        loop {
+            if broadcast_reads.run_lane_once(true).await.is_err() {
+                tracing::warn!("broadcast result worker failed; retrying persisted reads");
             }
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         }
@@ -226,6 +235,8 @@ async fn serve_inner(
     let _ = dispatch_worker.await;
     usage_worker.abort();
     let _ = usage_worker.await;
+    broadcast_read_worker.abort();
+    let _ = broadcast_read_worker.await;
     broadcast_worker.abort();
     let _ = broadcast_worker.await;
     assets_worker.abort();

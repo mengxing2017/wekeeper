@@ -370,14 +370,29 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
         self.client.candidates(start, end).await
     }
     pub async fn run_once(&self) -> Result<()> {
-        // Only explicitly confirmed work is claimed; credentials are required for upstream calls.
+        let (writes, reads) = tokio::join!(self.run_lane_once(false), self.run_lane_once(true));
+        writes?;
+        reads
+    }
+    /// Independent runtime loops ensure slow result pagination never holds new writes.
+    pub async fn run_lane_once(&self, reads: bool) -> Result<()> {
         if !self.management_available {
             return Ok(());
         }
+        let mut work = tokio::task::JoinSet::new();
         for w in self.store.work(None).await? {
-            if let Err(error) = self.run_work(w).await {
-                tracing::warn!(?error, "broadcast work failed; continuing other batches");
+            if (w.operation == "read") != reads {
+                continue;
             }
+            let service = self.clone();
+            work.spawn(async move { service.run_work(w).await });
+            // Bound upstream concurrency independently in each lane.
+            if work.len() >= 4 {
+                log_work_result(work.join_next().await);
+            }
+        }
+        while !work.is_empty() {
+            log_work_result(work.join_next().await);
         }
         Ok(())
     }
@@ -385,7 +400,15 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
         if w.operation == "read" {
             if self.store.claim(&w).await? {
                 self.store
-                    .observed(&w, self.client.results(&w).await)
+                    .observed(
+                        &w,
+                        tokio::time::timeout(
+                            std::time::Duration::from_secs(30),
+                            self.client.results(&w),
+                        )
+                        .await
+                        .unwrap_or(Err(Error::Unavailable)),
+                    )
                     .await?;
             }
             return Ok(());
@@ -449,6 +472,14 @@ impl crate::bootstrap::Application {
             management_available,
             origin: std::env::var("WEKEEPER_FORUM_ORIGIN").unwrap_or_default(),
         }
+    }
+}
+
+fn log_work_result(result: Option<std::result::Result<Result<()>, tokio::task::JoinError>>) {
+    if let Some(result) = result
+        && !matches!(result, Ok(Ok(())))
+    {
+        tracing::warn!(?result, "broadcast work failed; continuing other batches");
     }
 }
 
