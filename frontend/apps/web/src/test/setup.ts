@@ -21,9 +21,10 @@ vi.mock('@testing-library/react', async importOriginal => {
 
 // JSDOM computes element styles, but does not implement pseudo-element styles.
 // Keep real visibility checks while allowing Ant Design scrollbar measurements.
-const getComputedStyle = window.getComputedStyle.bind(window)
+const getComputedStyle = typeof window === 'undefined' ? undefined : window.getComputedStyle.bind(window)
 
 beforeEach(() => {
+  if (!getComputedStyle) return
   vi.stubGlobal('getComputedStyle', (element: Element) => getComputedStyle(element))
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
   vi.stubGlobal('matchMedia', (query: string) => ({

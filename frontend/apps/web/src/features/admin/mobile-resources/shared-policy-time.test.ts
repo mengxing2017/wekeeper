@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { expect, it } from 'vitest'
 import { policyClock, policyMinute, policyWeekdays, newPolicyWindow } from './shared-policy-time'
 it('中文星期保留ISO周日编号', () => {

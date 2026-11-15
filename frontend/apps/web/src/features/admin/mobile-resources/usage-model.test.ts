@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { expect,it } from 'vitest'
 import type { MobileUsage } from './api'
 import { openingExpiry,usageRows } from './usage-model'

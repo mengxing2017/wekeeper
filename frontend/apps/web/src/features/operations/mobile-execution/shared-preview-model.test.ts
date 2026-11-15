@@ -1,3 +1,4 @@
+// @vitest-environment node
 import {expect,it} from 'vitest'
 import {previewSelections,previewResourcesChanged,isUsageBlocker,currentReadiness,dispatchLabel,taskNeedsPolling,taskProgressLabel,attemptDispatchLabel} from './shared-preview-model'
 import type {SharedPreview} from './api'
