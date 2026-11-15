@@ -570,7 +570,7 @@ impl Store for Repository {
             json!({"id":"current","broadcast_available":available,"management_available":configured,
             "reason":if !configured {Some("官方渠道服务端凭据未配置，可保存草稿")} else if health.1=="paused" {Some("官方渠道已明确暂停新发送")} else if !available {Some("官方接口暂不可用，系统将自动重新检查；草稿保留")} else {None},
             "reason_code":if available {"available"} else if !configured {"credentials_missing"} else if health.1=="paused" {"channel_paused"} else {"channel_unavailable"},
-            "health_state":health.1,"control":control,"can_edit_draft":true,"can_preview":true,"can_confirm":available,"can_refresh":configured,"can_stop":configured,"request":pending}),
+            "health_state":health.1,"control":control,"request":pending}),
         )
     }
 }

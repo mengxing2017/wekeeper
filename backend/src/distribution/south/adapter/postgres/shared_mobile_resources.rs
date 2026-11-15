@@ -65,10 +65,10 @@ impl Store for Repository {
                 "SELECT to_jsonb(t) FROM mobile_targets t WHERE school_id=$1 AND archived_at IS NULL AND (strpos(lower(search_text),lower($2))>0) AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id AND d.enabled WHERE t.enabled AND b.target_id=t.id AND b.school_id=t.school_id AND b.device_id=$3 AND b.enabled)) ORDER BY created_at,id LIMIT $4 OFFSET $5"
             }
             Resource::PlatformDevices => {
-                "SELECT to_jsonb(d)-'client_instance_id' FROM execution_devices d WHERE $1::uuid IS NULL AND strpos(lower(d.name),lower($2))>0 AND ($3::uuid IS NULL OR d.id=$3) ORDER BY d.created_at,d.id LIMIT $4 OFFSET $5"
+                "SELECT jsonb_build_object('id',d.id,'name',d.name,'enabled',d.enabled,'last_seen_at',d.last_seen_at) FROM execution_devices d WHERE $1::uuid IS NULL AND strpos(lower(d.name),lower($2))>0 AND ($3::uuid IS NULL OR d.id=$3) ORDER BY d.created_at,d.id LIMIT $4 OFFSET $5"
             }
             Resource::Devices => {
-                "SELECT jsonb_build_object('id',d.id,'name',d.name,'enabled',d.enabled,'last_seen_at',d.last_seen_at,'control_state',p.state,'last_control_heartbeat_at',p.last_control_heartbeat_at) FROM execution_devices d LEFT JOIN device_control_presence p ON p.id=d.id WHERE EXISTS(SELECT 1 FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id AND t.school_id=b.school_id WHERE b.device_id=d.id AND b.school_id=$1 AND b.enabled AND t.enabled AND t.archived_at IS NULL) AND strpos(lower(d.name),lower($2))>0 AND ($3::uuid IS NULL OR d.id=$3) ORDER BY d.created_at,d.id LIMIT $4 OFFSET $5"
+                "SELECT jsonb_build_object('id',d.id,'name',d.name,'enabled',d.enabled,'last_seen_at',d.last_seen_at) FROM execution_devices d WHERE EXISTS(SELECT 1 FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id AND t.school_id=b.school_id WHERE b.device_id=d.id AND b.school_id=$1 AND b.enabled AND t.enabled AND t.archived_at IS NULL) AND strpos(lower(d.name),lower($2))>0 AND ($3::uuid IS NULL OR d.id=$3) ORDER BY d.created_at,d.id LIMIT $4 OFFSET $5"
             }
             Resource::Bindings | Resource::PlatformBindings => {
                 "SELECT to_jsonb(b)||jsonb_build_object('school_name',s.name,'device_name',d.name,'search_text',t.search_text,'target_locator_revision',t.locator_revision,'available',b.enabled AND d.enabled AND t.enabled AND t.archived_at IS NULL) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id AND t.school_id=b.school_id JOIN mobile_workspaces s ON s.id=t.school_id WHERE ($1::uuid IS NULL OR b.school_id=$1) AND (strpos(lower(t.search_text),lower($2))>0 OR strpos(lower(d.name),lower($2))>0) AND ($3::uuid IS NULL OR b.device_id=$3) ORDER BY b.created_at,b.id LIMIT $4 OFFSET $5"
@@ -135,7 +135,7 @@ impl Store for Repository {
                     let confirmation =
                         hash(&json!([school, v.search_text, v.remark, candidates]).to_string());
                     if v.duplicate_confirmation.as_deref() != Some(&confirmation) {
-                        let response = json!({"id":resource,"confirmation_required":true,"duplicate_confirmation":confirmation,"candidate_ids":candidates.iter().map(|v|v.0).collect::<Vec<_>>()});
+                        let response = json!({"id":resource,"confirmation_required":true,"duplicate_confirmation":confirmation});
                         sqlx::query("INSERT INTO shared_mobile_resource_operations(actor_id,scope,idempotency_key,payload_hash,result) VALUES($1,$2,$3,$4,$5)")
                             .bind(actor.id).bind(&scope).bind(key).bind(&digest).bind(&response).execute(&mut *tx).await?;
                         tx.commit().await?;

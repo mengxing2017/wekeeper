@@ -174,7 +174,7 @@ async fn shared_bindings_require_platform_authority_and_follow_business_group_na
 
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn one_shared_device_serves_two_schools_without_leaking_global_notes() {
+async fn one_shared_device_serves_two_workspaces_with_minimal_device_projection() {
     let (pool, a, school, device) = setup().await;
     let other = Uuid::now_v7();
     sqlx::query("INSERT INTO mobile_workspaces(id,name) VALUES($1,'Other')")
@@ -190,11 +190,6 @@ async fn one_shared_device_serves_two_schools_without_leaking_global_notes() {
     .execute(&pool)
     .await
     .unwrap();
-    sqlx::query("UPDATE execution_devices SET remark='private-account-hint' WHERE id=$1")
-        .bind(device)
-        .execute(&pool)
-        .await
-        .unwrap();
     let service = Service(Repository(pool.clone()));
     let mut bindings = Vec::new();
     for (index, s) in [school, other].iter().enumerate() {
@@ -222,6 +217,24 @@ async fn one_shared_device_serves_two_schools_without_leaking_global_notes() {
             .unwrap();
         bindings.push(result["bindings"][0].clone());
     }
+    let platform_devices = service
+        .list(
+            &a,
+            None,
+            Resource::PlatformDevices,
+            Page::default(),
+            String::new(),
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(!platform_devices.is_empty());
+    for device in platform_devices {
+        assert_eq!(device.as_object().unwrap().len(), 4);
+        for field in ["id", "name", "enabled", "last_seen_at"] {
+            assert!(device.get(field).is_some());
+        }
+    }
     for s in [school, other] {
         let devices = service
             .list(
@@ -235,7 +248,14 @@ async fn one_shared_device_serves_two_schools_without_leaking_global_notes() {
             .await
             .unwrap();
         assert_eq!(devices.len(), 1);
-        for private in ["remark", "custodian_actor_id", "school_id", "grant_id"] {
+        for private in [
+            "remark",
+            "custodian_actor_id",
+            "school_id",
+            "grant_id",
+            "control_state",
+            "last_control_heartbeat_at",
+        ] {
             assert!(devices[0].get(private).is_none());
         }
         let rows = service

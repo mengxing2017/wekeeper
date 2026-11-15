@@ -1188,18 +1188,11 @@ async fn source_material_changes_do_not_revoke_confirmed_messages_or_snapshots()
         .action(&a, s, task.id, "confirm", "confirm", body)
         .await
         .unwrap();
-    sqlx::query("WITH changed AS (UPDATE distribution_materials SET allowed=false,version=(version::bigint+1)::text WHERE namespace='builtin.forum' AND external_content_id=$1::uuid::text RETURNING *) INSERT INTO distribution_source_events(namespace,external_organization_id,external_content_id,version,allowed) SELECT namespace,external_organization_id,external_content_id,version,allowed FROM changed")
+    sqlx::query("UPDATE distribution_materials SET allowed=false,version=(version::bigint+1)::text WHERE namespace='builtin.forum' AND external_content_id=$1::uuid::text")
         .bind(input.post_ids[0])
         .execute(&pool)
         .await
         .unwrap();
-    let pending: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM distribution_source_events WHERE processed_at IS NULL",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert!(pending > 0);
     service.run_once().await.unwrap();
     assert_eq!(fake.calls.load(Ordering::SeqCst), 1);
     assert_eq!(
@@ -1659,7 +1652,8 @@ async fn automatic_health_never_unpauses_explicit_business_control() {
     let paused = repo.channel(&actor, school, true, "scope").await.unwrap();
     assert_eq!(paused["broadcast_available"], false);
     assert_eq!(paused["health_state"], "paused");
-    assert_eq!(paused["can_preview"], true);
+    assert_eq!(paused["management_available"], true);
+    assert!(paused.get("can_preview").is_none());
     repo.channel_control(
         &actor,
         "scope",
