@@ -39,7 +39,7 @@ it('lists independent material and placement resources',async()=>{
  expect(fetchMock.mock.calls[1][0]).toBe('/api/v2/admin/ad-placements?page=2')
 })
 
-it('archives an independent material with its revision and reason',async()=>{
+it('archives an independent material with its revision without an operation reason',async()=>{
  const fetchMock=vi.fn().mockImplementation(async()=>Response.json(fixture.response,{headers:{'content-type':'application/vnd.api+json'}}))
  vi.stubGlobal('fetch',fetchMock)
  await scopedMaterials.archive(fixture.material.id,fixture.archive)

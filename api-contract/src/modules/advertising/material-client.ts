@@ -4,13 +4,13 @@ import type {AdContent} from './client'
 export interface ManagementPage<T> {items:T[];has_more:boolean}
 export interface ScopedMaterial {id:string;revision:number;archived:boolean;content_version:string;content:AdContent}
 export interface ScopedMaterialVersion {id:string;material_id:string;version:number;content:AdContent;created_by:string;created_at:string}
-export interface CreateScopedMaterial {content:AdContent;reason:string}
+export interface CreateScopedMaterial {content:AdContent}
 export interface PublishScopedMaterial extends CreateScopedMaterial {expected_revision:number}
-export interface ArchiveScopedMaterial {expected_revision:number;reason:string}
+export interface ArchiveScopedMaterial {expected_revision:number}
 export type PlacementScope = {kind:'global'}|{kind:'platform';platform_id:string}|{kind:'unit';platform_id:string;unit_id:string}
-export interface CreateAdPlacement {material_id:string;scope:PlacementScope;enabled:boolean;valid_from:string;valid_until:string|null;reason:string}
+export interface CreateAdPlacement {material_id:string;scope:PlacementScope;enabled:boolean;valid_from:string;valid_until:string|null}
 export interface AdPlacement {id:string;material_id:string;scope:PlacementScope;enabled:boolean;valid_from:string;valid_until:string|null;revision:number}
-export interface SetPlacementState {expected_revision:number;enabled:boolean;reason:string}
+export interface SetPlacementState {expected_revision:number;enabled:boolean}
 
 /** Independent material management; the host supplies its own transport. */
 export function createScopedMaterialClient({requestResource}:Pick<Client,'requestResource'>) {
