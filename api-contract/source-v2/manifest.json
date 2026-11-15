@@ -39,7 +39,7 @@
     "fixtures/source-projection.json": "8c761f216e95047f182960e4e505286cf8142d0b977e3c86a058069ba438c3c9",
     "source-v2/receipt-projection.json": "319c374c86e6ec3eb26dd512da1c5b21a1600e7496c175fb8c4d3bad56dd894f",
     "fixtures/source-receipt-projection.json": "22dbb8da0ca9c8ae8b1f09d30313b7b1db04c165ee16718c2503269bce536780",
-    "fixtures/source-keywords.json": "2b4926685537d42053b721cf9a7fc64232aaba51ef816e7430e454e14372d43c",
+    "fixtures/source-keywords.json": "f9fd9a640d24b8fd1f992cc7a5a575d8c3933dea64b1b7eb8edf24038b43f9ed",
     "source-v2/keyword-filter.json": "5fbb9a0ce5a1074d4844e359d9fdd1206ad775056698706c37030333f265c5d8",
     "source-v2/advertising.json": "772a9f2a3508aa38eceed62c55e06981cfc9f7788f2f569faba59b3643549549"
   }
