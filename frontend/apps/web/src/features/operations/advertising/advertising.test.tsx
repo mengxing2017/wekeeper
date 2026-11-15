@@ -1,7 +1,8 @@
 import {configure,cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react'
 import {QueryClient,QueryClientProvider} from '@tanstack/react-query'
 import {afterEach,beforeEach,expect,it,vi} from 'vitest'
-import {Advertising,RouteAdvertising} from './index'
+import {Advertising} from './index'
+import {selectOption} from '../../../test/select-option'
 const api=vi.hoisted(()=>({list:vi.fn(),create:vi.fn(),publish:vi.fn(),placements:vi.fn(),bind:vi.fn(),setState:vi.fn(),scopes:vi.fn()}))
 vi.mock('./api',()=>({scopedMaterials:{list:api.list,create:api.create,publish:api.publish},adPlacements:{list:api.placements,create:api.bind,setState:api.setState},advertisingScopes:api.scopes,advertising:{},advertisementReasonLabels:{}}))
 configure({asyncUtilTimeout:5000})
@@ -17,13 +18,20 @@ it('manages scoped ads without workspace controls and validates 140 Unicode char
  show(<Advertising/>);await screen.findByText('广告甲');fireEvent.click(screen.getByRole('button',{name:'新增广告'}))
  fireEvent.change(await screen.findByLabelText('广告名称'),{target:{value:'新广告'}})
  fireEvent.change(screen.getByLabelText('广告正文'),{target:{value:'汉'.repeat(141)}})
- fireEvent.change(screen.getByLabelText('操作原因'),{target:{value:'业务投放'}})
+ expect(screen.queryByLabelText('操作原因')).toBeNull()
  fireEvent.click(screen.getByRole('button',{name:'保存广告'}));await screen.findByText('单个广告正文最多 140 字');expect(api.create).not.toHaveBeenCalled()
  fireEvent.change(screen.getByLabelText('广告正文'),{target:{value:'😀'.repeat(140)}})
- fireEvent.click(screen.getByRole('button',{name:'保存广告'}));await waitFor(()=>expect(api.create).toHaveBeenCalledWith({content:{name:'新广告',body:'😀'.repeat(140),link:null},reason:'业务投放'}))
+ fireEvent.click(screen.getByRole('button',{name:'保存广告'}));await waitFor(()=>expect(api.create).toHaveBeenCalledWith({content:{name:'新广告',body:'😀'.repeat(140),link:null}}))
  expect(screen.queryByText('工作空间')).toBeNull()
 })
-it('does not offer obsolete route pools',()=>{
- show(<RouteAdvertising route="r1"/>);expect(screen.getByRole('link',{name:'管理广告投放'}).getAttribute('href')).toContain('view=advertisements')
- expect(screen.queryByLabelText('广告模式')).toBeNull()
+it('binds an advertisement to a business unit without an operation reason',async()=>{
+ show(<Advertising/>);await screen.findByText('广告甲')
+ fireEvent.click(screen.getByRole('button',{name:'绑定投放范围'}))
+ await selectOption(await screen.findByLabelText('选择广告'),'广告甲')
+ await selectOption(screen.getByLabelText('选择平台'),'平台甲')
+ await selectOption(screen.getByLabelText('选择业务单位'),'单位甲')
+ fireEvent.change(screen.getByLabelText('生效时间'),{target:{value:'2026-11-15T00:00:00Z'}})
+ expect(screen.queryByLabelText('操作原因')).toBeNull()
+ fireEvent.click(screen.getByRole('button',{name:'保存投放绑定'}))
+ await waitFor(()=>expect(api.bind).toHaveBeenCalledExactlyOnceWith({material_id:'m1',scope:{kind:'unit',platform_id:'p1',unit_id:'u1'},enabled:true,valid_from:'2026-11-15T00:00:00.000Z',valid_until:null}))
 })
