@@ -2,7 +2,7 @@
 
 企业微信与手机群消息转发服务，采用 Rust API 与 React Web。论坛管理和完整微信小程序已迁至独立的 linjian 项目。
 
-当前保留分发登录与独立工作空间权限、消息模板、企业微信统一群发任务、手机共享发送及历史素材投影。论坛的内容审核、评论、举报反馈、展示资源与小程序登录接口已移除。
+当前保留分发登录与全局系统管理员权限、消息模板、企业微信统一群发任务、手机共享发送及历史素材投影。论坛的内容审核、评论、举报反馈、展示资源与小程序登录接口已移除。
 运行与数据切换见 [业务运行手册](docs/runbooks/business.md)。真实平台权限、真机及生产数据切换仍需验收。
 旧 PHP、根目录 Vue 2 `uniapp/`、Java 和附带资源保留用于迁移核对，新容器不会运行它们。
 
@@ -29,7 +29,7 @@ tools/           冒烟检查与后续迁移工具
 
 后端以 `system` 模块展示完整的 domain、north/local、north/remote、south/port、south/adapter/postgres 分层。
 业务模块按用例、领域与 PostgreSQL 端口实现。历史素材由 distribution 自有投影读取，保留历史数据库表以供后续独立清理。
-前端接口调用通过 feature/api 与 `@wekeeper/api-contract/*`。当前构建见 [前端工作区说明](frontend/README.md)。使用历史论坛素材生成消息时，配置 `WEKEEPER_FORUM_ORIGIN` 为 linjian 的实际 HTTPS origin，用于详情链接；素材选择改用 `/api/v1/wecom-distribution/workspaces/{workspace}/distribution-materials`。本轮不实现跨项目来源事件接入，不修改历史 migration 或清空数据。
+前端接口调用通过 feature/api 与 `@wekeeper/api-contract/*`。当前构建见 [前端工作区说明](frontend/README.md)。使用历史论坛素材生成消息时，配置 `WEKEEPER_FORUM_ORIGIN` 为 linjian 的实际 HTTPS origin，用于详情链接；素材选择改用 `/api/v1/wecom-distribution/distribution-materials`。运行时不读取论坛业务表；数据库调整使用新的前向 migration。
 
 ## Docker 文档导航
 
@@ -63,7 +63,7 @@ docker compose --env-file .env -f compose.yaml -f compose.dev.yaml up --build --
 
 `/readyz` 实际检查 PostgreSQL 与初始化 schema；数据库不可用时返回 503。
 迁移失败时 api 启动失败，不会以“健康”状态接收请求。
-后台在分发工作空间范围内确认群发任务，API 按群主创建官方任务，成员在企业微信确认执行；创建成功不等于已发送，历史客户端结果不等于平台送达证明。
+后台在全局资源中确认群发任务，API 按群主创建官方任务，成员在企业微信确认执行；创建成功不等于已发送，历史客户端结果不等于平台送达证明。
 Docker 不自动创建管理员；启动成功后按下方“首次创建管理员”执行。
 
 ```bash
@@ -312,7 +312,7 @@ docker compose --env-file .env -f compose.yaml logs --tail 100 api web
 ```
 
 仅交付 Compose 文件的服务器可直接用 curl 检查 `/healthz` 和 `/readyz`；`make smoke` 额外需要 Makefile、tools/smoke.sh、curl 和 Python 3。
-冒烟检查 SPA HTML 不能证明页面已渲染，还需在浏览器验证登录、工作空间、任务、图片及 `/wecom` 草稿预览。
+冒烟检查 SPA HTML 不能证明页面已渲染，还需在浏览器验证登录、任务、图片及 `/wecom` 草稿预览。
 
 业务与媒体图片保存在 `postgres-data` 命名卷，证书状态保存在 `caddy-data` / `caddy-config`。
 更新前保存数据库备份与旧镜像 digest；修改镜像引用后重新 pull、up 并验收。
@@ -337,13 +337,13 @@ export WEKEEPER_WECOM_ASSET_SYNC_INTERVAL_SECONDS=1800
 devbox run -- make dev-embedded
 ```
 
-分发管理员从目录选择自己担任群主的群；平台管理员可选择未关联其他工作空间的群，并有手填已知群标识的例外入口。旧群停用不依赖上游，新建手填群（包括未启用群）必须核验官方详情。完整行为、错误排查和数据保留见 [业务运行手册](docs/runbooks/business.md#客户群目录)。
+系统管理员从已核实目录选择客户群；发送时仍校验真实群主、绑定账号与发送资格。重复关联不会创建新的分发目标。
 
 通讯录、目录核验与基础业务已合并到 `202610310101_core_business.sql`。当前数据库采用 4 份初始化基线，见 [迁移目录说明](backend/migrations/README.md)。旧分段迁移库需完整重建 schema；启动器不会自动清库或改写 SQLx 账本。允许清空的 Compose 开发库可执行 `make reset-dev-database`，嵌入式临时库退出即清理。
 
 ### 企业统一群发（FE-03）
 
-企业微信分发工作空间“群发任务”支持直接填写文本（无需帖子或模板），或从已审核社区内容及模板生成正文；选择多个客户群，预览后人工确认；成员在企业微信确认执行。按群主拆分、每批最多 2000 群，文本最多 4000 UTF-8 字节；unknown 不自动重发。独立分享草稿/记录菜单已收敛，历史数据保留在任务页。
+企业微信“群发任务”支持直接填写文本（无需帖子或模板），或从已审核社区内容及模板生成正文；选择多个客户群，预览后人工确认；成员在企业微信确认执行。按群主拆分、每批最多 2000 群，文本最多 4000 UTF-8 字节；unknown 不自动重发。独立分享草稿/记录菜单已收敛，历史数据保留在任务页。
 
 配置有效 CorpID/Secret 后，群发自动可用，无需额外部署启用开关。实际执行仍校验客户联系权限、群主分发授权和官方接口状态；客户端需支持指定群发送。AgentID 不再是发送前提。平台明确暂停新发送时，仍可查询和停止既有任务。详见 [企业微信接入与验收](docs/runbooks/wecom.md)。
 
@@ -353,6 +353,6 @@ devbox run -- make dev-embedded
 
 ### 手机共享发送
 
-手机为平台共享资源，移动工作空间维护独立目标群。管理员核对群、实际搜索名、手机和正文后确认任务；执行遵守手机现场条件、业务额度、单次许可及 unknown 核对，不办理研发验收或发行放行。操作见[手机任务](docs/guide/operator/mobile-execution-tasks.md)和[使用管理](docs/guide/platform-admin/shared-mobile-resources.md)。协议以 `api-contract/src/modules/mobile-execution/shared-send/` 和 Rust 契约测试为准。
+手机为系统共享资源，系统管理员统一维护目标群。管理员核对群、实际搜索名、手机和正文后确认任务；执行遵守手机现场条件、业务额度、单次许可及 unknown 核对，不办理研发验收或发行放行。操作见[手机任务](docs/guide/operator/mobile-execution-tasks.md)和[使用管理](docs/guide/platform-admin/shared-mobile-resources.md)。协议以 `api-contract/src/modules/mobile-execution/shared-send/` 和 Rust 契约测试为准。
 
-学校成员与权限、学校设置、学校管理、登录账号管理已移出。企业微信与移动端分别管理独立工作空间，原 ID、群和任务保留；新增 migration 在 API 启动时执行，前后端需同步发布。见[工作空间与授权](docs/guide/workspaces.md)。
+企业微信和手机分发资源全局管理，不保留成员关系或旧接口兼容。新增前向迁移删除旧分区数据与字段，前后端同步发布。见[全局分发权限](docs/guide/workspaces.md)。

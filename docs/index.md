@@ -17,11 +17,11 @@ features:
     link: /guide/operator/
     linkText: 每日工作清单
   - title: 分发管理员
-    details: 核对独立工作空间、授权、目标群与发送范围。
+    details: 核对独立授权、目标群与发送范围。
     link: /guide/workspaces
-    linkText: 工作空间与授权
+    linkText: 全局分发权限
   - title: 系统管理员
-    details: 从分发工作空间和授权开始，准备通讯录、群目录与手机。
+    details: 从全局分发资源和授权开始，准备通讯录、群目录与手机。
     link: /guide/platform-admin/
     linkText: 系统上线清单
   - title: 开发与部署
