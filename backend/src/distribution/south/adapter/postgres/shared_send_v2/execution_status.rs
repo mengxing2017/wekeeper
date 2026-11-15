@@ -15,7 +15,7 @@ fn add(
         scope_type: "device".into(),
         scope_id: device,
         owner: match owner {
-            "platform" | "school" => "admin",
+            "platform" => "admin",
             other => other,
         }
         .into(),
@@ -34,15 +34,14 @@ fn add(
         retry_at: None,
     });
 }
-pub(super) async fn task(tx: &mut Tx<'_>, school: Uuid, value: &mut Value) -> Result<()> {
+pub(super) async fn task(tx: &mut Tx<'_>, value: &mut Value) -> Result<()> {
     let snapshot = value.clone();
     if let Some(items) = value["items"].as_array_mut() {
         for item in items {
             let position = item["position"].as_i64().unwrap_or(-1);
             if let Some(attempts) = item["attempts"].as_array_mut() {
                 for attempt in attempts {
-                    attempt["execution_status"] =
-                        assess(tx, school, &snapshot, position, attempt).await?;
+                    attempt["execution_status"] = assess(tx, &snapshot, position, attempt).await?;
                 }
             }
         }
@@ -52,7 +51,7 @@ pub(super) async fn task(tx: &mut Tx<'_>, school: Uuid, value: &mut Value) -> Re
 /// Display the durable dispatcher and grant facts. Runtime telemetry is informational only.
 pub(super) async fn assess(
     tx: &mut Tx<'_>,
-    _school: Uuid,
+
     task: &Value,
     _position: i64,
     attempt: &Value,

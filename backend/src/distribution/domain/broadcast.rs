@@ -163,7 +163,7 @@ pub struct Action {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Task {
     pub id: Uuid,
-    pub school_id: Uuid,
+
     pub creator_id: Uuid,
     pub template_version_id: Option<Uuid>,
     pub content_source: ContentSource,
@@ -214,7 +214,7 @@ pub struct Target {
 #[derive(Clone, Deserialize)]
 pub struct Work {
     pub id: Uuid,
-    pub school_id: Uuid,
+
     pub task_id: Uuid,
     pub sender: String,
     pub sender_account: Uuid,

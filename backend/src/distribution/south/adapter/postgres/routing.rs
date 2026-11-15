@@ -4,23 +4,23 @@ use serde_json::{Value, json};
 use sqlx::{Postgres, Row, Transaction};
 use uuid::Uuid;
 
-/// Route authorization owns access; workspace IDs only partition stored targets.
-pub async fn targets(
-    tx: &mut Transaction<'_, Postgres>,
-    channel: &str,
-    workspace: Uuid,
-) -> Result<Vec<Value>> {
+/// Route configuration selects real resources without artificial storage partitions.
+pub async fn targets(tx: &mut Transaction<'_, Postgres>, channel: &str) -> Result<Vec<Value>> {
     require_channel(channel)?;
     let mut result = Vec::new();
     if channel == "mobile" {
-        let rows=sqlx::query("SELECT id,search_text FROM mobile_targets WHERE school_id=$1 AND enabled AND archived_at IS NULL ORDER BY id FOR SHARE").bind(workspace).fetch_all(&mut **tx).await?;
+        let rows=sqlx::query("SELECT id,search_text FROM mobile_targets WHERE enabled AND archived_at IS NULL ORDER BY id FOR SHARE").fetch_all(&mut **tx).await?;
         for row in rows {
             let id: Uuid = row.get("id");
-            let candidates = super::shared_send_v2::routing_candidates(tx, workspace, id).await?;
+            let candidates = super::shared_send_v2::routing_candidates(tx, id).await?;
             result.push(json!({"id":id,"name":row.get::<String,_>("search_text"),"identity":{"candidates":candidates},"resource_available":!candidates.is_empty()}));
         }
     } else {
-        let rows=sqlx::query("SELECT id,name,corp_id,chat_id FROM wecom_groups WHERE school_id=$1 AND active ORDER BY id FOR SHARE").bind(workspace).fetch_all(&mut **tx).await?;
+        let rows = sqlx::query(
+            "SELECT id,name,corp_id,chat_id FROM wecom_groups WHERE active ORDER BY id FOR SHARE",
+        )
+        .fetch_all(&mut **tx)
+        .await?;
         for row in rows {
             let id: Uuid = row.get("id");
             let senders:Vec<Value>=sqlx::query_scalar(r#"SELECT jsonb_build_object('account_id',a.id,'userid',m.userid,'binding_revision',a.wecom_binding_revision)
@@ -45,10 +45,10 @@ pub async fn create_official_task(
     snapshot_id: Uuid,
 ) -> Result<Uuid> {
     use crate::business::{hash, require};
-    let config = snapshot;
+    let _config = snapshot;
     // The caller has checked the explicit source-route business authorization.
     let content = crate::distribution::domain::broadcast::normalize_text(message)?;
-    require(sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM distribution_message_snapshots WHERE id=$1 AND school_id=$2 AND channel='wecom' AND content=$3 AND content_hash=$4)").bind(snapshot_id).bind(config.workspace_id).bind(&content).bind(hash(&content)).fetch_one(&mut **tx).await?, "source_snapshot_mismatch")?;
+    require(sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM distribution_message_snapshots WHERE id=$1  AND channel='wecom' AND content=$2 AND content_hash=$3)").bind(snapshot_id).bind(&content).bind(hash(&content)).fetch_one(&mut **tx).await?, "source_snapshot_mismatch")?;
     let directory = sqlx::query(
         "SELECT corp_id,credential_generation FROM wecom_directory_state WHERE singleton FOR SHARE",
     )
@@ -58,8 +58,8 @@ pub async fn create_official_task(
     let generation: i64 = directory.get("credential_generation");
     let task = Uuid::now_v7();
     let input = json!({"content_source":"text","text_content":content,"group_ids":snapshot.targets.iter().map(|t|t.id).collect::<Vec<_>>()});
-    sqlx::query("INSERT INTO broadcast_tasks(id,school_id,creator_id,content,content_hash,corp_id,generation,state,content_source,source_namespace,draft_input,authorization_kind,authorized_by) VALUES($1,$2,$3,$4,$5,$6,$7,'confirmed','text','builtin.source-route',$8,'source_route',$3)").bind(task).bind(config.workspace_id).bind(authorizer).bind(&content).bind(hash(&content)).bind(&corp).bind(generation).bind(input).execute(&mut **tx).await?;
-    sqlx::query("INSERT INTO broadcast_task_snapshots SELECT school_id,id,revision,$2 FROM broadcast_tasks WHERE id=$1").bind(task).bind(snapshot_id).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO broadcast_tasks(id,creator_id,content,content_hash,corp_id,generation,state,content_source,source_namespace,draft_input,authorization_kind,authorized_by) VALUES($1,$2,$3,$4,$5,$6,'confirmed','text','builtin.source-route',$7,'source_route',$2)").bind(task).bind(authorizer).bind(&content).bind(hash(&content)).bind(&corp).bind(generation).bind(input).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO broadcast_task_snapshots SELECT id,revision,$2 FROM broadcast_tasks WHERE id=$1").bind(task).bind(snapshot_id).execute(&mut **tx).await?;
     for (position, target) in snapshot.targets.iter().enumerate() {
         require(
             target.identity["corp_id"] == corp,
@@ -72,18 +72,17 @@ pub async fn create_official_task(
         let account: Uuid =
             serde_json::from_value(sender["account_id"].clone()).map_err(|_| Error::Conflict)?;
         let revision: i64 = sqlx::query_scalar(
-            "SELECT revision FROM wecom_groups WHERE id=$1 AND school_id=$2 AND active FOR SHARE",
+            "SELECT revision FROM wecom_groups WHERE id=$1  AND active FOR SHARE",
         )
         .bind(target.id)
-        .bind(config.workspace_id)
         .fetch_one(&mut **tx)
         .await?;
         let batch = Uuid::now_v7();
         // One target per batch keeps stop/revocation decisions independent.
-        sqlx::query("INSERT INTO broadcast_batches(id,school_id,task_id,ordinal,sender,sender_account,binding_revision,corp_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)").bind(batch).bind(config.workspace_id).bind(task).bind(position as i32).bind(sender["userid"].as_str()).bind(account).bind(sender["binding_revision"].as_i64()).bind(&corp).execute(&mut **tx).await?;
-        sqlx::query("INSERT INTO broadcast_targets(id,school_id,task_id,batch_id,group_id,chat_id,group_name,group_revision) VALUES($1,$2,$3,$4,$5,$6,$7,$8)").bind(Uuid::now_v7()).bind(config.workspace_id).bind(task).bind(batch).bind(target.id).bind(target.identity["chat_id"].as_str()).bind(&target.name).bind(revision).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO broadcast_batches(id,task_id,ordinal,sender,sender_account,binding_revision,corp_id) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(batch).bind(task).bind(position as i32).bind(sender["userid"].as_str()).bind(account).bind(sender["binding_revision"].as_i64()).bind(&corp).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO broadcast_targets(id,task_id,batch_id,group_id,chat_id,group_name,group_revision) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(Uuid::now_v7()).bind(task).bind(batch).bind(target.id).bind(target.identity["chat_id"].as_str()).bind(&target.name).bind(revision).execute(&mut **tx).await?;
     }
-    sqlx::query("INSERT INTO broadcast_events(id,school_id,task_id,action,detail) VALUES($1,$2,$3,'source_route.authorized',$4)").bind(Uuid::now_v7()).bind(config.workspace_id).bind(task).bind(json!({"execution_actor":"message-orchestration","authorization_actor":authorizer,"delegate_id":snapshot.id,"configuration_id":snapshot.configuration_id})).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO broadcast_events(id,task_id,action,detail) VALUES($1,$2,'source_route.authorized',$3)").bind(Uuid::now_v7()).bind(task).bind(json!({"execution_actor":"message-orchestration","authorization_actor":authorizer,"delegate_id":snapshot.id,"configuration_id":snapshot.configuration_id})).execute(&mut **tx).await?;
     Ok(task)
 }
 

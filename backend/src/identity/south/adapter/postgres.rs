@@ -1,4 +1,4 @@
-use crate::business::{Actor, Error, Grant, Result, hash, secret};
+use crate::business::{Actor, Error, Result, hash, secret};
 use serde_json::{Value, json};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
@@ -47,16 +47,13 @@ impl Repository {
     }
     pub async fn authenticate(&self, token: &str, kind: &str) -> Result<Actor> {
         let h = hash(token);
-        let row=sqlx::query("UPDATE sessions s SET last_seen_at=now() FROM accounts a WHERE s.account_id=a.id AND s.token_hash=$1 AND s.kind=$2 AND s.expires_at>now() AND s.last_seen_at>now()-interval '30 minutes' AND a.active AND (NOT s.wecom_authenticated OR (s.wecom_binding_revision=a.wecom_binding_revision AND s.credential_generation=(SELECT credential_generation FROM wecom_directory_state) AND EXISTS(SELECT 1 FROM wecom_members m WHERE m.id=a.wecom_member_id AND m.verification='verified' AND m.status=1))) RETURNING a.id,a.username,a.display_name,a.platform_admin,NULL::uuid AS bound_school_id,s.csrf,s.wecom_authenticated,a.wecom_binding_revision").bind(&h).bind(kind).fetch_optional(&self.0).await?.ok_or(Error::Unauthorized)?;
+        let row=sqlx::query("UPDATE sessions s SET last_seen_at=now() FROM accounts a WHERE s.account_id=a.id AND s.token_hash=$1 AND s.kind=$2 AND s.expires_at>now() AND s.last_seen_at>now()-interval '30 minutes' AND a.active AND (NOT s.wecom_authenticated OR (s.wecom_binding_revision=a.wecom_binding_revision AND s.credential_generation=(SELECT credential_generation FROM wecom_directory_state) AND EXISTS(SELECT 1 FROM wecom_members m WHERE m.id=a.wecom_member_id AND m.verification='verified' AND m.status=1))) RETURNING a.id,a.username,a.display_name,a.platform_admin,s.csrf,s.wecom_authenticated,a.wecom_binding_revision").bind(&h).bind(kind).fetch_optional(&self.0).await?.ok_or(Error::Unauthorized)?;
         let id: Uuid = row.get("id");
-        let grants=sqlx::query("SELECT m.school_id,m.role FROM wecom_workspace_members m JOIN wecom_workspaces s ON s.id=m.school_id WHERE m.account_id=$1 AND s.active AND m.role<>'revoked'").bind(id).fetch_all(&self.0).await?.into_iter().map(|r|Grant{school_id:r.get("school_id"),role:r.get("role")}).collect();
         Ok(Actor {
             id,
             username: row.get("username"),
             display_name: row.get("display_name"),
             platform_admin: row.get("platform_admin"),
-            bound_school_id: row.get("bound_school_id"),
-            grants,
             csrf: row.get("csrf"),
             session_hash: h,
             request_id: String::new(),
@@ -101,7 +98,6 @@ impl Repository {
         crate::audit::record(
             &mut tx,
             actor,
-            Uuid::nil(),
             "identity.administrator.create",
             id,
             json!({"username":username,"display_name":name}),
@@ -145,7 +141,6 @@ impl Repository {
         crate::audit::record(
             &mut tx,
             actor,
-            Uuid::nil(),
             "identity.administrator.update",
             id,
             json!({"display_name":name,"active":active}),
@@ -166,7 +161,6 @@ impl Repository {
         crate::audit::record(
             &mut tx,
             actor,
-            Uuid::nil(),
             "identity.administrator.delete",
             id,
             json!({}),

@@ -1,13 +1,8 @@
 //! Business metering survives missing, stale or replaced execution projections.
 use super::*;
 
-pub(super) async fn check(
-    tx: &mut Tx<'_>,
-    school: Uuid,
-    device: Uuid,
-    target: Uuid,
-) -> Result<Vec<Uuid>> {
-    let usages = tasks::operative_usages(tx, school, device, target).await?;
+pub(super) async fn check(tx: &mut Tx<'_>, device: Uuid, target: Uuid) -> Result<Vec<Uuid>> {
+    let usages = tasks::operative_usages(tx, device, target).await?;
     let mut ids = Vec::new();
     for usage in usages {
         // validate_plan has already enforced current controls in this transaction.
@@ -15,9 +10,8 @@ pub(super) async fn check(
             continue;
         }
         let allowed: bool = sqlx::query_scalar(
-            "SELECT (SELECT count(*) FROM mobile_usage_invocation_budgets b JOIN mobile_usages u ON u.id=b.usage_id WHERE u.school_id=$1 AND b.budget_root=$2)+(SELECT count(*) FROM mobile_execution_usage_budgets b JOIN mobile_usages u ON u.id=b.usage_id JOIN mobile_execution_grants g ON g.id=b.execution_id WHERE u.school_id=$1 AND b.budget_root=$2 AND coalesce(g.result_body->>'outcome','pending') NOT IN ('not_called','failed'))<$3",
+            "SELECT (SELECT count(*) FROM mobile_usage_invocation_budgets b JOIN mobile_usages u ON u.id=b.usage_id WHERE b.budget_root=$1)+(SELECT count(*) FROM mobile_execution_usage_budgets b JOIN mobile_usages u ON u.id=b.usage_id JOIN mobile_execution_grants g ON g.id=b.execution_id WHERE b.budget_root=$1 AND coalesce(g.result_body->>'outcome','pending') NOT IN ('not_called','failed'))<$2",
         )
-        .bind(school)
         .bind(uid(&usage, "budget_root")?)
         .bind(usage["body"]["max_calls"].as_i64().ok_or(Error::Conflict)?)
         .fetch_one(&mut **tx)

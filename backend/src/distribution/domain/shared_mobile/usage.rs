@@ -180,8 +180,8 @@ impl SendingStatus {
             _ => "disabled",
         };
         let (owner, message) = match platform {
-            "enabled" => ("school", "平台已开放发送；手机领取任务并完成本地准备后执行"),
-            "default" => ("school", "使用系统默认发送设置，可正常提交任务"),
+            "enabled" => ("admin", "平台已开放发送；手机领取任务并完成本地准备后执行"),
+            "default" => ("admin", "使用系统默认发送设置，可正常提交任务"),
             "preview_only" => ("platform", "任务可以提交，实际执行等待平台恢复发送"),
             "draft_only" => ("platform", "任务可以提交，实际执行等待平台恢复发送"),
             _ => ("platform", "平台已暂停实际执行，任务仍可提交排队"),
@@ -208,7 +208,7 @@ mod policy_tests {
         ] {
             let s = SendingStatus::project(mode);
             assert!(s.can_confirm);
-            assert_eq!(s.owner, if mode.is_none() { "school" } else { "platform" });
+            assert_eq!(s.owner, if mode.is_none() { "admin" } else { "platform" });
         }
         assert_eq!(SendingStatus::project(Some("enabled")).platform, "enabled");
         assert!(SendingStatus::project(Some("enabled")).can_confirm);
@@ -219,7 +219,7 @@ mod policy_tests {
     #[test]
     fn business_form_cannot_select_technical_stages_or_skip_confirmation() {
         let limits = serde_json::json!({"interval_seconds":30,"window_seconds":3600,"max_calls":30,"daily_max_calls":150});
-        let mut body = serde_json::json!({"expected_revision":0,"enabled":false,"confirmed":true,"timezone":"Asia/Shanghai","allowed_windows":[{"weekdays":[1,2,3,4,5],"start_minute":540,"end_minute":1080}],"limits":{"global":limits,"school":limits,"device":limits,"target":limits},"reason":"业务设置"});
+        let mut body = serde_json::json!({"expected_revision":0,"enabled":false,"confirmed":true,"timezone":"Asia/Shanghai","allowed_windows":[{"weekdays":[1,2,3,4,5],"start_minute":540,"end_minute":1080}],"limits":{"global":limits,"device":limits,"target":limits},"reason":"业务设置"});
         let p = serde_json::from_value::<BusinessSchemeInput>(body.clone())
             .unwrap()
             .policy()

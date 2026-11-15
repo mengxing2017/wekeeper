@@ -142,8 +142,7 @@ pub(super) async fn reconcile(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
         reason = Some("candidate_unavailable");
     }
     if reason.is_none() && grant.is_none() && state == "queued" {
-        let school = uid(&row, "school_id")?;
-        let choices = tasks::raw_candidates(tx, school, uid(&row, "target_id")?).await?;
+        let choices = tasks::raw_candidates(tx, uid(&row, "target_id")?).await?;
         let available = choices
             .iter()
             .find(|c| tasks::dependencies(c) == tasks::dependencies(&row["plan"]));
@@ -151,7 +150,7 @@ pub(super) async fn reconcile(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
             if !ready(tx, candidate).await? {
                 reason = Some("candidate_unavailable");
             }
-            match tasks::validate_plan(tx, school, &row["plan"]).await {
+            match tasks::validate_plan(tx, &row["plan"]).await {
                 Ok(()) => {}
                 Err(Error::Policy(_) | Error::NotFound | Error::Forbidden) => {
                     reason = Some("plan_dependency_changed")
@@ -195,9 +194,9 @@ pub(super) async fn reconcile(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
         )
         .await?;
     }
-    let school = uid(&row, "school_id")?;
+
     if row["authorization_kind"] != "source_route" {
-        match authorize(tx, uid(&row, "confirmed_by")?, Some(school), true).await {
+        match authorize(tx, uid(&row, "confirmed_by")?, true).await {
             Ok(()) => {}
             Err(Error::Forbidden | Error::Unauthorized | Error::NotFound) => {
                 return status(tx, item, "stopped", "authorization_revoked").await;
@@ -205,7 +204,7 @@ pub(super) async fn reconcile(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
             Err(error) => return Err(error),
         }
     }
-    let choices = tasks::raw_candidates(tx, school, uid(&row, "target_id")?).await?;
+    let choices = tasks::raw_candidates(tx, uid(&row, "target_id")?).await?;
     let approved = row["candidates"].as_array().ok_or(Error::Conflict)?;
     let start = row["candidate_cursor"].as_u64().ok_or(Error::Conflict)? as usize;
     let origin = row["round_origin"].as_u64().ok_or(Error::Conflict)? as usize;
@@ -248,7 +247,7 @@ pub(super) async fn reconcile(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
             .await?;
             continue;
         }
-        match tasks::validate_plan(tx, school, snapshot).await {
+        match tasks::validate_plan(tx, snapshot).await {
             Ok(()) => {}
             Err(Error::Policy(_) | Error::NotFound | Error::Forbidden) => {
                 event(
@@ -266,7 +265,6 @@ pub(super) async fn reconcile(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
         }
         if !device::quota(
             tx,
-            school,
             uid(candidate, "device_id")?,
             uid(candidate, "target_id")?,
             aid,
@@ -378,7 +376,6 @@ pub(super) async fn replace(
     let mut plan = candidate.clone();
     for k in [
         "schema",
-        "school_id",
         "intent_id",
         "item_id",
         "message",
@@ -396,11 +393,11 @@ pub(super) async fn replace(
     .bind(uid(old, "id")?)
     .execute(&mut **tx)
     .await?;
-    sqlx::query("INSERT INTO mobile_v9_plans(id,school_id,item_id,target_id,device_id,snapshot_id,plan,digest,content_digest) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)")
-        .bind(pid).bind(uid(old,"school_id")?).bind(uid(old,"item_id")?).bind(uid(old,"target_id")?).bind(uid(&plan,"device_id")?).bind(uid(old,"snapshot_id")?).bind(&plan).bind(digest(&plan)?).bind(plan["content_digest"].as_str()).execute(&mut **tx).await?;
-    sqlx::query("INSERT INTO mobile_v9_attempts(id,school_id,item_id,plan_id,attempt_no,confirmed_by) VALUES($1,$2,$3,$4,$5,$6)")
-        .bind(aid).bind(uid(old,"school_id")?).bind(uid(old,"item_id")?).bind(pid).bind(old["attempt_no"].as_i64().ok_or(Error::Conflict)? as i32+1).bind(uid(old,"confirmed_by")?).execute(&mut **tx).await?;
-    sqlx::query("INSERT INTO mobile_v9_reassignments(id,school_id,old_attempt_id,new_attempt_id,actor_id,reason,source) VALUES($1,$2,$3,$4,$5,$6,$7)")
-        .bind(Uuid::now_v7()).bind(uid(old,"school_id")?).bind(uid(old,"id")?).bind(aid).bind(uid(old,"confirmed_by")?).bind(reason).bind(source).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO mobile_v9_plans(id,item_id,target_id,device_id,snapshot_id,plan,digest,content_digest) VALUES($1,$2,$3,$4,$5,$6,$7,$8)")
+        .bind(pid).bind(uid(old,"item_id")?).bind(uid(old,"target_id")?).bind(uid(&plan,"device_id")?).bind(uid(old,"snapshot_id")?).bind(&plan).bind(digest(&plan)?).bind(plan["content_digest"].as_str()).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO mobile_v9_attempts(id,item_id,plan_id,attempt_no,confirmed_by) VALUES($1,$2,$3,$4,$5)")
+        .bind(aid).bind(uid(old,"item_id")?).bind(pid).bind(old["attempt_no"].as_i64().ok_or(Error::Conflict)? as i32+1).bind(uid(old,"confirmed_by")?).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO mobile_v9_reassignments(id,old_attempt_id,new_attempt_id,actor_id,reason,source) VALUES($1,$2,$3,$4,$5,$6)")
+        .bind(Uuid::now_v7()).bind(uid(old,"id")?).bind(aid).bind(uid(old,"confirmed_by")?).bind(reason).bind(source).execute(&mut **tx).await?;
     Ok(aid)
 }

@@ -26,7 +26,6 @@ pub trait Store: Clone + Send + Sync + 'static {
     fn action_replay(
         &self,
         actor: &Actor,
-        school: Uuid,
         task: Uuid,
         operation: &str,
         key: &str,
@@ -36,21 +35,18 @@ pub trait Store: Clone + Send + Sync + 'static {
     fn preview_response(
         &self,
         actor: &Actor,
-        school: Uuid,
         key: &str,
         input_hash: &str,
     ) -> impl Future<Output = Result<Option<Value>>> + Send;
     fn evidence_query(
         &self,
         actor: &Actor,
-        school: Uuid,
         task: Uuid,
         batch: Uuid,
     ) -> impl Future<Output = Result<bool>> + Send;
     fn evidence_save(
         &self,
         actor: &Actor,
-        school: Uuid,
         task: Uuid,
         batch: Uuid,
         msgid: &str,
@@ -59,7 +55,6 @@ pub trait Store: Clone + Send + Sync + 'static {
     fn evidence(
         &self,
         actor: &Actor,
-        school: Uuid,
         task: Uuid,
         batch: Uuid,
         id: Uuid,
@@ -68,37 +63,24 @@ pub trait Store: Clone + Send + Sync + 'static {
     fn draft_request(
         &self,
         actor: &Actor,
-        school: Uuid,
         input: &DraftInput,
     ) -> impl Future<Output = Result<Option<Task>>> + Send;
     fn source_references(
         &self,
-        school: Uuid,
         ids: &[Uuid],
     ) -> impl Future<Output = Result<Vec<crate::distribution::domain::content::SourceReference>>> + Send;
     fn preview(
         &self,
         actor: &Actor,
-        school: Uuid,
         id: Uuid,
     ) -> impl Future<Output = Result<crate::distribution::domain::content::Preview>> + Send;
-    fn authorize(
-        &self,
-        actor: Uuid,
-        school: Uuid,
-        admin: bool,
-    ) -> impl Future<Output = Result<()>> + Send;
-    fn execute(
-        &self,
-        actor: &Actor,
-        school: Uuid,
-        command: Command,
-    ) -> impl Future<Output = Result<Task>> + Send;
-    fn list(&self, school: Uuid, page: Page) -> impl Future<Output = Result<Vec<Task>>> + Send;
-    fn task(&self, school: Uuid, id: Uuid) -> impl Future<Output = Result<Task>> + Send;
+    fn authorize(&self, actor: Uuid, admin: bool) -> impl Future<Output = Result<()>> + Send;
+    fn execute(&self, actor: &Actor, command: Command)
+    -> impl Future<Output = Result<Task>> + Send;
+    fn list(&self, page: Page) -> impl Future<Output = Result<Vec<Task>>> + Send;
+    fn task(&self, id: Uuid) -> impl Future<Output = Result<Task>> + Send;
     fn rows(
         &self,
-        school: Uuid,
         id: Uuid,
         kind: &str,
         page: Page,

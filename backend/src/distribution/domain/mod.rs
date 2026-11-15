@@ -1,11 +1,6 @@
 use crate::business::{Result, require};
 use std::collections::BTreeMap;
-const KEYS: [&str; 4] = [
-    "school.name",
-    "post.title",
-    "post.summary",
-    "post.detail_url",
-];
+const KEYS: [&str; 3] = ["post.title", "post.summary", "post.detail_url"];
 pub fn validate(body: &str) -> Result<()> {
     require(
         !body.trim().is_empty() && body.len() <= 8000,

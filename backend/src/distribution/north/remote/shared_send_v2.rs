@@ -34,31 +34,26 @@ async fn credential(a: &Application, h: &HeaderMap) -> Result<Credential> {
         )
         .await
 }
-async fn list(
-    State(a): State<Application>,
-    actor: Actor,
-    Path(s): Path<Uuid>,
-) -> Result<ApiResponse> {
+async fn list(State(a): State<Application>, actor: Actor) -> Result<ApiResponse> {
     Ok(resource(
         "mobile-shared-tasks",
-        service(&a).school_read(&actor, s, None).await?,
+        service(&a).task_read(&actor, None).await?,
     ))
 }
 async fn detail(
     State(a): State<Application>,
     actor: Actor,
-    Path((s, id)): Path<(Uuid, Uuid)>,
+    Path(id): Path<Uuid>,
 ) -> Result<ApiResponse> {
     Ok(resource(
         "mobile-shared-tasks",
-        service(&a).school_read(&actor, s, Some(id)).await?,
+        service(&a).task_read(&actor, Some(id)).await?,
     ))
 }
 
 async fn confirm(
     State(a): State<Application>,
     actor: Actor,
-    Path(s): Path<Uuid>,
     h: HeaderMap,
     input: Input,
 ) -> Result<ApiResponse> {
@@ -67,7 +62,6 @@ async fn confirm(
         service(&a)
             .usage_write(
                 &actor,
-                s,
                 key(&h),
                 crate::distribution::domain::shared_mobile::usage::UsageCommand::TaskConfirm(
                     input.decode("mobile-shared-tasks")?,
@@ -79,18 +73,17 @@ async fn confirm(
 async fn stop(
     State(a): State<Application>,
     actor: Actor,
-    Path((s, id)): Path<(Uuid, Uuid)>,
+    Path(id): Path<Uuid>,
     h: HeaderMap,
     input: Input,
 ) -> Result<ApiResponse> {
     Ok(resource(
         "mobile-shared-tasks",
         service(&a)
-            .school_write(
+            .task_write(
                 &actor,
-                s,
                 key(&h),
-                SchoolCommand::Stop(id, input.decode("mobile-shared-stops")?),
+                TaskCommand::Stop(id, input.decode("mobile-shared-stops")?),
             )
             .await?,
     ))
@@ -98,18 +91,17 @@ async fn stop(
 async fn review(
     State(a): State<Application>,
     actor: Actor,
-    Path((s, id)): Path<(Uuid, Uuid)>,
+    Path(id): Path<Uuid>,
     h: HeaderMap,
     input: Input,
 ) -> Result<ApiResponse> {
     Ok(resource(
         "mobile-shared-reviews",
         service(&a)
-            .school_write(
+            .task_write(
                 &actor,
-                s,
                 key(&h),
-                SchoolCommand::Review(id, input.decode("mobile-shared-reviews")?),
+                TaskCommand::Review(id, input.decode("mobile-shared-reviews")?),
             )
             .await?,
     ))
@@ -183,18 +175,16 @@ async fn consent(State(a): State<Application>, h: HeaderMap, input: Input) -> Re
 async fn inspection(
     State(a): State<Application>,
     actor: Actor,
-    Path(s): Path<Uuid>,
     h: HeaderMap,
     input: Input,
 ) -> Result<ApiResponse> {
     Ok(resource(
         "mobile-shared-inspections",
         service(&a)
-            .school_write(
+            .task_write(
                 &actor,
-                s,
                 key(&h),
-                SchoolCommand::Inspection(input.decode("mobile-shared-inspections")?),
+                TaskCommand::Inspection(input.decode("mobile-shared-inspections")?),
             )
             .await?,
     ))
@@ -202,18 +192,17 @@ async fn inspection(
 async fn reassign(
     State(a): State<Application>,
     actor: Actor,
-    Path((s, id)): Path<(Uuid, Uuid)>,
+    Path(id): Path<Uuid>,
     h: HeaderMap,
     input: Input,
 ) -> Result<ApiResponse> {
     Ok(resource(
         "mobile-shared-tasks",
         service(&a)
-            .school_write(
+            .task_write(
                 &actor,
-                s,
                 key(&h),
-                SchoolCommand::Reassign(id, input.decode("mobile-shared-reassignments")?),
+                TaskCommand::Reassign(id, input.decode("mobile-shared-reassignments")?),
             )
             .await?,
     ))
@@ -330,67 +319,55 @@ pub fn router() -> Router<Application> {
         )
         .route("/api/v10/device-execution/diagnostics", post(diagnostic))
         .route(
-            "/api/v1/mobile-execution/workspaces/{workspace}/shared-v2-items/{id}/reassignments",
+            "/api/v1/mobile-execution/shared-v2-items/{id}/reassignments",
             post(reassign),
         )
         .route(
-            "/api/v1/mobile-execution/workspaces/{workspace}/shared-v2-inspections",
+            "/api/v1/mobile-execution/shared-v2-inspections",
             post(inspection),
         )
         .route(
-            "/api/v1/mobile-execution/workspaces/{workspace}/shared-v2-tasks",
+            "/api/v1/mobile-execution/shared-v2-tasks",
             get(list).post(confirm),
         )
+        .route("/api/v1/mobile-execution/shared-v2-tasks/{id}", get(detail))
         .route(
-            "/api/v1/mobile-execution/workspaces/{workspace}/shared-v2-tasks/{id}",
-            get(detail),
-        )
-        .route(
-            "/api/v1/mobile-execution/workspaces/{workspace}/shared-v2-tasks/{id}/stops",
+            "/api/v1/mobile-execution/shared-v2-tasks/{id}/stops",
             post(stop),
         )
         .route(
-            "/api/v1/mobile-execution/workspaces/{workspace}/shared-v2-items/{id}/reviews",
+            "/api/v1/mobile-execution/shared-v2-items/{id}/reviews",
             post(review),
         )
 }
 
-async fn usage_options(
-    State(a): State<Application>,
-    actor: Actor,
-    Path(s): Path<Uuid>,
-) -> Result<ApiResponse> {
+async fn usage_options(State(a): State<Application>, actor: Actor) -> Result<ApiResponse> {
     Ok(resource(
         "mobile-usage-options",
-        service(&a).usage_read(&actor, Some(s), None, true).await?,
+        service(&a).usage_read(&actor, None, true).await?,
     ))
 }
-async fn usage_list(
-    State(a): State<Application>,
-    actor: Actor,
-    Path(s): Path<Uuid>,
-) -> Result<ApiResponse> {
+async fn usage_list(State(a): State<Application>, actor: Actor) -> Result<ApiResponse> {
     Ok(resource(
         "mobile-usages",
-        service(&a).usage_read(&actor, Some(s), None, false).await?,
+        service(&a).usage_read(&actor, None, false).await?,
     ))
 }
 async fn usage_global(State(a): State<Application>, actor: Actor) -> Result<ApiResponse> {
     Ok(resource(
         "mobile-usages",
-        service(&a).usage_read(&actor, None, None, false).await?,
+        service(&a).usage_read(&actor, None, false).await?,
     ))
 }
 async fn usage_global_options(State(a): State<Application>, actor: Actor) -> Result<ApiResponse> {
     Ok(resource(
         "mobile-usage-options",
-        service(&a).usage_read(&actor, None, None, true).await?,
+        service(&a).usage_read(&actor, None, true).await?,
     ))
 }
 async fn usage_preview(
     State(a): State<Application>,
     actor: Actor,
-    Path(s): Path<Uuid>,
     h: HeaderMap,
     input: Input,
 ) -> Result<ApiResponse> {
@@ -399,7 +376,6 @@ async fn usage_preview(
         service(&a)
             .usage_write(
                 &actor,
-                s,
                 key(&h),
                 crate::distribution::domain::shared_mobile::usage::UsageCommand::Preview(
                     input.decode("mobile-usage-previews")?,
@@ -411,7 +387,6 @@ async fn usage_preview(
 async fn usage_confirm(
     State(a): State<Application>,
     actor: Actor,
-    Path(s): Path<Uuid>,
     h: HeaderMap,
     input: Input,
 ) -> Result<ApiResponse> {
@@ -420,7 +395,6 @@ async fn usage_confirm(
         service(&a)
             .usage_write(
                 &actor,
-                s,
                 key(&h),
                 crate::distribution::domain::shared_mobile::usage::UsageCommand::Confirm(
                     input.decode("mobile-usages")?,
@@ -432,7 +406,7 @@ async fn usage_confirm(
 async fn usage_mutate(
     State(a): State<Application>,
     actor: Actor,
-    Path((s, id, operation)): Path<(Uuid, Uuid, String)>,
+    Path((id, operation)): Path<(Uuid, String)>,
     h: HeaderMap,
     input: Input,
 ) -> Result<ApiResponse> {
@@ -441,7 +415,6 @@ async fn usage_mutate(
         service(&a)
             .usage_write(
                 &actor,
-                s,
                 key(&h),
                 crate::distribution::domain::shared_mobile::usage::UsageCommand::Mutate {
                     id,
@@ -455,7 +428,6 @@ async fn usage_mutate(
 async fn usage_task_preview(
     State(a): State<Application>,
     actor: Actor,
-    Path(s): Path<Uuid>,
     h: HeaderMap,
     input: Input,
 ) -> Result<ApiResponse> {
@@ -464,7 +436,6 @@ async fn usage_task_preview(
         service(&a)
             .usage_write(
                 &actor,
-                s,
                 key(&h),
                 crate::distribution::domain::shared_mobile::usage::UsageCommand::TaskPreview(
                     input.decode("mobile-usage-task-previews")?,
@@ -495,7 +466,7 @@ fn usage_router() -> Router<Application> {
             post(business_scheme),
         )
         .route(
-            "/api/v1/mobile-execution/workspaces/{workspace}/usages/{id}/issues/{issue}/responses",
+            "/api/v1/mobile-execution/usages/{id}/issues/{issue}/responses",
             post(usage_issue_update),
         )
         .route(
@@ -506,32 +477,26 @@ fn usage_router() -> Router<Application> {
             "/api/v1/platform/mobile-execution/usage-options",
             get(usage_global_options),
         )
+        .route("/api/v1/mobile-execution/usage-options", get(usage_options))
         .route(
-            "/api/v1/mobile-execution/workspaces/{workspace}/usage-options",
-            get(usage_options),
-        )
-        .route(
-            "/api/v1/mobile-execution/workspaces/{workspace}/usage-previews",
+            "/api/v1/mobile-execution/usage-previews",
             post(usage_preview),
         )
         .route(
-            "/api/v1/mobile-execution/workspaces/{workspace}/usages",
+            "/api/v1/mobile-execution/usages",
             get(usage_list).post(usage_confirm),
         )
+        .route("/api/v1/mobile-execution/usages/{id}", get(usage_detail))
         .route(
-            "/api/v1/mobile-execution/workspaces/{workspace}/usages/{id}",
-            get(usage_detail),
-        )
-        .route(
-            "/api/v1/mobile-execution/workspaces/{workspace}/usages/{id}/issues",
+            "/api/v1/mobile-execution/usages/{id}/issues",
             post(usage_issue),
         )
         .route(
-            "/api/v1/mobile-execution/workspaces/{workspace}/usages/{id}/{operation}",
+            "/api/v1/mobile-execution/usages/{id}/{operation}",
             post(usage_mutate),
         )
         .route(
-            "/api/v1/mobile-execution/workspaces/{workspace}/usage-task-previews",
+            "/api/v1/mobile-execution/usage-task-previews",
             post(usage_task_preview),
         )
 }
@@ -544,7 +509,7 @@ struct UsageIssue {
 async fn usage_issue(
     State(a): State<Application>,
     actor: Actor,
-    Path((s, id)): Path<(Uuid, Uuid)>,
+    Path(id): Path<Uuid>,
     h: HeaderMap,
     input: Input,
 ) -> Result<ApiResponse> {
@@ -554,7 +519,6 @@ async fn usage_issue(
         service(&a)
             .usage_write(
                 &actor,
-                s,
                 key(&h),
                 crate::distribution::domain::shared_mobile::usage::UsageCommand::Issue {
                     id,
@@ -567,20 +531,18 @@ async fn usage_issue(
 async fn usage_detail(
     State(a): State<Application>,
     actor: Actor,
-    Path((s, id)): Path<(Uuid, Uuid)>,
+    Path(id): Path<Uuid>,
 ) -> Result<ApiResponse> {
     Ok(resource(
         "mobile-usages",
-        service(&a)
-            .usage_read(&actor, Some(s), Some(id), false)
-            .await?,
+        service(&a).usage_read(&actor, Some(id), false).await?,
     ))
 }
 
 async fn usage_issue_update(
     State(a): State<Application>,
     actor: Actor,
-    Path((s, id, issue_id)): Path<(Uuid, Uuid, Uuid)>,
+    Path((id, issue_id)): Path<(Uuid, Uuid)>,
     h: HeaderMap,
     input: Input,
 ) -> Result<ApiResponse> {
@@ -589,7 +551,6 @@ async fn usage_issue_update(
         service(&a)
             .usage_write(
                 &actor,
-                s,
                 key(&h),
                 crate::distribution::domain::shared_mobile::usage::UsageCommand::IssueUpdate {
                     id,

@@ -16,31 +16,26 @@ use uuid::Uuid;
 fn service(a: &Application) -> Service {
     Service(Repository(a.pool.clone()))
 }
-async fn options(
-    State(a): State<Application>,
-    actor: Actor,
-    Path(s): Path<Uuid>,
-) -> Result<ApiResponse> {
+async fn options(State(a): State<Application>, actor: Actor) -> Result<ApiResponse> {
     Ok(resource(
         "official-usage-options",
-        service(&a).options(&actor, Some(s)).await?,
+        service(&a).options(&actor).await?,
     ))
 }
 async fn platform_options(State(a): State<Application>, actor: Actor) -> Result<ApiResponse> {
     Ok(resource(
         "official-usage-options",
-        service(&a).options(&actor, None).await?,
+        service(&a).options(&actor).await?,
     ))
 }
 async fn requests(
     State(a): State<Application>,
     actor: Actor,
-    Path(s): Path<Uuid>,
     Query(p): Query<Page>,
 ) -> Result<ApiResponse> {
     Ok(collection(
         "business-requests",
-        service(&a).requests(&actor, Some(s), p.clone()).await?,
+        service(&a).requests(&actor, p.clone()).await?,
         &p,
     ))
 }
@@ -51,7 +46,7 @@ async fn platform_requests(
 ) -> Result<ApiResponse> {
     Ok(collection(
         "business-requests",
-        service(&a).requests(&actor, None, p.clone()).await?,
+        service(&a).requests(&actor, p.clone()).await?,
         &p,
     ))
 }
@@ -66,7 +61,6 @@ async fn decision(
         service(&a)
             .command(
                 &actor,
-                None,
                 Command::Decision {
                     id,
                     input: input.decode("business-requests")?,
@@ -75,42 +69,41 @@ async fn decision(
             .await?,
     ))
 }
-macro_rules! school_handler {
+macro_rules! business_handler {
     ($name:ident,$kind:literal,$variant:ident,$output:literal) => {
         async fn $name(
             State(a): State<Application>,
             actor: Actor,
-            Path(s): Path<Uuid>,
             input: Input,
         ) -> Result<ApiResponse> {
             Ok(resource(
                 $output,
                 service(&a)
-                    .command(&actor, Some(s), Command::$variant(input.decode($kind)?))
+                    .command(&actor, Command::$variant(input.decode($kind)?))
                     .await?,
             ))
         }
     };
 }
-school_handler!(
+business_handler!(
     template_preview,
     "template-previews",
     TemplatePreview,
     "template-previews"
 );
-school_handler!(
+business_handler!(
     template_confirm,
     "template-publications",
     TemplateConfirm,
     "templates"
 );
-school_handler!(
+business_handler!(
     usage_preview,
     "official-usage-previews",
     UsagePreview,
     "official-usage-previews"
 );
-school_handler!(
+business_handler!(
     usage_confirm,
     "official-usages",
     UsageConfirm,
@@ -119,7 +112,6 @@ school_handler!(
 async fn channel_request(
     State(a): State<Application>,
     actor: Actor,
-    Path(s): Path<Uuid>,
     input: Input,
 ) -> Result<ApiResponse> {
     Ok(resource(
@@ -127,7 +119,6 @@ async fn channel_request(
         service(&a)
             .command(
                 &actor,
-                Some(s),
                 Command::Request {
                     kind: "channel".into(),
                     input: input.decode("broadcast-access-requests")?,
@@ -136,18 +127,12 @@ async fn channel_request(
             .await?,
     ))
 }
-async fn issue(
-    State(a): State<Application>,
-    actor: Actor,
-    Path(s): Path<Uuid>,
-    input: Input,
-) -> Result<ApiResponse> {
+async fn issue(State(a): State<Application>, actor: Actor, input: Input) -> Result<ApiResponse> {
     Ok(resource(
         "business-requests",
         service(&a)
             .command(
                 &actor,
-                Some(s),
                 Command::Request {
                     kind: "broadcast_issue".into(),
                     input: input.decode("broadcast-issues")?,
@@ -166,7 +151,6 @@ async fn policy_preview(
         service(&a)
             .command(
                 &actor,
-                None,
                 Command::PolicyPreview(input.decode("member-policy-previews")?),
             )
             .await?,
@@ -182,7 +166,6 @@ async fn policy_confirm(
         service(&a)
             .command(
                 &actor,
-                None,
                 Command::PolicyConfirm(input.decode("member-policies")?),
             )
             .await?,
@@ -219,7 +202,7 @@ pub fn router() -> Router<Application> {
             get(channel_control_read).post(channel_control),
         )
         .route(
-            "/api/v1/wecom-distribution/workspaces/{workspace}/official-usage-options",
+            "/api/v1/wecom-distribution/official-usage-options",
             get(options),
         )
         .route(
@@ -227,7 +210,7 @@ pub fn router() -> Router<Application> {
             get(platform_options),
         )
         .route(
-            "/api/v1/wecom-distribution/workspaces/{workspace}/business-requests",
+            "/api/v1/wecom-distribution/business-requests",
             get(requests),
         )
         .route("/api/v1/platform/business-requests", get(platform_requests))
@@ -236,27 +219,24 @@ pub fn router() -> Router<Application> {
             post(decision),
         )
         .route(
-            "/api/v1/wecom-distribution/workspaces/{workspace}/broadcast-access-requests",
+            "/api/v1/wecom-distribution/broadcast-access-requests",
             post(channel_request),
         )
+        .route("/api/v1/wecom-distribution/broadcast-issues", post(issue))
         .route(
-            "/api/v1/wecom-distribution/workspaces/{workspace}/broadcast-issues",
-            post(issue),
-        )
-        .route(
-            "/api/v1/wecom-distribution/workspaces/{workspace}/template-previews",
+            "/api/v1/wecom-distribution/template-previews",
             post(template_preview),
         )
         .route(
-            "/api/v1/wecom-distribution/workspaces/{workspace}/template-publications",
+            "/api/v1/wecom-distribution/template-publications",
             post(template_confirm),
         )
         .route(
-            "/api/v1/wecom-distribution/workspaces/{workspace}/official-usage-previews",
+            "/api/v1/wecom-distribution/official-usage-previews",
             post(usage_preview),
         )
         .route(
-            "/api/v1/wecom-distribution/workspaces/{workspace}/official-usages",
+            "/api/v1/wecom-distribution/official-usages",
             post(usage_confirm),
         )
         .route(

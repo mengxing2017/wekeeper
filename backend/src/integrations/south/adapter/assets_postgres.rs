@@ -215,27 +215,21 @@ impl Repository {
         if kind == "member-statistics" {
             return self.statistics(q).await;
         }
-        Ok(sqlx::query_scalar("SELECT (o.data-'member_key'-'parent_key'-'type')||jsonb_build_object('id',o.id,'corp_id',o.corp_id,'checked_at',o.checked_at,'credential_generation',o.credential_generation,'visibility',o.visibility,'verification',CASE WHEN o.credential_generation=s.credential_generation AND o.checked_at>now()-interval '24 hours' THEN o.verification ELSE 'unverified' END,'source',o.source,'member_id',m.id,'member_name',m.name,'bound_account_id',a.id,'school_id',wg.school_id) FROM wecom_asset_objects o CROSS JOIN wecom_directory_state s LEFT JOIN wecom_members m ON m.userid_key=o.member_key AND (o.member_type IS NULL OR o.member_type=1) LEFT JOIN accounts a ON a.wecom_member_id=m.id LEFT JOIN wecom_groups wg ON wg.corp_id=o.corp_id AND wg.chat_id=o.key AND o.kind='groups' WHERE o.kind=$1 AND ($2::uuid IS NULL OR o.id=$2) AND ($3::uuid IS NULL OR o.parent_key=(SELECT key FROM wecom_asset_objects WHERE id=$3 AND kind='groups')) AND ($4::text IS NULL OR strpos(lower(coalesce(o.data->>'name','')||' '||o.key),lower($4))>0) AND ($5::text IS NULL OR CASE WHEN o.credential_generation=s.credential_generation AND o.checked_at>now()-interval '24 hours' THEN o.verification ELSE 'unverified' END=$5) AND ($6::uuid IS NULL OR m.id=$6) AND ($7::uuid IS NULL OR EXISTS(SELECT 1 FROM wecom_asset_objects gm JOIN wecom_members mm ON mm.userid_key=gm.member_key WHERE gm.kind='members' AND gm.member_type=1 AND gm.parent_key=o.key AND mm.id=$7 AND gm.verification='verified' AND gm.credential_generation=s.credential_generation AND gm.checked_at>now()-interval '24 hours')) AND ($8::bool IS NULL OR (wg.id IS NOT NULL)=$8) ORDER BY o.key,o.id LIMIT $9 OFFSET $10")
+        Ok(sqlx::query_scalar("SELECT (o.data-'member_key'-'parent_key'-'type')||jsonb_build_object('id',o.id,'corp_id',o.corp_id,'checked_at',o.checked_at,'credential_generation',o.credential_generation,'visibility',o.visibility,'verification',CASE WHEN o.credential_generation=s.credential_generation AND o.checked_at>now()-interval '24 hours' THEN o.verification ELSE 'unverified' END,'source',o.source,'member_id',m.id,'member_name',m.name,'bound_account_id',a.id,'associated',wg.id IS NOT NULL) FROM wecom_asset_objects o CROSS JOIN wecom_directory_state s LEFT JOIN wecom_members m ON m.userid_key=o.member_key AND (o.member_type IS NULL OR o.member_type=1) LEFT JOIN accounts a ON a.wecom_member_id=m.id LEFT JOIN wecom_groups wg ON wg.corp_id=o.corp_id AND wg.chat_id=o.key AND o.kind='groups' WHERE o.kind=$1 AND ($2::uuid IS NULL OR o.id=$2) AND ($3::uuid IS NULL OR o.parent_key=(SELECT key FROM wecom_asset_objects WHERE id=$3 AND kind='groups')) AND ($4::text IS NULL OR strpos(lower(coalesce(o.data->>'name','')||' '||o.key),lower($4))>0) AND ($5::text IS NULL OR CASE WHEN o.credential_generation=s.credential_generation AND o.checked_at>now()-interval '24 hours' THEN o.verification ELSE 'unverified' END=$5) AND ($6::uuid IS NULL OR m.id=$6) AND ($7::uuid IS NULL OR EXISTS(SELECT 1 FROM wecom_asset_objects gm JOIN wecom_members mm ON mm.userid_key=gm.member_key WHERE gm.kind='members' AND gm.member_type=1 AND gm.parent_key=o.key AND mm.id=$7 AND gm.verification='verified' AND gm.credential_generation=s.credential_generation AND gm.checked_at>now()-interval '24 hours')) AND ($8::bool IS NULL OR (wg.id IS NOT NULL)=$8) ORDER BY o.key,o.id LIMIT $9 OFFSET $10")
    .bind(kind).bind(id).bind(parent).bind(&q.search).bind(&q.verification).bind(q.owner_member_id).bind(q.participant_member_id).bind(q.associated).bind(limit).bind(offset).fetch_all(&self.0).await?)
     }
     async fn statistics(&self, q: &AssetQuery) -> Result<Vec<Value>> {
         let (limit, offset) = q.pagination().fetch_bounds()?;
         Ok(sqlx::query_scalar("SELECT jsonb_build_object('id',m.id,'userid',m.userid,'name',m.name,'owned_group_count',(SELECT count(*) FROM wecom_asset_objects g WHERE g.kind='groups' AND g.member_key=m.userid_key AND g.verification='verified' AND g.visibility='visible' AND g.credential_generation=s.credential_generation AND g.checked_at>now()-interval '24 hours'),'participating_group_count',(SELECT count(*) FROM wecom_asset_objects g WHERE g.kind='members' AND g.member_type=1 AND g.member_key=m.userid_key AND g.verification='verified' AND g.visibility='visible' AND g.credential_generation=s.credential_generation AND g.checked_at>now()-interval '24 hours'),'snapshots',(SELECT jsonb_agg(to_jsonb(st)-'scope') FROM wecom_asset_sync_state st)) FROM wecom_members m CROSS JOIN wecom_directory_state s WHERE ($1::uuid IS NULL OR m.id=$1) AND ($2::text IS NULL OR strpos(lower(m.name||' '||m.userid),lower($2))>0) ORDER BY m.userid_key LIMIT $3 OFFSET $4").bind(q.member_id).bind(&q.search).bind(limit).bind(offset).fetch_all(&self.0).await?)
     }
-    pub async fn candidates(
-        &self,
-        a: &Actor,
-        school: Uuid,
-        q: &AssetQuery,
-        g: i64,
-    ) -> Result<Vec<Value>> {
+    pub async fn candidates(&self, a: &Actor, q: &AssetQuery, g: i64) -> Result<Vec<Value>> {
+        a.platform()?;
         let (limit, offset) = q.pagination().fetch_bounds()?;
-        Ok(sqlx::query_scalar("SELECT jsonb_build_object('id',o.id,'name',o.data->>'name','chat_id',o.key,'corp_id',o.corp_id,'owner',o.data->>'owner','owner_name',m.name,'member_count',o.data->'member_count','already_associated',EXISTS(SELECT 1 FROM wecom_groups wg WHERE wg.school_id=$2 AND wg.corp_id=o.corp_id AND wg.chat_id=o.key),'credential_generation',o.credential_generation,'checked_at',o.checked_at) FROM wecom_asset_objects o LEFT JOIN wecom_members m ON m.userid_key=o.member_key WHERE o.kind='groups' AND o.verification='verified' AND o.visibility='visible' AND o.credential_generation=$1 AND o.checked_at>now()-interval '24 hours' AND EXISTS(SELECT 1 FROM wecom_workspaces WHERE id=$2 AND active) AND NOT EXISTS(SELECT 1 FROM wecom_groups g WHERE g.corp_id=o.corp_id AND g.chat_id=o.key AND g.school_id<>$2) AND ($3 OR EXISTS(SELECT 1 FROM accounts a WHERE a.id=$4 AND a.active AND a.wecom_member_id=m.id AND m.status=1 AND m.verification='verified')) AND ($5::text IS NULL OR strpos(lower(coalesce(o.data->>'name','')||' '||o.key),lower($5))>0) ORDER BY o.key LIMIT $6 OFFSET $7").bind(g).bind(school).bind(a.platform_admin).bind(a.id).bind(&q.search).bind(limit).bind(offset).fetch_all(&self.0).await?)
+        Ok(sqlx::query_scalar("SELECT jsonb_build_object('id',o.id,'name',o.data->>'name','chat_id',o.key,'corp_id',o.corp_id,'owner',o.data->>'owner','owner_name',m.name,'member_count',o.data->'member_count','already_associated',false,'credential_generation',o.credential_generation,'checked_at',o.checked_at) FROM wecom_asset_objects o LEFT JOIN wecom_members m ON m.userid_key=o.member_key WHERE o.kind='groups' AND o.verification='verified' AND o.visibility='visible' AND o.credential_generation=$1 AND o.checked_at>now()-interval '24 hours' AND NOT EXISTS(SELECT 1 FROM wecom_groups g WHERE g.corp_id=o.corp_id AND g.chat_id=o.key) AND ($2::text IS NULL OR strpos(lower(coalesce(o.data->>'name','')||' '||o.key),lower($2))>0) ORDER BY o.key LIMIT $3 OFFSET $4").bind(g).bind(&q.search).bind(limit).bind(offset).fetch_all(&self.0).await?)
     }
     pub async fn bind_group(
         &self,
         a: &Actor,
-        school: Uuid,
         input: &GroupBinding,
         group: &Group,
     ) -> Result<Value> {
@@ -246,21 +240,14 @@ impl Repository {
         if key != group.chat_id {
             return Err(Error::Conflict);
         }
-        sqlx::query("SELECT id FROM wecom_workspaces WHERE id=$1 AND active FOR SHARE")
-            .bind(school)
-            .fetch_optional(&mut *tx)
-            .await?
-            .ok_or(Error::NotFound)?;
+
         sqlx::query("SELECT id FROM accounts WHERE id=$1 FOR SHARE")
             .bind(a.id)
             .fetch_optional(&mut *tx)
             .await?
             .ok_or(Error::Forbidden)?;
-        sqlx::query("SELECT school_id FROM wecom_workspace_members WHERE school_id=$1 AND account_id=$2 FOR SHARE").bind(school).bind(a.id).fetch_optional(&mut *tx).await?;
-        let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts a LEFT JOIN wecom_members m ON m.id=a.wecom_member_id WHERE a.id=$1 AND a.active AND (a.platform_admin OR (a.wecom_binding_revision=$2 AND m.userid_key=lower($3 COLLATE \"C\") AND m.verification='verified' AND m.status=1 AND EXISTS(SELECT 1 FROM wecom_workspace_members r WHERE r.account_id=a.id AND r.school_id=$4 AND r.role='admin'))))").bind(a.id).bind(a.wecom_binding_revision).bind(&group.owner).bind(school).fetch_one(&mut *tx).await?;
-        if !allowed {
-            return Err(Error::Forbidden);
-        }
+        crate::distribution::south::adapter::postgres::authorization::authorize(&mut tx, a.id)
+            .await?;
         Self::observe_tx(
             &mut tx,
             input.expected_generation,
@@ -277,15 +264,16 @@ impl Repository {
             1,
             200,
         )?;
-        let v=sqlx::query_scalar("INSERT INTO wecom_groups(id,school_id,corp_id,chat_id,name,directory_group_id) VALUES($1,$2,$3,$4,$5,$6) RETURNING to_jsonb(wecom_groups)").bind(Uuid::now_v7()).bind(school).bind(row.get::<String,_>("corp_id")).bind(&key).bind(name).bind(input.directory_group_id).fetch_one(&mut *tx).await?;
-        sqlx::query("INSERT INTO audit_events(id,actor_id,action,object_id,detail) VALUES($1,$2,'wecom.group.bind',$3,$4)").bind(Uuid::now_v7()).bind(a.id).bind(input.directory_group_id).bind(json!({"school_id":school})).execute(&mut *tx).await?;
+        let v=sqlx::query_scalar("INSERT INTO wecom_groups(id,corp_id,chat_id,name,directory_group_id) VALUES($1,$2,$3,$4,$5) RETURNING to_jsonb(wecom_groups)").bind(Uuid::now_v7()).bind(row.get::<String,_>("corp_id")).bind(&key).bind(name).bind(input.directory_group_id).fetch_one(&mut *tx).await?;
+        sqlx::query("INSERT INTO audit_events(id,actor_id,action,object_id,detail) VALUES($1,$2,'wecom.group.bind',$3,$4)").bind(Uuid::now_v7()).bind(a.id).bind(input.directory_group_id).bind(json!({})).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(v)
     }
 }
 impl Repository {
-    pub async fn candidate(&self, a: &Actor, school: Uuid, id: Uuid, g: i64) -> Result<Value> {
-        sqlx::query_scalar("SELECT jsonb_build_object('id',o.id,'chat_id',o.key,'checked_at',o.checked_at) FROM wecom_asset_objects o WHERE o.id=$1 AND o.kind='groups' AND o.verification='verified' AND o.visibility='visible' AND o.credential_generation=$2 AND o.checked_at>now()-interval '24 hours' AND NOT EXISTS(SELECT 1 FROM wecom_groups wg WHERE wg.corp_id=o.corp_id AND wg.chat_id=o.key AND wg.school_id<>$3) AND ($4 OR EXISTS(SELECT 1 FROM accounts a JOIN wecom_members m ON a.wecom_member_id=m.id WHERE a.id=$5 AND a.active AND m.userid_key=o.member_key AND m.status=1 AND m.verification='verified'))").bind(id).bind(g).bind(school).bind(a.platform_admin).bind(a.id).fetch_optional(&self.0).await?.ok_or(Error::Forbidden)
+    pub async fn candidate(&self, a: &Actor, id: Uuid, g: i64) -> Result<Value> {
+        a.platform()?;
+        sqlx::query_scalar("SELECT jsonb_build_object('id',o.id,'chat_id',o.key,'checked_at',o.checked_at) FROM wecom_asset_objects o WHERE o.id=$1 AND o.kind='groups' AND o.verification='verified' AND o.visibility='visible' AND o.credential_generation=$2 AND o.checked_at>now()-interval '24 hours'").bind(id).bind(g).fetch_optional(&self.0).await?.ok_or(Error::Forbidden)
     }
 }
 impl Repository {
@@ -416,26 +404,14 @@ impl crate::integrations::south::port::assets::AssetStore for Repository {
     ) -> Result<Vec<Value>> {
         Repository::list(self, kind, q, parent, id).await
     }
-    async fn candidates(
-        &self,
-        a: &Actor,
-        school: Uuid,
-        q: &AssetQuery,
-        g: i64,
-    ) -> Result<Vec<Value>> {
-        Repository::candidates(self, a, school, q, g).await
+    async fn candidates(&self, a: &Actor, q: &AssetQuery, g: i64) -> Result<Vec<Value>> {
+        Repository::candidates(self, a, q, g).await
     }
-    async fn bind_group(
-        &self,
-        a: &Actor,
-        school: Uuid,
-        input: &GroupBinding,
-        group: &Group,
-    ) -> Result<Value> {
-        Repository::bind_group(self, a, school, input, group).await
+    async fn bind_group(&self, a: &Actor, input: &GroupBinding, group: &Group) -> Result<Value> {
+        Repository::bind_group(self, a, input, group).await
     }
-    async fn candidate(&self, a: &Actor, school: Uuid, id: Uuid, g: i64) -> Result<Value> {
-        Repository::candidate(self, a, school, id, g).await
+    async fn candidate(&self, a: &Actor, id: Uuid, g: i64) -> Result<Value> {
+        Repository::candidate(self, a, id, g).await
     }
     async fn observe(
         &self,

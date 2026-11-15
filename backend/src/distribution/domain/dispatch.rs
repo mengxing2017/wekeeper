@@ -1,7 +1,7 @@
 //! Channel-neutral data for a distribution delegation.
 //!
 //! Receiving a delegation does not itself authorize execution: the receiving
-//! channel must verify the authorization against its own workspace and policy.
+//! channel must verify the authorization against its own resources and policy.
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;

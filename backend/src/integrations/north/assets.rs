@@ -114,8 +114,8 @@ impl<C: AssetClient, R: AssetStore> Service<C, R> {
         )?;
         self.store.list(kind, q, parent, id).await
     }
-    pub async fn candidates(&self, a: &Actor, school: Uuid, q: &AssetQuery) -> Result<Vec<Value>> {
-        a.authorize(school, "admin")?;
+    pub async fn candidates(&self, a: &Actor, q: &AssetQuery) -> Result<Vec<Value>> {
+        a.platform()?;
         q.validate()?;
         require(
             q.member_id.is_none()
@@ -130,10 +130,10 @@ impl<C: AssetClient, R: AssetStore> Service<C, R> {
         if !a.platform_admin {
             self.integration.directory().verify_account(a.id).await?;
         }
-        self.store.candidates(a, school, q, g).await
+        self.store.candidates(a, q, g).await
     }
-    pub async fn bind(&self, a: &Actor, school: Uuid, input: GroupBinding) -> Result<Value> {
-        a.authorize(school, "admin")?;
+    pub async fn bind(&self, a: &Actor, input: GroupBinding) -> Result<Value> {
+        a.platform()?;
         let g = self.integration.directory().ensure_config().await?;
         if g != input.expected_generation {
             return Err(Error::Conflict);
@@ -141,10 +141,7 @@ impl<C: AssetClient, R: AssetStore> Service<C, R> {
         if !a.platform_admin {
             self.integration.directory().verify_account(a.id).await?;
         }
-        let row = self
-            .store
-            .candidate(a, school, input.directory_group_id, g)
-            .await?;
+        let row = self.store.candidate(a, input.directory_group_id, g).await?;
         if row["checked_at"]
             .as_str()
             .and_then(|v| chrono::DateTime::parse_from_rfc3339(v).ok())
@@ -156,7 +153,7 @@ impl<C: AssetClient, R: AssetStore> Service<C, R> {
         let id = row["chat_id"].as_str().ok_or(Error::Conflict)?;
         let group = self.client.group(id).await.map_err(upstream)?;
         group.validate(id).map_err(upstream)?;
-        self.store.bind_group(a, school, &input, &group).await
+        self.store.bind_group(a, &input, &group).await
     }
     pub async fn run_once(&self, interval: i64) -> Result<()> {
         let g = self.integration.directory().ensure_config().await?;

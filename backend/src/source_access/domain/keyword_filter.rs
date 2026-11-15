@@ -85,7 +85,6 @@ pub struct Context {
     pub route_id: String,
     pub unit_id: Option<Uuid>,
     pub channel: Option<String>,
-    pub workspace_id: Option<Uuid>,
     pub versions: Vec<ScopeVersion>,
 }
 impl Context {

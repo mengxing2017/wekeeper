@@ -19,16 +19,10 @@ struct Callback {
 }
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
-struct Start {
-    workspace: Option<uuid::Uuid>,
-}
+struct Start {}
 impl Start {
     fn return_path(&self) -> String {
-        let mut query = vec!["view=broadcast-tasks".to_owned()];
-        if let Some(id) = self.workspace {
-            query.push(format!("wecom_workspace={id}"));
-        }
-        format!("/admin?{}", query.join("&"))
+        "/admin?view=broadcast-tasks".into()
     }
 }
 async fn start(State(a): State<Application>, Query(input): Query<Start>) -> Result<Response> {
@@ -141,18 +135,10 @@ pub fn router() -> Router<Application> {
 mod tests {
     use super::*;
     #[test]
-    fn oauth_return_path_is_local_and_preserves_selection() {
+    fn oauth_return_path_is_local_and_uses_global_business_page() {
         assert_eq!(
             Start::default().return_path(),
             "/admin?view=broadcast-tasks"
-        );
-        let id = uuid::Uuid::nil();
-        assert_eq!(
-            Start {
-                workspace: Some(id)
-            }
-            .return_path(),
-            format!("/admin?view=broadcast-tasks&wecom_workspace={id}")
         );
     }
 }

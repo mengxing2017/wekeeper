@@ -1,13 +1,9 @@
 use crate::business::{Page, Result};
 use serde_json::Value;
-use uuid::Uuid;
 pub trait Store: Clone + Send + Sync + 'static {
-    fn materials(
-        &self,
-        s: Uuid,
-        page: Page,
-    ) -> impl std::future::Future<Output = Result<Vec<Value>>> + Send;
-    fn templates(&self, s: Uuid) -> impl std::future::Future<Output = Result<Vec<Value>>> + Send;
+    fn materials(&self, page: Page)
+    -> impl std::future::Future<Output = Result<Vec<Value>>> + Send;
+    fn templates(&self) -> impl std::future::Future<Output = Result<Vec<Value>>> + Send;
 }
 
 pub mod broadcast;

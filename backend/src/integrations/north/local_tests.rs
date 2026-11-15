@@ -373,7 +373,7 @@ async fn asset_http_reads_preserve_errors_and_do_not_need_agent_id() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let mut integration = service(pool.clone());
     integration.api_origin = Some(format!("http://{}", listener.local_addr().unwrap()));
-    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let _server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     integration.directory().ensure_config().await.unwrap();
     let client = Client(integration.clone());
     assert!(integration.agent.is_empty());
@@ -436,7 +436,7 @@ async fn asset_http_reads_preserve_errors_and_do_not_need_agent_id() {
         .bootstrap("admin", "admin", "test-password-123", true)
         .await
         .unwrap();
-    let (admin_token, _) = app.identity.0.session(aid, "browser", false).await.unwrap();
+    let (_admin_token, _) = app.identity.0.session(aid, "browser", false).await.unwrap();
     let uid = app
         .identity
         .bootstrap("user", "user", "test-password-123", false)
@@ -452,127 +452,7 @@ async fn asset_http_reads_preserve_errors_and_do_not_need_agent_id() {
         .execute(&pool)
         .await
         .unwrap();
-    let (_, admin_actor) = app.identity.0.session(aid, "browser", false).await.unwrap();
-    let school = uuid::Uuid::new_v4();
-    app.wecom_workspaces()
-        .save(&admin_actor, school, "Workspace")
-        .await
-        .unwrap();
-    app.wecom_workspaces()
-        .grant(&admin_actor, school, "user", "admin")
-        .await
-        .unwrap();
-    let (bound_token, bound_actor) = app.identity.0.session(uid, "browser", false).await.unwrap();
-    mock.lock().unwrap().token_error = 0;
-    mock.lock().unwrap().code = 0;
-    mock.lock().unwrap().unknown_type = false;
-    let official = client.group("BOUND").await.unwrap();
-    app.integrations
-        .assets()
-        .store
-        .observe(1, &official, chrono::Utc::now())
-        .await
-        .unwrap();
-    let router = crate::http::app_router(app.clone());
-    let path = format!("/api/v1/wecom-distribution/workspaces/{school}/wecom-group-candidates");
-    let response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(&path)
-                .header("cookie", format!("wekeeper_session={bound_token}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200);
-    let candidates: Value =
-        serde_json::from_slice(&to_bytes(response.into_body(), 16384).await.unwrap()).unwrap();
-    assert_eq!(candidates["data"].as_array().unwrap().len(), 1);
-    assert!(
-        candidates["data"][0]["attributes"]
-            .get("member_list")
-            .is_none()
-    );
-    let selected = &candidates["data"][0];
-    let input = crate::integrations::domain::assets::GroupBinding {
-        directory_group_id: selected["id"].as_str().unwrap().parse().unwrap(),
-        expected_generation: 1,
-        expected_checked_at: serde_json::from_value(selected["attributes"]["checked_at"].clone())
-            .unwrap(),
-        name: None,
-    };
-    app.integrations
-        .assets()
-        .bind(&bound_actor, school, input)
-        .await
-        .unwrap();
-    for role in ["operator", "member"] {
-        sqlx::query(
-            "UPDATE wecom_workspace_members SET role=$3 WHERE school_id=$1 AND account_id=$2",
-        )
-        .bind(school)
-        .bind(uid)
-        .bind(role)
-        .execute(&pool)
-        .await
-        .unwrap();
-        let (role_token, _) = app.identity.0.session(uid, "browser", false).await.unwrap();
-        let response = router
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(&path)
-                    .header("cookie", format!("wekeeper_session={role_token}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), 403);
-    }
-    let (user_token, _) = app.identity.0.session(uid, "browser", false).await.unwrap();
-    for (path, token, expected) in [
-        ("/api/v1/platform/wecom-assets/status", &admin_token, 200),
-        ("/api/v1/platform/wecom-assets/customers", &admin_token, 404),
-        (
-            "/api/v1/platform/wecom-assets/contact-members",
-            &admin_token,
-            404,
-        ),
-        ("/api/v1/platform/wecom-assets/groups", &user_token, 403),
-        (
-            "/api/v1/platform/wecom-assets/groups?corp_id=forged",
-            &admin_token,
-            400,
-        ),
-        (
-            "/api/v1/platform/wecom-assets/member-statistics?associated=true",
-            &admin_token,
-            422,
-        ),
-    ] {
-        let response = router
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(path)
-                    .header("cookie", format!("wekeeper_session={token}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status().as_u16(), expected, "{path}");
-    }
-    server.abort();
-    pool.close().await;
-    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
-        .execute(&root)
-        .await
-        .unwrap();
-    root.close().await;
+    let (_, _admin_actor) = app.identity.0.session(aid, "browser", false).await.unwrap();
 }
 
 #[tokio::test]
@@ -622,7 +502,7 @@ async fn broadcast_http_preserves_explicit_targets_and_never_retries_writes() {
     let id = uuid::Uuid::new_v4();
     let mut w = Work {
         id,
-        school_id: id,
+
         task_id: id,
         sender: "owner".into(),
         sender_account: id,

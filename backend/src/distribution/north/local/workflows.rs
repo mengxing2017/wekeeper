@@ -6,28 +6,21 @@ use crate::{
     },
 };
 use serde_json::Value;
-use uuid::Uuid;
 #[derive(Clone)]
 pub struct Service<R: Store = Repository>(pub R);
 impl<R: Store> Service<R> {
-    pub async fn command(&self, a: &Actor, s: Option<Uuid>, v: Command) -> Result<Value> {
+    pub async fn command(&self, a: &Actor, v: Command) -> Result<Value> {
         v.validate()?;
-        self.0.command(a, s, v).await
+        self.0.command(a, v).await
     }
-    pub async fn options(&self, a: &Actor, s: Option<Uuid>) -> Result<Value> {
-        self.0.options(a, s).await
+    pub async fn options(&self, a: &Actor) -> Result<Value> {
+        self.0.options(a).await
     }
-    pub async fn requests(&self, a: &Actor, s: Option<Uuid>, p: Page) -> Result<Vec<Value>> {
-        self.0.requests(a, s, p).await
+    pub async fn requests(&self, a: &Actor, p: Page) -> Result<Vec<Value>> {
+        self.0.requests(a, p).await
     }
-    pub async fn channel(
-        &self,
-        a: &Actor,
-        s: Uuid,
-        configured: bool,
-        scope: &str,
-    ) -> Result<Value> {
-        let mut value = self.0.channel(a, s, configured, scope).await?;
+    pub async fn channel(&self, a: &Actor, configured: bool, scope: &str) -> Result<Value> {
+        let mut value = self.0.channel(a, configured, scope).await?;
         value["execution"] =
             serde_json::json!(crate::distribution::domain::broadcast::execution_capability(false));
         Ok(value)

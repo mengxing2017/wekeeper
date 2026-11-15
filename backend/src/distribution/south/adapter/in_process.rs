@@ -12,45 +12,39 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct Sources(pub PgPool);
 impl ContentSource for Sources {
-    async fn check(&self, school: Uuid, references: &[SourceReference]) -> Result<()> {
+    async fn check(&self, references: &[SourceReference]) -> Result<()> {
         for reference in references {
             reference.validate()?;
             require(
-                reference.namespace == "builtin.forum"
-                    && reference.external_organization_id == school.to_string(),
+                reference.namespace == "builtin.forum",
                 "source_entry_not_authorized",
             )?;
             let id = reference
                 .external_content_id
                 .parse()
                 .map_err(|_| Error::NotFound)?;
-            let row = self.material(school, id).await?;
+            let row = self
+                .material(&reference.external_organization_id, id)
+                .await?;
             if row.get::<String, _>("version") != reference.version {
                 return Err(Error::Policy("source_version_conflict"));
             }
         }
         Ok(())
     }
-    async fn read(
-        &self,
-        actor: &Actor,
-        school: Uuid,
-        references: &[SourceReference],
-    ) -> Result<Vec<Material>> {
+    async fn read(&self, actor: &Actor, references: &[SourceReference]) -> Result<Vec<Material>> {
         let mut out = Vec::new();
         for reference in references {
             reference.validate()?;
             if reference.namespace == "builtin.forum" {
-                require(
-                    reference.external_organization_id == school.to_string(),
-                    "来源分发工作空间不匹配",
-                )?;
                 let id = reference
                     .external_content_id
                     .parse()
                     .map_err(|_| Error::NotFound)?;
-                actor.authorize(school, "operator")?;
-                let material = self.material(school, id).await?;
+                actor.platform()?;
+                let material = self
+                    .material(&reference.external_organization_id, id)
+                    .await?;
                 if material.get::<String, _>("version") != reference.version {
                     return Err(Error::Policy("source_version_conflict"));
                 }
@@ -58,7 +52,10 @@ impl ContentSource for Sources {
                     reference: reference.clone(),
                     title: material.get("title"),
                     content: material.get("content"),
-                    detail_url: format!("/community/{school}/posts/{id}"),
+                    detail_url: format!(
+                        "/community/{}/posts/{id}",
+                        reference.external_organization_id
+                    ),
                 });
             } else {
                 // The browser cannot select another product's identity. Future
@@ -71,15 +68,14 @@ impl ContentSource for Sources {
 }
 
 impl Sources {
-    async fn material(&self, school: Uuid, id: Uuid) -> Result<sqlx::postgres::PgRow> {
-        sqlx::query("SELECT m.title,m.content,m.version FROM distribution_materials m JOIN distribution_sources s USING(namespace) JOIN distribution_source_organizations o USING(namespace,external_organization_id,school_id) WHERE m.namespace='builtin.forum' AND m.school_id=$1 AND m.external_organization_id=$1::text AND m.external_content_id=$2 AND m.allowed AND s.enabled AND o.enabled")
-            .bind(school).bind(id.to_string()).fetch_optional(&self.0).await?.ok_or(Error::Conflict)
+    async fn material(&self, organization: &str, id: Uuid) -> Result<sqlx::postgres::PgRow> {
+        sqlx::query("SELECT m.title,m.content,m.version FROM distribution_materials m JOIN distribution_sources s USING(namespace) JOIN distribution_source_organizations o USING(namespace,external_organization_id) WHERE m.namespace='builtin.forum' AND m.external_organization_id=$2 AND m.external_content_id=$1 AND m.allowed AND s.enabled AND o.enabled").bind(id.to_string()).bind(organization).fetch_optional(&self.0).await?.ok_or(Error::Conflict)
     }
 }
 
-pub(crate) fn forum_detail_url(school: Uuid, id: Uuid) -> Result<String> {
+pub(crate) fn forum_detail_url(organization: &str, id: Uuid) -> Result<String> {
     let origin = std::env::var("WEKEEPER_FORUM_ORIGIN").unwrap_or_default();
-    absolute_detail_url(&origin, &format!("/community/{school}/posts/{id}"))
+    absolute_detail_url(&origin, &format!("/community/{organization}/posts/{id}"))
 }
 
 pub(crate) fn absolute_detail_url(origin: &str, path: &str) -> Result<String> {

@@ -37,7 +37,7 @@ pub struct Material {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct OfficialSender {
     pub id: Uuid,
-    pub school_id: Uuid,
+
     pub userid: String,
     pub display_name: String,
     pub member_verified: bool,
@@ -95,9 +95,9 @@ mod tests {
         assert_eq!(v["target_count"], 2);
         assert!(
             serde_json::from_value::<SenderQualificationInput>(
-                serde_json::json!({"enabled":false,"revision":1,"school_id":"other"})
+                serde_json::json!({"enabled":false,"revision":1})
             )
-            .is_err()
+            .is_ok()
         );
     }
 }

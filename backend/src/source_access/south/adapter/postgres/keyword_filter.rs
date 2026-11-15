@@ -52,7 +52,6 @@ pub(crate) async fn context_for_scope(
             route_id: route,
             unit_id: unit,
             channel: None,
-            workspace_id: None,
             versions,
         },
         rules,
@@ -139,7 +138,6 @@ impl KeywordStore for KeywordRepository {
         crate::audit::record(
             &mut tx,
             actor,
-            Uuid::nil(),
             "source.keyword.access",
             actor.id,
             audit_context,

@@ -39,16 +39,8 @@ async fn guard(tx: &mut Tx<'_>) -> Result<()> {
         .await?;
     Ok(())
 }
-async fn authorize(
-    tx: &mut Tx<'_>,
-    actor: Uuid,
-    workspace: Option<Uuid>,
-    admin: bool,
-) -> Result<()> {
-    crate::distribution::south::adapter::postgres::mobile_workspaces::authorize(
-        tx, actor, workspace, admin,
-    )
-    .await
+async fn authorize(tx: &mut Tx<'_>, actor: Uuid, _admin: bool) -> Result<()> {
+    crate::distribution::south::adapter::postgres::authorization::authorize(tx, actor).await
 }
 
 async fn authenticate(tx: &mut Tx<'_>, c: &Credential, control: bool) -> Result<()> {
@@ -94,7 +86,7 @@ async fn policy(tx: &mut Tx<'_>) -> Result<Option<Value>> {
 fn default_policy() -> Value {
     let limits =
         json!({"interval_seconds":30,"window_seconds":3600,"max_calls":30,"daily_max_calls":150});
-    json!({"id":null,"revision":0,"mode":"enabled","limits":{"global":limits,"school":limits,"device":limits,"target":limits},"timezone":"Asia/Shanghai","allowed_windows":[{"weekdays":[1,2,3,4,5,6,7],"start_minute":0,"end_minute":1440}],"confirmation_seconds":86400,"inspection_seconds":3600,"retry_seconds":300,"retry_limit":3})
+    json!({"id":null,"revision":0,"mode":"enabled","limits":{"global":limits,"device":limits,"target":limits},"timezone":"Asia/Shanghai","allowed_windows":[{"weekdays":[1,2,3,4,5,6,7],"start_minute":0,"end_minute":1440}],"confirmation_seconds":86400,"inspection_seconds":3600,"retry_seconds":300,"retry_limit":3})
 }
 fn policy_id(p: &Value) -> Result<Option<Uuid>> {
     p["id"]
@@ -105,8 +97,8 @@ fn policy_id(p: &Value) -> Result<Option<Uuid>> {
 fn uid(v: &Value, k: &str) -> Result<Uuid> {
     serde_json::from_value(v[k].clone()).map_err(|_| Error::Conflict)
 }
-async fn task(tx: &mut Tx<'_>, s: Uuid, id: Uuid) -> Result<Value> {
-    let mut value: Value = sqlx::query_scalar("SELECT to_jsonb(t)||jsonb_build_object('items',coalesce((SELECT jsonb_agg(to_jsonb(i)||jsonb_build_object('attempts',(SELECT jsonb_agg(to_jsonb(a)||jsonb_build_object('plan',p.plan,'plan_digest',p.digest,'evidence',(SELECT to_jsonb(e) FROM channel_execution_observations e WHERE e.attempt_id=a.id ORDER BY e.id DESC LIMIT 1),'result_reason',coalesce((SELECT g.result_body->>'reason' FROM mobile_execution_grants g WHERE g.attempt_id=a.id),(SELECT e.body->>'reason' FROM mobile_v9_send_events e WHERE e.attempt_id=a.id AND e.receipt->>'disposition'<>'archived' ORDER BY e.created_at DESC,e.id DESC LIMIT 1))) ORDER BY a.attempt_no) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id WHERE a.item_id=i.id)) ORDER BY i.position) FROM mobile_v9_task_items i WHERE i.task_id=t.id),'[]'::jsonb)) FROM mobile_v9_tasks t WHERE t.school_id=$1 AND t.id=$2").bind(s).bind(id).fetch_optional(&mut **tx).await?.ok_or(Error::NotFound)?;
+async fn task(tx: &mut Tx<'_>, id: Uuid) -> Result<Value> {
+    let mut value: Value = sqlx::query_scalar("SELECT to_jsonb(t)||jsonb_build_object('items',coalesce((SELECT jsonb_agg(to_jsonb(i)||jsonb_build_object('attempts',(SELECT jsonb_agg(to_jsonb(a)||jsonb_build_object('plan',p.plan,'plan_digest',p.digest,'evidence',(SELECT to_jsonb(e) FROM channel_execution_observations e WHERE e.attempt_id=a.id ORDER BY e.id DESC LIMIT 1),'result_reason',coalesce((SELECT g.result_body->>'reason' FROM mobile_execution_grants g WHERE g.attempt_id=a.id),(SELECT e.body->>'reason' FROM mobile_v9_send_events e WHERE e.attempt_id=a.id AND e.receipt->>'disposition'<>'archived' ORDER BY e.created_at DESC,e.id DESC LIMIT 1))) ORDER BY a.attempt_no) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id WHERE a.item_id=i.id)) ORDER BY i.position) FROM mobile_v9_task_items i WHERE i.task_id=t.id),'[]'::jsonb)) FROM mobile_v9_tasks t WHERE t.id=$1").bind(id).fetch_optional(&mut **tx).await?.ok_or(Error::NotFound)?;
     let receipts:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('attempt_id',r.attempt_id,'received_at',r.received_at) FROM mobile_v9_task_receipts r JOIN mobile_v9_attempts a ON a.id=r.attempt_id JOIN mobile_v9_task_items i ON i.id=a.item_id WHERE i.task_id=$1").bind(id).fetch_all(&mut **tx).await?;
     if let Some(items) = value["items"].as_array_mut() {
         for item in items {
@@ -133,8 +125,8 @@ async fn task(tx: &mut Tx<'_>, s: Uuid, id: Uuid) -> Result<Value> {
             }
         }
     }
-    execution_status::task(tx, s, &mut value).await?;
-    task_status::attach(tx, s, std::slice::from_mut(&mut value)).await?;
+    execution_status::task(tx, &mut value).await?;
+    task_status::attach(tx, std::slice::from_mut(&mut value)).await?;
     Ok(value)
 }
 impl Store for Repository {
@@ -168,27 +160,20 @@ impl Store for Repository {
         })
     }
 
-    async fn usage_read(
-        &self,
-        a: &Actor,
-        s: Option<Uuid>,
-        id: Option<Uuid>,
-        get_options: bool,
-    ) -> Result<Value> {
-        Repository::usage_read(self, a, s, id, get_options).await
+    async fn usage_read(&self, a: &Actor, id: Option<Uuid>, get_options: bool) -> Result<Value> {
+        Repository::usage_read(self, a, id, get_options).await
     }
     async fn usage_write(
         &self,
         a: &Actor,
-        s: Uuid,
         key: &str,
         command: crate::distribution::domain::shared_mobile::usage::UsageCommand,
     ) -> Result<Value> {
-        Repository::usage_write(self, a, s, key, command).await
+        Repository::usage_write(self, a, key, command).await
     }
     async fn artifact_content(&self, a: &Actor, id: Uuid) -> Result<Vec<u8>> {
         let mut tx = self.0.begin().await?;
-        authorize(&mut tx, a.id, None, true).await?;
+        authorize(&mut tx, a.id, true).await?;
         let data = sqlx::query_scalar("SELECT content FROM mobile_v9_artifacts WHERE id=$1")
             .bind(id)
             .fetch_optional(&mut *tx)
@@ -197,56 +182,45 @@ impl Store for Repository {
         tx.commit().await?;
         Ok(data)
     }
-    async fn school_write(
-        &self,
-        a: &Actor,
-        s: Uuid,
-        key: &str,
-        command: SchoolCommand,
-    ) -> Result<Value> {
+    async fn task_write(&self, a: &Actor, key: &str, command: TaskCommand) -> Result<Value> {
         let mut tx = self.0.begin().await?;
         guard(&mut tx).await?;
         authorize(
             &mut tx,
             a.id,
-            Some(s),
-            !matches!(
-                &command,
-                SchoolCommand::Draft(..) | SchoolCommand::Preview(_)
-            ),
+            !matches!(&command, TaskCommand::Draft(..) | TaskCommand::Preview(_)),
         )
         .await?;
         let (scope, body) = match &command {
-            SchoolCommand::Support(v) => (format!("{s}:support"), json!(v)),
-            SchoolCommand::PoolBinding(v) => (format!("{s}:pool-binding"), json!(v)),
-            SchoolCommand::Unbind(id, v) => (format!("{s}:unbind:{id}"), json!(v)),
-            SchoolCommand::Draft(id, v) => (format!("{s}:draft:{id:?}"), json!(v)),
-            SchoolCommand::Inspection(v) => (format!("{s}:inspection"), json!(v)),
-            SchoolCommand::Preview(v) => (format!("{s}:preview"), json!(v)),
-            SchoolCommand::Confirm(v) => (format!("{s}:confirm"), json!(v)),
-            SchoolCommand::Stop(id, v) => (format!("{s}:stop:{id}"), json!(v)),
-            SchoolCommand::Reassign(id, v) => (format!("{s}:reassign:{id}"), json!(v)),
-            SchoolCommand::Review(id, v) => (format!("{s}:review:{id}"), json!(v)),
+            TaskCommand::Support(v) => ("support".to_string(), json!(v)),
+
+            TaskCommand::Draft(id, v) => (format!("draft:{id:?}"), json!(v)),
+            TaskCommand::Inspection(v) => ("inspection".to_string(), json!(v)),
+            TaskCommand::Preview(v) => ("preview".to_string(), json!(v)),
+            TaskCommand::Confirm(v) => ("confirm".to_string(), json!(v)),
+            TaskCommand::Stop(id, v) => (format!("stop:{id}"), json!(v)),
+            TaskCommand::Reassign(id, v) => (format!("reassign:{id}"), json!(v)),
+            TaskCommand::Review(id, v) => (format!("review:{id}"), json!(v)),
         };
         if let Some(v) = replay(&mut tx, a.id, 0, &scope, key, &body).await? {
             return Ok(v);
         }
-        let v = tasks::write(&mut tx, a, s, command).await?;
+        let v = tasks::write(&mut tx, a, command).await?;
         remember(&mut tx, a.id, 0, &scope, key, &body, &v).await?;
         tx.commit().await?;
         Ok(v)
     }
-    async fn school_read(&self, a: &Actor, s: Uuid, id: Option<Uuid>) -> Result<Value> {
+    async fn task_read(&self, a: &Actor, id: Option<Uuid>) -> Result<Value> {
         let mut tx = self.0.begin().await?;
-        authorize(&mut tx, a.id, Some(s), false).await?;
+        authorize(&mut tx, a.id, false).await?;
         let v = if let Some(id) = id {
-            task(&mut tx, s, id).await?
+            task(&mut tx, id).await?
         } else {
-            let mut tasks:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(t) FROM mobile_v9_tasks t WHERE school_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100").bind(s).fetch_all(&mut *tx).await?;
-            task_status::attach(&mut tx, s, &mut tasks).await?;
-            let drafts:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(d)||jsonb_build_object('targets',coalesce((SELECT jsonb_agg(jsonb_build_object('id',t.id,'name',t.search_text) ORDER BY ids.n) FROM unnest(d.target_ids) WITH ORDINALITY ids(id,n) JOIN mobile_targets t ON t.id=ids.id AND t.school_id=d.school_id),'[]'::jsonb)) FROM mobile_v9_task_drafts d WHERE school_id=$1 AND NOT EXISTS(SELECT 1 FROM mobile_v9_tasks t WHERE t.draft_id=d.id) ORDER BY created_at DESC LIMIT 100").bind(s).fetch_all(&mut *tx).await?;
-            let inspections:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(i)-'challenge' FROM mobile_v9_send_inspections i WHERE school_id=$1 ORDER BY id DESC LIMIT 100").bind(s).fetch_all(&mut *tx).await?;
-            json!({"id":s,"tasks":tasks,"drafts":drafts,"inspections":inspections,"readiness":readiness::school(&mut tx,s).await?,"pool":readiness::pool(&mut tx,s).await?,"sending_status":business_scheme::status(&mut tx).await?})
+            let mut tasks:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(t) FROM mobile_v9_tasks t  ORDER BY created_at DESC,id DESC LIMIT 100").fetch_all(&mut *tx).await?;
+            task_status::attach(&mut tx, &mut tasks).await?;
+            let drafts:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(d)||jsonb_build_object('targets',coalesce((SELECT jsonb_agg(jsonb_build_object('id',t.id,'name',t.search_text) ORDER BY ids.n) FROM unnest(d.target_ids) WITH ORDINALITY ids(id,n) JOIN mobile_targets t ON t.id=ids.id ),'[]'::jsonb)) FROM mobile_v9_task_drafts d WHERE NOT EXISTS(SELECT 1 FROM mobile_v9_tasks t WHERE t.draft_id=d.id) ORDER BY created_at DESC LIMIT 100").fetch_all(&mut *tx).await?;
+            let inspections:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(i)-'challenge' FROM mobile_v9_send_inspections i  ORDER BY id DESC LIMIT 100").fetch_all(&mut *tx).await?;
+            json!({"id":"tasks","tasks":tasks,"drafts":drafts,"inspections":inspections,"readiness":readiness::resources(&mut tx).await?,"pool":readiness::pool(&mut tx).await?,"sending_status":business_scheme::status(&mut tx).await?})
         };
         tx.commit().await?;
         Ok(v)
@@ -259,7 +233,7 @@ impl Store for Repository {
     ) -> Result<Value> {
         let mut tx = self.0.begin().await?;
         guard(&mut tx).await?;
-        authorize(&mut tx, a.id, None, true).await?;
+        authorize(&mut tx, a.id, true).await?;
         let (scope, body) = match &command {
             PlatformCommand::Policy(v) => ("policy", json!(v)),
             PlatformCommand::Manage(v) => ("management", json!(v)),
@@ -267,7 +241,6 @@ impl Store for Repository {
                 "artifact",
                 json!({"kind":v.kind,"name":v.name,"digest":hash_bytes(&v.content)}),
             ),
-            PlatformCommand::Access(v) => ("school-access", json!(v)),
         };
         if let Some(v) = replay(&mut tx, a.id, 0, scope, key, &body).await? {
             return Ok(v);
@@ -275,24 +248,6 @@ impl Store for Repository {
         let v = match command {
             PlatformCommand::Manage(v) => platform::write(&mut tx, a, v).await?,
             PlatformCommand::Artifact(v) => platform::artifact(&mut tx, a, v).await?,
-            PlatformCommand::Access(v) => {
-                let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_workspaces s,execution_devices d WHERE s.id=$1 AND d.id=$2 AND (NOT $3 OR (s.active AND d.enabled)))").bind(v.school_id).bind(v.device_id).bind(v.enabled).fetch_one(&mut *tx).await?;
-                require(valid, "shared_access_invalid")?;
-                let old:Option<(i64,bool)>=sqlx::query_as("SELECT revision,enabled FROM mobile_shared_school_access WHERE device_id=$1 AND school_id=$2").bind(v.device_id).bind(v.school_id).fetch_optional(&mut *tx).await?;
-                require(
-                    old.map(|r| r.0).unwrap_or(0) == v.expected_revision,
-                    "revision_conflict",
-                )?;
-                let revision = if old.is_some_and(|r| r.1 == v.enabled) {
-                    v.expected_revision
-                } else {
-                    let next = v.expected_revision + 1;
-                    sqlx::query("INSERT INTO mobile_shared_school_access(device_id,school_id,enabled,revision,updated_by) VALUES($1,$2,$3,$4,$5) ON CONFLICT(device_id,school_id) DO UPDATE SET enabled=$3,revision=$4,updated_by=$5").bind(v.device_id).bind(v.school_id).bind(v.enabled).bind(next).bind(a.id).execute(&mut *tx).await?;
-                    sqlx::query("INSERT INTO mobile_shared_access_events(id,device_id,school_id,revision,enabled,actor_id) VALUES($1,$2,$3,$4,$5,$6)").bind(Uuid::now_v7()).bind(v.device_id).bind(v.school_id).bind(next).bind(v.enabled).bind(a.id).execute(&mut *tx).await?;
-                    next
-                };
-                json!({"id":v.device_id,"school_id":v.school_id,"revision":revision,"enabled":v.enabled})
-            }
             PlatformCommand::Policy(v) => {
                 v.validate()?;
                 if matches!(v.mode.as_str(), "enabled") {
@@ -307,7 +262,7 @@ impl Store for Repository {
     }
     async fn platform_read(&self, a: &Actor, page: u32) -> Result<Value> {
         let mut tx = self.0.begin().await?;
-        authorize(&mut tx, a.id, None, true).await?;
+        authorize(&mut tx, a.id, true).await?;
         let mut v = platform::read(&mut tx, page).await?;
         v["id"] = json!("current");
         v["policy"] = json!(policy(&mut tx).await?);
@@ -318,9 +273,9 @@ impl Store for Repository {
             .fetch_all(&mut *tx)
             .await?
         );
-        v["schools"] = json!(sqlx::query_scalar::<_, Value>("SELECT jsonb_build_object('id',id,'name',name) FROM mobile_workspaces WHERE active ORDER BY name,id").fetch_all(&mut *tx).await?);
-        v["targets"] = json!(sqlx::query_scalar::<_, Value>("SELECT to_jsonb(t)||jsonb_build_object('name',search_text) FROM mobile_targets t WHERE archived_at IS NULL ORDER BY school_id,id").fetch_all(&mut *tx).await?);
-        v["access"] = json!(sqlx::query_scalar::<_, Value>("SELECT to_jsonb(a)||jsonb_build_object('id',a.device_id::text||':'||a.school_id::text,'device_name',d.name,'school_name',s.name) FROM mobile_shared_school_access a JOIN execution_devices d ON d.id=a.device_id JOIN mobile_workspaces s ON s.id=a.school_id ORDER BY s.name,d.name").fetch_all(&mut *tx).await?);
+
+        v["targets"] = json!(sqlx::query_scalar::<_, Value>("SELECT to_jsonb(t)||jsonb_build_object('name',search_text) FROM mobile_targets t WHERE archived_at IS NULL ORDER BY id").fetch_all(&mut *tx).await?);
+
         tx.commit().await?;
         Ok(v)
     }
@@ -408,14 +363,10 @@ mod default_policy_tests {
 }
 
 /// Routing freezes only business-authorized candidates, never transient phone readiness.
-pub(crate) async fn routing_candidates(
-    tx: &mut Tx<'_>,
-    workspace: Uuid,
-    target: Uuid,
-) -> Result<Vec<Value>> {
+pub(crate) async fn routing_candidates(tx: &mut Tx<'_>, target: Uuid) -> Result<Vec<Value>> {
     let mut result = Vec::new();
-    for candidate in tasks::raw_candidates(tx, workspace, target).await? {
-        if tasks::scope_control(tx, workspace, uid(&candidate, "device_id")?, target).await?
+    for candidate in tasks::raw_candidates(tx, target).await? {
+        if tasks::scope_control(tx, uid(&candidate, "device_id")?, target).await?
             == tasks::ScopeControl::Authorized
         {
             result.push(candidate);

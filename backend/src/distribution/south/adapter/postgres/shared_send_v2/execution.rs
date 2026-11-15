@@ -93,16 +93,16 @@ pub(super) async fn grant(tx: &mut Tx<'_>, c: &Credential, v: GrantRequest) -> R
         let Some(row) = row else {
             return Ok(dependency_rejection(c.device_id));
         };
-        let school = uid(&row, "school_id")?;
+
         let target = uid(&row, "target_id")?;
-        let plan = tasks::raw_candidates(tx, school, target)
+        let plan = tasks::raw_candidates(tx, target)
             .await?
             .into_iter()
             .find(|p| p["binding_id"] == json!(binding));
         let Some(plan) = plan else {
             return Ok(dependency_rejection(c.device_id));
         };
-        match tasks::validate_plan(tx, school, &plan).await {
+        match tasks::validate_plan(tx, &plan).await {
             Ok(()) => {}
             Err(Error::Policy(_) | Error::NotFound | Error::Forbidden | Error::Invalid(_)) => {
                 return Ok(dependency_rejection(c.device_id));
@@ -130,14 +130,14 @@ pub(super) async fn grant(tx: &mut Tx<'_>, c: &Credential, v: GrantRequest) -> R
             continue;
         }
         let aid = uid(&row, "id")?;
-        let school = uid(&row, "school_id")?;
+
         let authorization = if row["authorization_kind"] == "source_route" {
             Ok(()) // Route guard above verified the business chain and frozen targets.
         } else {
-            authorize(tx, uid(&row, "confirmed_by")?, Some(school), true).await
+            authorize(tx, uid(&row, "confirmed_by")?, true).await
         };
         let validation = match authorization {
-            Ok(()) => tasks::validate_plan(tx, school, &row["plan"]).await,
+            Ok(()) => tasks::validate_plan(tx, &row["plan"]).await,
             Err(error) => Err(error),
         };
         match validation {
@@ -154,26 +154,25 @@ pub(super) async fn grant(tx: &mut Tx<'_>, c: &Credential, v: GrantRequest) -> R
             }
             Err(error) => return Err(error),
         }
-        if !device::quota(tx, school, c.device_id, uid(&row, "target_id")?, aid, false).await? {
+        if !device::quota(tx, c.device_id, uid(&row, "target_id")?, aid, false).await? {
             continue;
         }
-        let usages =
-            match usage_budgets::check(tx, school, c.device_id, uid(&row, "target_id")?).await {
-                Ok(usages) => usages,
-                Err(Error::Policy("quota_wait")) => continue,
-                Err(error) => return Err(error),
-            };
+        let usages = match usage_budgets::check(tx, c.device_id, uid(&row, "target_id")?).await {
+            Ok(usages) => usages,
+            Err(Error::Policy("quota_wait")) => continue,
+            Err(error) => return Err(error),
+        };
         let id = Uuid::now_v7();
         let secret = secrets::token();
-        let timing = match timing(tx, &row, school, c.device_id).await {
+        let timing = match timing(tx, &row, c.device_id).await {
             Ok(timing) => timing,
             Err(Error::Policy("execution_window_too_short")) => continue,
             Err(error) => return Err(error),
         };
-        if !device::quota(tx, school, c.device_id, uid(&row, "target_id")?, aid, true).await? {
+        if !device::quota(tx, c.device_id, uid(&row, "target_id")?, aid, true).await? {
             continue;
         }
-        let mut envelope = json!({"id":id,"execution_id":id,"capability_id":id,"schema":"durable_execution/1","protocol_version":10,"kind":"send","state":"granted","max_calls":1,"local_budget_ms":210000,"attempt_id":aid,"task_id":row["task_id"],"target_id":row["target_id"],"school_id":school,"device_id":c.device_id,"credential_generation":c.generation,"assignment_revision":row["revision"],"runtime_epoch":v.runtime_epoch,"plan":row["plan"],"plan_digest":row["plan_digest"],"content_digest":row["content_digest"],"timing":timing,"result_credential":secret});
+        let mut envelope = json!({"id":id,"execution_id":id,"capability_id":id,"schema":"durable_execution/1","protocol_version":10,"kind":"send","state":"granted","max_calls":1,"local_budget_ms":210000,"attempt_id":aid,"task_id":row["task_id"],"target_id":row["target_id"],"device_id":c.device_id,"credential_generation":c.generation,"assignment_revision":row["revision"],"runtime_epoch":v.runtime_epoch,"plan":row["plan"],"plan_digest":row["plan_digest"],"content_digest":row["content_digest"],"timing":timing,"result_credential":secret});
         let (public_key, signature) = secrets::sign(&envelope)?;
         envelope["signature"] = json!(signature);
         envelope["key_id"] = json!(hash(&public_key));
@@ -287,7 +286,7 @@ pub(super) async fn apply_results(tx: &mut Tx<'_>) -> Result<()> {
 }
 
 /// Shorten the fixed local budget at confirmation, usage and policy time boundaries.
-async fn timing(tx: &mut Tx<'_>, row: &Value, school: Uuid, device: Uuid) -> Result<Value> {
+async fn timing(tx: &mut Tx<'_>, row: &Value, device: Uuid) -> Result<Value> {
     let now: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
         .fetch_one(&mut **tx)
         .await?;
@@ -295,7 +294,7 @@ async fn timing(tx: &mut Tx<'_>, row: &Value, school: Uuid, device: Uuid) -> Res
     let confirmed: chrono::DateTime<chrono::Utc> =
         serde_json::from_value(row["confirmed_until"].clone()).map_err(|_| Error::Conflict)?;
     until = until.min(confirmed);
-    for usage in tasks::operative_usages(tx, school, device, uid(row, "target_id")?).await? {
+    for usage in tasks::operative_usages(tx, device, uid(row, "target_id")?).await? {
         let expiry: chrono::DateTime<chrono::Utc> =
             serde_json::from_value(usage["expires_at"].clone()).map_err(|_| Error::Conflict)?;
         until = until.min(expiry);

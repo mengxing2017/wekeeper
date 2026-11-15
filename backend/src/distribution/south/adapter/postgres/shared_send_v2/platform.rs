@@ -187,7 +187,7 @@ pub(super) async fn write(tx: &mut Tx<'_>, a: &Actor, command: ManagementCommand
             )
             .await?;
             let deps = json!({"flow_id":v.flow_id,"flow_digest":digest(&flow)?,"binding_id":b["id"],"binding_locator_revision":b["locator_revision"],"credential_generation":b["credential_generation"],"delegation_id":d["id"]});
-            sqlx::query("INSERT INTO mobile_v9_send_inspections(id,school_id,device_id,target_id,binding_id,flow_id,delegation_id,dependencies,requested_by,purpose,launch_path,challenge,automatic,expires_at,apk_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'maintenance',$10,$11,false,clock_timestamp()+interval '1 day',$12)").bind(id).bind(uid(&b,"school_id")?).bind(uid(&b,"device_id")?).bind(uid(&b,"target_id")?).bind(v.binding_id).bind(v.flow_id).bind(uid(&d,"id")?).bind(deps).bind(a.id).bind(v.launch_path).bind(secrets::token()).bind(v.apk_id).execute(&mut **tx).await?;
+            sqlx::query("INSERT INTO mobile_v9_send_inspections(id,device_id,target_id,binding_id,flow_id,delegation_id,dependencies,requested_by,purpose,launch_path,challenge,automatic,expires_at,apk_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'maintenance',$9,$10,false,clock_timestamp()+interval '1 day',$11)").bind(id).bind(uid(&b,"device_id")?).bind(uid(&b,"target_id")?).bind(v.binding_id).bind(v.flow_id).bind(uid(&d,"id")?).bind(deps).bind(a.id).bind(v.launch_path).bind(secrets::token()).bind(v.apk_id).execute(&mut **tx).await?;
             Ok(json!({"id":id}))
         }
         ManagementCommand::Acceptances(v) => {
@@ -244,10 +244,6 @@ pub(super) async fn write(tx: &mut Tx<'_>, a: &Actor, command: ManagementCommand
                     "shared_send_trial_limit",
                 )?;
             }
-            for d in &v.device_ids {
-                let rev:i64=sqlx::query_scalar("SELECT coalesce((SELECT revision FROM mobile_shared_school_access WHERE school_id=$1 AND device_id=$2),0)").bind(v.school_id).bind(d).fetch_one(&mut **tx).await?;
-                require(v.expected_access.get(d) == Some(&rev), "revision_conflict")?;
-            }
             let n: i64 = sqlx::query_scalar(
                 "SELECT count(*) FROM execution_devices WHERE id=ANY($1) AND enabled",
             )
@@ -258,7 +254,7 @@ pub(super) async fn write(tx: &mut Tx<'_>, a: &Actor, command: ManagementCommand
                 n == v.device_ids.len() as i64,
                 "shared_send_resource_invalid",
             )?;
-            sqlx::query("INSERT INTO mobile_v9_scope_grants(id,school_id,release_id,acceptance_id,stage,device_ids,target_ids,auto_targets,max_calls,expires_at,reason,created_by,resource_revisions) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)").bind(id).bind(v.school_id).bind(uid(&ac,"release_id")?).bind(v.acceptance_id).bind(ac["stage"].as_str()).bind(v.device_ids).bind(v.target_ids).bind(v.auto_targets).bind(v.max_calls).bind(v.expires_at).bind(v.reason).bind(a.id).bind(json!(v.expected_access)).execute(&mut **tx).await?;
+            sqlx::query("INSERT INTO mobile_v9_scope_grants(id,release_id,acceptance_id,stage,device_ids,target_ids,auto_targets,max_calls,expires_at,reason,created_by,resource_revisions) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)").bind(id).bind(uid(&ac,"release_id")?).bind(v.acceptance_id).bind(ac["stage"].as_str()).bind(v.device_ids).bind(v.target_ids).bind(v.auto_targets).bind(v.max_calls).bind(v.expires_at).bind(v.reason).bind(a.id).bind(json!({})).execute(&mut **tx).await?;
             Ok(json!({"id":id}))
         }
         ManagementCommand::Revocations(v) => {
@@ -268,7 +264,7 @@ pub(super) async fn write(tx: &mut Tx<'_>, a: &Actor, command: ManagementCommand
         }
         ManagementCommand::Support(v) => {
             text(&v.reason)?;
-            sqlx::query("INSERT INTO mobile_v9_support_requests(id,device_id,school_id,reason,state,created_by) VALUES($1,$2,$3,$4,'submitted',$5)").bind(id).bind(v.device_id).bind(v.school_id).bind(v.reason).bind(a.id).execute(&mut **tx).await?;
+            sqlx::query("INSERT INTO mobile_v9_support_requests(id,device_id,reason,state,created_by) VALUES($1,$2,$3,'submitted',$4)").bind(id).bind(v.device_id).bind(v.reason).bind(a.id).execute(&mut **tx).await?;
             Ok(json!({"id":id}))
         }
         ManagementCommand::SupportUpdates(v) => {
@@ -326,7 +322,7 @@ pub(super) async fn read(tx: &mut Tx<'_>, page: u32) -> Result<Value> {
     .fetch_optional(&mut **tx)
     .await?;
     data.insert("activation".into(), json!(activation));
-    let bindings:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(b)||jsonb_build_object('device_name',d.name,'school_name',s.name,'target_name',t.search_text) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_workspaces s ON s.id=b.school_id JOIN mobile_targets t ON t.id=b.target_id WHERE b.enabled ORDER BY b.id LIMIT 100").fetch_all(&mut **tx).await?;
+    let bindings:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(b)||jsonb_build_object('device_name',d.name,'target_name',t.search_text) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id  JOIN mobile_targets t ON t.id=b.target_id WHERE b.enabled ORDER BY b.id LIMIT 100").fetch_all(&mut **tx).await?;
     data.insert("bindings".into(), json!(bindings));
     data.insert("counts".into(), Value::Object(counts));
     data.insert(

@@ -35,18 +35,11 @@ pub fn text(value: &str, min: usize, max: usize) -> Result<String> {
     Ok(s.into())
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Grant {
-    pub school_id: Uuid,
-    pub role: String,
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Actor {
     pub id: Uuid,
     pub username: String,
     pub display_name: String,
     pub platform_admin: bool,
-    pub bound_school_id: Option<Uuid>,
-    pub grants: Vec<Grant>,
     #[serde(skip)]
     pub csrf: String,
     #[serde(skip)]
@@ -60,22 +53,6 @@ pub struct Actor {
     pub wecom_binding_revision: i64,
 }
 impl Actor {
-    pub fn can(&self, school: Uuid, role: &str) -> bool {
-        self.platform_admin
-            || self.grants.iter().any(|g| {
-                g.school_id == school
-                    && (role == "member"
-                        || g.role == "admin"
-                        || (role == "operator" && g.role == "operator"))
-            })
-    }
-    pub fn authorize(&self, school: Uuid, role: &str) -> Result<()> {
-        if self.can(school, role) {
-            Ok(())
-        } else {
-            Err(Error::Forbidden)
-        }
-    }
     pub fn platform(&self) -> Result<()> {
         if self.platform_admin {
             Ok(())

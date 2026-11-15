@@ -1,4 +1,4 @@
-//! Explicit platform/school governance use cases, separate from send confirmation.
+//! Explicit global governance use cases, separate from send confirmation.
 use crate::{
     business::{Actor, Page, Result},
     distribution::{
@@ -13,24 +13,18 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct Service(pub sqlx::PgPool);
 impl Service {
-    pub async fn senders(
-        &self,
-        a: &Actor,
-        s: Option<Uuid>,
-        page: Page,
-    ) -> Result<Vec<OfficialSender>> {
-        senders::Repository(self.0.clone()).list(a, s, page).await
+    pub async fn senders(&self, a: &Actor, page: Page) -> Result<Vec<OfficialSender>> {
+        senders::Repository(self.0.clone()).list(a, page).await
     }
     pub async fn qualify(
         &self,
         a: &Actor,
-        s: Uuid,
         id: Uuid,
         input: SenderQualificationInput,
     ) -> Result<()> {
         a.platform()?;
         senders::Repository(self.0.clone())
-            .qualify(a, s, id, input)
+            .qualify(a, id, input)
             .await
     }
     pub async fn policies(&self, a: &Actor) -> Result<serde_json::Value> {

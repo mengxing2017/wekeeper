@@ -3,22 +3,16 @@ use crate::{
     distribution::south::adapter::postgres::groups::Repository,
 };
 use serde_json::Value;
-use uuid::Uuid;
 #[derive(Clone)]
 pub struct Service(pub Repository);
 impl Service {
     pub async fn group(
         &self,
         a: &Actor,
-        school: Uuid,
         mut v: Value,
         integration: &crate::integrations::north::local::Service,
     ) -> Result<Value> {
-        if school.is_nil() {
-            a.platform()?;
-        } else {
-            a.authorize(school, "admin")?;
-        }
+        a.platform()?;
         if v["revision"].as_i64().unwrap_or(0) == 0 {
             a.platform()?;
         }
@@ -49,11 +43,11 @@ impl Service {
             v["directory_group_id"] = serde_json::json!(id);
             v["verified_generation"] = serde_json::json!(generation);
         }
-        self.0.group(a, school, v).await
+        self.0.group(a, v).await
     }
-    pub async fn groups(&self, a: &Actor, s: Uuid) -> Result<Vec<Value>> {
-        a.authorize(s, "operator")?;
-        self.0.groups(s).await
+    pub async fn groups(&self, a: &Actor) -> Result<Vec<Value>> {
+        a.platform()?;
+        self.0.groups().await
     }
 }
 impl crate::bootstrap::Application {

@@ -20,23 +20,26 @@ pub(super) async fn guard(tx: &mut Tx<'_>) -> Result<()> {
     Ok(())
 }
 
-pub(super) async fn authorize(
-    tx: &mut Tx<'_>,
-    actor: Uuid,
-    school: Uuid,
-    admin: bool,
-) -> Result<()> {
-    super::wecom_workspaces::authorize(tx, actor, Some(school), admin).await
+pub(super) async fn authorize(tx: &mut Tx<'_>, actor: Uuid, _admin: bool) -> Result<()> {
+    crate::distribution::south::adapter::postgres::authorization::authorize(tx, actor).await
 }
 async fn event(
     tx: &mut Tx<'_>,
-    school: Uuid,
     task: Uuid,
     actor: Option<Uuid>,
     action: &str,
     detail: Value,
 ) -> Result<()> {
-    sqlx::query("INSERT INTO broadcast_events(id,school_id,task_id,actor_id,action,detail) VALUES($1,$2,$3,$4,$5,$6)").bind(Uuid::now_v7()).bind(school).bind(task).bind(actor).bind(action).bind(detail).execute(&mut **tx).await?;
+    sqlx::query(
+        "INSERT INTO broadcast_events(id,task_id,actor_id,action,detail) VALUES($1,$2,$3,$4,$5)",
+    )
+    .bind(Uuid::now_v7())
+    .bind(task)
+    .bind(actor)
+    .bind(action)
+    .bind(detail)
+    .execute(&mut **tx)
+    .await?;
     Ok(())
 }
 const TASK: &str = "SELECT to_jsonb(t)||jsonb_build_object('total',(SELECT count(*) FROM broadcast_targets x WHERE x.task_id=t.id),'sent',(SELECT count(*) FROM broadcast_targets x WHERE x.task_id=t.id AND x.official_status=1),'rejected',(SELECT count(*) FROM broadcast_targets x JOIN broadcast_batches b ON b.id=x.batch_id WHERE x.task_id=t.id AND x.official_status IS DISTINCT FROM 1 AND (x.rejected OR x.official_status IN (2,3) OR b.state='rejected')),'uncertain',(SELECT count(*) FROM broadcast_batches b WHERE b.task_id=t.id AND (b.state='unknown' OR b.stop_state='unknown' OR EXISTS(SELECT 1 FROM broadcast_targets z WHERE z.batch_id=b.id AND z.official_status IS NOT NULL AND z.official_status NOT IN (0,1,2,3)))),'pending',(SELECT count(*) FROM broadcast_targets x JOIN broadcast_batches b ON b.id=x.batch_id WHERE x.task_id=t.id AND (x.official_status IS NULL OR x.official_status=0) AND NOT x.rejected AND b.stop_state<>'stopped' AND b.state IN ('queued','submitting','created')),'batch_count',(SELECT count(*) FROM broadcast_batches b WHERE b.task_id=t.id),'materials',coalesce((SELECT jsonb_agg(jsonb_build_object('namespace',r.namespace,'external_organization_id',r.external_organization_id,'external_content_id',r.external_content_id,'version',r.version) ORDER BY r.position) FROM broadcast_content_references r WHERE r.task_id=t.id),'[]'::jsonb),'post_ids',coalesce((SELECT jsonb_agg(p.post_id ORDER BY p.position) FROM broadcast_task_posts p WHERE p.task_id=t.id),'[]'::jsonb)) FROM broadcast_tasks t";
@@ -46,7 +49,6 @@ impl Repository {
     async fn save(
         &self,
         a: &Actor,
-        s: Uuid,
         id: Option<Uuid>,
         input: DraftInput,
         materials: Vec<crate::distribution::domain::content::Material>,
@@ -57,13 +59,13 @@ impl Repository {
         input.validate()?;
         let mut tx = self.0.begin().await?;
         guard(&mut tx).await?;
-        authorize(&mut tx, a.id, s, input.source_task_id.is_some()).await?;
+        authorize(&mut tx, a.id, input.source_task_id.is_some()).await?;
         if let Some(encoded) = &preview_key {
             let (key, input_hash) = encoded.rsplit_once(':').ok_or(Error::Conflict)?;
-            if let Some(prior)=sqlx::query("SELECT task_id,input_hash FROM broadcast_preview_intents WHERE school_id=$1 AND actor_id=$2 AND request_key=$3").bind(s).bind(a.id).bind(key).fetch_optional(&mut *tx).await?{require(prior.get::<String,_>("input_hash")==input_hash,"幂等键已用于不同内容")?;return Ok(prior.get("task_id"));}
+            if let Some(prior)=sqlx::query("SELECT task_id,input_hash FROM broadcast_preview_intents WHERE actor_id=$1 AND request_key=$2").bind(a.id).bind(key).fetch_optional(&mut *tx).await?{require(prior.get::<String,_>("input_hash")==input_hash,"幂等键已用于不同内容")?;return Ok(prior.get("task_id"));}
         }
         if id.is_none()
-            && let Some(task) = super::content::find_draft_request(&mut tx, a, s, &input).await?
+            && let Some(task) = super::content::find_draft_request(&mut tx, a, &input).await?
         {
             return Ok(task);
         }
@@ -75,12 +77,11 @@ impl Repository {
                 "渠道资料已变化，请重新预览",
             )?;
         }
-        // Unresolved target references must still belong to this school.
+        // Unresolved target references must still exist.
         if generation.is_none() {
             for group in &input.group_ids {
-                sqlx::query("SELECT id FROM wecom_groups WHERE id=$1 AND school_id=$2")
+                sqlx::query("SELECT id FROM wecom_groups WHERE id=$1 ")
                     .bind(group)
-                    .bind(s)
                     .fetch_optional(&mut *tx)
                     .await?
                     .ok_or(Error::Forbidden)?;
@@ -88,7 +89,12 @@ impl Repository {
         }
         let task = id.unwrap_or_else(Uuid::now_v7);
         if id.is_some() {
-            let old = sqlx::query("SELECT revision,state FROM broadcast_tasks WHERE school_id=$1 AND id=$2 FOR UPDATE").bind(s).bind(task).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
+            let old =
+                sqlx::query("SELECT revision,state FROM broadcast_tasks WHERE id=$1 FOR UPDATE")
+                    .bind(task)
+                    .fetch_optional(&mut *tx)
+                    .await?
+                    .ok_or(Error::NotFound)?;
             require(
                 old.get::<String, _>("state") == "draft"
                     && input.revision == Some(old.get("revision")),
@@ -96,13 +102,11 @@ impl Repository {
             )?;
         }
         if let Some(source) = input.source_task_id {
-            let prior = sqlx::query(
-                "SELECT id FROM broadcast_tasks WHERE school_id=$1 AND id=$2 AND state='confirmed'",
-            )
-            .bind(s)
-            .bind(source)
-            .fetch_optional(&mut *tx)
-            .await?;
+            let prior =
+                sqlx::query("SELECT id FROM broadcast_tasks WHERE id=$1 AND state='confirmed'")
+                    .bind(source)
+                    .fetch_optional(&mut *tx)
+                    .await?;
             require(prior.is_some(), "再次发送来源无效")?;
             let allowed: Vec<Uuid> =
                 sqlx::query_scalar("SELECT group_id FROM broadcast_targets WHERE task_id=$1")
@@ -138,7 +142,7 @@ impl Repository {
                 "来源草稿积压已达限制",
             )?;
         }
-        super::content::validate_materials(&mut tx, s, &materials).await?;
+        super::content::validate_materials(&mut tx, &materials).await?;
         let mut revisions = Vec::new();
         let content = match input.content_source {
             ContentSource::Text => {
@@ -150,18 +154,18 @@ impl Repository {
                 .collect::<Vec<_>>()
                 .join("\n\n"),
             ContentSource::Posts => {
-                let name: String =
-                    sqlx::query_scalar("SELECT name FROM wecom_workspaces WHERE id=$1")
-                        .bind(s)
-                        .fetch_one(&mut *tx)
-                        .await?;
-                let body: String = sqlx::query_scalar("SELECT body FROM template_versions WHERE school_id=$1 AND id=$2 AND published FOR SHARE").bind(s).bind(input.template_version_id).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
+                let body: String = sqlx::query_scalar(
+                    "SELECT body FROM template_versions WHERE id=$1 AND published FOR SHARE",
+                )
+                .bind(input.template_version_id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .ok_or(Error::NotFound)?;
                 let mut snippets = Vec::new();
                 for material in &materials {
                     snippets.push(crate::distribution::domain::render(
                         &body,
                         &std::collections::BTreeMap::from([
-                            ("school.name", name.clone()),
                             ("post.title", material.title.clone()),
                             ("post.summary", material.content.chars().take(200).collect()),
                             ("post.detail_url", material.detail_url.clone()),
@@ -184,8 +188,8 @@ impl Repository {
         let mut sorted = input.group_ids.clone();
         sorted.sort();
         for group in sorted.into_iter().filter(|_| generation.is_some()) {
-            let row = sqlx::query("SELECT g.id,g.chat_id,g.name,g.revision,m.userid,a.id AS account_id,a.wecom_binding_revision FROM wecom_groups g JOIN wecom_asset_objects o ON o.id=g.directory_group_id AND o.kind='groups' JOIN wecom_members m ON m.userid_key=lower(o.data->>'owner' COLLATE \"C\") JOIN accounts a ON a.wecom_member_id=m.id JOIN wecom_workspace_members sm ON sm.account_id=a.id AND sm.school_id=g.school_id WHERE g.id=$1 AND g.school_id=$2 AND g.active AND g.corp_id=$3 AND o.credential_generation=$4 AND o.verification='verified' AND o.visibility='visible' AND o.checked_at>now()-interval '24 hours' AND m.verification='verified' AND m.status=1 AND a.active AND sm.role IN ('operator','admin') AND NOT EXISTS(SELECT 1 FROM wecom_sender_qualifications q WHERE q.school_id=g.school_id AND q.account_id=a.id AND NOT q.enabled) FOR SHARE OF g,o,m,a,sm")
-                .bind(group).bind(s).bind(&corp).bind(generation).fetch_optional(&mut *tx).await?.ok_or_else(|| Error::Invalid("群目录过期或群主未绑定当前工作空间有效运营账号，请同步并核对".into()))?;
+            let row = sqlx::query("SELECT g.id,g.chat_id,g.name,g.revision,m.userid,a.id AS account_id,a.wecom_binding_revision FROM wecom_groups g JOIN wecom_asset_objects o ON o.id=g.directory_group_id AND o.kind='groups' JOIN wecom_members m ON m.userid_key=lower(o.data->>'owner' COLLATE \"C\") JOIN accounts a ON a.wecom_member_id=m.id  WHERE g.id=$1  AND g.active AND g.corp_id=$2 AND o.credential_generation=$3 AND o.verification='verified' AND o.visibility='visible' AND o.checked_at>now()-interval '24 hours' AND m.verification='verified' AND m.status=1 AND a.active AND NOT EXISTS(SELECT 1 FROM wecom_sender_qualifications q WHERE q.account_id=a.id AND NOT q.enabled) FOR SHARE OF g,o,m,a")
+                .bind(group).bind(&corp).bind(generation).fetch_optional(&mut *tx).await?.ok_or_else(|| Error::Invalid("群目录过期或群主未绑定当前业务有效运营账号，请同步并核对".into()))?;
             groups.push((row.get::<String, _>("userid"), row));
         }
         if id.is_some() {
@@ -203,7 +207,7 @@ impl Repository {
                 .await?;
             sqlx::query("UPDATE broadcast_tasks SET revision=revision+1,template_version_id=$2,content=$3,content_hash=$4,corp_id=$5,generation=$6,source_task_id=$7,resend_reason=$8,content_source=$9 WHERE id=$1").bind(task).bind(input.template_version_id).bind(&content).bind(hash(&content)).bind(&corp).bind(generation).bind(input.source_task_id).bind(&input.reason).bind(input.content_source.as_str()).execute(&mut *tx).await?;
         } else {
-            sqlx::query("INSERT INTO broadcast_tasks(id,school_id,creator_id,template_version_id,content,content_hash,corp_id,generation,source_task_id,resend_reason,content_source,draft_input) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)").bind(task).bind(s).bind(a.id).bind(input.template_version_id).bind(&content).bind(hash(&content)).bind(&corp).bind(generation).bind(input.source_task_id).bind(&input.reason).bind(input.content_source.as_str()).bind(json!(input)).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO broadcast_tasks(id,creator_id,template_version_id,content,content_hash,corp_id,generation,source_task_id,resend_reason,content_source,draft_input) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)").bind(task).bind(a.id).bind(input.template_version_id).bind(&content).bind(hash(&content)).bind(&corp).bind(generation).bind(input.source_task_id).bind(&input.reason).bind(input.content_source.as_str()).bind(json!(input)).execute(&mut *tx).await?;
         }
         sqlx::query("UPDATE broadcast_tasks SET source_namespace=$2,draft_input=$3 WHERE id=$1")
             .bind(task)
@@ -211,10 +215,10 @@ impl Repository {
             .bind(json!(input))
             .execute(&mut *tx)
             .await?;
-        super::content::save_snapshot(&mut tx, s, task, &content, &materials).await?;
+        super::content::save_snapshot(&mut tx, task, &content, &materials).await?;
         for (position, (post, revision)) in input.post_ids.iter().zip(revisions).enumerate() {
-            sqlx::query("INSERT INTO broadcast_task_posts VALUES($1,$2,$3,$4,$5)")
-                .bind(s)
+            sqlx::query("INSERT INTO broadcast_task_posts(task_id,post_id,post_revision,position) VALUES($1,$2,$3,$4)")
+
                 .bind(task)
                 .bind(post)
                 .bind(revision)
@@ -225,17 +229,16 @@ impl Repository {
         for (ordinal, (owner, rows)) in chunks(groups).into_iter().enumerate() {
             let batch = Uuid::now_v7();
             let first = &rows[0];
-            sqlx::query("INSERT INTO broadcast_batches(id,school_id,task_id,ordinal,sender,sender_account,binding_revision,corp_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)").bind(batch).bind(s).bind(task).bind(ordinal as i32).bind(owner).bind(first.get::<Uuid,_>("account_id")).bind(first.get::<i64,_>("wecom_binding_revision")).bind(&corp).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO broadcast_batches(id,task_id,ordinal,sender,sender_account,binding_revision,corp_id) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(batch).bind(task).bind(ordinal as i32).bind(owner).bind(first.get::<Uuid,_>("account_id")).bind(first.get::<i64,_>("wecom_binding_revision")).bind(&corp).execute(&mut *tx).await?;
             for row in rows {
-                sqlx::query("INSERT INTO broadcast_targets(id,school_id,task_id,batch_id,group_id,chat_id,group_name,group_revision) VALUES($1,$2,$3,$4,$5,$6,$7,$8)").bind(Uuid::now_v7()).bind(s).bind(task).bind(batch).bind(row.get::<Uuid,_>("id")).bind(row.get::<String,_>("chat_id")).bind(row.get::<String,_>("name")).bind(row.get::<i64,_>("revision")).execute(&mut *tx).await?;
+                sqlx::query("INSERT INTO broadcast_targets(id,task_id,batch_id,group_id,chat_id,group_name,group_revision) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(Uuid::now_v7()).bind(task).bind(batch).bind(row.get::<Uuid,_>("id")).bind(row.get::<String,_>("chat_id")).bind(row.get::<String,_>("name")).bind(row.get::<i64,_>("revision")).execute(&mut *tx).await?;
             }
         }
         if id.is_none() {
-            super::content::record_draft_request(&mut tx, a, s, task, &input).await?;
+            super::content::record_draft_request(&mut tx, a, task, &input).await?;
         }
         event(
             &mut tx,
-            s,
             task,
             Some(a.id),
             "draft.saved",
@@ -256,7 +259,7 @@ impl Repository {
             } else {
                 json!({"id":task,"task_id":task,"preview":null,"saved":true,"reason":"草稿已保存；请选择有效目标并等待官方渠道可用后重新预览"})
             };
-            sqlx::query("INSERT INTO broadcast_preview_intents(school_id,actor_id,request_key,input_hash,task_id,response) VALUES($1,$2,$3,$4,$5,$6)").bind(s).bind(a.id).bind(key).bind(input_hash).bind(task).bind(response).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO broadcast_preview_intents(actor_id,request_key,input_hash,task_id,response) VALUES($1,$2,$3,$4,$5)").bind(a.id).bind(key).bind(input_hash).bind(task).bind(response).execute(&mut *tx).await?;
         }
         tx.commit().await?;
         Ok(task)
@@ -266,7 +269,7 @@ impl Repository {
             .bind(task)
             .fetch_one(&mut **tx)
             .await?;
-        let s: Uuid = t.get("school_id");
+
         let actor: Uuid = t.get::<Option<Uuid>, _>("confirmed_by").unwrap_or(
             t.get::<Option<Uuid>, _>("authorized_by")
                 .unwrap_or(t.get("creator_id")),
@@ -276,7 +279,6 @@ impl Repository {
             authorize(
                 tx,
                 actor,
-                s,
                 t.get::<String, _>("content_source") == "text"
                     && t.get::<Option<Uuid>, _>("confirmed_by").is_some(),
             )
@@ -284,7 +286,7 @@ impl Repository {
         }
         sqlx::query("SELECT singleton FROM wecom_directory_state WHERE corp_id=$1 AND credential_generation=$2 FOR SHARE").bind(t.get::<String,_>("corp_id")).bind(t.get::<i64,_>("generation")).fetch_optional(&mut **tx).await?.ok_or(Error::Conflict)?;
         super::content::validate_task(&mut *tx, task).await?;
-        let groups=sqlx::query("SELECT g.id FROM broadcast_targets x JOIN broadcast_batches b ON b.id=x.batch_id JOIN wecom_groups g ON g.id=x.group_id JOIN wecom_asset_objects o ON o.id=g.directory_group_id JOIN accounts a ON a.id=b.sender_account JOIN wecom_members m ON m.id=a.wecom_member_id LEFT JOIN wecom_workspace_members sm ON sm.account_id=a.id AND sm.school_id=x.school_id WHERE x.task_id=$1 AND ($3::uuid IS NULL OR x.batch_id=$3) AND g.school_id=x.school_id AND g.active AND g.revision=x.group_revision AND g.chat_id=x.chat_id AND g.corp_id=b.corp_id AND o.credential_generation=$2 AND o.verification='verified' AND o.visibility='visible' AND o.checked_at>now()-interval '24 hours' AND lower(o.data->>'owner' COLLATE \"C\")=m.userid_key AND lower(b.sender COLLATE \"C\")=m.userid_key AND a.active AND a.wecom_binding_revision=b.binding_revision AND m.verification='verified' AND m.status=1 AND ($4 OR sm.role IN ('operator','admin')) AND ($4 OR NOT EXISTS(SELECT 1 FROM wecom_sender_qualifications q WHERE q.school_id=g.school_id AND q.account_id=a.id AND NOT q.enabled)) ORDER BY g.id FOR UPDATE OF g FOR SHARE OF a,m,o")
+        let groups=sqlx::query("SELECT g.id FROM broadcast_targets x JOIN broadcast_batches b ON b.id=x.batch_id JOIN wecom_groups g ON g.id=x.group_id JOIN wecom_asset_objects o ON o.id=g.directory_group_id JOIN accounts a ON a.id=b.sender_account JOIN wecom_members m ON m.id=a.wecom_member_id  WHERE x.task_id=$1 AND ($3::uuid IS NULL OR x.batch_id=$3)  AND g.active AND g.revision=x.group_revision AND g.chat_id=x.chat_id AND g.corp_id=b.corp_id AND o.credential_generation=$2 AND o.verification='verified' AND o.visibility='visible' AND o.checked_at>now()-interval '24 hours' AND lower(o.data->>'owner' COLLATE \"C\")=m.userid_key AND lower(b.sender COLLATE \"C\")=m.userid_key AND a.active AND a.wecom_binding_revision=b.binding_revision AND m.verification='verified' AND m.status=1 AND TRUE AND ($4 OR NOT EXISTS(SELECT 1 FROM wecom_sender_qualifications q WHERE q.account_id=a.id AND NOT q.enabled)) ORDER BY g.id FOR UPDATE OF g FOR SHARE OF a,m,o")
             .bind(task).bind(t.get::<i64,_>("generation")).bind(batch).bind(automatic).fetch_all(&mut **tx).await?;
         let count: i64 =
             sqlx::query_scalar("SELECT count(*) FROM broadcast_targets WHERE task_id=$1 AND ($2::uuid IS NULL OR batch_id=$2)")
@@ -303,9 +305,9 @@ impl Repository {
             .bind(task)
             .fetch_one(&mut **tx)
             .await?;
-        let s: Uuid = t.get("school_id");
-        let prior=sqlx::query("SELECT DISTINCT p.id,b.state,b.stop_state,b.reconciliation FROM broadcast_tasks p JOIN broadcast_targets x ON x.task_id=p.id JOIN broadcast_targets target ON target.group_id=x.group_id AND target.task_id=$1 JOIN broadcast_batches b ON b.id=x.batch_id WHERE p.id<>$1 AND p.school_id=$2 AND p.state='confirmed' AND (p.content_hash=$3 OR EXISTS(SELECT 1 FROM broadcast_content_references a JOIN broadcast_content_references z USING(namespace,external_organization_id,external_content_id) WHERE a.task_id=p.id AND z.task_id=$1))")
-            .bind(task).bind(s).bind(t.get::<String,_>("content_hash")).fetch_all(&mut **tx).await?;
+
+        let prior=sqlx::query("SELECT DISTINCT p.id,b.state,b.stop_state,b.reconciliation FROM broadcast_tasks p JOIN broadcast_targets x ON x.task_id=p.id JOIN broadcast_targets target ON target.group_id=x.group_id AND target.task_id=$1 JOIN broadcast_batches b ON b.id=x.batch_id WHERE p.id<>$1  AND p.state='confirmed' AND (p.content_hash=$2 OR EXISTS(SELECT 1 FROM broadcast_content_references a JOIN broadcast_content_references z USING(namespace,external_organization_id,external_content_id) WHERE a.task_id=p.id AND z.task_id=$1))")
+            .bind(task).bind(t.get::<String,_>("content_hash")).fetch_all(&mut **tx).await?;
         for p in &prior {
             let state: String = p.get("state");
             let stop: String = p.get("stop_state");
@@ -319,7 +321,7 @@ impl Repository {
             )?;
         }
         if !prior.is_empty() {
-            authorize(tx, actor, s, true).await?;
+            authorize(tx, actor, true).await?;
             require(
                 !t.get::<String, _>("resend_reason").trim().is_empty(),
                 "再次发送须填写原因",
@@ -335,7 +337,6 @@ impl Repository {
     async fn action(
         &self,
         a: &Actor,
-        s: Uuid,
         id: Uuid,
         operation: String,
         key: String,
@@ -346,27 +347,24 @@ impl Repository {
         authorize(
             &mut tx,
             a.id,
-            s,
             matches!(operation.as_str(), "stop" | "reconcile"),
         )
         .await?;
-        let t =
-            sqlx::query("SELECT * FROM broadcast_tasks WHERE school_id=$1 AND id=$2 FOR UPDATE")
-                .bind(s)
-                .bind(id)
-                .fetch_optional(&mut *tx)
-                .await?
-                .ok_or(Error::NotFound)?;
+        let t = sqlx::query("SELECT * FROM broadcast_tasks WHERE id=$1 FOR UPDATE")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(Error::NotFound)?;
         if operation == "confirm" && t.get::<String, _>("content_source") == "text" {
-            authorize(&mut tx, a.id, s, true).await?;
+            authorize(&mut tx, a.id, true).await?;
         }
         let request_hash = action_hash(id, &input);
         // Also serialize keys used on different tasks, not just double clicks on one task.
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
-            .bind(format!("broadcast:{}:{s}:{operation}:{key}", a.id))
+            .bind(format!("broadcast:{}:{operation}:{key}", a.id))
             .execute(&mut *tx)
             .await?;
-        if let Some(prior)=sqlx::query("SELECT task_id,request_hash FROM broadcast_operations WHERE actor_id=$1 AND school_id=$2 AND operation=$3 AND idempotency_key=$4").bind(a.id).bind(s).bind(&operation).bind(&key).fetch_optional(&mut *tx).await? {
+        if let Some(prior)=sqlx::query("SELECT task_id,request_hash FROM broadcast_operations WHERE actor_id=$1  AND operation=$2 AND idempotency_key=$3").bind(a.id).bind(&operation).bind(&key).fetch_optional(&mut *tx).await? {
             if prior.get::<Uuid,_>("task_id")!=id || prior.get::<String,_>("request_hash")!=request_hash {return Err(Error::Conflict);}
             return Ok(());
         }
@@ -442,7 +440,7 @@ impl Repository {
                         .execute(&mut *tx)
                         .await?;
                     }
-                    sqlx::query("INSERT INTO broadcast_operations(id,school_id,task_id,batch_id,actor_id,operation,idempotency_key,request_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8)").bind(Uuid::now_v7()).bind(s).bind(id).bind(batch).bind(a.id).bind(&operation).bind(format!("child:{key}:{batch}")).bind(&request_hash).execute(&mut *tx).await?;
+                    sqlx::query("INSERT INTO broadcast_operations(id,task_id,batch_id,actor_id,operation,idempotency_key,request_hash) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(Uuid::now_v7()).bind(id).bind(batch).bind(a.id).bind(&operation).bind(format!("child:{key}:{batch}")).bind(&request_hash).execute(&mut *tx).await?;
                     queued += 1;
                 }
                 if operation == "remind" {
@@ -479,7 +477,7 @@ impl Repository {
                     )?;
                     if decision == "linked" {
                         let evidence = input.evidence_id.ok_or(Error::Conflict)?;
-                        sqlx::query("SELECT id FROM product_previews WHERE id=$1 AND school_id=$2 AND actor_id=$3 AND kind='broadcast_evidence' AND expires_at>now() AND payload->>'task'=$4 AND payload->>'batch'=$5 AND payload->>'msgid'=$6 FOR SHARE").bind(evidence).bind(s).bind(a.id).bind(id.to_string()).bind(batch.to_string()).bind(input.msgid.as_deref()).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
+                        sqlx::query("SELECT id FROM product_previews WHERE id=$1  AND actor_id=$2 AND kind='broadcast_evidence' AND expires_at>now() AND payload->>'task'=$3 AND payload->>'batch'=$4 AND payload->>'msgid'=$5 FOR SHARE").bind(evidence).bind(a.id).bind(id.to_string()).bind(batch.to_string()).bind(input.msgid.as_deref()).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
                         let msgid = input
                             .msgid
                             .as_deref()
@@ -492,17 +490,9 @@ impl Repository {
             }
             _ => return Err(Error::NotFound),
         }
-        sqlx::query("INSERT INTO broadcast_operations(id,school_id,task_id,actor_id,operation,idempotency_key,request_hash,state) VALUES($1,$2,$3,$4,$5,$6,$7,'done')").bind(Uuid::now_v7()).bind(s).bind(id).bind(a.id).bind(&operation).bind(key).bind(request_hash).execute(&mut *tx).await?;
-        event(&mut tx, s, id, Some(a.id), &operation, json!(input)).await?;
-        crate::audit::record(
-            &mut tx,
-            a,
-            s,
-            &format!("broadcast.{operation}"),
-            id,
-            json!({}),
-        )
-        .await?;
+        sqlx::query("INSERT INTO broadcast_operations(id,task_id,actor_id,operation,idempotency_key,request_hash,state) VALUES($1,$2,$3,$4,$5,$6,'done')").bind(Uuid::now_v7()).bind(id).bind(a.id).bind(&operation).bind(key).bind(request_hash).execute(&mut *tx).await?;
+        event(&mut tx, id, Some(a.id), &operation, json!(input)).await?;
+        crate::audit::record(&mut tx, a, &format!("broadcast.{operation}"), id, json!({})).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -511,13 +501,12 @@ impl Store for Repository {
     async fn action_replay(
         &self,
         a: &Actor,
-        s: Uuid,
         task: Uuid,
         operation: &str,
         key: &str,
         input: &Action,
     ) -> Result<bool> {
-        let row=sqlx::query("SELECT task_id,request_hash FROM broadcast_operations WHERE actor_id=$1 AND school_id=$2 AND operation=$3 AND idempotency_key=$4").bind(a.id).bind(s).bind(operation).bind(key).fetch_optional(&self.0).await?;
+        let row=sqlx::query("SELECT task_id,request_hash FROM broadcast_operations WHERE actor_id=$1  AND operation=$2 AND idempotency_key=$3").bind(a.id).bind(operation).bind(key).fetch_optional(&self.0).await?;
         if let Some(row) = row {
             require(
                 row.get::<Uuid, _>("task_id") == task
@@ -546,12 +535,11 @@ impl Store for Repository {
     async fn preview_response(
         &self,
         a: &Actor,
-        s: Uuid,
         key: &str,
         input_hash: &str,
     ) -> Result<Option<Value>> {
-        self.authorize(a.id, s, false).await?;
-        let row=sqlx::query("SELECT input_hash,response FROM broadcast_preview_intents WHERE school_id=$1 AND actor_id=$2 AND request_key=$3").bind(s).bind(a.id).bind(key).fetch_optional(&self.0).await?;
+        self.authorize(a.id, false).await?;
+        let row=sqlx::query("SELECT input_hash,response FROM broadcast_preview_intents WHERE actor_id=$1 AND request_key=$2").bind(a.id).bind(key).fetch_optional(&self.0).await?;
         if let Some(row) = row {
             require(
                 row.get::<String, _>("input_hash") == input_hash,
@@ -562,10 +550,10 @@ impl Store for Repository {
             Ok(None)
         }
     }
-    async fn evidence_query(&self, a: &Actor, s: Uuid, task: Uuid, batch: Uuid) -> Result<bool> {
+    async fn evidence_query(&self, a: &Actor, task: Uuid, batch: Uuid) -> Result<bool> {
         let mut tx = self.0.begin().await?;
-        authorize(&mut tx, a.id, s, true).await?;
-        sqlx::query("SELECT b.id FROM broadcast_batches b JOIN broadcast_tasks t ON t.id=b.task_id WHERE b.id=$1 AND t.id=$2 AND t.school_id=$3 AND b.state='unknown' FOR SHARE OF b,t").bind(batch).bind(task).bind(s).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
+        authorize(&mut tx, a.id, true).await?;
+        sqlx::query("SELECT b.id FROM broadcast_batches b JOIN broadcast_tasks t ON t.id=b.task_id WHERE b.id=$1 AND t.id=$2  AND b.state='unknown' FOR SHARE OF b,t").bind(batch).bind(task).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
         let n=sqlx::query("INSERT INTO broadcast_evidence_queries(actor_id,task_id,batch_id) VALUES($1,$2,$3) ON CONFLICT(actor_id,task_id,batch_id) DO UPDATE SET queried_at=now() WHERE broadcast_evidence_queries.queried_at<now()-interval '15 seconds'").bind(a.id).bind(task).bind(batch).execute(&mut *tx).await?.rows_affected();
         tx.commit().await?;
         Ok(n == 1)
@@ -573,7 +561,6 @@ impl Store for Repository {
     async fn evidence_save(
         &self,
         a: &Actor,
-        s: Uuid,
         task: Uuid,
         batch: Uuid,
         msgid: &str,
@@ -581,8 +568,8 @@ impl Store for Repository {
     ) -> Result<Value> {
         let mut tx = self.0.begin().await?;
         guard(&mut tx).await?;
-        authorize(&mut tx, a.id, s, true).await?;
-        sqlx::query("SELECT id FROM broadcast_batches WHERE id=$1 AND task_id=$2 AND school_id=$3 AND state='unknown' FOR SHARE").bind(batch).bind(task).bind(s).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
+        authorize(&mut tx, a.id, true).await?;
+        sqlx::query("SELECT id FROM broadcast_batches WHERE id=$1 AND task_id=$2  AND state='unknown' FOR SHARE").bind(batch).bind(task).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
         let sender:Option<String>=sqlx::query_scalar("SELECT a.display_name FROM broadcast_batches b JOIN accounts a ON a.id=b.sender_account WHERE b.id=$1").bind(batch).fetch_optional(&mut *tx).await?;
         summary["sender_name"] = json!(sender);
         // A candidate already claimed by another batch is never disclosed or reassigned.
@@ -591,7 +578,6 @@ impl Store for Repository {
         let result = super::product_preview::create(
             &mut tx,
             a,
-            Some(s),
             "broadcast_evidence",
             json!({"task":task,"batch":batch,"msgid":msgid}),
             summary.clone(),
@@ -600,17 +586,10 @@ impl Store for Repository {
         tx.commit().await?;
         Ok(json!({"id":result["id"],"summary":summary,"expires_at":result["expires_at"]}))
     }
-    async fn evidence(
-        &self,
-        a: &Actor,
-        s: Uuid,
-        task: Uuid,
-        batch: Uuid,
-        id: Uuid,
-    ) -> Result<String> {
+    async fn evidence(&self, a: &Actor, task: Uuid, batch: Uuid, id: Uuid) -> Result<String> {
         let mut tx = self.0.begin().await?;
-        authorize(&mut tx, a.id, s, true).await?;
-        let row:Value=sqlx::query_scalar("SELECT payload FROM product_previews WHERE id=$1 AND actor_id=$2 AND school_id=$3 AND kind='broadcast_evidence' AND expires_at>now()").bind(id).bind(a.id).bind(s).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
+        authorize(&mut tx, a.id, true).await?;
+        let row:Value=sqlx::query_scalar("SELECT payload FROM product_previews WHERE id=$1 AND actor_id=$2  AND kind='broadcast_evidence' AND expires_at>now()").bind(id).bind(a.id).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
         require(
             row["task"] == json!(task) && row["batch"] == json!(batch),
             "证据与核对对象不匹配",
@@ -621,37 +600,34 @@ impl Store for Repository {
             .ok_or(Error::Conflict)
     }
 
-    async fn draft_request(
-        &self,
-        actor: &Actor,
-        school: Uuid,
-        input: &DraftInput,
-    ) -> Result<Option<Task>> {
+    async fn draft_request(&self, actor: &Actor, input: &DraftInput) -> Result<Option<Task>> {
         let mut tx = self.0.begin().await?;
-        authorize(&mut tx, actor.id, school, input.source_task_id.is_some()).await?;
-        let id = super::content::find_draft_request(&mut tx, actor, school, input).await?;
+        authorize(&mut tx, actor.id, input.source_task_id.is_some()).await?;
+        let id = super::content::find_draft_request(&mut tx, actor, input).await?;
         if let Some(id) = id {
-            return Ok(Some(self.task(school, id).await?));
+            return Ok(Some(self.task(id).await?));
         }
         Ok(None)
     }
     async fn source_references(
         &self,
-        school: Uuid,
         ids: &[Uuid],
     ) -> Result<Vec<crate::distribution::domain::content::SourceReference>> {
-        super::content::forum_references(&self.0, school, ids).await
+        super::content::forum_references(&self.0, ids).await
     }
     async fn preview(
         &self,
         actor: &Actor,
-        school: Uuid,
         id: Uuid,
     ) -> Result<crate::distribution::domain::content::Preview> {
         let mut tx = self.0.begin().await?;
         guard(&mut tx).await?;
-        authorize(&mut tx, actor.id, school, false).await?;
-        sqlx::query("SELECT id FROM broadcast_tasks WHERE school_id=$1 AND id=$2 AND state='draft' FOR UPDATE").bind(school).bind(id).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
+        authorize(&mut tx, actor.id, false).await?;
+        sqlx::query("SELECT id FROM broadcast_tasks WHERE id=$1 AND state='draft' FOR UPDATE")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(Error::NotFound)?;
         Self::validate(&mut tx, id, None).await?;
         let preview = super::content::preview(&mut tx, id).await?;
         sqlx::query("UPDATE broadcast_previews SET actor_id=$2 WHERE task_id=$1")
@@ -662,12 +638,12 @@ impl Store for Repository {
         tx.commit().await?;
         Ok(preview)
     }
-    async fn authorize(&self, actor: Uuid, school: Uuid, admin: bool) -> Result<()> {
+    async fn authorize(&self, actor: Uuid, admin: bool) -> Result<()> {
         let mut tx = self.0.begin().await?;
         guard(&mut tx).await?;
-        authorize(&mut tx, actor, school, admin).await
+        authorize(&mut tx, actor, admin).await
     }
-    async fn execute(&self, a: &Actor, s: Uuid, command: Command) -> Result<Task> {
+    async fn execute(&self, a: &Actor, command: Command) -> Result<Task> {
         let id = match command {
             Command::Save {
                 id,
@@ -677,7 +653,7 @@ impl Store for Repository {
                 generation,
                 preview_key,
             } => {
-                self.save(a, s, id, input, materials, corp, generation, preview_key)
+                self.save(a, id, input, materials, corp, generation, preview_key)
                     .await?
             }
             Command::Action {
@@ -686,44 +662,42 @@ impl Store for Repository {
                 key,
                 input,
             } => {
-                self.action(a, s, id, operation, key, input).await?;
+                self.action(a, id, operation, key, input).await?;
                 id
             }
         };
-        self.task(s, id).await
+        self.task(id).await
     }
-    async fn task(&self, s: Uuid, id: Uuid) -> Result<Task> {
+    async fn task(&self, id: Uuid) -> Result<Task> {
         decode(
-            sqlx::query_scalar(&format!("{TASK} WHERE t.school_id=$1 AND t.id=$2"))
-                .bind(s)
+            sqlx::query_scalar(&format!("{TASK} WHERE t.id=$1"))
                 .bind(id)
                 .fetch_optional(&self.0)
                 .await?
                 .ok_or(Error::NotFound)?,
         )
     }
-    async fn list(&self, s: Uuid, page: Page) -> Result<Vec<Task>> {
+    async fn list(&self, page: Page) -> Result<Vec<Task>> {
         let (limit, offset) = page.fetch_bounds()?;
-        let rows:Vec<Value>=sqlx::query_scalar(&format!("{TASK} WHERE t.school_id=$1 AND ($4::text IS NULL OR t.state=$4 OR ($4='pending' AND t.state='confirmed' AND NOT t.stopped AND EXISTS(SELECT 1 FROM broadcast_targets x JOIN broadcast_batches b ON b.id=x.batch_id WHERE x.task_id=t.id AND b.state IN ('queued','submitting','created') AND NOT x.rejected AND (x.official_status IS NULL OR x.official_status=0))) OR ($4='issues' AND t.state='confirmed' AND EXISTS(SELECT 1 FROM broadcast_targets x JOIN broadcast_batches b ON b.id=x.batch_id WHERE x.task_id=t.id AND (x.rejected OR x.official_status IN (2,3) OR b.state IN ('rejected','unknown') OR b.sync_error IS NOT NULL OR b.stop_state IN ('unknown','rejected'))))) ORDER BY t.created_at DESC,t.id DESC LIMIT $2 OFFSET $3")).bind(s).bind(limit).bind(offset).bind(page.status.filter(|x|!x.is_empty())).fetch_all(&self.0).await?;
+        let rows:Vec<Value>=sqlx::query_scalar(&format!("{TASK} WHERE ($3::text IS NULL OR t.state=$3 OR ($3='pending' AND t.state='confirmed' AND NOT t.stopped AND EXISTS(SELECT 1 FROM broadcast_targets x JOIN broadcast_batches b ON b.id=x.batch_id WHERE x.task_id=t.id AND b.state IN ('queued','submitting','created') AND NOT x.rejected AND (x.official_status IS NULL OR x.official_status=0))) OR ($3='issues' AND t.state='confirmed' AND EXISTS(SELECT 1 FROM broadcast_targets x JOIN broadcast_batches b ON b.id=x.batch_id WHERE x.task_id=t.id AND (x.rejected OR x.official_status IN (2,3) OR b.state IN ('rejected','unknown') OR b.sync_error IS NOT NULL OR b.stop_state IN ('unknown','rejected'))))) ORDER BY t.created_at DESC,t.id DESC LIMIT $1 OFFSET $2")).bind(limit).bind(offset).bind(page.status.filter(|x|!x.is_empty())).fetch_all(&self.0).await?;
         rows.into_iter().map(decode).collect()
     }
-    async fn rows(&self, s: Uuid, id: Uuid, kind: &str, page: Page) -> Result<Vec<Value>> {
-        self.task(s, id).await?;
+    async fn rows(&self, id: Uuid, kind: &str, page: Page) -> Result<Vec<Value>> {
+        self.task(id).await?;
         let (limit, offset) = page.fetch_bounds()?;
         let sql = match kind {
             "targets" => {
-                "SELECT to_jsonb(x)||jsonb_build_object('execution_mode','official_customer_group_broadcast','sync_failures',b.sync_failures,'next_sync_at',b.next_sync_at,'evidence',COALESCE((SELECT to_jsonb(e) FROM channel_execution_observations e WHERE e.batch_id=b.id AND e.target_id=x.group_id ORDER BY e.id DESC LIMIT 1),(SELECT to_jsonb(e) FROM channel_execution_observations e WHERE e.batch_id=b.id AND e.target_id IS NULL ORDER BY e.id DESC LIMIT 1)),'sender',b.sender,'creation_state',b.state,'msgid',b.msgid,'member_status',b.member_status,'last_synced_at',b.last_synced_at,'sync_error',b.sync_error,'error_code',b.error_code,'stop_state',b.stop_state,'reconciliation',b.reconciliation,'operation_unknown',EXISTS(SELECT 1 FROM broadcast_operations o WHERE o.batch_id=b.id AND o.state='unknown')) FROM broadcast_targets x JOIN broadcast_batches b ON b.id=x.batch_id WHERE x.school_id=$1 AND x.task_id=$2 ORDER BY b.ordinal,x.group_name,x.id LIMIT $3 OFFSET $4"
+                "SELECT to_jsonb(x)||jsonb_build_object('execution_mode','official_customer_group_broadcast','sync_failures',b.sync_failures,'next_sync_at',b.next_sync_at,'evidence',COALESCE((SELECT to_jsonb(e) FROM channel_execution_observations e WHERE e.batch_id=b.id AND e.target_id=x.group_id ORDER BY e.id DESC LIMIT 1),(SELECT to_jsonb(e) FROM channel_execution_observations e WHERE e.batch_id=b.id AND e.target_id IS NULL ORDER BY e.id DESC LIMIT 1)),'sender',b.sender,'creation_state',b.state,'msgid',b.msgid,'member_status',b.member_status,'last_synced_at',b.last_synced_at,'sync_error',b.sync_error,'error_code',b.error_code,'stop_state',b.stop_state,'reconciliation',b.reconciliation,'operation_unknown',EXISTS(SELECT 1 FROM broadcast_operations o WHERE o.batch_id=b.id AND o.state='unknown')) FROM broadcast_targets x JOIN broadcast_batches b ON b.id=x.batch_id WHERE x.task_id=$1 ORDER BY b.ordinal,x.group_name,x.id LIMIT $2 OFFSET $3"
             }
             "observations" => {
-                "SELECT to_jsonb(e)||jsonb_build_object('id',e.id::text) FROM channel_execution_observations e WHERE e.workspace_id=$1 AND e.task_id=$2 AND e.channel='wecom' ORDER BY e.id DESC LIMIT $3 OFFSET $4"
+                "SELECT to_jsonb(e)||jsonb_build_object('id',e.id::text) FROM channel_execution_observations e WHERE e.task_id=$1 AND e.channel='wecom' ORDER BY e.id DESC LIMIT $2 OFFSET $3"
             }
             "events" => {
-                "SELECT jsonb_build_object('id',e.id,'created_at',e.created_at,'actor_name',coalesce(a.display_name,'系统'),'description',CASE e.action WHEN 'draft.saved' THEN '保存了群发草稿' WHEN 'confirm' THEN '确认创建官方群发任务' WHEN 'stop' THEN '申请停止任务' WHEN 'remind' THEN '申请提醒执行成员' WHEN 'reconcile' THEN '登记了人工核对结论' WHEN 'create.result' THEN '更新了官方任务创建结果' ELSE '更新了任务处理记录' END,'reason',coalesce(e.detail->>'reason','')) FROM broadcast_events e LEFT JOIN accounts a ON a.id=e.actor_id WHERE e.school_id=$1 AND e.task_id=$2 ORDER BY e.created_at DESC,e.id DESC LIMIT $3 OFFSET $4"
+                "SELECT jsonb_build_object('id',e.id,'created_at',e.created_at,'actor_name',coalesce(a.display_name,'系统'),'description',CASE e.action WHEN 'draft.saved' THEN '保存了群发草稿' WHEN 'confirm' THEN '确认创建官方群发任务' WHEN 'stop' THEN '申请停止任务' WHEN 'remind' THEN '申请提醒执行成员' WHEN 'reconcile' THEN '登记了人工核对结论' WHEN 'create.result' THEN '更新了官方任务创建结果' ELSE '更新了任务处理记录' END,'reason',coalesce(e.detail->>'reason','')) FROM broadcast_events e LEFT JOIN accounts a ON a.id=e.actor_id WHERE e.task_id=$1 ORDER BY e.created_at DESC,e.id DESC LIMIT $2 OFFSET $3"
             }
             _ => return Err(Error::NotFound),
         };
         let rows: Vec<Value> = sqlx::query_scalar(sql)
-            .bind(s)
             .bind(id)
             .bind(limit)
             .bind(offset)
@@ -743,11 +717,11 @@ impl Store for Repository {
         sqlx::query("UPDATE broadcast_operations SET state='unknown',error_code='interrupted' WHERE state='calling' AND claimed_at<now()-interval '2 minutes'").execute(&self.0).await?;
         sqlx::query("UPDATE broadcast_batches b SET stop_state='unknown' WHERE stop_state='requested' AND EXISTS(SELECT 1 FROM broadcast_operations o WHERE o.batch_id=b.id AND o.operation='stop' AND o.state='unknown')").execute(&self.0).await?;
         // A stop requested while creation was in flight must also cover its late msgid.
-        sqlx::query("INSERT INTO broadcast_operations(id,school_id,task_id,batch_id,actor_id,operation,idempotency_key,request_hash) SELECT gen_random_uuid(),b.school_id,b.task_id,b.id,o.actor_id,'stop','auto-stop:'||b.id::text,'late-created-stop' FROM broadcast_batches b JOIN broadcast_tasks t ON t.id=b.task_id JOIN LATERAL (SELECT actor_id FROM broadcast_operations WHERE task_id=t.id AND operation='stop' AND batch_id IS NULL ORDER BY created_at DESC LIMIT 1) o ON true WHERE t.stopped AND b.state='created' AND b.stop_state='none' ON CONFLICT(actor_id,school_id,operation,idempotency_key) DO NOTHING").execute(&self.0).await?;
+        sqlx::query("INSERT INTO broadcast_operations(id,task_id,batch_id,actor_id,operation,idempotency_key,request_hash) SELECT gen_random_uuid(),b.task_id,b.id,o.actor_id,'stop','auto-stop:'||b.id::text,'late-created-stop'  FROM broadcast_batches b JOIN broadcast_tasks t ON t.id=b.task_id JOIN LATERAL (SELECT actor_id FROM broadcast_operations WHERE task_id=t.id AND operation='stop' AND batch_id IS NULL ORDER BY created_at DESC LIMIT 1) o ON true WHERE t.stopped AND b.state='created' AND b.stop_state='none' ON CONFLICT(actor_id,operation,idempotency_key) DO NOTHING").execute(&self.0).await?;
         sqlx::query("UPDATE broadcast_batches b SET stop_state='requested' WHERE b.stop_state='none' AND EXISTS(SELECT 1 FROM broadcast_operations o WHERE o.batch_id=b.id AND o.operation='stop' AND o.state='pending')").execute(&self.0).await?;
         // Interleave creates and unresolved reads so each gets ten slots when busy,
         // borrowing unused slots from the other lane. Within each lane, offer each
-        // workspace a turn before returning to its backlog. Successful targets are
+        // channel a turn before returning to its backlog. Successful targets are
         // immutable; fully successful batches need no recurring official reads.
         let sql = if task.is_some() {
             format!("{WORK} WHERE t.id=$1 ORDER BY b.ordinal")
@@ -756,7 +730,7 @@ impl Store for Repository {
                 "WITH eligible AS (
                     SELECT b.id,b.msgid IS NOT NULL AS reading,b.next_sync_at,
                         coalesce(st.last_claimed_at,'-infinity'::timestamptz) AS source_turn,
-                        row_number() OVER(PARTITION BY (b.msgid IS NOT NULL),t.source_namespace,t.school_id ORDER BY b.next_sync_at,b.id) AS workspace_turn
+                        row_number() OVER(PARTITION BY (b.msgid IS NOT NULL),t.source_namespace ORDER BY b.next_sync_at,b.id) AS channel_turn
                     FROM broadcast_batches b JOIN broadcast_tasks t ON t.id=b.task_id
                     LEFT JOIN distribution_source_turns st ON st.source_namespace=t.source_namespace
                     WHERE t.state='confirmed' AND b.next_sync_at<=now() AND (
@@ -764,7 +738,7 @@ impl Store for Repository {
                         (b.msgid IS NOT NULL AND EXISTS(SELECT 1 FROM broadcast_targets x WHERE x.batch_id=b.id AND x.official_status IS DISTINCT FROM 1))
                     )
                 ), ranked AS (
-                    SELECT id,reading,row_number() OVER(PARTITION BY reading ORDER BY workspace_turn,source_turn,next_sync_at,id) AS lane_turn
+                    SELECT id,reading,row_number() OVER(PARTITION BY reading ORDER BY channel_turn,source_turn,next_sync_at,id) AS lane_turn
                     FROM eligible
                 )
                 {WORK} JOIN ranked r ON r.id=b.id ORDER BY r.lane_turn,r.reading LIMIT 20"
@@ -839,7 +813,6 @@ impl Store for Repository {
             let n=sqlx::query("UPDATE broadcast_batches SET state='submitting',invocation_id=$2,claimed_at=now(),submitted_at=clock_timestamp(),request_digest=$3,error_code=NULL WHERE id=$1 AND state='queued' AND invocation_id IS NULL").bind(w.id).bind(Uuid::now_v7()).bind(crate::business::hash(&json!({"operation":"create","sender":w.sender,"content":w.content,"chats":w.chats,"corp_id":w.corp_id,"generation":w.generation}).to_string())).execute(&mut *tx).await?.rows_affected();
             event(
                 &mut tx,
-                w.school_id,
                 w.task_id,
                 None,
                 "create.claimed",
@@ -864,13 +837,7 @@ impl Store for Repository {
         if o.get::<String, _>("state") != "pending" {
             return Ok(false);
         }
-        authorize(
-            &mut tx,
-            o.get("actor_id"),
-            w.school_id,
-            w.operation == "stop",
-        )
-        .await?;
+        authorize(&mut tx, o.get("actor_id"), w.operation == "stop").await?;
         let n=sqlx::query("UPDATE broadcast_operations SET state='calling',claimed_at=now() WHERE id=$1 AND state='pending'").bind(op).execute(&mut *tx).await?.rows_affected();
         tx.commit().await?;
         Ok(n == 1)
@@ -950,7 +917,6 @@ impl Store for Repository {
         }
         event(
             &mut tx,
-            w.school_id,
             w.task_id,
             None,
             &format!("{}.result", w.operation),

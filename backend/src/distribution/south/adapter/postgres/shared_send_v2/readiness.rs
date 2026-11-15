@@ -1,24 +1,24 @@
 //! Planning remains possible while device conditions are waiting.
 use super::*;
-pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> {
+pub(super) async fn resources(tx: &mut Tx<'_>) -> Result<Vec<Value>> {
     let policy = policy(tx).await?;
-    let rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(b)||jsonb_build_object('device_name',d.name,'target_name',t.search_text,'search_text',t.search_text,'online',coalesce(cp.state IN ('online','suspect'),false),'ui_ready',coalesce(rt.ui_ready AND NOT rt.paused AND rt.credential_generation=d.credential_generation AND rt.observed_at>clock_timestamp()-interval '30 seconds',false),'context_epoch',rd.ui_context_epoch,'runtime_observed_at',rt.observed_at,'runtime_fresh',coalesce(rt.credential_generation=d.credential_generation AND rd.credential_generation=d.credential_generation AND rt.observed_at>clock_timestamp()-interval '30 seconds' AND rd.observed_at>clock_timestamp()-interval '30 seconds',false),'runtime_conditions',rd.conditions,'runtime_reason',rd.ready_reason,'preparation',rd.preparation,'paused',coalesce(rt.paused,false)) FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id JOIN execution_devices d ON d.id=b.device_id LEFT JOIN device_control_presence cp ON cp.id=d.id LEFT JOIN mobile_shared_runtime rt ON rt.device_id=d.id LEFT JOIN mobile_v9_runtime_details rd ON rd.device_id=d.id WHERE b.school_id=$1 ORDER BY d.name,b.id").bind(school).fetch_all(&mut **tx).await?;
+    let rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(b)||jsonb_build_object('device_name',d.name,'target_name',t.search_text,'search_text',t.search_text,'online',coalesce(cp.state IN ('online','suspect'),false),'ui_ready',coalesce(rt.ui_ready AND NOT rt.paused AND rt.credential_generation=d.credential_generation AND rt.observed_at>clock_timestamp()-interval '30 seconds',false),'context_epoch',rd.ui_context_epoch,'runtime_observed_at',rt.observed_at,'runtime_fresh',coalesce(rt.credential_generation=d.credential_generation AND rd.credential_generation=d.credential_generation AND rt.observed_at>clock_timestamp()-interval '30 seconds' AND rd.observed_at>clock_timestamp()-interval '30 seconds',false),'runtime_conditions',rd.conditions,'runtime_reason',rd.ready_reason,'preparation',rd.preparation,'paused',coalesce(rt.paused,false)) FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id JOIN execution_devices d ON d.id=b.device_id LEFT JOIN device_control_presence cp ON cp.id=d.id LEFT JOIN mobile_shared_runtime rt ON rt.device_id=d.id LEFT JOIN mobile_v9_runtime_details rd ON rd.device_id=d.id  ORDER BY d.name,b.id").fetch_all(&mut **tx).await?;
     let mut result = Vec::new();
     for row in rows {
-        let candidate = tasks::raw_candidates(tx, school, uid(&row, "target_id")?)
+        let candidate = tasks::raw_candidates(tx, uid(&row, "target_id")?)
             .await?
             .into_iter()
             .find(|c| c["device_id"] == row["device_id"]);
         let selectable = candidate.is_some();
         let confirmable = if let Some(ref c) = candidate {
-            tasks::validate_plan(tx, school, c).await.is_ok()
+            tasks::validate_plan(tx, c).await.is_ok()
         } else {
             false
         };
         let inspection: Option<Value> = None;
         let accepted = candidate.as_ref().is_some_and(|c| c["accepted"] == true);
         let scope_exists = if let Some(ref c) = candidate {
-            tasks::validate_scope(tx, school, c).await.is_ok()
+            tasks::validate_scope(tx, c).await.is_ok()
         } else {
             false
         };
@@ -39,9 +39,7 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
             );
         }
         if !scope_exists && selectable {
-            blockers.push(
-                scope_issue(tx, school, uid(&row, "device_id")?, uid(&row, "target_id")?).await?,
-            );
+            blockers.push(scope_issue(tx, uid(&row, "device_id")?, uid(&row, "target_id")?).await?);
         }
         let consent_state = candidate
             .as_ref()
@@ -64,8 +62,8 @@ pub(super) async fn school(tx: &mut Tx<'_>, school: Uuid) -> Result<Vec<Value>> 
     }
     Ok(result)
 }
-pub(super) async fn pool(tx: &mut Tx<'_>, s: Uuid) -> Result<Vec<Value>> {
-    sqlx::query_scalar("SELECT jsonb_build_object('id',d.id,'name',d.name,'access_revision',a.revision) FROM mobile_shared_school_access a JOIN execution_devices d ON d.id=a.device_id JOIN mobile_workspaces s ON s.id=a.school_id WHERE a.school_id=$1 AND a.enabled AND d.enabled AND s.active ORDER BY d.name,d.id").bind(s).fetch_all(&mut **tx).await.map_err(Into::into)
+pub(super) async fn pool(tx: &mut Tx<'_>) -> Result<Vec<Value>> {
+    sqlx::query_scalar("SELECT jsonb_build_object('id',id,'name',name) FROM execution_devices WHERE enabled ORDER BY name,id").fetch_all(&mut **tx).await.map_err(Into::into)
 }
 
 fn condition(code: &str, message: &str, owner: &str, action: &str, automatic: bool) -> Value {
@@ -199,24 +197,21 @@ fn execution_conditions(row: &Value, consent: &str, busy: bool, mode: Option<&st
     }
     conditions
 }
-async fn scope_issue(tx: &mut Tx<'_>, school: Uuid, device: Uuid, target: Uuid) -> Result<Value> {
+async fn scope_issue(tx: &mut Tx<'_>, device: Uuid, target: Uuid) -> Result<Value> {
     // Reuse the single business judgment that also gates preview, confirm and claim,
     // so the readiness page never guesses a different reason than the real rejection.
     // Only an explicit pause, revocation or expiry blocks; pending, declined and
     // superseded history, or a projection still being reconciled, are not a disable.
-    let (code, message) = match tasks::scope_control(tx, school, device, target).await? {
+    let (code, message) = match tasks::scope_control(tx, device, target).await? {
         tasks::ScopeControl::Revoked => (
             "business_scope_revoked",
-            "此工作空间使用范围已撤销，手机托管同意不受此状态说明影响",
+            "此使用授权已撤销，手机托管同意不受此状态说明影响",
         ),
         tasks::ScopeControl::Paused => (
             "business_scope_paused",
-            "此工作空间使用范围已暂停，请在使用管理恢复",
+            "此使用授权已暂停，请在使用管理恢复",
         ),
-        tasks::ScopeControl::Expired => (
-            "business_scope_expired",
-            "此工作空间使用范围已到期，请办理续期",
-        ),
+        tasks::ScopeControl::Expired => ("business_scope_expired", "此使用授权已到期，请办理续期"),
         // Authorized never reaches here because validate_scope already passed; kept as
         // a non-blocking note should the execution projection still be reconciling.
         tasks::ScopeControl::Authorized => (
@@ -227,8 +222,8 @@ async fn scope_issue(tx: &mut Tx<'_>, school: Uuid, device: Uuid, target: Uuid) 
     Ok(condition(
         code,
         message,
-        "school",
-        "查看当前工作空间手机与目标群使用管理",
+        "admin",
+        "查看手机与目标群使用管理",
         code == "business_scope_sync_pending",
     ))
 }

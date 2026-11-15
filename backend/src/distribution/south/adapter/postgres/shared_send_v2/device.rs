@@ -1,7 +1,6 @@
 use super::*;
 pub(super) async fn quota(
     tx: &mut Tx<'_>,
-    s: Uuid,
     device: Uuid,
     target: Uuid,
     attempt: Uuid,
@@ -12,15 +11,15 @@ pub(super) async fn quota(
         .ok_or(Error::Policy("shared_send_not_released"))?;
     let frozen:Option<Value>=sqlx::query_scalar("SELECT coalesce(to_jsonb(policy),nullif(u.body->'scheme','null'::jsonb),to_jsonb(task_policy),$2::jsonb) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id LEFT JOIN mobile_usage_scopes m ON m.scope_id=(p.plan->>'scope_id')::uuid LEFT JOIN mobile_usages u ON u.id=m.usage_id LEFT JOIN mobile_v9_send_policy_versions policy ON policy.id=(u.body->>'scheme_id')::uuid LEFT JOIN mobile_v9_send_policy_versions task_policy ON task_policy.id=(p.plan->>'policy_id')::uuid WHERE a.id=$1").bind(attempt).bind(default_policy()).fetch_optional(&mut **tx).await?;
     if let Some(original) = frozen.filter(|p| p.is_object())
-        && !quota_policy(tx, s, device, target, attempt, &original, false).await?
+        && !quota_policy(tx, device, target, attempt, &original, false).await?
     {
         return Ok(false);
     }
-    if !quota_policy(tx, s, device, target, attempt, &p, false).await? {
+    if !quota_policy(tx, device, target, attempt, &p, false).await? {
         return Ok(false);
     }
     if reserve {
-        quota_policy(tx, s, device, target, attempt, &p, true).await
+        quota_policy(tx, device, target, attempt, &p, true).await
     } else {
         Ok(true)
     }
@@ -30,7 +29,6 @@ pub(super) async fn frozen_policy(tx: &mut Tx<'_>, attempt: Uuid) -> Result<Valu
 }
 async fn quota_policy(
     tx: &mut Tx<'_>,
-    s: Uuid,
     device: Uuid,
     target: Uuid,
     attempt: Uuid,
@@ -50,9 +48,8 @@ async fn quota_policy(
 
     let keys = [
         ("global".to_owned(), limits.global),
-        (format!("school:{s}"), limits.school),
         (format!("device:{device}"), limits.device),
-        (format!("target:{s}:{target}"), limits.target),
+        (format!("target:{target}"), limits.target),
     ];
     for (key, l) in &keys {
         let row=sqlx::query("SELECT count(*) FILTER (WHERE recorded_at>clock_timestamp()-make_interval(secs=>$2::double precision)) AS used,coalesce(bool_or(recorded_at>clock_timestamp()-make_interval(secs=>$3::double precision)),false) AS cooling FROM mobile_v9_quota_reservations WHERE dimension_key=$1 AND state<>'released' AND attempt_id<>$4 AND (recorded_at>clock_timestamp()-make_interval(secs=>greatest($2::double precision,$3::double precision)))").bind(key).bind(l.window_seconds as f64).bind(l.interval_seconds as f64).bind(attempt).fetch_one(&mut **tx).await?;

@@ -5,18 +5,13 @@ use crate::{
 };
 use axum::{
     Router,
-    extract::{Path, Query, State},
+    extract::{Query, State},
     routing::get,
 };
-use uuid::Uuid;
-async fn templates(
-    State(a): State<Application>,
-    actor: Actor,
-    Path(s): Path<Uuid>,
-) -> Result<ApiResponse> {
+async fn templates(State(a): State<Application>, actor: Actor) -> Result<ApiResponse> {
     Ok(resource(
         "templates",
-        a.distribution.templates(&actor, s).await?,
+        a.distribution.templates(&actor).await?,
     ))
 }
 async fn capability(State(a): State<Application>, _actor: Actor) -> ApiResponse {
@@ -30,12 +25,11 @@ async fn capability(State(a): State<Application>, _actor: Actor) -> ApiResponse 
 async fn materials(
     State(a): State<Application>,
     actor: Actor,
-    Path(s): Path<Uuid>,
     Query(page): Query<Page>,
 ) -> Result<ApiResponse> {
     Ok(collection(
         "distribution-materials",
-        a.distribution.materials(&actor, s, page.clone()).await?,
+        a.distribution.materials(&actor, page.clone()).await?,
         &page,
     ))
 }
@@ -43,13 +37,10 @@ pub fn router() -> Router<Application> {
     Router::new()
         .route("/api/v1/capabilities", get(capability))
         .route(
-            "/api/v1/wecom-distribution/workspaces/{workspace}/distribution-materials",
+            "/api/v1/wecom-distribution/distribution-materials",
             get(materials),
         )
-        .route(
-            "/api/v1/wecom-distribution/workspaces/{workspace}/templates",
-            get(templates),
-        )
+        .route("/api/v1/wecom-distribution/templates", get(templates))
 }
 
 pub mod device_registry;
@@ -61,10 +52,6 @@ pub mod shared_mobile_resources;
 pub mod shared_send_v2;
 
 pub mod workflows;
-
-pub mod mobile_workspaces;
-
-pub mod wecom_workspaces;
 
 pub mod groups;
 pub mod receiving;

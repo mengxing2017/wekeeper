@@ -58,10 +58,7 @@ async fn devices(
         .device_registry()
         .query(
             Principal::Actor(actor.id),
-            Scope {
-                school: None,
-                id: None,
-            },
+            Scope { id: None },
             Read::Devices,
             page.clone(),
         )
@@ -78,10 +75,7 @@ async fn create_device(
         .device_registry()
         .execute(
             Principal::Actor(actor.id),
-            Scope {
-                school: None,
-                id: None,
-            },
+            Scope { id: None },
             key(&headers),
             command(input, "execution-devices", "create_device")?,
         )
@@ -98,10 +92,7 @@ async fn device(
         .device_registry()
         .query(
             Principal::Actor(actor.id),
-            Scope {
-                school: None,
-                id: Some(id),
-            },
+            Scope { id: Some(id) },
             Read::Device,
             page.clone(),
         )
@@ -119,10 +110,7 @@ async fn update_device(
         .device_registry()
         .execute(
             Principal::Actor(actor.id),
-            Scope {
-                school: None,
-                id: Some(id),
-            },
+            Scope { id: Some(id) },
             key(&headers),
             command(input, "execution-devices", "update_device")?,
         )
@@ -140,10 +128,7 @@ async fn enrollment(
         .device_registry()
         .execute(
             Principal::Actor(actor.id),
-            Scope {
-                school: None,
-                id: Some(id),
-            },
+            Scope { id: Some(id) },
             key(&headers),
             command(input, "device-enrollments", "enrollment")?,
         )
@@ -161,10 +146,7 @@ async fn revoke(
         .device_registry()
         .execute(
             Principal::Actor(actor.id),
-            Scope {
-                school: None,
-                id: Some(id),
-            },
+            Scope { id: Some(id) },
             key(&headers),
             command(input, "execution-devices", "revoke")?,
         )
@@ -180,10 +162,7 @@ async fn enroll(
         .device_registry()
         .execute(
             Principal::Enrollment,
-            Scope {
-                school: None,
-                id: None,
-            },
+            Scope { id: None },
             key(&headers),
             command(input, "device-credentials", "enroll")?,
         )
@@ -208,10 +187,7 @@ async fn rotate(
                 id: c.device_id,
                 generation: c.generation,
             },
-            Scope {
-                school: None,
-                id: None,
-            },
+            Scope { id: None },
             key(&headers),
             command(input, "device-credentials", "rotate")?,
         )

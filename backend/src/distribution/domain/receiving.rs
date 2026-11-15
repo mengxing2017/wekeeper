@@ -140,7 +140,7 @@ mod tests {
 pub struct DeliveryPlan {
     pub id: Uuid,
     pub configuration_id: Uuid,
-    pub workspace_id: Uuid,
+
     pub channel: Channel,
     pub authorized_by: Uuid,
     pub targets: Vec<DeliveryTarget>,

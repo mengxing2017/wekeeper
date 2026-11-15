@@ -388,7 +388,7 @@ mod tests {
     async fn secret_read_checks_management_permission_before_database_access() {
         let actor: Actor = serde_json::from_value(json!({
             "id":uuid::Uuid::nil(),"username":"operator","display_name":"operator",
-            "platform_admin":false,"bound_school_id":null,"grants":[],"wecom_authenticated":false
+            "platform_admin":false,"wecom_authenticated":false
         }))
         .unwrap();
         let pool = sqlx::postgres::PgPoolOptions::new()

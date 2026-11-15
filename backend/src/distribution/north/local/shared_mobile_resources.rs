@@ -10,44 +10,33 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct Service<R = Repository>(pub R);
 impl<R: Store> Service<R> {
-    pub async fn target(&self, actor: &Actor, school: Uuid, id: Uuid) -> Result<Value> {
-        self.0.target(actor, school, id).await
+    pub async fn target(&self, actor: &Actor, id: Uuid) -> Result<Value> {
+        self.0.target(actor, id).await
     }
 
     pub async fn list(
         &self,
         actor: &Actor,
-        school: Option<Uuid>,
         resource: Resource,
         page: Page,
         search: String,
         device: Option<Uuid>,
     ) -> Result<Vec<Value>> {
-        if school.is_none() && !actor.platform_admin {
-            return Err(crate::business::Error::Forbidden);
-        }
+        actor.platform()?;
         page.fetch_bounds()?;
-        self.0
-            .list(actor, school, resource, page, search, device)
-            .await
+        self.0.list(actor, resource, page, search, device).await
     }
     pub async fn write(
         &self,
         actor: &Actor,
-        school: Option<Uuid>,
         action: &str,
         id: Option<Uuid>,
         key: &str,
         input: Value,
     ) -> Result<Value> {
-        if school.is_some() && matches!(action, "bind" | "update-binding" | "revoke-binding") {
-            return Err(crate::business::Error::Forbidden);
-        }
-        if school.is_none() && !actor.platform_admin {
-            return Err(crate::business::Error::Forbidden);
-        }
+        actor.platform()?;
         self.0
-            .write(actor, school, action, id, &text(key, 1, 128)?, input)
+            .write(actor, action, id, &text(key, 1, 128)?, input)
             .await
     }
 }

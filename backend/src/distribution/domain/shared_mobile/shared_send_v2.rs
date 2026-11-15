@@ -8,7 +8,7 @@ pub const SCHEMA: &str = "shared_mobile_send/2";
 pub const SCOPE: &str = "shared_mobile_device_delegation/1";
 pub fn delegation_scope(platform: Uuid, device: Uuid, generation: i64) -> Value {
     serde_json::json!({"schema":SCOPE,"platform_id":platform,"device_id":device,"credential_generation":generation,
-        "package_name":"com.tencent.wework","capability":"group_text","resource_policy":"platform_managed_school_targets",
+        "package_name":"com.tencent.wework","capability":"group_text","resource_policy":"platform_managed_targets",
         "background_collection":true,"automatic_inspection":true,"text_input":true,"single_use_send":true})
 }
 /// A read observation; it never grants a lease, consent or a send permission.
@@ -321,13 +321,12 @@ pub struct Limit {
 #[serde(deny_unknown_fields)]
 pub struct Limits {
     pub global: Limit,
-    pub school: Limit,
     pub device: Limit,
     pub target: Limit,
 }
 impl Limits {
     pub fn validate(&self) -> Result<()> {
-        for v in [&self.global, &self.school, &self.device, &self.target] {
+        for v in [&self.global, &self.device, &self.target] {
             require(
                 (1..=86400).contains(&v.interval_seconds)
                     && (1..=2592000).contains(&v.window_seconds)
@@ -423,22 +422,6 @@ pub struct Reassignment {
     pub expected_revision: i64,
     pub device_id: Uuid,
     pub reason: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct SchoolAccessInput {
-    pub device_id: Uuid,
-    pub school_id: Uuid,
-    pub expected_revision: i64,
-    pub enabled: bool,
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct PoolBindingInput {
-    pub target_id: Uuid,
-    pub device_id: Uuid,
-    pub expected_access_revision: i64,
 }
 
 /// Display identity belongs to a target, even when no phone qualifies.
@@ -581,13 +564,12 @@ pub struct AcceptanceInput {
 #[serde(deny_unknown_fields)]
 pub struct ScopeInput {
     pub acceptance_id: Uuid,
-    pub school_id: Uuid,
+
     pub device_ids: Vec<Uuid>,
     pub target_ids: Vec<Uuid>,
     pub auto_targets: bool,
     pub max_calls: i64,
     pub expires_at: chrono::DateTime<chrono::Utc>,
-    pub expected_access: std::collections::BTreeMap<Uuid, i64>,
     pub reason: String,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -600,7 +582,7 @@ pub struct RevocationInput {
 #[serde(deny_unknown_fields)]
 pub struct SupportInput {
     pub device_id: Uuid,
-    pub school_id: Option<Uuid>,
+
     pub reason: String,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -722,7 +704,7 @@ pub struct DispatchSnapshot {
 #[serde(deny_unknown_fields)]
 pub struct DispatchAssignment {
     pub id: Uuid,
-    pub school_id: Uuid,
+
     pub old_attempt_id: Uuid,
     pub new_attempt_id: Uuid,
     pub actor_id: Uuid,

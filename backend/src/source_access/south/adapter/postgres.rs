@@ -598,7 +598,6 @@ impl Repository {
         crate::audit::record(
             &mut tx,
             a,
-            Uuid::nil(),
             "source.management.write",
             source,
             json!({"kind":kind,"id":object,"method":method}),
@@ -658,7 +657,7 @@ impl Repository {
             json!({}),
         )
         .await?;
-        crate::audit::record(&mut tx, a, Uuid::nil(), "source.credential.secret_reveal", source, json!({"key_id":key}))
+        crate::audit::record(&mut tx, a, "source.credential.secret_reveal", source, json!({"key_id":key}))
             .await.map_err(|error| {
                 tracing::error!(request_id=%a.request_id,error=%error,"source secret access audit failed");
                 Fault("temporarily_unavailable")
@@ -708,7 +707,6 @@ impl Repository {
         crate::audit::record(
             &mut tx,
             a,
-            Uuid::nil(),
             "source.management.read",
             a.id,
             json!({"kind":kind,"allowed":a.platform_admin}),

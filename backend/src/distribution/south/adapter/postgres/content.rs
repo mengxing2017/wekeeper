@@ -9,55 +9,44 @@ use crate::{
 use sqlx::{PgPool, Postgres, Row, Transaction};
 use uuid::Uuid;
 type Tx<'a> = Transaction<'a, Postgres>;
-pub async fn forum_references(
-    pool: &PgPool,
-    school: Uuid,
-    ids: &[Uuid],
-) -> Result<Vec<SourceReference>> {
+pub async fn forum_references(pool: &PgPool, ids: &[Uuid]) -> Result<Vec<SourceReference>> {
     let mut out = Vec::new();
     for id in ids {
-        let version:String=sqlx::query_scalar("SELECT version FROM distribution_materials WHERE namespace='builtin.forum' AND school_id=$1 AND external_organization_id=$1::text AND external_content_id=$2 AND allowed")
-            .bind(school).bind(id.to_string()).fetch_optional(pool).await?.ok_or(Error::Conflict)?;
+        let source:(String,String)=sqlx::query_as("SELECT external_organization_id,version FROM distribution_materials WHERE namespace='builtin.forum'  AND external_content_id=$1 AND allowed").bind(id.to_string()).fetch_optional(pool).await?.ok_or(Error::Conflict)?;
         out.push(SourceReference {
             namespace: "builtin.forum".into(),
-            external_organization_id: school.to_string(),
+            external_organization_id: source.0,
             external_content_id: id.to_string(),
-            version,
+            version: source.1,
         });
     }
     Ok(out)
 }
-pub async fn validate_materials(
-    tx: &mut Tx<'_>,
-    school: Uuid,
-    materials: &[Material],
-) -> Result<()> {
+pub async fn validate_materials(tx: &mut Tx<'_>, materials: &[Material]) -> Result<()> {
     for material in materials {
         let r = &material.reference;
-        sqlx::query("SELECT m.version FROM distribution_materials m JOIN distribution_sources s USING(namespace) JOIN distribution_source_organizations o USING(namespace,external_organization_id,school_id) WHERE m.namespace=$1 AND m.external_organization_id=$2 AND m.external_content_id=$3 AND m.school_id=$4 AND m.version=$5 AND m.allowed AND m.title=$6 AND m.content=$7 AND s.enabled AND o.enabled FOR SHARE OF m,s,o")
-            .bind(&r.namespace).bind(&r.external_organization_id).bind(&r.external_content_id).bind(school).bind(&r.version).bind(&material.title).bind(&material.content).fetch_optional(&mut **tx).await?.ok_or(Error::Conflict)?;
+        sqlx::query("SELECT m.version FROM distribution_materials m JOIN distribution_sources s USING(namespace) JOIN distribution_source_organizations o USING(namespace,external_organization_id) WHERE m.namespace=$1 AND m.external_organization_id=$2 AND m.external_content_id=$3  AND m.version=$4 AND m.allowed AND m.title=$5 AND m.content=$6 AND s.enabled AND o.enabled FOR SHARE OF m,s,o")
+            .bind(&r.namespace).bind(&r.external_organization_id).bind(&r.external_content_id).bind(&r.version).bind(&material.title).bind(&material.content).fetch_optional(&mut **tx).await?.ok_or(Error::Conflict)?;
     }
     Ok(())
 }
 pub async fn save_snapshot(
     tx: &mut Tx<'_>,
-    school: Uuid,
     task: Uuid,
     content: &str,
     materials: &[Material],
 ) -> Result<()> {
     let snapshot = Uuid::now_v7();
-    sqlx::query("INSERT INTO distribution_message_snapshots(id,school_id,channel,content,content_hash,source_references) VALUES($1,$2,'wecom',$3,$4,$5)")
-        .bind(snapshot).bind(school).bind(content).bind(hash(content)).bind(serde_json::json!(materials.iter().map(|m| &m.reference).collect::<Vec<_>>())).execute(&mut **tx).await?;
-    sqlx::query("INSERT INTO broadcast_task_snapshots SELECT school_id,id,revision,$2 FROM broadcast_tasks WHERE id=$1").bind(task).bind(snapshot).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO distribution_message_snapshots(id,channel,content,content_hash,source_references) VALUES($1,'wecom',$2,$3,$4)")
+        .bind(snapshot).bind(content).bind(hash(content)).bind(serde_json::json!(materials.iter().map(|m| &m.reference).collect::<Vec<_>>())).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO broadcast_task_snapshots SELECT id,revision,$2 FROM broadcast_tasks WHERE id=$1").bind(task).bind(snapshot).execute(&mut **tx).await?;
     sqlx::query("DELETE FROM broadcast_content_references WHERE task_id=$1")
         .bind(task)
         .execute(&mut **tx)
         .await?;
     for (position, material) in materials.iter().enumerate() {
         let r = &material.reference;
-        sqlx::query("INSERT INTO broadcast_content_references VALUES($1,$2,$3,$4,$5,$6,$7)")
-            .bind(school)
+        sqlx::query("INSERT INTO broadcast_content_references VALUES($1,$2,$3,$4,$5,$6)")
             .bind(task)
             .bind(position as i32)
             .bind(&r.namespace)
@@ -74,21 +63,21 @@ pub async fn save_snapshot(
     Ok(())
 }
 pub async fn validate_task(tx: &mut Tx<'_>, task: Uuid) -> Result<()> {
-    let row=sqlx::query("SELECT t.state,t.content_source,t.source_namespace,t.authorization_kind,t.school_id,t.content,s.enabled,s.max_pending FROM broadcast_tasks t JOIN distribution_sources s ON s.namespace=t.source_namespace WHERE t.id=$1 FOR SHARE OF s")
+    let row=sqlx::query("SELECT t.state,t.content_source,t.source_namespace,t.authorization_kind,t.content,s.enabled,s.max_pending FROM broadcast_tasks t JOIN distribution_sources s ON s.namespace=t.source_namespace WHERE t.id=$1 FOR SHARE OF s")
         .bind(task).fetch_one(&mut **tx).await?;
     let frozen = row.get::<String, _>("state") == "confirmed";
     if !frozen {
         require(row.get("enabled"), "内容来源已暂停")?;
     }
-    let refs=sqlx::query("SELECT r.*,m.version AS current_version,m.allowed,o.enabled AS organization_enabled FROM broadcast_content_references r LEFT JOIN distribution_materials m USING(namespace,external_organization_id,external_content_id,school_id) LEFT JOIN distribution_source_organizations o USING(namespace,external_organization_id,school_id) WHERE r.task_id=$1 ORDER BY r.position")
+    let refs=sqlx::query("SELECT r.*,m.version AS current_version,m.allowed,o.enabled AS organization_enabled FROM broadcast_content_references r LEFT JOIN distribution_materials m USING(namespace,external_organization_id,external_content_id) LEFT JOIN distribution_source_organizations o USING(namespace,external_organization_id) WHERE r.task_id=$1 ORDER BY r.position")
         .bind(task).fetch_all(&mut **tx).await?;
     let namespace: String = row.get("source_namespace");
     if row.get::<String, _>("content_source") == "text" {
         // Automatic messages use the durable delegation and frozen snapshot.
         let source_route = namespace == "builtin.source-route"
             && row.get::<String, _>("authorization_kind") == "source_route"
-            && sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM orchestration_delegates WHERE task_id=$1 AND channel='wecom' AND storage_scope=$2)")
-                .bind(task).bind(row.get::<Uuid,_>("school_id")).fetch_one(&mut **tx).await?;
+            && sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM orchestration_delegates WHERE task_id=$1 AND channel='wecom' )")
+                .bind(task).fetch_one(&mut **tx).await?;
         require(
             refs.is_empty() && (namespace == "builtin.direct" || source_route),
             "来源不匹配",
@@ -99,8 +88,8 @@ pub async fn validate_task(tx: &mut Tx<'_>, task: Uuid) -> Result<()> {
         // their immutable content and references even if the source later changes.
         for r in &refs {
             if !frozen {
-                sqlx::query("SELECT m.version FROM distribution_materials m JOIN distribution_source_organizations o USING(namespace,external_organization_id,school_id) WHERE m.namespace=$1 AND m.external_organization_id=$2 AND m.external_content_id=$3 AND m.school_id=$4 AND m.version=$5 AND m.allowed AND o.enabled FOR SHARE OF m,o")
-                .bind(r.get::<String,_>("namespace")).bind(r.get::<String,_>("external_organization_id")).bind(r.get::<String,_>("external_content_id")).bind(row.get::<Uuid,_>("school_id")).bind(r.get::<String,_>("version")).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("source_content_unavailable"))?;
+                sqlx::query("SELECT m.version FROM distribution_materials m JOIN distribution_source_organizations o USING(namespace,external_organization_id) WHERE m.namespace=$1 AND m.external_organization_id=$2 AND m.external_content_id=$3  AND m.version=$4 AND m.allowed AND o.enabled FOR SHARE OF m,o")
+                .bind(r.get::<String,_>("namespace")).bind(r.get::<String,_>("external_organization_id")).bind(r.get::<String,_>("external_content_id")).bind(r.get::<String,_>("version")).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("source_content_unavailable"))?;
             }
             require(r.get::<String, _>("namespace") == namespace, "来源不匹配")?;
         }
@@ -175,15 +164,14 @@ fn draft_namespace(input: &crate::distribution::domain::broadcast::DraftInput) -
 pub async fn find_draft_request(
     tx: &mut Tx<'_>,
     actor: &crate::business::Actor,
-    school: Uuid,
     input: &crate::distribution::domain::broadcast::DraftInput,
 ) -> Result<Option<Uuid>> {
     let Some(key) = input.request_key.as_deref() else {
         return Ok(None);
     };
     require(!key.is_empty() && key.len() <= 128, "草稿幂等键无效")?;
-    let row=sqlx::query("SELECT request_hash,task_id FROM broadcast_draft_requests WHERE source_namespace=$1 AND school_id=$2 AND actor_id=$3 AND request_key=$4")
-        .bind(draft_namespace(input)).bind(school).bind(actor.id).bind(key).fetch_optional(&mut **tx).await?;
+    let row=sqlx::query("SELECT request_hash,task_id FROM broadcast_draft_requests WHERE source_namespace=$1  AND actor_id=$2 AND request_key=$3")
+        .bind(draft_namespace(input)).bind(actor.id).bind(key).fetch_optional(&mut **tx).await?;
     if let Some(row) = row {
         require(
             row.get::<String, _>("request_hash") == hash(&serde_json::json!(input).to_string()),
@@ -197,13 +185,11 @@ pub async fn find_draft_request(
 pub async fn record_draft_request(
     tx: &mut Tx<'_>,
     actor: &crate::business::Actor,
-    school: Uuid,
     task: Uuid,
     input: &crate::distribution::domain::broadcast::DraftInput,
 ) -> Result<()> {
     if let Some(key) = input.request_key.as_deref() {
-        sqlx::query("INSERT INTO broadcast_draft_requests VALUES($1,$2,$3,$4,$5,$6)")
-            .bind(school)
+        sqlx::query("INSERT INTO broadcast_draft_requests VALUES($1,$2,$3,$4,$5)")
             .bind(draft_namespace(input))
             .bind(actor.id)
             .bind(key)

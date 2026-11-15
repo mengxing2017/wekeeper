@@ -9,7 +9,6 @@ pub async fn create(
     authorizer: Uuid,
     snapshot_id: Uuid,
 ) -> Result<Uuid> {
-    let s = snapshot.workspace_id;
     // Explicit source-route authorization was checked before this internal call.
     let input = DraftInput {
         target_ids: snapshot.targets.iter().map(|t| t.id).collect(),
@@ -22,7 +21,7 @@ pub async fn create(
     let draft = Uuid::now_v7();
     let intent = Uuid::now_v7();
     let preview = Uuid::now_v7();
-    sqlx::query("INSERT INTO mobile_v9_task_drafts(id,school_id,intent_id,actor_id,target_ids,message,content_digest,between_targets_seconds) VALUES($1,$2,$3,$4,$5,$6,$7,$8)").bind(draft).bind(s).bind(intent).bind(authorizer).bind(&input.target_ids).bind(&input.message).bind(hash(&input.message)).bind(input.between_targets_seconds).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO mobile_v9_task_drafts(id,intent_id,actor_id,target_ids,message,content_digest,between_targets_seconds) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(draft).bind(intent).bind(authorizer).bind(&input.target_ids).bind(&input.message).bind(hash(&input.message)).bind(input.between_targets_seconds).execute(&mut **tx).await?;
     let mut items = Vec::new();
     for (position, target) in snapshot.targets.iter().enumerate() {
         let mut candidates = target.identity["candidates"]
@@ -31,18 +30,18 @@ pub async fn create(
             .clone();
         require(!candidates.is_empty(), "mobile_candidates_missing")?;
         for c in &mut candidates {
-            if let Some(scope) = tasks::grant(tx, s, c).await? {
+            if let Some(scope) = tasks::grant(tx, c).await? {
                 c["scope_id"] = scope["id"].clone();
             }
-            tasks::validate_plan(tx, s, c).await?;
+            tasks::validate_plan(tx, c).await?;
             c["confirmable"] = json!(true);
         }
         items.push(json!({"position":position,"target_id":target.id,"selected":candidates[0],"candidates":candidates}));
     }
-    let plan = json!({"schema":SCHEMA,"school_id":s,"intent_id":intent,"draft_id":draft,"draft_revision":1,"between_targets_seconds":input.between_targets_seconds,"message":input.message,"content_digest":hash(&input.message),"items":items,"policy_id":null,"authorization_kind":"source_route","executed_by":"message-orchestration","delegate_id":snapshot.id,"configuration_id":snapshot.configuration_id});
-    sqlx::query("INSERT INTO mobile_v9_previews(id,school_id,draft_id,draft_revision,plan,digest) VALUES($1,$2,$3,1,$4,$5)").bind(preview).bind(s).bind(draft).bind(&plan).bind(digest(&plan)?).execute(&mut **tx).await?;
+    let plan = json!({"schema":SCHEMA,"intent_id":intent,"draft_id":draft,"draft_revision":1,"between_targets_seconds":input.between_targets_seconds,"message":input.message,"content_digest":hash(&input.message),"items":items,"policy_id":null,"authorization_kind":"source_route","executed_by":"message-orchestration","delegate_id":snapshot.id,"configuration_id":snapshot.configuration_id});
+    sqlx::query("INSERT INTO mobile_v9_previews(id,draft_id,draft_revision,plan,digest) VALUES($1,$2,1,$3,$4)").bind(preview).bind(draft).bind(&plan).bind(digest(&plan)?).execute(&mut **tx).await?;
     let p = json!({"id":preview,"plan":plan,"policy_id":null,"source_snapshot_id":snapshot_id});
-    let task = tasks::create_authorized_task(tx, authorizer, s, &p).await?;
+    let task = tasks::create_authorized_task(tx, authorizer, &p).await?;
     let id = uid(&task, "id")?;
     Ok(id)
 }

@@ -28,7 +28,6 @@ impl crate::source_access::south::port::ProjectionStore for ReceiptsRepository {
             crate::audit::record(
                 &mut tx,
                 actor,
-                Uuid::nil(),
                 "source.receipts.read",
                 actor.id,
                 json!({"route_id":route}),

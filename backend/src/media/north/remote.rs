@@ -13,13 +13,8 @@ use axum::{
 };
 use serde_json::json;
 use uuid::Uuid;
-async fn upload(
-    State(a): State<Application>,
-    actor: Actor,
-    Path(s): Path<Uuid>,
-    b: Bytes,
-) -> Result<ApiResponse> {
-    let url = a.media.put(&actor, s, b.to_vec()).await?;
+async fn upload(State(a): State<Application>, actor: Actor, b: Bytes) -> Result<ApiResponse> {
+    let url = a.media.put(&actor, b.to_vec()).await?;
     Ok(singleton(
         "media",
         url.rsplit('/').next().unwrap_or(&url),
@@ -29,9 +24,9 @@ async fn upload(
 async fn download(
     State(a): State<Application>,
     actor: Actor,
-    Path((s, id)): Path<(Uuid, Uuid)>,
+    Path(id): Path<Uuid>,
 ) -> Result<Response> {
-    let (mime, b) = a.media.get(&actor, s, id).await?;
+    let (mime, b) = a.media.get(&actor, id).await?;
     Ok((
         [
             (header::CONTENT_TYPE, mime),
@@ -44,13 +39,7 @@ async fn download(
 }
 pub fn router() -> Router<Application> {
     Router::new()
-        .route(
-            "/api/v1/wecom-distribution/workspaces/{workspace}/media",
-            post(upload),
-        )
-        .route(
-            "/api/v1/wecom-distribution/workspaces/{workspace}/media/{id}",
-            get(download),
-        )
+        .route("/api/v1/wecom-distribution/media", post(upload))
+        .route("/api/v1/wecom-distribution/media/{id}", get(download))
         .layer(DefaultBodyLimit::max(5 * 1024 * 1024))
 }

@@ -1,7 +1,7 @@
 //! One resolution rule for opening summaries and durable resource coordination.
 use super::*;
 
-pub(super) async fn resolve(tx: &mut Tx<'_>, school: Uuid, body: &mut Value) -> Result<()> {
+pub(super) async fn resolve(tx: &mut Tx<'_>, body: &mut Value) -> Result<()> {
     let devices: Vec<Uuid> =
         serde_json::from_value(body["device_ids"].clone()).map_err(|_| Error::Conflict)?;
     let targets = body["targets"].as_array().ok_or(Error::Conflict)?.clone();
@@ -9,8 +9,7 @@ pub(super) async fn resolve(tx: &mut Tx<'_>, school: Uuid, body: &mut Value) -> 
     for (index, target) in targets.iter().enumerate() {
         for device in &devices {
             let binding: Option<Value> = if let Some(id) = target["id"].as_str() {
-                sqlx::query_scalar("SELECT to_jsonb(b) FROM mobile_device_target_bindings b WHERE b.school_id=$1 AND b.device_id=$2 AND b.target_id=$3")
-                    .bind(school).bind(device).bind(id.parse::<Uuid>().map_err(|_| Error::Conflict)?).fetch_optional(&mut **tx).await?
+                sqlx::query_scalar("SELECT to_jsonb(b) FROM mobile_device_target_bindings b WHERE b.device_id=$1 AND b.target_id=$2").bind(device).bind(id.parse::<Uuid>().map_err(|_| Error::Conflict)?).fetch_optional(&mut **tx).await?
             } else {
                 None
             };

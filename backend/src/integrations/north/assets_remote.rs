@@ -103,31 +103,21 @@ async fn runs(
 async fn candidates(
     State(a): State<Application>,
     actor: Actor,
-    Path(school): Path<Uuid>,
     Query(q): Query<AssetQuery>,
 ) -> Result<ApiResponse> {
     Ok(collection(
         "wecom-group-candidates",
-        a.integrations
-            .assets()
-            .candidates(&actor, school, &q)
-            .await?,
+        a.integrations.assets().candidates(&actor, &q).await?,
         &q.pagination(),
     ))
 }
-async fn bind(
-    State(a): State<Application>,
-    actor: Actor,
-    Path(school): Path<Uuid>,
-    input: Input,
-) -> Result<ApiResponse> {
+async fn bind(State(a): State<Application>, actor: Actor, input: Input) -> Result<ApiResponse> {
     Ok(resource(
         "groups",
         a.integrations
             .assets()
             .bind(
                 &actor,
-                school,
                 input.decode::<GroupBinding>("wecom-group-bindings")?,
             )
             .await?,
@@ -165,11 +155,11 @@ pub fn router() -> Router<Application> {
             get(relations),
         )
         .route(
-            "/api/v1/wecom-distribution/workspaces/{workspace}/wecom-group-candidates",
+            "/api/v1/wecom-distribution/wecom-group-candidates",
             get(candidates),
         )
         .route(
-            "/api/v1/wecom-distribution/workspaces/{workspace}/groups/from-directory",
+            "/api/v1/wecom-distribution/groups/from-directory",
             axum::routing::post(bind),
         )
 }

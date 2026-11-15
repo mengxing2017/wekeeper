@@ -132,12 +132,7 @@ mod shared_binding_tests {
         let input: SharedBindingInput = serde_json::from_value(value.clone()).unwrap();
         input.validate().unwrap();
         assert_eq!(serde_json::to_value(&input).unwrap(), value);
-        for field in [
-            "school_id",
-            "grant_id",
-            "sender_account_id",
-            "search_text_override",
-        ] {
+        for field in ["grant_id", "sender_account_id", "search_text_override"] {
             let mut bad = value.clone();
             bad[field] = serde_json::json!("retired");
             assert!(serde_json::from_value::<SharedBindingInput>(bad).is_err());

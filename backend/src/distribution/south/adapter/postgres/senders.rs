@@ -7,21 +7,11 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct Repository(pub PgPool);
 impl Repository {
-    pub async fn list(
-        &self,
-        actor: &Actor,
-        school: Option<Uuid>,
-        page: Page,
-    ) -> Result<Vec<OfficialSender>> {
+    pub async fn list(&self, actor: &Actor, page: Page) -> Result<Vec<OfficialSender>> {
         let mut tx = self.0.begin().await?;
-        if let Some(s) = school {
-            super::broadcast::authorize(&mut tx, actor.id, s, false).await?;
-        } else {
-            actor.platform()?;
-        }
+        super::authorization::authorize(&mut tx, actor.id).await?;
         let (limit, offset) = page.fetch_bounds()?;
-        let rows=sqlx::query("SELECT a.id,sm.school_id,m.userid,m.name,m.verification='verified' AS member_verified,coalesce(m.status=1,false) AS member_active,a.active AS account_active,a.wecom_binding_revision,coalesce(q.revision,0) AS qualification_revision,coalesce(q.enabled,true) AS enabled FROM accounts a JOIN wecom_members m ON m.id=a.wecom_member_id JOIN wecom_workspace_members sm ON sm.account_id=a.id JOIN wecom_workspaces s ON s.id=sm.school_id LEFT JOIN wecom_sender_qualifications q ON q.school_id=sm.school_id AND q.account_id=a.id WHERE ($1::uuid IS NULL OR sm.school_id=$1) AND s.active AND sm.role IN ('operator','admin') ORDER BY sm.school_id,m.userid,a.id LIMIT $2 OFFSET $3")
-            .bind(school).bind(limit).bind(offset).fetch_all(&mut *tx).await?;
+        let rows=sqlx::query("SELECT a.id,m.userid,m.name,m.verification='verified' AS member_verified,coalesce(m.status=1,false) AS member_active,a.active AS account_active,a.wecom_binding_revision,coalesce(q.revision,0) AS qualification_revision,coalesce(q.enabled,true) AS enabled FROM accounts a JOIN wecom_members m ON m.id=a.wecom_member_id LEFT JOIN wecom_sender_qualifications q ON q.account_id=a.id ORDER BY m.userid,a.id LIMIT $1 OFFSET $2").bind(limit).bind(offset).fetch_all(&mut *tx).await?;
         let out = rows
             .into_iter()
             .map(|r| {
@@ -32,7 +22,7 @@ impl Repository {
                 let eligible = verified && active && account && enabled;
                 OfficialSender {
                     id: r.get("id"),
-                    school_id: r.get("school_id"),
+
                     userid: r.get("userid"),
                     display_name: r.get("name"),
                     member_verified: verified,
@@ -58,19 +48,16 @@ impl Repository {
     pub async fn qualify(
         &self,
         actor: &Actor,
-        school: Uuid,
         id: Uuid,
         input: SenderQualificationInput,
     ) -> Result<()> {
         actor.platform()?;
         let mut tx = self.0.begin().await?;
         super::broadcast::guard(&mut tx).await?;
-        sqlx::query("SELECT a.id FROM accounts a JOIN wecom_members m ON m.id=a.wecom_member_id JOIN wecom_workspace_members s ON s.account_id=a.id WHERE a.id=$1 AND s.school_id=$2 AND s.role IN ('admin','operator') FOR SHARE OF a,m,s").bind(id).bind(school).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
-        let updated=sqlx::query("INSERT INTO wecom_sender_qualifications(school_id,account_id,enabled,updated_by) SELECT $1,$2,$3,$4 WHERE $5=0 ON CONFLICT(school_id,account_id) DO NOTHING")
-            .bind(school).bind(id).bind(input.enabled).bind(actor.id).bind(input.revision).execute(&mut *tx).await?.rows_affected();
+        sqlx::query("SELECT a.id FROM accounts a JOIN wecom_members m ON m.id=a.wecom_member_id WHERE a.id=$1 FOR SHARE OF a,m").bind(id).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
+        let updated=sqlx::query("INSERT INTO wecom_sender_qualifications(account_id,enabled,updated_by) SELECT $1,$2,$3  WHERE $4=0 ON CONFLICT(account_id) DO NOTHING").bind(id).bind(input.enabled).bind(actor.id).bind(input.revision).execute(&mut *tx).await?.rows_affected();
         if updated == 0 {
-            let n=sqlx::query("UPDATE wecom_sender_qualifications SET enabled=$3,revision=revision+1,updated_by=$4,updated_at=now() WHERE school_id=$1 AND account_id=$2 AND revision=$5 AND $5>0")
-                .bind(school).bind(id).bind(input.enabled).bind(actor.id).bind(input.revision).execute(&mut *tx).await?.rows_affected();
+            let n=sqlx::query("UPDATE wecom_sender_qualifications SET enabled=$2,revision=revision+1,updated_by=$3,updated_at=now() WHERE account_id=$1 AND revision=$4 AND $4>0").bind(id).bind(input.enabled).bind(actor.id).bind(input.revision).execute(&mut *tx).await?.rows_affected();
             if n != 1 {
                 return Err(Error::Conflict);
             }
@@ -78,7 +65,6 @@ impl Repository {
         crate::audit::record(
             &mut tx,
             actor,
-            school,
             "wecom.sender.qualification",
             id,
             serde_json::json!({"domain":"wecom","enabled":input.enabled}),

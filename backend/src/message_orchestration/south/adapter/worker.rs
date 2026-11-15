@@ -268,8 +268,8 @@ async fn failed_delegate(
     plan: &DeliveryPlan,
     reason: &str,
 ) -> Result<()> {
-    sqlx::query("INSERT INTO orchestration_delegates(id,message_id,configuration_id,channel,storage_scope,plan,state,reason_code) VALUES($1,$2,$3,$4,$5,$6,'failed',$7)")
-        .bind(plan.id).bind(message).bind(plan.configuration_id).bind(plan.channel.as_str()).bind(plan.workspace_id).bind(json!(plan)).bind(reason).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO orchestration_delegates(id,message_id,configuration_id,channel,plan,state,reason_code) VALUES($1,$2,$3,$4,$5,'failed',$6)")
+        .bind(plan.id).bind(message).bind(plan.configuration_id).bind(plan.channel.as_str()).bind(json!(plan)).bind(reason).execute(&mut **tx).await?;
     Ok(())
 }
 async fn delegate(
@@ -279,7 +279,7 @@ async fn delegate(
     content: &str,
 ) -> Result<()> {
     let snapshot = Uuid::now_v7();
-    sqlx::query("INSERT INTO distribution_message_snapshots(id,school_id,channel,content,content_hash) VALUES($1,$2,$3,$4,$5)").bind(snapshot).bind(plan.workspace_id).bind(plan.channel.as_str()).bind(content).bind(crate::business::hash(content)).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO distribution_message_snapshots(id,channel,content,content_hash) VALUES($1,$2,$3,$4)").bind(snapshot).bind(plan.channel.as_str()).bind(content).bind(crate::business::hash(content)).execute(&mut **tx).await?;
     let task = match plan.channel {
         Channel::Mobile => {
             shared_send_v2::source_routing::create(tx, plan, content, plan.authorized_by, snapshot)
@@ -289,6 +289,6 @@ async fn delegate(
             routing::create_official_task(tx, plan, content, plan.authorized_by, snapshot).await
         }
     }?;
-    sqlx::query("INSERT INTO orchestration_delegates(id,message_id,configuration_id,channel,storage_scope,task_id,snapshot_id,plan) VALUES($1,$2,$3,$4,$5,$6,$7,$8)").bind(plan.id).bind(message).bind(plan.configuration_id).bind(plan.channel.as_str()).bind(plan.workspace_id).bind(task).bind(snapshot).bind(json!(plan)).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO orchestration_delegates(id,message_id,configuration_id,channel,task_id,snapshot_id,plan) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(plan.id).bind(message).bind(plan.configuration_id).bind(plan.channel.as_str()).bind(task).bind(snapshot).bind(json!(plan)).execute(&mut **tx).await?;
     Ok(())
 }

@@ -26,47 +26,34 @@ pub struct Service<
 impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::ContentSource>
     Service<R, C, S>
 {
-    pub async fn list(&self, a: &Actor, s: Uuid, page: Page) -> Result<Vec<Task>> {
-        self.store.authorize(a.id, s, false).await?;
-        self.store.list(s, page).await
+    pub async fn list(&self, a: &Actor, page: Page) -> Result<Vec<Task>> {
+        self.store.authorize(a.id, false).await?;
+        self.store.list(page).await
     }
-    pub async fn task(&self, a: &Actor, s: Uuid, id: Uuid) -> Result<Task> {
-        self.store.authorize(a.id, s, false).await?;
-        self.store.task(s, id).await
+    pub async fn task(&self, a: &Actor, id: Uuid) -> Result<Task> {
+        self.store.authorize(a.id, false).await?;
+        self.store.task(id).await
     }
-    pub async fn rows(
-        &self,
-        a: &Actor,
-        s: Uuid,
-        id: Uuid,
-        kind: &str,
-        page: Page,
-    ) -> Result<Vec<Value>> {
-        self.store.authorize(a.id, s, false).await?;
-        self.store.rows(s, id, kind, page).await
+    pub async fn rows(&self, a: &Actor, id: Uuid, kind: &str, page: Page) -> Result<Vec<Value>> {
+        self.store.authorize(a.id, false).await?;
+        self.store.rows(id, kind, page).await
     }
-    pub async fn save(
-        &self,
-        a: &Actor,
-        s: Uuid,
-        id: Option<Uuid>,
-        input: DraftInput,
-    ) -> Result<Task> {
+    pub async fn save(&self, a: &Actor, id: Option<Uuid>, input: DraftInput) -> Result<Task> {
         self.store
-            .authorize(a.id, s, input.source_task_id.is_some())
+            .authorize(a.id, input.source_task_id.is_some())
             .await?;
         input.validate()?;
         if id.is_none()
-            && let Some(task) = self.store.draft_request(a, s, &input).await?
+            && let Some(task) = self.store.draft_request(a, &input).await?
         {
             return Ok(task);
         }
         let references = if input.content_source == ContentSource::Posts {
-            self.store.source_references(s, &input.post_ids).await?
+            self.store.source_references(&input.post_ids).await?
         } else {
             input.materials.clone()
         };
-        let mut materials = self.sources.read(a, s, &references).await?;
+        let mut materials = self.sources.read(a, &references).await?;
         for material in &mut materials {
             if material.detail_url.starts_with('/') {
                 material.detail_url =
@@ -87,7 +74,6 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
         self.store
             .execute(
                 a,
-                s,
                 Command::Save {
                     id,
                     input,
@@ -102,26 +88,25 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
     pub async fn save_preview(
         &self,
         a: &Actor,
-        s: Uuid,
         id: Option<Uuid>,
         mut input: DraftInput,
         key: &str,
     ) -> Result<Value> {
-        self.store.authorize(a.id, s, false).await?;
+        self.store.authorize(a.id, false).await?;
         let key = text(key, 1, 128)?;
         input.validate()?;
         let input_hash =
             crate::business::hash(&serde_json::json!({"id":id,"input":input}).to_string());
-        if let Some(prior) = self.store.preview_response(a, s, &key, &input_hash).await? {
+        if let Some(prior) = self.store.preview_response(a, &key, &input_hash).await? {
             return Ok(prior);
         }
         // Drafts are retained even while delivery is unavailable; no external write occurs here.
         let references = if input.content_source == ContentSource::Posts {
-            self.store.source_references(s, &input.post_ids).await?
+            self.store.source_references(&input.post_ids).await?
         } else {
             input.materials.clone()
         };
-        let mut materials = self.sources.read(a, s, &references).await?;
+        let mut materials = self.sources.read(a, &references).await?;
         for m in &mut materials {
             if m.detail_url.starts_with('/') {
                 m.detail_url =
@@ -151,9 +136,9 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
             generation,
             preview_key: Some(format!("{key}:{input_hash}")),
         };
-        if let Err(error) = self.store.execute(a, s, command.clone()).await {
+        if let Err(error) = self.store.execute(a, command.clone()).await {
             // A failed resolution/preview transaction is rolled back. Retain the valid business
-            // content and school-owned target references without inventing a sender or batch.
+            // content and target references without inventing a sender or batch.
             if generation.is_none() {
                 return Err(error);
             }
@@ -174,7 +159,6 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
                 self.store
                     .execute(
                         a,
-                        s,
                         Command::Save {
                             id,
                             input,
@@ -188,19 +172,13 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
             }
         }
         self.store
-            .preview_response(a, s, &key, &input_hash)
+            .preview_response(a, &key, &input_hash)
             .await?
             .ok_or(Error::Conflict)
     }
-    pub async fn evidence_candidates(
-        &self,
-        a: &Actor,
-        s: Uuid,
-        id: Uuid,
-        batch: Uuid,
-    ) -> Result<Value> {
-        self.store.authorize(a.id, s, true).await?;
-        let task = self.store.task(s, id).await?;
+    pub async fn evidence_candidates(&self, a: &Actor, id: Uuid, batch: Uuid) -> Result<Value> {
+        self.store.authorize(a.id, true).await?;
+        let task = self.store.task(id).await?;
         let w = self
             .store
             .work(Some(id))
@@ -218,7 +196,7 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
                 serde_json::json!({"id":batch,"items":[],"reason":"已超出可查询时间，请移交负责人；未查到不能证明未发送"}),
             );
         }
-        if !self.store.evidence_query(a, s, id, batch).await? {
+        if !self.store.evidence_query(a, id, batch).await? {
             return Ok(
                 serde_json::json!({"id":batch,"items":[],"reason":"刚刚查询过，请稍后再核对；当前状态仍保留不确定"}),
             );
@@ -257,53 +235,47 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
                 continue;
             }
             let summary = serde_json::json!({"content":task.content,"sender":w.sender,"target_count":w.chats.len(),"created_at":v["create_time"],"member_status":results.member_status});
-            if let Ok(candidate) = self
-                .store
-                .evidence_save(a, s, id, batch, msgid, summary)
-                .await
-            {
+            if let Ok(candidate) = self.store.evidence_save(a, id, batch, msgid, summary).await {
                 items.push(candidate);
             }
         }
         Ok(
-            serde_json::json!({"id":batch,"items":items,"reason":"仅列出目标及成员证据完整且属于当前工作空间的候选。候选不代表已发送；没有候选可移交负责人。"}),
+            serde_json::json!({"id":batch,"items":items,"reason":"仅列出目标及成员证据完整且属于当前业务的候选。候选不代表已发送；没有候选可移交负责人。"}),
         )
     }
     pub async fn preview(
         &self,
         a: &Actor,
-        s: Uuid,
         id: Uuid,
     ) -> Result<crate::distribution::domain::content::Preview> {
-        self.store.authorize(a.id, s, false).await?;
-        let mut task = self.store.task(s, id).await?;
+        self.store.authorize(a.id, false).await?;
+        let mut task = self.store.task(id).await?;
         if task.total == 0 {
             let mut input = task.draft_input.clone();
             input.revision = Some(task.revision);
             input.request_key = None;
-            task = self.save(a, s, Some(id), input).await?;
+            task = self.save(a, Some(id), input).await?;
         }
-        self.sources.check(s, &task.materials).await?;
-        self.store.preview(a, s, id).await
+        self.sources.check(&task.materials).await?;
+        self.store.preview(a, id).await
     }
     pub async fn action(
         &self,
         a: &Actor,
-        s: Uuid,
         id: Uuid,
         operation: &str,
         key: &str,
         mut input: Action,
     ) -> Result<Task> {
         self.store
-            .authorize(a.id, s, matches!(operation, "stop" | "reconcile"))
+            .authorize(a.id, matches!(operation, "stop" | "reconcile"))
             .await?;
         let key = text(key, 1, 128)?;
         require(!key.starts_with("child:"), "幂等键前缀保留")?;
-        let task = self.store.task(s, id).await?;
+        let task = self.store.task(id).await?;
         if self
             .store
-            .action_replay(a, s, id, operation, &key, &input)
+            .action_replay(a, id, operation, &key, &input)
             .await?
         {
             return Ok(task);
@@ -311,7 +283,7 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
         if operation == "confirm"
             && task.content_source == crate::distribution::domain::broadcast::ContentSource::Text
         {
-            self.store.authorize(a.id, s, true).await?;
+            self.store.authorize(a.id, true).await?;
         }
         if matches!(operation, "confirm" | "remind") {
             require(self.management_available, "群发需要有效企业微信服务端凭据")?;
@@ -329,21 +301,18 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
             )?;
         }
         if operation == "reconcile" && input.decision.as_deref() == Some("linked") {
-            require(
-                input.msgid.is_none(),
-                "请从当前工作空间证据候选中选择核对记录",
-            )?;
+            require(input.msgid.is_none(), "请从当前业务证据候选中选择核对记录")?;
             let evidence = input
                 .evidence_id
-                .ok_or_else(|| Error::Invalid("请选择当前工作空间证据候选".into()))?;
+                .ok_or_else(|| Error::Invalid("请选择当前业务证据候选".into()))?;
             input.msgid = Some(
                 self.store
-                    .evidence(a, s, id, input.batch_id.ok_or(Error::Conflict)?, evidence)
+                    .evidence(a, id, input.batch_id.ok_or(Error::Conflict)?, evidence)
                     .await?,
             );
         }
         if operation == "confirm" && task.state == "draft" {
-            self.sources.check(s, &task.materials).await?;
+            self.sources.check(&task.materials).await?;
             require(input.revision == Some(task.revision), "草稿版本冲突")?;
             for w in self.store.work(Some(id)).await? {
                 self.client.verify(&w).await?;
@@ -381,13 +350,12 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
                     && w.chats
                         .iter()
                         .all(|chat| results.groups.iter().any(|g| &g.chat_id == chat)),
-                "未取得当前工作空间完整成员和目标证据，请移交负责人",
+                "未取得当前业务完整成员和目标证据，请移交负责人",
             )?;
         }
         self.store
             .execute(
                 a,
-                s,
                 Command::Action {
                     id,
                     operation: operation.into(),

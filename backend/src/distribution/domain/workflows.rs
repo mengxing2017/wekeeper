@@ -40,7 +40,6 @@ pub struct UsageInput {
     pub member_id: Uuid,
     pub account_id: Uuid,
     pub generation: i64,
-    pub role: String,
     pub group_ids: Vec<Uuid>,
 }
 #[derive(Clone, Serialize, Deserialize)]
@@ -87,7 +86,6 @@ impl Command {
             ),
             Self::UsagePreview(v) => require(
                 v.generation > 0
-                    && matches!(v.role.as_str(), "operator" | "admin")
                     && !v.group_ids.is_empty()
                     && v.group_ids.len() <= 100
                     && v.group_ids

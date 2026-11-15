@@ -73,21 +73,18 @@ pub trait AssetStore: Clone + Send + Sync + 'static {
     fn candidates(
         &self,
         a: &Actor,
-        school: Uuid,
         q: &AssetQuery,
         g: i64,
     ) -> impl Future<Output = crate::business::Result<Vec<Value>>> + Send;
     fn bind_group(
         &self,
         a: &Actor,
-        school: Uuid,
         input: &GroupBinding,
         group: &Group,
     ) -> impl Future<Output = crate::business::Result<Value>> + Send;
     fn candidate(
         &self,
         a: &Actor,
-        school: Uuid,
         id: Uuid,
         g: i64,
     ) -> impl Future<Output = crate::business::Result<Value>> + Send;

@@ -25,10 +25,10 @@ async fn authorize(
     tx: &mut Transaction<'_, Postgres>,
     actor: Uuid,
     unit: Uuid,
-    write: bool,
+    _write: bool,
 ) -> Result<()> {
-    let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts a JOIN business_units u ON u.id=$2 WHERE a.id=$1 AND a.active AND (a.platform_admin OR (NOT $3 AND EXISTS(SELECT 1 FROM source_routes r JOIN source_route_managers m USING(route_id) WHERE r.business_unit_id=u.id AND m.account_id=a.id))))")
-        .bind(actor).bind(unit).bind(write).fetch_one(&mut **tx).await?;
+    let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts a JOIN business_units u ON u.id=$2 WHERE a.id=$1 AND a.active AND a.platform_admin)")
+        .bind(actor).bind(unit).fetch_one(&mut **tx).await?;
     if allowed {
         Ok(())
     } else {
@@ -50,45 +50,19 @@ impl Store for Repository {
             .bind(format!("{unit}:{}", channel.as_str()))
             .execute(&mut *tx)
             .await?;
-        let scope:Option<Uuid>=sqlx::query_scalar("SELECT storage_scope FROM unit_receiving_storage WHERE business_unit_id=$1 AND channel=$2").bind(unit).bind(channel.as_str()).fetch_optional(&mut *tx).await?;
-        let scope = if let Some(scope) = scope {
-            scope
-        } else {
-            let scope = Uuid::now_v7();
-            let table = if channel == Channel::Mobile {
-                "mobile_workspaces"
-            } else {
-                "wecom_workspaces"
-            };
-            sqlx::query(&format!(
-                "INSERT INTO {table}(id,name) SELECT $1,name FROM business_units WHERE id=$2"
-            ))
-            .bind(scope)
-            .bind(unit)
-            .execute(&mut *tx)
-            .await?;
-            sqlx::query("INSERT INTO unit_receiving_storage VALUES($1,$2,$3)")
-                .bind(unit)
-                .bind(channel.as_str())
-                .bind(scope)
-                .execute(&mut *tx)
-                .await?;
-            scope
-        };
         let resource: serde_json::Value = match channel {
             Channel::Mobile => {
-                sqlx::query("INSERT INTO mobile_targets(id,school_id,search_text,created_by,updated_by) VALUES($1,$2,$3,$4,$4) ON CONFLICT(id) DO NOTHING").bind(id).bind(scope).bind(&input.name).bind(actor.id).execute(&mut *tx).await?;
-                sqlx::query_scalar("SELECT jsonb_build_object('id',id,'name',search_text) FROM mobile_targets WHERE id=$1 AND school_id=$2 AND search_text=$3 AND archived_at IS NULL").bind(id).bind(scope).bind(&input.name).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?
+                sqlx::query("INSERT INTO mobile_targets(id,search_text,created_by,updated_by) VALUES($1,$2,$3,$3) ON CONFLICT(id) DO NOTHING").bind(id).bind(&input.name).bind(actor.id).execute(&mut *tx).await?;
+                sqlx::query_scalar("SELECT jsonb_build_object('id',id,'name',search_text) FROM mobile_targets WHERE id=$1  AND search_text=$2 AND archived_at IS NULL").bind(id).bind(&input.name).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?
             }
             Channel::Wecom => {
-                sqlx::query("INSERT INTO wecom_groups(id,school_id,corp_id,chat_id,name,directory_group_id) SELECT $1,$2,o.corp_id,o.key,$3,o.id FROM wecom_asset_objects o JOIN wecom_directory_state ds ON ds.singleton WHERE o.id=$4 AND o.kind='groups' AND o.corp_id=ds.corp_id AND o.credential_generation=ds.credential_generation AND o.verification='verified' AND o.visibility='visible' ON CONFLICT DO NOTHING").bind(id).bind(scope).bind(&input.name).bind(input.directory_group_id).execute(&mut *tx).await?;
+                sqlx::query("INSERT INTO wecom_groups(id,corp_id,chat_id,name,directory_group_id) SELECT $1,o.corp_id,o.key,$2,o.id  FROM wecom_asset_objects o JOIN wecom_directory_state ds ON ds.singleton WHERE o.id=$3 AND o.kind='groups' AND o.corp_id=ds.corp_id AND o.credential_generation=ds.credential_generation AND o.verification='verified' AND o.visibility='visible' ON CONFLICT DO NOTHING").bind(id).bind(&input.name).bind(input.directory_group_id).execute(&mut *tx).await?;
                 sqlx::query_scalar("SELECT jsonb_build_object('id',id,'name',name) FROM wecom_groups WHERE directory_group_id=$1 AND active").bind(input.directory_group_id).fetch_optional(&mut *tx).await?.ok_or(Error::Invalid("客户群尚未同步或不可用".into()))?
             }
         };
         crate::audit::record(
             &mut tx,
             actor,
-            Uuid::nil(),
             "receiving.target",
             id,
             json!({"business_unit_id":unit,"channel":channel.as_str()}),
@@ -165,7 +139,7 @@ impl Store for Repository {
         if channel == Channel::Mobile && input.enabled {
             for target in &input.target_ids {
                 for device in &input.device_ids {
-                    sqlx::query("INSERT INTO mobile_device_target_bindings(id,school_id,device_id,target_id,source,created_by,updated_by) SELECT $1,t.school_id,$2,t.id,'platform',$4,$4 FROM mobile_targets t WHERE t.id=$3 ON CONFLICT(school_id,device_id,target_id) DO UPDATE SET enabled=true,source='platform',updated_by=$4,updated_at=clock_timestamp()").bind(Uuid::now_v7()).bind(device).bind(target).bind(actor.id).execute(&mut *tx).await?;
+                    sqlx::query("INSERT INTO mobile_device_target_bindings(id,device_id,target_id,created_by,updated_by) SELECT $1,$2,t.id,$4,$4  FROM mobile_targets t WHERE t.id=$3 ON CONFLICT(device_id,target_id) DO UPDATE SET enabled=true,updated_by=$4,updated_at=clock_timestamp()").bind(Uuid::now_v7()).bind(device).bind(target).bind(actor.id).execute(&mut *tx).await?;
                 }
             }
         }
@@ -186,7 +160,6 @@ impl Store for Repository {
         crate::audit::record(
             &mut tx,
             actor,
-            Uuid::nil(),
             "receiving.save",
             id,
             json!({"business_unit_id":unit,"channel":channel.prefix(),"enabled":result.enabled}),
@@ -247,19 +220,8 @@ pub(crate) async fn plans(
         } else {
             Channel::Wecom
         };
-        let table = if channel == Channel::Mobile {
-            "mobile_targets"
-        } else {
-            "wecom_groups"
-        };
-        let scopes: Vec<Uuid> = sqlx::query_scalar(&format!(
-            "SELECT DISTINCT school_id FROM {table} WHERE id=ANY($1) ORDER BY school_id"
-        ))
-        .bind(&c.target_ids)
-        .fetch_all(&mut **tx)
-        .await?;
-        for scope in scopes {
-            let resources = super::routing::targets(tx, channel.as_str(), scope).await?;
+        {
+            let resources = super::routing::targets(tx, channel.as_str()).await?;
             let mut targets = vec![];
             for resource in resources {
                 let mut target: DeliveryTarget =
@@ -319,7 +281,7 @@ pub(crate) async fn plans(
                 plans.push(DeliveryPlan {
                     id: Uuid::now_v7(),
                     configuration_id: c.id,
-                    workspace_id: scope,
+
                     channel,
                     authorized_by: row.get("authorized_by"),
                     targets,

@@ -15,13 +15,11 @@ pub trait Store: Clone + Send + Sync + 'static {
     fn target(
         &self,
         actor: &Actor,
-        school: Uuid,
         id: Uuid,
     ) -> impl std::future::Future<Output = Result<Value>> + Send;
     fn list(
         &self,
         actor: &Actor,
-        school: Option<Uuid>,
         resource: Resource,
         page: Page,
         search: String,
@@ -30,7 +28,6 @@ pub trait Store: Clone + Send + Sync + 'static {
     fn write(
         &self,
         actor: &Actor,
-        school: Option<Uuid>,
         action: &str,
         id: Option<Uuid>,
         key: &str,

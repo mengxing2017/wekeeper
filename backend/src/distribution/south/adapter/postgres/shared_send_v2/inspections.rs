@@ -1,15 +1,10 @@
 //! Inspections carry no message and cannot obtain a send invocation.
 use super::*;
-pub(super) async fn request(
-    tx: &mut Tx<'_>,
-    a: &Actor,
-    s: Uuid,
-    v: InspectionInput,
-) -> Result<Value> {
-    let exists:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_device_target_bindings WHERE school_id=$1 AND target_id=$2 AND device_id=$3 AND enabled)").bind(s).bind(v.target_id).bind(v.device_id).fetch_one(&mut **tx).await?;
+pub(super) async fn request(tx: &mut Tx<'_>, a: &Actor, v: InspectionInput) -> Result<Value> {
+    let exists:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_device_target_bindings WHERE target_id=$1 AND device_id=$2 AND enabled)").bind(v.target_id).bind(v.device_id).fetch_one(&mut **tx).await?;
     require(exists, "shared_binding_missing")?;
     let _ = a;
-    let status = readiness::school(tx, s)
+    let status = readiness::resources(tx)
         .await?
         .into_iter()
         .find(|r| r["device_id"] == json!(v.device_id) && r["target_id"] == json!(v.target_id))

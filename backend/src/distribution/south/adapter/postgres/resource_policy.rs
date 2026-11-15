@@ -77,7 +77,7 @@ async fn audit(
     detail: serde_json::Value,
 ) -> Result<()> {
     // Public audit supports platform scope without inventing a school ownership.
-    sqlx::query("INSERT INTO audit_events(id,school_id,actor_id,action,object_id,detail,request_id) VALUES($1,NULL,$2,$3,$1,$4,$5)")
+    sqlx::query("INSERT INTO audit_events(id,actor_id,action,object_id,detail,request_id) VALUES($1,$2,$3,$1,$4,$5)")
         .bind(uuid::Uuid::now_v7()).bind(actor.id).bind(action).bind(detail).bind(&actor.request_id).execute(&mut **tx).await?;
     Ok(())
 }

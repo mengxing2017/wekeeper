@@ -9,7 +9,7 @@ use uuid::Uuid;
 pub struct Observation {
     pub id: i64,
     pub channel: String,
-    pub workspace_id: Uuid,
+
     pub task_id: Uuid,
     pub target_id: Option<Uuid>,
     pub attempt_id: Option<Uuid>,

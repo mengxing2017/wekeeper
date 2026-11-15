@@ -26,7 +26,6 @@ impl Principal {
 }
 #[derive(Clone, Debug)]
 pub struct Scope {
-    pub school: Option<Uuid>,
     pub id: Option<Uuid>,
 }
 #[derive(Clone, Copy)]

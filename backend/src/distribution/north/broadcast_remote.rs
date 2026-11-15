@@ -16,10 +16,9 @@ use uuid::Uuid;
 async fn list(
     State(a): State<Application>,
     actor: Actor,
-    Path(s): Path<Uuid>,
     Query(page): Query<Page>,
 ) -> Result<ApiResponse> {
-    let rows = a.broadcast().list(&actor, s, page.clone()).await?;
+    let rows = a.broadcast().list(&actor, page.clone()).await?;
     Ok(collection(
         "broadcast-tasks",
         rows.into_iter().map(|v| json!(v)).collect(),
@@ -29,7 +28,6 @@ async fn list(
 async fn create(
     State(a): State<Application>,
     actor: Actor,
-    Path(s): Path<Uuid>,
     headers: HeaderMap,
     input: Input,
 ) -> Result<ApiResponse> {
@@ -44,23 +42,23 @@ async fn create(
     )?);
     Ok(resource(
         "broadcast-tasks",
-        a.broadcast().save(&actor, s, None, body).await?,
+        a.broadcast().save(&actor, None, body).await?,
     ))
 }
 async fn task(
     State(a): State<Application>,
     actor: Actor,
-    Path((s, id)): Path<(Uuid, Uuid)>,
+    Path(id): Path<Uuid>,
 ) -> Result<ApiResponse> {
     Ok(resource(
         "broadcast-tasks",
-        a.broadcast().task(&actor, s, id).await?,
+        a.broadcast().task(&actor, id).await?,
     ))
 }
 async fn edit(
     State(a): State<Application>,
     actor: Actor,
-    Path((s, id)): Path<(Uuid, Uuid)>,
+    Path(id): Path<Uuid>,
     input: Input,
 ) -> Result<ApiResponse> {
     Ok(resource(
@@ -68,7 +66,6 @@ async fn edit(
         a.broadcast()
             .save(
                 &actor,
-                s,
                 Some(id),
                 input.decode::<DraftInput>("broadcast-tasks")?,
             )
@@ -78,21 +75,19 @@ async fn edit(
 async fn rows(
     State(a): State<Application>,
     actor: Actor,
-    Path((s, id, kind)): Path<(Uuid, Uuid, String)>,
+    Path((id, kind)): Path<(Uuid, String)>,
     Query(page): Query<Page>,
 ) -> Result<ApiResponse> {
     Ok(collection(
         &format!("broadcast-{kind}"),
-        a.broadcast()
-            .rows(&actor, s, id, &kind, page.clone())
-            .await?,
+        a.broadcast().rows(&actor, id, &kind, page.clone()).await?,
         &page,
     ))
 }
 async fn action(
     State(a): State<Application>,
     actor: Actor,
-    Path((s, id, operation)): Path<(Uuid, Uuid, String)>,
+    Path((id, operation)): Path<(Uuid, String)>,
     headers: HeaderMap,
     input: Input,
 ) -> Result<ApiResponse> {
@@ -106,7 +101,6 @@ async fn action(
         a.broadcast()
             .action(
                 &actor,
-                s,
                 id,
                 operation,
                 headers
@@ -118,17 +112,12 @@ async fn action(
             .await?,
     ))
 }
-async fn capability(
-    State(a): State<Application>,
-    actor: Actor,
-    Path(s): Path<Uuid>,
-) -> Result<ApiResponse> {
+async fn capability(State(a): State<Application>, actor: Actor) -> Result<ApiResponse> {
     let value = crate::distribution::north::local::workflows::Service(
         crate::distribution::south::adapter::postgres::workflows::Repository(a.pool.clone()),
     )
     .channel(
         &actor,
-        s,
         a.integrations.server_configured(),
         &a.integrations.credential_scope(),
     )
@@ -138,21 +127,20 @@ async fn capability(
 async fn preview(
     State(a): State<Application>,
     actor: Actor,
-    Path((s, id)): Path<(Uuid, Uuid)>,
+    Path(id): Path<Uuid>,
 ) -> Result<ApiResponse> {
     Ok(resource(
         "broadcast-previews",
-        a.broadcast().preview(&actor, s, id).await?,
+        a.broadcast().preview(&actor, id).await?,
     ))
 }
-async fn school_senders(
+async fn senders(
     State(a): State<Application>,
     actor: Actor,
-    Path(s): Path<Uuid>,
     Query(page): Query<Page>,
 ) -> Result<ApiResponse> {
     let rows = crate::distribution::north::local::governance::Service(a.pool.clone())
-        .senders(&actor, Some(s), page.clone())
+        .senders(&actor, page.clone())
         .await?;
     Ok(collection(
         "wecom-senders",
@@ -166,7 +154,7 @@ async fn platform_senders(
     Query(page): Query<Page>,
 ) -> Result<ApiResponse> {
     let rows = crate::distribution::north::local::governance::Service(a.pool.clone())
-        .senders(&actor, None, page.clone())
+        .senders(&actor, page.clone())
         .await?;
     Ok(collection(
         "wecom-senders",
@@ -177,14 +165,14 @@ async fn platform_senders(
 async fn qualify(
     State(a): State<Application>,
     actor: Actor,
-    Path((s, id)): Path<(Uuid, Uuid)>,
+    Path(id): Path<Uuid>,
     input: Input,
 ) -> Result<ApiResponse> {
     let body = input.decode::<crate::distribution::domain::content::SenderQualificationInput>(
         "wecom-senders",
     )?;
     crate::distribution::north::local::governance::Service(a.pool.clone())
-        .qualify(&actor, s, id, body)
+        .qualify(&actor, id, body)
         .await?;
     Ok(singleton(
         "wecom-sender-qualifications",
@@ -222,7 +210,6 @@ async fn source_policy(
 async fn save_preview(
     State(a): State<Application>,
     actor: Actor,
-    Path(s): Path<Uuid>,
     headers: HeaderMap,
     input: Input,
 ) -> Result<ApiResponse> {
@@ -242,7 +229,6 @@ async fn save_preview(
         a.broadcast()
             .save_preview(
                 &actor,
-                s,
                 id,
                 input,
                 headers
@@ -261,24 +247,24 @@ struct EvidenceQuery {
 async fn evidence_candidates(
     State(a): State<Application>,
     actor: Actor,
-    Path((s, id)): Path<(Uuid, Uuid)>,
+    Path(id): Path<Uuid>,
     Query(q): Query<EvidenceQuery>,
 ) -> Result<ApiResponse> {
     Ok(resource(
         "broadcast-evidence-candidates",
         a.broadcast()
-            .evidence_candidates(&actor, s, id, q.batch_id)
+            .evidence_candidates(&actor, id, q.batch_id)
             .await?,
     ))
 }
 pub fn router() -> Router<Application> {
     Router::new()
         .route(
-            "/api/v1/wecom-distribution/workspaces/{workspace}/broadcast-task-previews",
+            "/api/v1/wecom-distribution/broadcast-task-previews",
             axum::routing::post(save_preview),
         )
         .route(
-            "/api/v1/wecom-distribution/workspaces/{workspace}/broadcast-tasks/{id}/evidence-candidates",
+            "/api/v1/wecom-distribution/broadcast-tasks/{id}/evidence-candidates",
             get(evidence_candidates),
         )
         .route("/api/v1/platform/distribution-policies", get(policies))
@@ -286,33 +272,30 @@ pub fn router() -> Router<Application> {
             "/api/v1/platform/distribution-source-policies",
             axum::routing::post(source_policy),
         )
-        .route(
-            "/api/v1/wecom-distribution/workspaces/{workspace}/wecom-senders",
-            get(school_senders),
-        )
+        .route("/api/v1/wecom-distribution/wecom-senders", get(senders))
         .route("/api/v1/platform/wecom-senders", get(platform_senders))
         .route(
-            "/api/v1/platform/wecom-distribution/workspaces/{workspace}/wecom-senders/{id}/qualification",
+            "/api/v1/platform/wecom-distribution/wecom-senders/{id}/qualification",
             axum::routing::post(qualify),
         )
         .route(
-            "/api/v1/wecom-distribution/workspaces/{workspace}/broadcast-tasks/{id}/preview",
+            "/api/v1/wecom-distribution/broadcast-tasks/{id}/preview",
             axum::routing::post(preview),
         )
         .route(
-            "/api/v1/wecom-distribution/workspaces/{workspace}/broadcast-tasks",
+            "/api/v1/wecom-distribution/broadcast-tasks",
             get(list).post(create),
         )
         .route(
-            "/api/v1/wecom-distribution/workspaces/{workspace}/broadcast-capabilities",
+            "/api/v1/wecom-distribution/broadcast-capabilities",
             get(capability),
         )
         .route(
-            "/api/v1/wecom-distribution/workspaces/{workspace}/broadcast-tasks/{id}",
+            "/api/v1/wecom-distribution/broadcast-tasks/{id}",
             get(task).patch(edit),
         )
         .route(
-            "/api/v1/wecom-distribution/workspaces/{workspace}/broadcast-tasks/{id}/{operation}",
+            "/api/v1/wecom-distribution/broadcast-tasks/{id}/{operation}",
             get(rows).post(action),
         )
 }

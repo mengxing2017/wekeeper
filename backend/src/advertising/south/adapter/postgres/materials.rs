@@ -59,7 +59,6 @@ impl MaterialStore for Repository {
         crate::audit::record(
             &mut tx,
             actor,
-            Uuid::nil(),
             "advertising.material.create",
             id,
             json!({"revision":1,"content_version":version}),
@@ -195,7 +194,6 @@ impl MaterialStore for Repository {
         crate::audit::record(
             &mut tx,
             actor,
-            Uuid::nil(),
             "advertising.material.archive",
             id,
             json!({"revision":next,"content_version":version}),
@@ -255,7 +253,6 @@ impl MaterialStore for Repository {
         crate::audit::record(
             &mut tx,
             actor,
-            Uuid::nil(),
             "advertising.material.publish",
             id,
             json!({"revision":revision,"content_version":version}),
@@ -344,7 +341,6 @@ impl crate::advertising::south::port::AdPlacementStore for Repository {
         crate::audit::record(
             &mut tx,
             actor,
-            Uuid::nil(),
             "advertising.placement.create",
             id,
             json!({"material_id":input.material_id,"scope":input.scope,"enabled":input.enabled}),
@@ -482,7 +478,7 @@ impl crate::advertising::south::port::AdPlacementStore for Repository {
             valid_until: row.get("valid_until"),
             revision: row.get("revision"),
         };
-        crate::audit::record(&mut tx, actor, Uuid::nil(), "advertising.placement.state", id,
+        crate::audit::record(&mut tx, actor, "advertising.placement.state", id,
             json!({"previous_enabled":current.get::<bool,_>("enabled"),"enabled":input.enabled,"revision":next})).await.map_err(unavailable)?;
         tx.commit().await.map_err(unavailable)?;
         Ok(result)

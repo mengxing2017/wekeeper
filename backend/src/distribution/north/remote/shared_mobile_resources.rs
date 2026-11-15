@@ -56,7 +56,6 @@ async fn platform_devices(
         a.shared_mobile_resources()
             .list(
                 &actor,
-                None,
                 Resource::PlatformDevices,
                 f.page(),
                 f.search.clone(),
@@ -69,7 +68,6 @@ async fn platform_devices(
 async fn targets(
     State(a): State<Application>,
     actor: Actor,
-    Path(s): Path<Uuid>,
     Query(f): Query<Filter>,
 ) -> Result<ApiResponse> {
     Ok(collection(
@@ -77,7 +75,6 @@ async fn targets(
         a.shared_mobile_resources()
             .list(
                 &actor,
-                Some(s),
                 Resource::Targets,
                 f.page(),
                 f.search.clone(),
@@ -90,7 +87,6 @@ async fn targets(
 async fn devices(
     State(a): State<Application>,
     actor: Actor,
-    Path(s): Path<Uuid>,
     Query(f): Query<Filter>,
 ) -> Result<ApiResponse> {
     Ok(collection(
@@ -98,7 +94,6 @@ async fn devices(
         a.shared_mobile_resources()
             .list(
                 &actor,
-                Some(s),
                 Resource::Devices,
                 f.page(),
                 f.search.clone(),
@@ -111,7 +106,6 @@ async fn devices(
 async fn bindings(
     State(a): State<Application>,
     actor: Actor,
-    Path(s): Path<Uuid>,
     Query(f): Query<Filter>,
 ) -> Result<ApiResponse> {
     Ok(collection(
@@ -119,7 +113,6 @@ async fn bindings(
         a.shared_mobile_resources()
             .list(
                 &actor,
-                Some(s),
                 Resource::Bindings,
                 f.page(),
                 f.search.clone(),
@@ -132,7 +125,6 @@ async fn bindings(
 async fn target(
     State(a): State<Application>,
     actor: Actor,
-    Path(s): Path<Uuid>,
     h: HeaderMap,
     input: Input,
 ) -> Result<ApiResponse> {
@@ -141,7 +133,6 @@ async fn target(
         a.shared_mobile_resources()
             .write(
                 &actor,
-                Some(s),
                 "target",
                 None,
                 key(&h),
@@ -161,7 +152,6 @@ async fn binding(
         a.shared_mobile_resources()
             .write(
                 &actor,
-                None,
                 "bind",
                 None,
                 key(&h),
@@ -182,7 +172,6 @@ async fn revoke_binding(
         a.shared_mobile_resources()
             .write(
                 &actor,
-                None,
                 "revoke-binding",
                 Some(id),
                 key(&h),
@@ -194,17 +183,17 @@ async fn revoke_binding(
 async fn target_detail(
     State(a): State<Application>,
     actor: Actor,
-    Path((s, id)): Path<(Uuid, Uuid)>,
+    Path(id): Path<Uuid>,
 ) -> Result<ApiResponse> {
     Ok(resource(
         "mobile-targets",
-        a.shared_mobile_resources().target(&actor, s, id).await?,
+        a.shared_mobile_resources().target(&actor, id).await?,
     ))
 }
 async fn update_target(
     State(a): State<Application>,
     actor: Actor,
-    Path((s, id)): Path<(Uuid, Uuid)>,
+    Path(id): Path<Uuid>,
     h: HeaderMap,
     input: Input,
 ) -> Result<ApiResponse> {
@@ -213,7 +202,6 @@ async fn update_target(
         a.shared_mobile_resources()
             .write(
                 &actor,
-                Some(s),
                 "update-target",
                 Some(id),
                 key(&h),
@@ -225,7 +213,7 @@ async fn update_target(
 async fn archive_target(
     State(a): State<Application>,
     actor: Actor,
-    Path((s, id)): Path<(Uuid, Uuid)>,
+    Path(id): Path<Uuid>,
     h: HeaderMap,
     input: Input,
 ) -> Result<ApiResponse> {
@@ -234,7 +222,6 @@ async fn archive_target(
         a.shared_mobile_resources()
             .write(
                 &actor,
-                Some(s),
                 "archive-target",
                 Some(id),
                 key(&h),
@@ -253,7 +240,6 @@ async fn platform_bindings(
         a.shared_mobile_resources()
             .list(
                 &actor,
-                None,
                 Resource::PlatformBindings,
                 f.page(),
                 f.search.clone(),
@@ -273,7 +259,6 @@ async fn platform_targets(
         a.shared_mobile_resources()
             .list(
                 &actor,
-                None,
                 Resource::PlatformTargets,
                 f.page(),
                 f.search.clone(),
@@ -295,7 +280,6 @@ async fn update_binding(
         a.shared_mobile_resources()
             .write(
                 &actor,
-                None,
                 "update-binding",
                 Some(id),
                 key(&h),
@@ -311,7 +295,7 @@ pub fn router() -> Router<Application> {
             get(platform_devices),
         )
         .route(
-            "/api/v1/mobile-execution/workspaces/{workspace}/targets/{id}",
+            "/api/v1/mobile-execution/targets/{id}",
             get(target_detail)
                 .patch(update_target)
                 .delete(archive_target),
@@ -332,18 +316,12 @@ pub fn router() -> Router<Application> {
             "/api/v1/platform/mobile-execution/targets",
             get(platform_targets),
         )
+        .route("/api/v1/mobile-execution/devices", get(devices))
         .route(
-            "/api/v1/mobile-execution/workspaces/{workspace}/devices",
-            get(devices),
-        )
-        .route(
-            "/api/v1/mobile-execution/workspaces/{workspace}/targets",
+            "/api/v1/mobile-execution/targets",
             get(targets).post(target),
         )
-        .route(
-            "/api/v1/mobile-execution/workspaces/{workspace}/target-bindings",
-            get(bindings),
-        )
+        .route("/api/v1/mobile-execution/target-bindings", get(bindings))
 }
 
 #[cfg(test)]

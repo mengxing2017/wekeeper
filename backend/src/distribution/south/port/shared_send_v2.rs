@@ -5,10 +5,9 @@ use crate::{
 use serde_json::Value;
 use uuid::Uuid;
 #[derive(Clone, Debug)]
-pub enum SchoolCommand {
+pub enum TaskCommand {
     Support(SupportInput),
-    PoolBinding(PoolBindingInput),
-    Unbind(Uuid, Mutation),
+
     Draft(Option<Uuid>, DraftInput),
     Inspection(InspectionInput),
     Preview(PreviewInput),
@@ -22,7 +21,6 @@ pub enum PlatformCommand {
     Policy(PolicyInput),
     Manage(ManagementCommand),
     Artifact(ArtifactUpload),
-    Access(SchoolAccessInput),
 }
 #[derive(Clone, Debug)]
 pub enum DeviceCommand {
@@ -54,30 +52,22 @@ pub trait Store: Clone + Send + Sync {
     fn usage_read(
         &self,
         a: &Actor,
-        s: Option<Uuid>,
         id: Option<Uuid>,
         get_options: bool,
     ) -> impl Future<Output = Result<Value>> + Send;
     fn usage_write(
         &self,
         a: &Actor,
-        s: Uuid,
         key: &str,
         command: crate::distribution::domain::shared_mobile::usage::UsageCommand,
     ) -> impl Future<Output = Result<Value>> + Send;
-    fn school_write(
+    fn task_write(
         &self,
         a: &Actor,
-        s: Uuid,
         key: &str,
-        command: SchoolCommand,
+        command: TaskCommand,
     ) -> impl Future<Output = Result<Value>> + Send;
-    fn school_read(
-        &self,
-        a: &Actor,
-        s: Uuid,
-        id: Option<Uuid>,
-    ) -> impl Future<Output = Result<Value>> + Send;
+    fn task_read(&self, a: &Actor, id: Option<Uuid>) -> impl Future<Output = Result<Value>> + Send;
     fn platform_write(
         &self,
         a: &Actor,

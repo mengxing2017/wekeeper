@@ -11,37 +11,33 @@ pub async fn platform(tx: &mut Transaction<'_, Postgres>, a: &Actor) -> Result<(
         .ok_or(Error::Forbidden)?;
     Ok(())
 }
-pub async fn authorize(
-    tx: &mut Transaction<'_, Postgres>,
-    a: &Actor,
-    s: Option<Uuid>,
-    role: &str,
-) -> Result<()> {
-    super::wecom_workspaces::authorize(tx, a.id, s, role == "admin").await
+pub async fn authorize(tx: &mut Transaction<'_, Postgres>, a: &Actor, _role: &str) -> Result<()> {
+    crate::distribution::south::adapter::postgres::authorization::authorize(tx, a.id).await
 }
 
 pub async fn create(
     tx: &mut Transaction<'_, Postgres>,
     a: &Actor,
-    s: Option<Uuid>,
     kind: &str,
     payload: Value,
     dependencies: Value,
 ) -> Result<Value> {
     let id = Uuid::now_v7();
-    let digest=hash(&json!({"id":id,"actor":a.id,"school":s,"kind":kind,"payload":payload,"dependencies":dependencies}).to_string());
-    let expiry:chrono::DateTime<chrono::Utc>=sqlx::query_scalar("INSERT INTO product_previews(id,actor_id,school_id,kind,payload,dependencies,digest) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING expires_at").bind(id).bind(a.id).bind(s).bind(kind).bind(&payload).bind(&dependencies).bind(&digest).fetch_one(&mut **tx).await?;
+    let digest = hash(
+        &json!({"id":id,"actor":a.id,"kind":kind,"payload":payload,"dependencies":dependencies})
+            .to_string(),
+    );
+    let expiry:chrono::DateTime<chrono::Utc>=sqlx::query_scalar("INSERT INTO product_previews(id,actor_id,kind,payload,dependencies,digest) VALUES($1,$2,$3,$4,$5,$6) RETURNING expires_at").bind(id).bind(a.id).bind(kind).bind(&payload).bind(&dependencies).bind(&digest).fetch_one(&mut **tx).await?;
     Ok(json!({"id":id,"digest":digest,"expires_at":expiry,"summary":payload}))
 }
 pub async fn load(
     tx: &mut Transaction<'_, Postgres>,
     a: &Actor,
-    s: Option<Uuid>,
     kind: &str,
     id: Uuid,
     digest: &str,
 ) -> Result<(Value, Value, Option<Value>)> {
-    let row=sqlx::query("SELECT payload,dependencies,result,expires_at>now() AS valid,digest FROM product_previews WHERE id=$1 AND actor_id=$2 AND school_id IS NOT DISTINCT FROM $3 AND kind=$4 FOR UPDATE").bind(id).bind(a.id).bind(s).bind(kind).fetch_optional(&mut **tx).await?.ok_or(Error::NotFound)?;
+    let row=sqlx::query("SELECT payload,dependencies,result,expires_at>now() AS valid,digest FROM product_previews WHERE id=$1 AND actor_id=$2  AND kind=$3 FOR UPDATE").bind(id).bind(a.id).bind(kind).fetch_optional(&mut **tx).await?.ok_or(Error::NotFound)?;
     require(row.get::<String, _>("digest") == digest, "核对摘要不匹配")?;
     let result = row.get::<Option<Value>, _>("result");
     require(
