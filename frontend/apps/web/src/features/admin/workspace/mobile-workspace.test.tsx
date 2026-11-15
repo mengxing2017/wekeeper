@@ -6,6 +6,7 @@ import { Workspace } from './index'
 import { mobileWorkspaces } from '../../operations/mobile-execution/api'
 import { wecomWorkspaces } from '../../operations/wecom-senders/api'
 import { identity } from '../../identity/api'
+vi.mock('../../../app/shell', () => ({ AppShell: ({children}: {children: React.ReactNode}) => <>{children}</> }))
 vi.mock('../../identity/api', () => ({ identity: { session: vi.fn(), logout: vi.fn() }, subscribeUnauthorized: () => () => {} }))
 vi.mock('../../operations/wecom-senders/api', () => ({ wecomWorkspaces: { list: vi.fn() } }))
 vi.mock('../../operations/mobile-execution/api', () => ({ mobileWorkspaces: { list: vi.fn() } }))
@@ -18,7 +19,7 @@ function show(view: string, platformAdmin: boolean, role?: 'admin' | 'operator')
   vi.mocked(identity.session).mockResolvedValue({ csrf: 'csrf', user: {id:'user',username:'mobile',display_name:'移动运营',platform_admin:platformAdmin,bound_school_id:null,grants:[],wecom_authenticated:false} })
   vi.mocked(mobileWorkspaces.list).mockResolvedValue({ items: role ? [{id:'standalone',name:'独立移动分发',role}] : [] })
   const cache = new QueryClient({defaultOptions:{queries:{retry:false}}})
-  render(<QueryClientProvider client={cache}><MemoryRouter initialEntries={[`/admin?view=${view}&school=retired-school`]}><Workspace/></MemoryRouter></QueryClientProvider>)
+  render(<QueryClientProvider client={cache}><MemoryRouter initialEntries={[`/admin?view=${view}`]}><Workspace/></MemoryRouter></QueryClientProvider>)
 }
 it('系统管理员无需学校即可进入手机任务并确认发送', async () => {
   show('mobile-execution-tasks', true, 'admin')

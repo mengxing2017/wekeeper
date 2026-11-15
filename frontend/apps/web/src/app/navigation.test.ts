@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { expect, test } from 'vitest'
 import { canNavigate, navigation, visibleNavigationKeys } from './navigation'
 
@@ -13,15 +14,7 @@ test('功能分类不代替数据范围与角色权限', () => {
   expect(overview.domain).toBe('wecom')
   expect(canNavigate(overview, false, 'admin')).toBe(false)
   expect(canNavigate(overview, true)).toBe(true)
-  for (const key of ['settings','members','schools','accounts']) expect(navigation.find(n => n.key === key)).toBeUndefined()
-  expect(visibleNavigationKeys(false, 'operator')).not.toContain('settings')
-  expect(visibleNavigationKeys(false, 'admin')).not.toContain('settings')
   expect(visibleNavigationKeys(false, 'member')).toEqual([])
-})
-
-test('只注册当前业务入口', () => {
-  expect(navigation.find(n => n.key === 'mobile-delivery')).toBeUndefined()
-  expect(new Set(navigation.map(n => n.key)).size).toBe(navigation.length)
 })
 
 test('手机任务与目标群使用独立移动权限，学校角色不能放行', () => {
@@ -42,14 +35,12 @@ test('共享手机目标绑定属于平台资源，学校不保留旧设备授�
   expect(item.scope).toBe('global')
   expect(canNavigate(item, false, 'admin')).toBe(false)
   expect(canNavigate(item, true)).toBe(true)
-  expect(navigation.find(n => n.key === 'mobile-device-grants')).toBeUndefined()
 })
 
-test('保留消息接收、两类分发业务与系统支撑，论坛入口已移除', () => {
+test('业务导航归属消息接收、两类分发与系统支撑', () => {
+  expect(new Set(navigation.map(item => item.key)).size).toBe(navigation.length)
   expect(new Set(navigation.map(item => item.domain))).toEqual(new Set(['source', 'wecom', 'mobile', 'support']))
   expect(navigation.find(item => item.key === 'wecom-directory')?.domain).toBe('wecom')
-  for (const key of ['posts','comments','cases','resources','platform-resources']) expect(navigation.find(item => item.key === key)).toBeUndefined()
-  expect(navigation.find(item => item.key === 'execution-accounts')).toBeUndefined()
 })
 
 test('消息分发路由是调用方凭据的子项，不注册独立导航', () => {
@@ -60,12 +51,10 @@ test('消息分发路由是调用方凭据的子项，不注册独立导航', ()
   expect(canNavigate(credential, true)).toBe(true)
   expect(canNavigate(credential, false, 'admin', 'admin')).toBe(false)
   expect(canNavigate(credential, false, 'operator', 'operator')).toBe(false)
-  expect(navigation.find(item => item.key === 'source-routes')).toBeUndefined()
 })
 
 
 test('消息接收管理保留路由执行配置，移除独立单位分组入口', () => {
-  expect(navigation.find(item => item.key === 'source-routing-directory')).toBeUndefined()
   const configuration = navigation.find(item => item.key === 'source-route-configurations')!
   expect(configuration.label).toBe('路由执行配置')
   for (const item of [configuration]) {

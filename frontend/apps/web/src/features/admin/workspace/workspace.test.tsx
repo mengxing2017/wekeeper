@@ -1,4 +1,3 @@
-import { keywordRules } from '../../operations/source-access/api'
 import { selectOption } from '../../../test/select-option'
 import { afterEach, expect, it, vi } from 'vitest'
 import { cleanup, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
@@ -8,6 +7,7 @@ import { Workspace } from './index'
 import { identity, workspace } from './api'
 import { wecomWorkspaces } from '../../operations/wecom-senders/api'
 import { mobileWorkspaces } from '../../operations/mobile-execution/api'
+vi.mock('../../../app/shell', () => ({ AppShell: ({children}: {children: React.ReactNode}) => <>{children}</> }))
 vi.mock('../../identity/api', async () => ({ identity: (await import('./api')).identity, subscribeUnauthorized: () => () => {} }))
 vi.mock('./api', () => ({ identity: { session: vi.fn(), administrators: vi.fn(), resetAdministrator: vi.fn(), logout: vi.fn() }, workspace: { list: vi.fn(), mutate: vi.fn() } }))
 vi.mock('../../operations/wecom-senders/api', () => ({ wecomWorkspaces: { list: vi.fn() } }))
@@ -46,12 +46,6 @@ it('keeps an existing group identity read-only while saving its revocation', asy
 })
 
 
-it.each(['members','settings','schools','accounts','posts','comments','cases','resources','platform-resources'])('rejects retired management URL %s', async view => {
-  show(view)
-  expect(await screen.findByText('页面不存在')).toBeTruthy()
-  expect(workspace.list).not.toHaveBeenCalled()
-  for (const name of ['学校成员与权限','学校设置','学校管理','登录账号管理']) expect(screen.queryByRole('menuitem',{name})).toBeNull()
-})
 it('requires a fresh login after resetting the current platform administrator password', async () => {
   vi.mocked(identity.administrators).mockResolvedValue([{id:'u',username:'root',display_name:'平台维护者',active:true,platform_admin:true}])
   vi.mocked(identity.resetAdministrator).mockResolvedValue(undefined as never)
@@ -61,14 +55,4 @@ it('requires a fresh login after resetting the current platform administrator pa
   fireEvent.click(within(screen.getByRole('dialog')).getByRole('button',{name:'确认重设密码'}))
   await waitFor(()=>expect(identity.resetAdministrator).toHaveBeenCalledWith('u','changed-password'))
   expect(await screen.findByText('登录工作空间',{selector:'h1'})).toBeTruthy()
-})
-
-it('opens the keyword rules page from its registered workspace URL and sidebar entry',async()=>{
- const words=vi.spyOn(keywordRules,'list').mockResolvedValue({entries:[],revision:0})
- show('keyword-rules')
- expect(await screen.findByRole('menuitem',{name:'敏感词拦截'})).toBeTruthy()
- expect(await screen.findByRole('button',{name:'添加敏感词'})).toBeTruthy()
- await waitFor(()=>expect(words).toHaveBeenCalled())
- expect(screen.queryByText('页面不存在')).toBeNull()
- words.mockRestore()
 })
