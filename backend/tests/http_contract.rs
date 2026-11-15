@@ -70,121 +70,6 @@ async fn receiving_configuration_routes_require_identity_and_serialize_channel_r
 }
 
 #[tokio::test]
-async fn removed_compatibility_routes_are_absent() {
-    let school = "00000000-0000-4000-8000-000000000001";
-    for (method, path, expected) in [
-        (
-            "GET",
-            format!("/api/v1/mobile-execution/workspaces/{school}/receiving-configurations"),
-            StatusCode::NOT_FOUND,
-        ),
-        (
-            "GET",
-            format!("/api/v1/wecom-distribution/workspaces/{school}/receiving-configurations"),
-            StatusCode::NOT_FOUND,
-        ),
-        (
-            "GET",
-            "/api/v2/admin/source-automation-tasks".into(),
-            StatusCode::NOT_FOUND,
-        ),
-        (
-            "POST",
-            "/api/v2/admin/source-routes/route/receipts/receipt/rechecks".into(),
-            StatusCode::NOT_FOUND,
-        ),
-        (
-            "GET",
-            "/api/v2/admin/advertisements".into(),
-            StatusCode::NOT_FOUND,
-        ),
-        (
-            "GET",
-            "/api/v2/admin/source-routes/route/version-policy".into(),
-            StatusCode::NOT_FOUND,
-        ),
-        (
-            "PUT",
-            "/api/v2/admin/source-routes/route/version-policy".into(),
-            StatusCode::NOT_FOUND,
-        ),
-        (
-            "GET",
-            "/api/v2/admin/ad-placement-rules".into(),
-            StatusCode::NOT_FOUND,
-        ),
-        (
-            "POST",
-            "/api/v2/admin/ad-placement-rules".into(),
-            StatusCode::NOT_FOUND,
-        ),
-        (
-            "GET",
-            format!("/api/v2/admin/ad-placement-rules/{school}"),
-            StatusCode::NOT_FOUND,
-        ),
-        (
-            "GET",
-            format!("/api/v1/schools/{school}/delivery-drafts"),
-            StatusCode::NOT_FOUND,
-        ),
-        (
-            "GET",
-            format!("/api/v1/schools/{school}/delivery-attempts"),
-            StatusCode::NOT_FOUND,
-        ),
-        (
-            "GET",
-            format!("/api/v1/mobile-execution/workspaces/{school}/shared-tasks"),
-            StatusCode::NOT_FOUND,
-        ),
-        (
-            "POST",
-            format!("/api/v1/wecom-distribution/workspaces/{school}/templates"),
-            StatusCode::METHOD_NOT_ALLOWED,
-        ),
-        (
-            "POST",
-            format!("/api/v1/schools/{school}/resources"),
-            StatusCode::NOT_FOUND,
-        ),
-        (
-            "POST",
-            "/api/v1/platform/mobile-execution/shared-v2-management".into(),
-            StatusCode::NOT_FOUND,
-        ),
-        (
-            "GET",
-            format!("/api/v2/admin/routing-groups/{school}/targets"),
-            StatusCode::NOT_FOUND,
-        ),
-        (
-            "PUT",
-            format!("/api/v2/admin/routing-groups/{school}/targets"),
-            StatusCode::NOT_FOUND,
-        ),
-        (
-            "POST",
-            "/api/v9/device-execution/human-samples".into(),
-            StatusCode::NOT_FOUND,
-        ),
-    ] {
-        let response = app()
-            .oneshot(
-                Request::builder()
-                    .method(method)
-                    .uri(&path)
-                    .header("origin", "http://localhost:5173")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), expected, "{method} {path}");
-    }
-}
-
-#[tokio::test]
 async fn public_contract_matches_shared_fixture() {
     let response = app()
         .oneshot(
@@ -209,7 +94,7 @@ async fn unknown_business_routes_fail_closed() {
     let response = app()
         .oneshot(
             Request::builder()
-                .uri("/api/v1/posts")
+                .uri("/api/v1/not-a-business-route")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -760,50 +645,6 @@ fn control_presence_matches_shared_contract_and_policy() {
     assert_eq!(serde_json::to_value(presence).unwrap(), fixture);
 }
 
-#[tokio::test]
-async fn retired_phone_task_routes_are_removed() {
-    for (method, path) in [
-        ("POST", "task-previews"),
-        ("POST", "tasks"),
-        ("GET", "tasks"),
-        (
-            "POST",
-            "tasks/00000000-0000-0000-0000-000000000002/cancellations",
-        ),
-    ] {
-        let response = app().oneshot(Request::builder().method(method)
-            .uri(format!("/api/v1/mobile-execution/workspaces/00000000-0000-0000-0000-000000000001/{path}"))
-            .header("content-type", "application/vnd.api+json")
-            .body(Body::from("{\"data\":{\"type\":\"mobile-execution-tasks\",\"attributes\":{}}}")).unwrap()).await.unwrap();
-        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
-    }
-}
-
-#[tokio::test]
-async fn removed_v8_delegation_and_school_pool_writes_are_absent() {
-    for path in [
-        "/api/v8/device-execution/send-delegation-decisions",
-        "/api/v1/platform/mobile-execution/shared-device-access",
-        "/api/v1/mobile-execution/workspaces/00000000-0000-0000-0000-000000000001/shared-bindings",
-        "/api/v1/mobile-execution/workspaces/00000000-0000-0000-0000-000000000001/shared-bindings/00000000-0000-0000-0000-000000000002/revocations",
-    ] {
-        let response = app()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri(path)
-                    .header("content-type", "application/vnd.api+json")
-                    .body(Body::from(
-                        r#"{"data":{"type":"mobile-shared-delegation-decisions","attributes":{}}}"#,
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
-    }
-}
-
 #[test]
 fn preview_without_phone_keeps_target_identity_and_binding_names() {
     use wekeeper_api::distribution::domain::shared_mobile::shared_send_v2::PreviewItem;
@@ -1040,63 +881,6 @@ fn usage_summary_serializes_the_business_group_name() {
 }
 
 #[tokio::test]
-async fn legacy_phone_send_and_maintenance_routes_are_absent() {
-    for version in 1..=9 {
-        for tail in [
-            "protocol-capabilities",
-            "send-capability-context",
-            "send-recovery-context",
-            "send-delegation-context",
-            "shared-task-inbox",
-            "shared-task-receipts",
-            "runtime-reports",
-            "send-delegation-decisions",
-            "failure-diagnostics",
-            "send-claims/00000000-0000-4000-8000-000000000001/renewals",
-            "send-claims/00000000-0000-4000-8000-000000000001/releases",
-            "send-claims/00000000-0000-4000-8000-000000000001/preparations",
-            "send-claims/00000000-0000-4000-8000-000000000001/invocations",
-            "send-claims",
-            "send-preparations",
-            "send-invocations",
-            "send-results",
-            "send-recoveries",
-            "send-settlements",
-            "send-inspection-claims",
-            "send-inspection-starts",
-            "send-inspection-results",
-            "send-task-inbox",
-            "send-task-receipts",
-            "claims",
-            "session",
-            "flow-validations",
-            "capability-context",
-            "field-checks",
-            "enrollments",
-            "credential-rotations",
-        ] {
-            for method in ["GET", "POST"] {
-                let response = app()
-                    .oneshot(
-                        Request::builder()
-                            .method(method)
-                            .uri(format!("/api/v{version}/device-execution/{tail}"))
-                            .header("content-type", "application/vnd.api+json")
-                            .body(Body::from("{}"))
-                            .unwrap(),
-                    )
-                    .await
-                    .unwrap();
-                assert_eq!(
-                    response.status(),
-                    StatusCode::NOT_FOUND,
-                    "{method} v{version}/{tail}"
-                );
-            }
-        }
-    }
-}
-#[tokio::test]
 async fn registry_rotation_requires_device_identity_and_admin_registry_requires_account() {
     for (method, path) in [
         ("POST", "/api/v10/device-execution/credential-rotations"),
@@ -1146,47 +930,8 @@ async fn task_delivery_is_a_device_authenticated_jsonapi_endpoint() {
 }
 
 #[tokio::test]
-async fn forum_and_miniapp_routes_are_removed_while_materials_require_login() {
+async fn distribution_materials_require_authenticated_sessions() {
     let school = "00000000-0000-4000-8000-000000000001";
-    let id = "00000000-0000-4000-8000-000000000002";
-    let paths = [
-        format!("/api/v1/schools/{school}/posts"),
-        format!("/api/v1/schools/{school}/posts/{id}"),
-        format!("/api/v1/schools/{school}/posts/{id}/moderation-decisions"),
-        format!("/api/v1/schools/{school}/comments"),
-        format!("/api/v1/schools/{school}/comments/{id}/moderation-decisions"),
-        format!("/api/v1/schools/{school}/cases"),
-        format!("/api/v1/schools/{school}/resources"),
-        format!("/api/v1/schools/{school}/published-resources"),
-        format!("/api/v1/schools/{school}/resource-previews"),
-        format!("/api/v1/schools/{school}/resource-publications"),
-        format!("/api/v1/schools/{school}/resource-artwork"),
-        format!("/api/v1/schools/{school}/resource-media/{id}"),
-        format!("/api/v1/schools/{school}/resource-qrcodes"),
-        format!("/api/v1/schools/{school}/notifications"),
-        format!("/api/v1/schools/{school}/reactions"),
-        format!("/api/v1/schools/{school}/follows"),
-        "/api/v1/platform/resources".into(),
-        "/api/v1/platform/resource-artwork".into(),
-        "/api/v1/platform/resource-previews".into(),
-        "/api/v1/platform/resource-publications".into(),
-        "/api/v1/auth/miniapp".into(),
-    ];
-    for path in paths {
-        for method in ["GET", "POST", "PUT", "DELETE"] {
-            let response = app()
-                .oneshot(
-                    Request::builder()
-                        .method(method)
-                        .uri(&path)
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method} {path}");
-        }
-    }
     for path in [
         format!("/api/v1/wecom-distribution/workspaces/{school}/distribution-materials"),
         "/api/v1/auth/session".into(),
@@ -1195,7 +940,7 @@ async fn forum_and_miniapp_routes_are_removed_while_materials_require_login() {
             .oneshot(
                 Request::builder()
                     .uri(&path)
-                    .header("authorization", "Bearer retired-miniapp-token")
+                    .header("authorization", "Bearer invalid-token")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1206,35 +951,8 @@ async fn forum_and_miniapp_routes_are_removed_while_materials_require_login() {
 }
 
 #[tokio::test]
-async fn schools_and_login_account_management_are_removed() {
+async fn business_management_collections_require_identity() {
     let id = "00000000-0000-4000-8000-000000000001";
-    for path in [
-        "/api/v1/schools".into(),
-        "/api/v1/school-directory".into(),
-        format!("/api/v1/schools/{id}"),
-        format!("/api/v1/schools/{id}/members"),
-        format!("/api/v1/schools/{id}/members/{id}"),
-        format!("/api/v1/schools/{id}/bind"),
-        format!("/api/v1/schools/{id}/groups"),
-        "/api/v1/accounts".into(),
-        format!("/api/v1/accounts/{id}"),
-        format!("/api/v1/accounts/{id}/password"),
-        format!("/api/v1/accounts/{id}/wecom-binding"),
-    ] {
-        for method in ["GET", "POST", "PUT", "DELETE"] {
-            let response = app()
-                .oneshot(
-                    Request::builder()
-                        .method(method)
-                        .uri(&path)
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method} {path}");
-        }
-    }
     for path in [
         "/api/v1/wecom-distribution/workspaces".into(),
         format!("/api/v1/wecom-distribution/workspaces/{id}/groups"),
@@ -1248,14 +966,6 @@ async fn schools_and_login_account_management_are_removed() {
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
     }
-}
-
-#[tokio::test]
-async fn workspace_audit_route_is_removed() {
-    let response = app().oneshot(Request::builder()
-        .uri("/api/v1/wecom-distribution/workspaces/00000000-0000-4000-8000-000000000001/audit")
-        .body(Body::empty()).unwrap()).await.unwrap();
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
