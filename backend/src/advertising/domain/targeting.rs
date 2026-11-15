@@ -76,7 +76,6 @@ pub fn preferred_candidates(
 #[serde(deny_unknown_fields)]
 pub struct CreateMaterial {
     pub content: Content,
-    pub reason: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -84,14 +83,12 @@ pub struct CreateMaterial {
 pub struct PublishMaterial {
     pub expected_revision: i64,
     pub content: Content,
-    pub reason: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArchiveMaterial {
     pub expected_revision: i64,
-    pub reason: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -127,7 +124,6 @@ pub struct CreateAdPlacement {
     pub enabled: bool,
     pub valid_from: chrono::DateTime<chrono::Utc>,
     pub valid_until: Option<chrono::DateTime<chrono::Utc>>,
-    pub reason: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -146,7 +142,6 @@ pub struct AdPlacementView {
 pub struct SetPlacementState {
     pub expected_revision: i64,
     pub enabled: bool,
-    pub reason: String,
 }
 
 #[cfg(test)]
@@ -319,6 +314,26 @@ mod tests {
             serde_json::to_value(state).unwrap(),
             fixture["placement_state"]
         );
+        // Daily advertising operations have no operator-supplied reason field.
+        // Reject the retired field rather than retaining a compatibility branch.
+        for key in [
+            "create",
+            "publish",
+            "archive",
+            "placement_create",
+            "placement_state",
+        ] {
+            let mut retired = fixture[key].clone();
+            retired["reason"] = serde_json::json!("obsolete");
+            let rejected = match key {
+                "create" => serde_json::from_value::<CreateMaterial>(retired).is_err(),
+                "publish" => serde_json::from_value::<PublishMaterial>(retired).is_err(),
+                "archive" => serde_json::from_value::<ArchiveMaterial>(retired).is_err(),
+                "placement_create" => serde_json::from_value::<CreateAdPlacement>(retired).is_err(),
+                _ => serde_json::from_value::<SetPlacementState>(retired).is_err(),
+            };
+            assert!(rejected, "retired reason accepted by {key}");
+        }
         let mut invalid = fixture["create"].clone();
         invalid["route_id"] = serde_json::json!("not-allowed");
         assert!(serde_json::from_value::<CreateMaterial>(invalid).is_err());

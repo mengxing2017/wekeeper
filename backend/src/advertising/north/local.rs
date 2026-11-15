@@ -33,7 +33,7 @@ impl<S: super::super::south::port::MaterialStore> MaterialService<S> {
         input: targeting::CreateMaterial,
     ) -> Result<targeting::MaterialView> {
         ensure(actor.platform_admin, "forbidden")?;
-        validate_material(&input.content, &input.reason)?;
+        input.content.validate()?;
         self.0.create_material(actor, input).await
     }
     pub async fn get(&self, actor: &Actor, id: uuid::Uuid) -> Result<targeting::MaterialView> {
@@ -72,12 +72,7 @@ impl<S: super::super::south::port::MaterialStore> MaterialService<S> {
         input: targeting::ArchiveMaterial,
     ) -> Result<targeting::MaterialView> {
         ensure(actor.platform_admin, "forbidden")?;
-        ensure(
-            input.expected_revision > 0
-                && !input.reason.trim().is_empty()
-                && input.reason.chars().count() <= 2000,
-            "invalid_request",
-        )?;
+        ensure(input.expected_revision > 0, "invalid_request")?;
         self.0.archive_material(actor, id, input).await
     }
     pub async fn publish(
@@ -88,17 +83,9 @@ impl<S: super::super::south::port::MaterialStore> MaterialService<S> {
     ) -> Result<targeting::MaterialView> {
         ensure(actor.platform_admin, "forbidden")?;
         ensure(input.expected_revision > 0, "invalid_request")?;
-        validate_material(&input.content, &input.reason)?;
+        input.content.validate()?;
         self.0.publish_material(actor, id, input).await
     }
-}
-
-fn validate_material(content: &Content, reason: &str) -> Result<()> {
-    content.validate()?;
-    ensure(
-        !reason.trim().is_empty() && reason.chars().count() <= 2000,
-        "invalid_request",
-    )
 }
 
 pub struct AdPlacementService<S>(pub S);
@@ -110,10 +97,6 @@ impl<S: super::super::south::port::AdPlacementStore> AdPlacementService<S> {
     ) -> Result<targeting::AdPlacementView> {
         use targeting::TargetScope;
         ensure(actor.platform_admin, "forbidden")?;
-        ensure(
-            !input.reason.trim().is_empty() && input.reason.chars().count() <= 2000,
-            "invalid_request",
-        )?;
         ensure(
             !input.material_id.is_nil()
                 && input.valid_until.is_none_or(|end| end > input.valid_from),
@@ -153,10 +136,6 @@ impl<S: super::super::south::port::AdPlacementStore> AdPlacementService<S> {
     ) -> Result<targeting::AdPlacementView> {
         ensure(actor.platform_admin, "forbidden")?;
         ensure(input.expected_revision > 0, "invalid_request")?;
-        ensure(
-            !input.reason.trim().is_empty() && input.reason.chars().count() <= 2000,
-            "invalid_request",
-        )?;
         self.0.set_placement_state(actor, id, input).await
     }
 }

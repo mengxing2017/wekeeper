@@ -62,7 +62,7 @@ impl MaterialStore for Repository {
             Uuid::nil(),
             "advertising.material.create",
             id,
-            json!({"revision":1,"content_version":version,"reason":input.reason}),
+            json!({"revision":1,"content_version":version}),
         )
         .await
         .map_err(unavailable)?;
@@ -198,7 +198,7 @@ impl MaterialStore for Repository {
             Uuid::nil(),
             "advertising.material.archive",
             id,
-            json!({"revision":next,"content_version":version,"reason":input.reason}),
+            json!({"revision":next,"content_version":version}),
         )
         .await
         .map_err(unavailable)?;
@@ -258,7 +258,7 @@ impl MaterialStore for Repository {
             Uuid::nil(),
             "advertising.material.publish",
             id,
-            json!({"revision":revision,"content_version":version,"reason":input.reason}),
+            json!({"revision":revision,"content_version":version}),
         )
         .await
         .map_err(unavailable)?;
@@ -341,8 +341,16 @@ impl crate::advertising::south::port::AdPlacementStore for Repository {
                     _ => unavailable(error),
                 }
             })?;
-        crate::audit::record(&mut tx, actor, Uuid::nil(), "advertising.placement.create", id,
-            json!({"material_id":input.material_id,"scope":input.scope,"enabled":input.enabled,"reason":input.reason})).await.map_err(unavailable)?;
+        crate::audit::record(
+            &mut tx,
+            actor,
+            Uuid::nil(),
+            "advertising.placement.create",
+            id,
+            json!({"material_id":input.material_id,"scope":input.scope,"enabled":input.enabled}),
+        )
+        .await
+        .map_err(unavailable)?;
         tx.commit().await.map_err(unavailable)?;
         Ok(AdPlacementView {
             id,
@@ -475,7 +483,7 @@ impl crate::advertising::south::port::AdPlacementStore for Repository {
             revision: row.get("revision"),
         };
         crate::audit::record(&mut tx, actor, Uuid::nil(), "advertising.placement.state", id,
-            json!({"previous_enabled":current.get::<bool,_>("enabled"),"enabled":input.enabled,"revision":next,"reason":input.reason})).await.map_err(unavailable)?;
+            json!({"previous_enabled":current.get::<bool,_>("enabled"),"enabled":input.enabled,"revision":next})).await.map_err(unavailable)?;
         tx.commit().await.map_err(unavailable)?;
         Ok(result)
     }
