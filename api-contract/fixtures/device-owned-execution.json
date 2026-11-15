@@ -1,6 +1,0 @@
-{
-  "execution": {
-    "contract": "device_owned/1",
-    "capability": "wecom.group_text"
-  }
-}
