@@ -17,9 +17,11 @@ use uuid::Uuid;
 
 impl Repository {
     pub async fn run_once(&self) -> Result<()> {
-        let ids:Vec<Uuid>=sqlx::query_scalar("SELECT m.id FROM orchestration_messages m LEFT JOIN orchestration_dispatches d ON d.message_id=m.id WHERE (d.message_id IS NULL OR (d.state IN ('preparing','ready') AND d.next_attempt_at<=clock_timestamp())) ORDER BY m.accepted_at,m.id LIMIT 50")
+        let ids:Vec<Uuid>=sqlx::query_scalar("SELECT m.id FROM orchestration_messages m LEFT JOIN orchestration_dispatches d ON d.message_id=m.id WHERE (d.message_id IS NULL OR (d.state IN ('pending','preparing','ready') AND d.next_attempt_at<=clock_timestamp())) ORDER BY m.accepted_at,m.id LIMIT 50")
             .fetch_all(&self.0).await?;
         for id in ids {
+            // Persist retry identity before reading configuration or keyword dependencies.
+            sqlx::query("INSERT INTO orchestration_dispatches(message_id,content,decision,plans,state) VALUES($1,'','{}','[]','pending') ON CONFLICT DO NOTHING").bind(id).execute(&self.0).await?;
             if let Err(error) = self.process(id).await {
                 tracing::warn!(message_id=%id,error=?error,"message delegation will retry");
                 if matches!(
@@ -31,7 +33,7 @@ impl Repository {
                         | Error::NotFound
                 ) {
                     let mut tx = self.0.begin().await?;
-                    sqlx::query("UPDATE orchestration_dispatches SET state='failed',reason_code='channel_resources_missing',updated_at=clock_timestamp() WHERE message_id=$1 AND state IN ('preparing','ready')").bind(id).execute(&mut *tx).await?;
+                    sqlx::query("UPDATE orchestration_dispatches SET state='failed',reason_code='channel_resources_missing',updated_at=clock_timestamp() WHERE message_id=$1 AND state IN ('pending','preparing','ready')").bind(id).execute(&mut *tx).await?;
                     let receipt: Uuid = sqlx::query_scalar(
                         "SELECT evidence_ref FROM orchestration_messages WHERE id=$1",
                     )
@@ -47,7 +49,7 @@ impl Repository {
                     .await?;
                     tx.commit().await?;
                 } else {
-                    sqlx::query("UPDATE orchestration_dispatches SET failures=failures+1,next_attempt_at=clock_timestamp()+make_interval(secs=>LEAST(300,5*power(2,LEAST(failures,6)))),updated_at=clock_timestamp() WHERE message_id=$1 AND state IN ('preparing','ready')").bind(id).execute(&self.0).await?;
+                    sqlx::query("UPDATE orchestration_dispatches SET failures=failures+1,next_attempt_at=clock_timestamp()+make_interval(secs=>LEAST(300,5*power(2,LEAST(failures,6)))),updated_at=clock_timestamp() WHERE message_id=$1 AND state IN ('pending','preparing','ready')").bind(id).execute(&self.0).await?;
                 }
             }
         }
@@ -74,7 +76,7 @@ impl Repository {
         .bind(id)
         .fetch_optional(&mut *tx)
         .await?;
-        if existing.is_none() {
+        if existing.as_ref().is_some_and(|d| d["state"] == "pending") {
             let plans = receiving::plans(&mut tx, row.get("unit_id")).await?;
             // Evaluate current global keyword restrictions once. Configuration changes
             // never reinterpret an already frozen message or a delivered attempt.
@@ -113,12 +115,12 @@ impl Repository {
                 None
             };
             if let Some(reason) = reason {
-                sqlx::query("INSERT INTO orchestration_dispatches(message_id,content,decision,plans,state,reason_code) VALUES($1,$2,'{}',$3,'failed',$4)").bind(id).bind(&text).bind(json!(plans)).bind(reason).execute(&mut *tx).await?;
+                sqlx::query("UPDATE orchestration_dispatches SET content=$2,plans=$3,state='failed',reason_code=$4 WHERE message_id=$1").bind(id).bind(&text).bind(json!(plans)).bind(reason).execute(&mut *tx).await?;
                 mirror(&mut tx, receipt, "not_dispatched", Some(reason)).await?;
                 tx.commit().await?;
                 return Ok(());
             }
-            sqlx::query("INSERT INTO orchestration_dispatches(message_id,content,decision,plans,state) VALUES($1,$2,'{}',$3,'preparing')").bind(id).bind(&text).bind(json!(plans)).execute(&mut *tx).await?;
+            sqlx::query("UPDATE orchestration_dispatches SET content=$2,plans=$3,state='preparing' WHERE message_id=$1").bind(id).bind(&text).bind(json!(plans)).execute(&mut *tx).await?;
             mirror(&mut tx, receipt, "delegation_pending", None).await?;
         }
         tx.commit().await?;

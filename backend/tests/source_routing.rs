@@ -437,5 +437,77 @@ async fn both_channels_share_one_ad_and_aggregate_official_results_without_membe
         sending,
         serde_json::json!({"sent":1,"failed":0,"pending":1,"unknown":0})
     );
+    // A long but channel-valid original must reach both channels without an ad.
+    let (long, _) = f.message_with_content(2, &"原".repeat(250)).await;
+    f.run().await;
+    f.run().await;
+    let contents: Vec<String> = sqlx::query_scalar("SELECT s.content FROM orchestration_delegates d JOIN distribution_message_snapshots s ON s.id=d.snapshot_id WHERE d.message_id=$1 AND d.state='delegated'")
+        .bind(long).fetch_all(&f.pool).await.unwrap();
+    assert_eq!(contents.len(), 2);
+    assert_eq!(contents[0], contents[1]);
+    assert!(contents[0].contains(&"原".repeat(250)));
+    assert!(!contents[0].contains("【广告】"));
+    let count: i64 =
+        sqlx::query_scalar("SELECT selected_count FROM ad_unit_counters WHERE unit_id=$1")
+            .bind(f.unit)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 1);
+
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn first_dependency_failure_backs_off_fifty_messages_and_allows_new_work() {
+    let f = Fixture::new().await;
+    let config = f.configure(vec![f.target]).await;
+    let saved: Value = sqlx::query_scalar(
+        "SELECT configuration FROM channel_receiving_configurations WHERE id=$1",
+    )
+    .bind(config)
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    // Fault injection: configuration cannot be decoded before any plan is frozen.
+    sqlx::query("UPDATE channel_receiving_configurations SET configuration=configuration-'target_ids' WHERE id=$1")
+        .bind(config).execute(&f.pool).await.unwrap();
+    let mut failed = Vec::new();
+    for sequence in 1..=50 {
+        failed.push(f.message(sequence).await.0);
+    }
+    f.run().await;
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM orchestration_dispatches WHERE message_id=ANY($1) AND state='pending' AND failures=1 AND next_attempt_at>clock_timestamp() AND plans='[]'")
+        .bind(&failed).fetch_one(&f.pool).await.unwrap();
+    assert_eq!(count, 50);
+    sqlx::query("UPDATE channel_receiving_configurations SET configuration=$2 WHERE id=$1")
+        .bind(config)
+        .bind(saved)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let (new, _) = f.message(51).await;
+    f.run().await;
+    let state: String =
+        sqlx::query_scalar("SELECT state FROM orchestration_dispatches WHERE message_id=$1")
+            .bind(new)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(state, "delegated");
+    sqlx::query("UPDATE orchestration_dispatches SET next_attempt_at=clock_timestamp() WHERE message_id=ANY($1)")
+        .bind(&failed).execute(&f.pool).await.unwrap();
+    f.run().await;
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM orchestration_dispatches WHERE message_id=ANY($1) AND state='delegated'")
+        .bind(&failed).fetch_one(&f.pool).await.unwrap();
+    assert_eq!(count, 50);
+    assert!(
+        sqlx::query("UPDATE orchestration_dispatches SET plans='[]' WHERE message_id=$1")
+            .bind(new)
+            .execute(&f.pool)
+            .await
+            .is_err()
+    );
     f.close().await;
 }
