@@ -1,17 +1,17 @@
 import type { Client, Cancellation } from '../../http/client'
-const workspacePath = (id: string) => `/api/v1/wecom-distribution/workspaces/${encodeURIComponent(id)}`
+const mediaPath = '/api/v1/wecom-distribution/media'
 export interface UploadedMedia {
   id: string
   url: string
 }
 export function createMediaClient(client: Client) {
   return {
-    upload: (school: string, bytes: ArrayBuffer) =>
-      client.requestResource<UploadedMedia>(`${workspacePath(school)}/media`, 'POST', bytes),
-    download(school: string, path: string, signal?: Cancellation) {
-      const prefix = `${workspacePath(school)}/media/`
+    upload: (bytes: ArrayBuffer) =>
+      client.requestResource<UploadedMedia>(`${mediaPath}`, 'POST', bytes),
+    download(path: string, signal?: Cancellation) {
+      const prefix = `${mediaPath}/`
       if (!path.startsWith(prefix) || !/^[0-9a-f-]{36}$/i.test(path.slice(prefix.length)))
-        throw new Error('图片必须属于当前学校')
+        throw new Error('图片地址无效')
       return client.requestBinary(path, signal)
     },
   }

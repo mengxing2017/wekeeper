@@ -13,7 +13,7 @@
       "credential_generation": 1,
       "package_name": "com.tencent.wework",
       "capability": "group_text",
-      "resource_policy": "platform_managed_school_targets",
+      "resource_policy": "platform_managed_targets",
       "background_collection": true,
       "automatic_inspection": true,
       "text_input": true,

@@ -10,10 +10,10 @@ it('local UI fixtures preserve immutable digests while business requests contain
  const calls:Array<{url:string;body:unknown;key:string|undefined}>=[]
  const client=createClient(async r=>{calls.push({url:r.path,body:r.body?JSON.parse(r.body as string):undefined,key:r.headers['Idempotency-Key']});return {status:200,headers:{'content-type':'application/vnd.api+json'},body:{data:{type:'mobile-usages',id:'new',attributes:{items:[]}}}}})
  const business=createSharedSendV2Client(client)
- await business.usageConfirm('school',{preview_id:'summary',digest:'summary-hash'},'stable-key')
- await business.usageAction('school','usage','pause',{expected_revision:2,reason:'暂停使用'},'pause-key')
- await business.usageIssue('school','usage','无法找到群','issue-key')
- await business.taskPreview('school',{target_ids:['target'],message:'  原样文字\n',between_targets_seconds:30},'preview-key')
+ await business.usageConfirm({preview_id:'summary',digest:'summary-hash'},'stable-key')
+ await business.usageAction('usage','pause',{expected_revision:2,reason:'暂停使用'},'pause-key')
+ await business.usageIssue('usage','无法找到群','issue-key')
+ await business.taskPreview({target_ids:['target'],message:'  原样文字\n',between_targets_seconds:30},'preview-key')
  expect(calls[0].body).toEqual({data:{type:'mobile-usages',attributes:{preview_id:'summary',digest:'summary-hash'}}})
  expect(calls[1].body).toEqual({data:{type:'mobile-usages',attributes:{expected_revision:2,reason:'暂停使用'}}})
  expect(calls[2].body).toEqual({data:{type:'mobile-usage-issues',attributes:{description:'无法找到群'}}})
@@ -25,8 +25,8 @@ it('business input fixture has only business selection values',async()=>{
  const {default:input}=await import('../fixtures/mobile-usage-input.json')
  const calls:unknown[]=[]
  const client=createSharedSendV2Client({requestResource:async(path,...args)=>{calls.push([path,...args]);return {} as never}})
- await client.usagePreview('school',input,'key')
- expect(calls[0]).toEqual(['/api/v1/mobile-execution/workspaces/school/usage-previews','POST',input,undefined,{'Idempotency-Key':'key'}])
+ await client.usagePreview(input,'key')
+ expect(calls[0]).toEqual(['/api/v1/mobile-execution/usage-previews','POST',input,undefined,{'Idempotency-Key':'key'}])
  expect(Object.keys(input).sort()).toEqual(['auto_targets','device_ids','expires_at','max_calls','targets'])
 })
 
@@ -107,9 +107,9 @@ it('dispatch feedback exposes the authorized pool and automatic assignment histo
 
 it('task lists expose canonical outcomes without loading individual task details',async()=>{
  const {default:cases}=await import('../fixtures/shared-task-status.json')
- const tasks=cases.map(c=>({id:c.name,school_id:'school',intent_id:'intent',revision:1,stopped:c.stopped,created_at:'2026-11-08',status:c.status}))
+ const tasks=cases.map(c=>({id:c.name,intent_id:'intent',revision:1,stopped:c.stopped,created_at:'2026-11-08',status:c.status}))
  const client=createClient(async()=>({status:200,headers:{'content-type':'application/vnd.api+json'},body:{data:{type:'mobile-shared-tasks',id:'school',attributes:{tasks,drafts:[],readiness:[],pool:[],inspections:[]}}}}))
- const overview=await createSharedSendV2Client(client).overview('school')
+ const overview=await createSharedSendV2Client(client).overview()
  const statuses:Array<import('../src/modules/mobile-execution/shared-send/v2').SharedTaskStatus>=['completed','completed','stopped','dispatch_failed','dispatching','confirmation_expired','needs_review','completed']
  expect(overview.tasks.map(t=>t.status)).toEqual(statuses)
  expect(overview.tasks.every(t=>!t.items)).toBe(true)

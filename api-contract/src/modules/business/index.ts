@@ -3,7 +3,7 @@ export { ApiError } from '../../http';
 export * from './types'
 import type { Row, Session, Resource } from './types'
 const part = (s: string) => encodeURIComponent(s);
-export const scope = (school: string, path: string) => `/api/v1/wecom-distribution/workspaces/${part(school)}/${path}`;
+export const scope = (path: string) => `/api/v1/wecom-distribution/${path}`;
 export interface Administrator { id: string; username: string; display_name: string; active: boolean; platform_admin: boolean }
 export const identity = {
     async session() { const v = await requestResource<Session>('/api/v1/auth/session'); setCsrf(v.csrf); return v; },
@@ -19,20 +19,15 @@ export const identity = {
 export interface WecomStatus { server_configured: boolean; client_configured: boolean; oauth_available: boolean; share_available: boolean }
 export const workspace = {
     wecomStatus: () => requestResource<WecomStatus>('/api/v1/wecom/status'),
-    list: <T extends Row = Row>(s: string, resource: Resource, query = '', signal?: AbortSignal) => requestCollection<T>(scope(s, resource) + query, signal),
-    mutate: <T = Row>(s: string, path: string, body?: unknown, method = 'POST') => requestResource<T>(scope(s, path), method, body),
-    upload: (s: string, file: Blob) => requestResource<{
+    list: <T extends Row = Row>(resource: Resource, query = '', signal?: AbortSignal) => requestCollection<T>(scope(resource) + query, signal),
+    mutate: <T = Row>(path: string, body?: unknown, method = 'POST') => requestResource<T>(scope(path), method, body),
+    upload: (file: Blob) => requestResource<{
         url: string;
-    }>(scope(s, 'media'), 'POST', file),
+    }>(scope('media'), 'POST', file),
 
 };
 
-/** OAuth only accepts UUID selections; arbitrary return URLs are not supported. */
-export function wecomOAuthUrl(selection: { workspace?: string } = {}): string {
-    const params = new URLSearchParams();
-    if (selection.workspace) params.set('workspace', selection.workspace);
-    return `/api/v1/wecom/oauth/start${params.size ? `?${params}` : ''}`;
-}
+export function wecomOAuthUrl(): string { return '/api/v1/wecom/oauth/start' }
 
 export interface DirectoryDepartment { id: number; parentid: number; name: string; order: number }
 export interface DirectoryMember {
@@ -96,8 +91,8 @@ export const assets = {
     list:(kind:AssetList,filter:AssetFilter={})=>requestCollection<Row>(`${assetsPath}/${kind}?${assetQuery(filter)}`),
     detail:(kind:'groups'|'sync-runs',id:string)=>requestResource<Row>(`${assetsPath}/${kind}/${part(id)}`),
     relations:(kind:'groups',id:string,page=1)=>requestCollection<AssetRecord>(`${assetsPath}/${kind}/${part(id)}/members?${assetQuery({page})}`),
-    candidates:(school:string,filter:Pick<AssetFilter,'page'|'search'>={})=>requestCollection<GroupCandidate>(scope(school,'wecom-group-candidates')+`?${assetQuery(filter)}`),
-    bind:(school:string,input:{directory_group_id:string;expected_generation:number;expected_checked_at:string;name?:string})=>requestResource<Row>(scope(school,'groups/from-directory'),'POST',input),
+    candidates:(filter:Pick<AssetFilter,'page'|'search'>={})=>requestCollection<GroupCandidate>(scope('wecom-group-candidates')+`?${assetQuery(filter)}`),
+    bind:(input:{directory_group_id:string;expected_generation:number;expected_checked_at:string;name?:string})=>requestResource<Row>(scope('groups/from-directory'),'POST',input),
 };
 
 // Transitional export only; the official contract has one canonical owner.

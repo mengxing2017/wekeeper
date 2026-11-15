@@ -18,7 +18,7 @@
         "member_id": "00000000-0000-0000-0000-000000000002",
         "member_name": "成员0",
         "bound_account_id": null,
-        "school_id": null
+        "associated": false
       }
     }
   ],

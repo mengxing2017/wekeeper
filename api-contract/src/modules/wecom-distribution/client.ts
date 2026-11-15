@@ -4,10 +4,10 @@ export type {ChannelObservation,ExecutionCapability} from '../execution-evidence
 import type { Client } from '../../http/client';
 import type { SourceReference } from '../distribution-content';
 const part=(s:string)=>encodeURIComponent(s);
-const scope=(school:string,path:string)=>`/api/v1/wecom-distribution/workspaces/${part(school)}/${path}`;
+const scope=(path:string)=>`/api/v1/wecom-distribution/${path}`;
 export type BroadcastObservation=Omit<ChannelObservation,'id'>&{id:string}
 export interface BroadcastTask {
-    id: string; school_id: string; creator_id: string; template_version_id: string|null; content_source: 'posts'|'text'|'materials'; source_namespace: string; materials: SourceReference[]; content: string;
+    id: string; creator_id: string; template_version_id: string|null; content_source: 'posts'|'text'|'materials'; source_namespace: string; materials: SourceReference[]; content: string;
     revision: number; state: 'draft'|'confirmed'|'abandoned'; stopped: boolean; created_at: string;
     total: number; sent: number; rejected: number; uncertain: number; pending: number; batch_count: number;
     post_ids: string[]; source_task_id: string|null; resend_reason: string; draft_input:BroadcastDraftInput;
@@ -33,12 +33,12 @@ export interface BroadcastAction {
 }
 export interface BroadcastEvent {id:string;actor_name:string;description:string;reason:string;created_at:string}
 export interface BroadcastCapability {execution?:ExecutionCapability;id: string; broadcast_available: boolean; management_available: boolean; reason: string|null; reason_code?:string; health_state?:string;control?:{paused:boolean;revision:number}|null; request?:import('../product-workflows/client').BusinessRequest|null}
-const broadcastPath = (s: string, id?: string) => scope(s, `broadcast-tasks${id ? `/${part(id)}` : ''}`);
+const broadcastPath = (id?: string) => scope(`broadcast-tasks${id ? `/${part(id)}` : ''}`);
 export interface BroadcastPreview {id:string; revision:number; digest:string; expires_at:string; content:string; target_count:number; channel:'wecom'}
 
 
 export interface OfficialSender {
-    id:string; school_id:string; userid:string; display_name:string;
+    id:string; userid:string; display_name:string;
     member_verified:boolean; member_active:boolean; account_active:boolean;
     binding_revision:number; qualification_revision:number; enabled:boolean;
     eligible:boolean; reason:string|null;
@@ -52,21 +52,21 @@ export interface DistributionPolicies {sources:SourcePolicy[];resources:Resource
 export function createWecomDistributionClient(client: Pick<Client,'requestResource'|'requestCollection'>) {
   const {requestResource,requestCollection}=client;
 const broadcast = {
-    savePreview:(s:string,input:BroadcastDraftInput,id:string|undefined,key:string)=>requestResource<{id:string;task_id:string;preview:BroadcastPreview|null;saved:boolean;reason:string|null}>(scope(s,'broadcast-task-previews'),'POST',{...input,id},undefined,{'Idempotency-Key':key}),
-    evidenceCandidates:(s:string,id:string,batch:string)=>requestResource<{id:string;items:{id:string;summary:{content:string;sender:string;sender_name?:string|null;target_count:number;created_at:number|null;member_status:number};expires_at:string}[];reason:string}>(`${broadcastPath(s,id)}/evidence-candidates?batch_id=${part(batch)}`),
-    preview: (s:string,id:string)=>requestResource<BroadcastPreview>(`${broadcastPath(s,id)}/preview`,'POST',{}),
-    capability: (s: string) => requestResource<BroadcastCapability>(scope(s, 'broadcast-capabilities')),
-    list: (s: string, page = 1, status = '') => requestCollection<BroadcastTask>(`${broadcastPath(s)}?page[number]=${page}&page[size]=30${status ? `&status=${part(status)}` : ''}`),
-    task: (s: string, id: string) => requestResource<BroadcastTask>(broadcastPath(s,id)),
-    save: (s: string, input: BroadcastDraftInput, id?: string, key?: string) => requestResource<BroadcastTask>(broadcastPath(s,id), id ? 'PATCH' : 'POST', input, undefined, key ? {'Idempotency-Key':key} : undefined),
-    targets: (s: string, id: string, page = 1) => requestCollection<BroadcastTarget>(`${broadcastPath(s,id)}/targets?page[number]=${page}&page[size]=100`),
-    observations:(s:string,id:string,page=1)=>requestCollection<BroadcastObservation>(`${broadcastPath(s,id)}/observations?page[number]=${page}&page[size]=30`),
-    events: (s: string, id: string, page = 1) => requestCollection<BroadcastEvent>(`${broadcastPath(s,id)}/events?page[number]=${page}&page[size]=30`),
-    action: (s: string, id: string, operation: 'confirm'|'abandon'|'refresh'|'reminders'|'stop'|'reconciliations', key: string, input: BroadcastAction = {}) => requestResource<BroadcastTask>(`${broadcastPath(s,id)}/${operation}`, 'POST', input, undefined, {'Idempotency-Key': key}),
+    savePreview:(input:BroadcastDraftInput,id:string|undefined,key:string)=>requestResource<{id:string;task_id:string;preview:BroadcastPreview|null;saved:boolean;reason:string|null}>(scope('broadcast-task-previews'),'POST',{...input,id},undefined,{'Idempotency-Key':key}),
+    evidenceCandidates:(id:string,batch:string)=>requestResource<{id:string;items:{id:string;summary:{content:string;sender:string;sender_name?:string|null;target_count:number;created_at:number|null;member_status:number};expires_at:string}[];reason:string}>(`${broadcastPath(id)}/evidence-candidates?batch_id=${part(batch)}`),
+    preview: (id:string)=>requestResource<BroadcastPreview>(`${broadcastPath(id)}/preview`,'POST',{}),
+    capability: () => requestResource<BroadcastCapability>(scope('broadcast-capabilities')),
+    list: (page = 1, status = '') => requestCollection<BroadcastTask>(`${broadcastPath()}?page[number]=${page}&page[size]=30${status ? `&status=${part(status)}` : ''}`),
+    task: (id: string) => requestResource<BroadcastTask>(broadcastPath(id)),
+    save: (input: BroadcastDraftInput, id?: string, key?: string) => requestResource<BroadcastTask>(broadcastPath(id), id ? 'PATCH' : 'POST', input, undefined, key ? {'Idempotency-Key':key} : undefined),
+    targets: (id: string, page = 1) => requestCollection<BroadcastTarget>(`${broadcastPath(id)}/targets?page[number]=${page}&page[size]=100`),
+    observations:(id:string,page=1)=>requestCollection<BroadcastObservation>(`${broadcastPath(id)}/observations?page[number]=${page}&page[size]=30`),
+    events: (id: string, page = 1) => requestCollection<BroadcastEvent>(`${broadcastPath(id)}/events?page[number]=${page}&page[size]=30`),
+    action: (id: string, operation: 'confirm'|'abandon'|'refresh'|'reminders'|'stop'|'reconciliations', key: string, input: BroadcastAction = {}) => requestResource<BroadcastTask>(`${broadcastPath(id)}/${operation}`, 'POST', input, undefined, {'Idempotency-Key': key}),
 };
 const officialSenders={
-    list:(school:string|undefined,page=1)=>requestCollection<OfficialSender>(`${school ? scope(school,'wecom-senders') : '/api/v1/platform/wecom-senders'}?page[number]=${page}&page[size]=30`),
-    qualify:(school:string,id:string,input:{enabled:boolean;revision:number})=>requestResource<{updated:boolean}>(`/api/v1/platform/wecom-distribution/workspaces/${part(school)}/wecom-senders/${part(id)}/qualification`,'POST',input),
+    list:(page=1)=>requestCollection<OfficialSender>(`/api/v1/wecom-distribution/wecom-senders?page[number]=${page}&page[size]=30`),
+    qualify:(id:string,input:{enabled:boolean;revision:number})=>requestResource<{updated:boolean}>(`/api/v1/wecom-distribution/wecom-senders/${part(id)}/qualification`,'POST',input),
 };
 const distributionPolicies={
     get:()=>requestResource<DistributionPolicies>('/api/v1/platform/distribution-policies'),

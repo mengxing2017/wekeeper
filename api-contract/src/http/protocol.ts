@@ -118,17 +118,14 @@ export function resourceType(path: string): string {
     }
     if (['source-routes','source-credentials'].includes(parts[3])) return parts[5] === 'routes' ? 'source-key-routes' : parts[5] === 'secret-reveals' ? 'source-credential-secret-reveals' : parts[3];
   }
-  if (parts[2] === 'wecom-distribution' && parts[3] === 'workspaces') {
-    if (parts[5] === 'receiving-configurations') return 'wecom-receiving-configurations';
-    if (!parts[5]) return 'wecom-workspaces';
-    if (parts[5] === 'members') return 'wecom-workspace-members';
-    const kind = parts[5];
-    if (kind === 'groups' && parts[6] === 'from-directory') return 'wecom-group-bindings';
-    if (kind === 'broadcast-tasks' && parts[7] === 'preview') return 'broadcast-previews';
+  if (parts[2] === 'wecom-distribution') {
+    const kind = parts[3];
+    if (kind === 'groups' && parts[4] === 'from-directory') return 'wecom-group-bindings';
+    if (kind === 'broadcast-tasks' && parts[5] === 'preview') return 'broadcast-previews';
+    if (kind === 'wecom-senders') return 'wecom-senders';
     if (['groups','broadcast-tasks','template-previews','template-publications','official-usage-previews','official-usages','broadcast-task-previews','broadcast-access-requests','broadcast-issues','member-policy-previews','member-policies','official-channel-controls'].includes(kind)) return kind;
     throw new Error('Unknown wecom distribution write resource path');
   }
-  if (parts[2] === 'platform' && parts[3] === 'wecom-distribution' && parts[4] === 'workspaces') return 'wecom-senders';
   if (parts[2] === 'platform' && parts[3] === 'wecom-distribution' && parts[4] === 'operators') return 'wecom-bindings';
   if (parts[2] === 'platform' && parts[3] === 'administrators') return 'administrators';
   if(parts[0]==='api' && parts[1]==='v10' && parts[2]==='device-execution') {
@@ -137,10 +134,8 @@ export function resourceType(path: string): string {
   }
   const productKind=parts[2]==='platform'?parts[3]:undefined;
   if(productKind && ['template-previews','template-publications','official-usage-previews','official-usages','broadcast-task-previews','broadcast-access-requests','broadcast-issues','member-policy-previews','member-policies','official-channel-controls'].includes(productKind)) return productKind;
-  if (parts[2] === "mobile-execution" && parts[3] === "workspaces" && !parts[5]) return "mobile-workspaces";
-  if (parts[2] === "mobile-execution" && parts[3] === "workspaces" && parts[5] === "members") return "mobile-workspace-members";
   if (parts[2] === "mobile-execution" || parts[3] === "mobile-execution" || parts[4] === "mobile-execution") {
-    const rawKind = parts[2] === "platform" ? parts[4] : parts[5];
+    const rawKind = parts[2] === "platform" ? parts[4] : parts[3];
     const kind=rawKind?.replace(/^shared-v2-/,"shared-");
     if(rawKind==="shared-v2-support")return "mobile-v9-support";
     if(rawKind==="shared-v2-management")return "mobile-v9-management";
@@ -149,12 +144,12 @@ export function resourceType(path: string): string {
       case "usage-options": return "mobile-usage-options";
       case "usage-previews": return "mobile-usage-previews";
       case "usage-requests": return "mobile-usages";
-      case "usages": return parts[7]==="issues"?"mobile-usage-issues":"mobile-usages";
+      case "usages": return parts[5]==="issues"?"mobile-usage-issues":"mobile-usages";
       case "usage-task-previews": return "mobile-usage-task-previews";
       case "shared-task-drafts": return "mobile-shared-drafts";
       case "shared-task-previews": return "mobile-shared-previews";
-      case "shared-tasks": return parts[7] === "stops" ? "mobile-shared-stops" : "mobile-shared-tasks";
-      case "shared-items": return parts[7] === "reassignments" ? "mobile-shared-reassignments" : "mobile-shared-reviews";
+      case "shared-tasks": return parts[5] === "stops" ? "mobile-shared-stops" : "mobile-shared-tasks";
+      case "shared-items": return parts[5] === "reassignments" ? "mobile-shared-reassignments" : "mobile-shared-reviews";
       case "shared-inspections": return "mobile-shared-inspections";
       case "shared-send-policies": return "mobile-shared-policies";
       case "targets": return "mobile-targets";

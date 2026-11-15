@@ -18,7 +18,7 @@ it('preserves external confirmation and result provenance without treating creat
   paths.push(r.path)
   return {status:200,headers:{'content-type':'application/vnd.api+json'},body:{data:[{type:'broadcast-observations',id:String(observation.id),attributes:Object.fromEntries(Object.entries(observation).filter(([k])=>k!=='id'))}]}}
  }))
- expect((await official.broadcast.observations('workspace','task',2)).items[0].evidence_type).toBe('official_task_created')
+ expect((await official.broadcast.observations('task',2)).items[0].evidence_type).toBe('official_task_created')
  expect(paths[0]).toContain('/observations?page[number]=2')
 })
 

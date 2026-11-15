@@ -1,7 +1,6 @@
 {
   "id": 1,
   "channel": "wecom",
-  "workspace_id": "00000000-0000-0000-0000-000000000001",
   "task_id": "00000000-0000-0000-0000-000000000002",
   "target_id": null,
   "attempt_id": null,

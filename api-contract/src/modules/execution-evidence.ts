@@ -1,6 +1,6 @@
 /** Observations carry provenance, never executable credentials or new authorization. */
 export interface ChannelObservation {
- id:number;channel:'wecom'|'mobile';workspace_id:string;task_id:string;target_id:string|null;attempt_id:string|null;batch_id:string|null;execution_id:string|null;invocation_id:string|null;
+ id:number;channel:'wecom'|'mobile';task_id:string;target_id:string|null;attempt_id:string|null;batch_id:string|null;execution_id:string|null;invocation_id:string|null;
  evidence_type:string;observation_source:string;observed_at:string;device_occurred_at:string|null;external_status:string|null;normalized_result:string;detail:Record<string,unknown>;reconstructed:boolean;
 }
 export interface ExecutionCapability {

@@ -5,12 +5,12 @@ import target from '../fixtures/broadcast-target.json'
 afterEach(()=>vi.unstubAllGlobals())
 it('decodes Rust task and target status facts independently',async()=>{
  const fetch=vi.fn().mockResolvedValueOnce(Response.json(task,{headers:{'Content-Type':'application/vnd.api+json'}})).mockResolvedValueOnce(Response.json({data:[target.data],meta:{page:{number:1,size:100,has_more:false}}},{headers:{'Content-Type':'application/vnd.api+json'}}));vi.stubGlobal('fetch',fetch)
- expect(await broadcast.task('school','task')).toMatchObject({total:2,sent:1,pending:1})
- expect((await broadcast.targets('school','task')).items[0]).toMatchObject({member_status:2,official_status:null})
+ expect(await broadcast.task('task')).toMatchObject({total:2,sent:1,pending:1})
+ expect((await broadcast.targets('task')).items[0]).toMatchObject({member_status:2,official_status:null})
 })
 it('confirms the exact revision with a stable idempotency key and no automatic retry',async()=>{
  const fetch=vi.fn().mockRejectedValue(new TypeError('response lost'));vi.stubGlobal('fetch',fetch)
- await expect(broadcast.action('school','task','confirm','one-invocation',{revision:4})).rejects.toThrow('网络中断')
+ await expect(broadcast.action('task','confirm','one-invocation',{revision:4})).rejects.toThrow('网络中断')
  expect(fetch).toHaveBeenCalledTimes(1)
  expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({data:{type:'broadcast-tasks',attributes:{revision:4}}})
  expect(fetch.mock.calls[0][1].headers['Idempotency-Key']).toBe('one-invocation')
@@ -18,14 +18,14 @@ it('confirms the exact revision with a stable idempotency key and no automatic r
 it('draft editing uses PATCH and preserves explicit selected groups',async()=>{
  const fetch=vi.fn().mockResolvedValue(Response.json(task,{headers:{'Content-Type':'application/vnd.api+json'}}));vi.stubGlobal('fetch',fetch)
  const input={content_source:'posts' as const,template_version_id:'v',post_ids:['p'],group_ids:['g1','g2'],revision:2}
- await broadcast.save('school',input,'draft')
+ await broadcast.save(input,'draft')
  expect(fetch.mock.calls[0][1].method).toBe('PATCH')
  expect(JSON.parse(fetch.mock.calls[0][1].body).data.attributes).toEqual(input)
 })
 it('saves direct text without posts or templates and decodes nullable Rust fields',async()=>{
  const {default:textTask}=await import('../fixtures/broadcast-text-task.json')
  const fetch=vi.fn().mockResolvedValue(Response.json(textTask,{headers:{'Content-Type':'application/vnd.api+json'}}));vi.stubGlobal('fetch',fetch)
- const result=await broadcast.save('school',{content_source:'text',text_content:'校园通知',group_ids:['g']})
+ const result=await broadcast.save({content_source:'text',text_content:'校园通知',group_ids:['g']})
  expect(JSON.parse(fetch.mock.calls[0][1].body).data.attributes).toEqual({content_source:'text',text_content:'校园通知',group_ids:['g']})
  expect(result).toMatchObject({content_source:'text',template_version_id:null,post_ids:[],content:'校园通知'})
 })

@@ -18,7 +18,7 @@ describe('platform-independent clients', () => {
       display_name: 'A',
     })
     const bytes = new Uint8Array([137, 80, 78, 71, 0, 255]).buffer
-    await createMediaClient(other).upload('school', bytes)
+    await createMediaClient(other).upload(bytes)
     expect(a.mock.calls[0][0].headers['X-CSRF-Token']).toBe('browser-csrf')
     expect(b.mock.calls[0][0].headers).not.toHaveProperty('X-CSRF-Token')
     expect(b.mock.calls[0][0].body).toBe(bytes)
@@ -29,7 +29,7 @@ describe('platform-independent clients', () => {
       client = createClient(transport),
       media = createMediaClient(client)
     expect(() =>
-      media.download('a', '/api/v1/schools/b/media/00000000-0000-0000-0000-000000000001'),
+      media.download('/api/v1/schools/b/media/00000000-0000-0000-0000-000000000001'),
     ).toThrow()
     for (const path of ['//evil.test/api', '/api/../evil', '/api/%2e%2e/evil', '/api/\\evil'])
       await expect(client.requestJson(path)).rejects.toThrow('same-origin')

@@ -5,17 +5,11 @@ export interface Row {
     id: string;
     [key: string]: Json;
 }
-export interface Grant {
-    school_id: string;
-    role: 'member' | 'operator' | 'admin';
-}
 export interface User {
     id: string;
     username: string;
     display_name: string;
     platform_admin: boolean;
-    bound_school_id: string | null;
-    grants: Grant[];
     wecom_authenticated: boolean;
 }
 export interface Session {

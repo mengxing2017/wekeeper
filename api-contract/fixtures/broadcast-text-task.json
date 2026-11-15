@@ -3,7 +3,6 @@
     "type": "broadcast-tasks",
     "id": "00000000-0000-0000-0000-000000000001",
     "attributes": {
-      "school_id": "00000000-0000-0000-0000-000000000001",
       "creator_id": "00000000-0000-0000-0000-000000000001",
       "template_version_id": null,
       "content": "校园通知",

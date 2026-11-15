@@ -1,5 +1,5 @@
 {
-  "verification_key": "047f921ae99cfab3ee6b1d813610cc3966dddf83760b1694db07e43bfcd66a6ba3bbe511be11cd93d5ae31d23c6e8bbd1ceb029f864cd1e85efd27c72319cfc912",
+  "verification_key": "046ea29eaed5bad0bad927c313447e97edbcd272852bda49d5735cab061461bb2f86af29b7e9348279ab901af68c1bcfff93afb6fbee6a327b32dccc5e0c538592",
   "grant": {
     "id": "00000000-0000-4000-8000-000000000001",
     "execution_id": "00000000-0000-4000-8000-000000000001",
@@ -13,7 +13,6 @@
     "attempt_id": "00000000-0000-4000-8000-000000000003",
     "task_id": "00000000-0000-4000-8000-000000000004",
     "target_id": "00000000-0000-4000-8000-000000000005",
-    "school_id": "00000000-0000-4000-8000-000000000006",
     "device_id": "00000000-0000-4000-8000-000000000002",
     "credential_generation": 1,
     "assignment_revision": 1,
@@ -41,8 +40,8 @@
       "execute_before": "2026-11-06T00:03:30Z"
     },
     "result_credential": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-    "signature": "30440220054cb3e0c06a8b013e415bb36e3f69b3d61650feb65a3b47f5087d30fc46be9a02203dd91f32b24153969ce3dff16585d4fe80227c70bd78d50bfe2a116771e8d496",
-    "key_id": "7118551d49b021658493245dc88cd1a29c920d643452d557af931b12c5727b2d"
+    "key_id": "f2a1893fbf4d5f7a5f6fdebdf0fc6acd6b8f24fc596707571b0c4fc45dfe8599",
+    "signature": "304402201e60326903d2f346afaead4fb613f8b9539fc8761ff7f0efaab91d1186b5a97f02207dc95c0d7999f9e5421fa857aa4d7fbb90caea6ee53b6519e251c1748a43e284"
   },
   "completion": {
     "result_id": "00000000-0000-4000-8000-000000000008",
@@ -59,7 +58,7 @@
     "schema": "task_delivery/1",
     "state": "granted",
     "reason": null,
-    "verification_key": "047f921ae99cfab3ee6b1d813610cc3966dddf83760b1694db07e43bfcd66a6ba3bbe511be11cd93d5ae31d23c6e8bbd1ceb029f864cd1e85efd27c72319cfc912",
+    "verification_key": "046ea29eaed5bad0bad927c313447e97edbcd272852bda49d5735cab061461bb2f86af29b7e9348279ab901af68c1bcfff93afb6fbee6a327b32dccc5e0c538592",
     "execution": {
       "id": "00000000-0000-4000-8000-000000000001",
       "execution_id": "00000000-0000-4000-8000-000000000001",
@@ -73,7 +72,6 @@
       "attempt_id": "00000000-0000-4000-8000-000000000003",
       "task_id": "00000000-0000-4000-8000-000000000004",
       "target_id": "00000000-0000-4000-8000-000000000005",
-      "school_id": "00000000-0000-4000-8000-000000000006",
       "device_id": "00000000-0000-4000-8000-000000000002",
       "credential_generation": 1,
       "assignment_revision": 1,
@@ -101,8 +99,8 @@
         "execute_before": "2026-11-06T00:03:30Z"
       },
       "result_credential": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "signature": "30440220054cb3e0c06a8b013e415bb36e3f69b3d61650feb65a3b47f5087d30fc46be9a02203dd91f32b24153969ce3dff16585d4fe80227c70bd78d50bfe2a116771e8d496",
-      "key_id": "7118551d49b021658493245dc88cd1a29c920d643452d557af931b12c5727b2d"
+      "key_id": "f2a1893fbf4d5f7a5f6fdebdf0fc6acd6b8f24fc596707571b0c4fc45dfe8599",
+      "signature": "304402201e60326903d2f346afaead4fb613f8b9539fc8761ff7f0efaab91d1186b5a97f02207dc95c0d7999f9e5421fa857aa4d7fbb90caea6ee53b6519e251c1748a43e284"
     }
   }
 }
