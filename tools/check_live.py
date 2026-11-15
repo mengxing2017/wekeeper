@@ -37,9 +37,9 @@ with tempfile.TemporaryDirectory(prefix='wekeeper-live-') as directory:
             ready(origin+'/readyz',web)
             jar=http.cookiejar.CookieJar();client=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
             def request(path,method='GET',body=None,csrf=None,expected=200):
-                headers={'Origin':origin,'Content-Type':'application/vnd.api+json'}
+                headers={'Origin':origin,'Content-Type':'application/vnd.api+json','Idempotency-Key':str(uuid.uuid4())}
                 if csrf:headers['X-CSRF-Token']=csrf
-                req=urllib.request.Request(origin+path,data=json.dumps({'data':{'type':('sessions' if '/auth/' in path else 'wecom-workspaces'),'attributes':body}}).encode() if body is not None else None,headers=headers,method=method)
+                req=urllib.request.Request(origin+path,data=json.dumps({'data':{'type':('sessions' if '/auth/' in path else 'mobile-targets'),'attributes':body}}).encode() if body is not None else None,headers=headers,method=method)
                 try:r=client.open(req,timeout=10)
                 except urllib.error.HTTPError as e:r=e
                 with r:
@@ -47,18 +47,19 @@ with tempfile.TemporaryDirectory(prefix='wekeeper-live-') as directory:
                     return json.loads(r.read())
             session=request('/api/v1/auth/sessions','POST',{'username':'admin','password':password})['data']['attributes'];csrf=session['csrf']
             assert any(c.name=='wekeeper_session' and c.has_nonstandard_attr('HttpOnly') for c in jar)
-            workspace=f'/api/v1/wecom-distribution/workspaces/{uuid.uuid4()}'
-            request(workspace,'PUT',{'name':'Denied'},expected=403)
-            created=request(workspace,'PUT',{'name':'Live smoke'},csrf)['data']
-            assert created['attributes']['name']=='Live smoke'
-            request(workspace+'/groups')
+            targets='/api/v1/mobile-execution/targets'
+            request(targets,'POST',{'search_text':'Denied'},expected=403)
+            created=request(targets,'POST',{'search_text':'Live smoke'},csrf)['data']
+            assert created['attributes']['search_text']=='Live smoke'
+            request('/api/v1/wecom-distribution/groups')
+            request(targets)
             request('/api/v1/schools',expected=404)
             request('/api/v1/accounts',expected=404)
             for path in ('/admin',):
                 with client.open(origin+path) as response:assert '<div id="root"></div>' in response.read().decode()
             request('/api/v1/auth/session','DELETE',csrf=csrf)
-            request('/api/v1/wecom-distribution/workspaces',expected=401)
-            print('Live API + Vite proxy, administrator bootstrap, Cookie/CSRF, independent workspace, retired management routes, SPA routes and logout passed.')
+            request('/api/v1/wecom-distribution/groups',expected=401)
+            print('Live API + Vite proxy, administrator bootstrap, Cookie/CSRF, global distribution resources, retired management routes, SPA routes and logout passed.')
         except Exception:
             for log in (alog,wlog):log.flush();log.seek(0);print(log.read())
             raise
