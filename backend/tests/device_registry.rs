@@ -12,7 +12,7 @@ use wekeeper_api::{
     },
 };
 fn scope(id: Option<Uuid>) -> Scope {
-    Scope { school: None, id }
+    Scope { id }
 }
 fn uid(v: &Value) -> Uuid {
     v["id"].as_str().unwrap().parse().unwrap()

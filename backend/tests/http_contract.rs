@@ -480,7 +480,7 @@ async fn broadcast_rust_serialization_matches_shared_fixtures() {
         source_namespace: "builtin.forum".into(),
         materials: vec![],
         id,
-        school_id: id,
+
         creator_id: id,
         template_version_id: Some(id),
         content_source: wekeeper_api::distribution::domain::broadcast::ContentSource::Posts,
@@ -795,14 +795,8 @@ fn product_workflows_share_strict_typed_inputs_with_both_clients() {
 #[tokio::test]
 async fn product_workflow_routes_require_identity_before_any_database_access() {
     for (method, path) in [
-        (
-            "POST",
-            "/api/v1/wecom-distribution/workspaces/00000000-0000-4000-8000-000000000001/broadcast-task-previews",
-        ),
-        (
-            "POST",
-            "/api/v1/wecom-distribution/workspaces/00000000-0000-4000-8000-000000000001/template-previews",
-        ),
+        ("POST", "/api/v1/wecom-distribution/broadcast-task-previews"),
+        ("POST", "/api/v1/wecom-distribution/template-previews"),
         ("POST", "/api/v1/platform/member-policy-previews"),
         ("GET", "/api/v1/platform/business-requests"),
         (
@@ -931,9 +925,9 @@ async fn task_delivery_is_a_device_authenticated_jsonapi_endpoint() {
 
 #[tokio::test]
 async fn distribution_materials_require_authenticated_sessions() {
-    let school = "00000000-0000-4000-8000-000000000001";
+    let _school = "00000000-0000-4000-8000-000000000001";
     for path in [
-        format!("/api/v1/wecom-distribution/workspaces/{school}/distribution-materials"),
+        "/api/v1/wecom-distribution/distribution-materials".to_string(),
         "/api/v1/auth/session".into(),
     ] {
         let response = app()
@@ -952,16 +946,14 @@ async fn distribution_materials_require_authenticated_sessions() {
 
 #[tokio::test]
 async fn business_management_collections_require_identity() {
-    let id = "00000000-0000-4000-8000-000000000001";
     for path in [
-        "/api/v1/wecom-distribution/workspaces".into(),
-        format!("/api/v1/wecom-distribution/workspaces/{id}/groups"),
-        format!("/api/v1/wecom-distribution/workspaces/{id}/members"),
-        "/api/v1/platform/administrators".into(),
-        "/api/v1/audit-events".into(),
+        "/api/v1/wecom-distribution/groups",
+        "/api/v1/mobile-execution/targets",
+        "/api/v1/platform/administrators",
+        "/api/v1/audit-events",
     ] {
         let response = app()
-            .oneshot(Request::builder().uri(&path).body(Body::empty()).unwrap())
+            .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
@@ -969,11 +961,11 @@ async fn business_management_collections_require_identity() {
 }
 
 #[tokio::test]
-async fn system_audit_rejects_workspace_members_before_database_access() {
+async fn system_audit_rejects_non_administrators_before_database_access() {
     let pool = PgPoolOptions::new()
         .connect_lazy("postgres://unused:unused@127.0.0.1:1/unused")
         .unwrap();
-    let actor = serde_json::from_value(json!({"id":"00000000-0000-4000-8000-000000000001", "username":"operator", "display_name":"operator", "platform_admin":false, "bound_school_id":null, "grants":[{"school_id":"00000000-0000-4000-8000-000000000002","role":"admin"}], "wecom_authenticated":false})).unwrap();
+    let actor = serde_json::from_value(json!({"id":"00000000-0000-4000-8000-000000000001", "username":"operator", "display_name":"operator", "platform_admin":false, "wecom_authenticated":false})).unwrap();
     let result = wekeeper_api::audit::list(
         axum::extract::State(bootstrap::build_application(pool)),
         actor,

@@ -51,8 +51,7 @@ async fn route_creates_distinct_unit_and_database_enforces_scope() {
         username: "admin".into(),
         display_name: "admin".into(),
         platform_admin: true,
-        bound_school_id: None,
-        grants: vec![],
+
         csrf: String::new(),
         session_hash: String::new(),
         request_id: Uuid::new_v4().to_string(),

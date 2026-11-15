@@ -112,10 +112,5 @@ async fn unit_creates_target_and_binds_phone_without_workspace_setup() {
     .await
     .unwrap();
     assert_eq!(n, 1);
-    let memberships: i64 = sqlx::query_scalar("SELECT count(*) FROM mobile_workspace_members")
-        .fetch_one(&f.pool)
-        .await
-        .unwrap();
-    assert_eq!(memberships, 0);
     f.close().await;
 }

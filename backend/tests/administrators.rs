@@ -9,7 +9,7 @@ use wekeeper_api::{
     },
 };
 fn actor(admin: bool) -> Actor {
-    serde_json::from_value(json!({"id":"00000000-0000-4000-8000-000000000001","username":"root","display_name":"管理员","platform_admin":admin,"bound_school_id":null,"grants":[],"wecom_authenticated":false})).unwrap()
+    serde_json::from_value(json!({"id":"00000000-0000-4000-8000-000000000001","username":"root","display_name":"管理员","platform_admin":admin,"wecom_authenticated":false})).unwrap()
 }
 fn service() -> Service {
     Service(Repository(

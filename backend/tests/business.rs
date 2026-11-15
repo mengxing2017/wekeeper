@@ -19,7 +19,7 @@ fn write_document(path: &str, mut body: Value) -> Value {
         "auth" => "sessions",
         "accounts" | "profile" => "accounts",
         "platform" => segments[3],
-        "wecom-distribution" => segments.get(5).copied().unwrap_or("wecom-workspaces"),
+        "wecom-distribution" => segments[3],
         "schools" => match segments.get(4).copied().unwrap_or("schools") {
             "members" => "accounts",
             "posts" if segments.get(6) == Some(&"comments") => "comments",
@@ -177,18 +177,6 @@ async fn complete_business_flow_and_security_boundaries() {
         404
     );
     let s = Uuid::new_v4();
-    let b = Uuid::new_v4();
-    for (id, name) in [(s, "Workspace A"), (b, "Workspace B")] {
-        ok(
-            &app,
-            "PUT",
-            &format!("/api/v1/wecom-distribution/workspaces/{id}"),
-            &admin_token,
-            &admin,
-            json!({"name":name}),
-        )
-        .await;
-    }
     let memberid = a
         .identity
         .bootstrap(
@@ -199,31 +187,23 @@ async fn complete_business_flow_and_security_boundaries() {
         )
         .await
         .unwrap();
-    sqlx::query(
-        "INSERT INTO wecom_workspace_members(school_id,account_id,role) VALUES($1,$2,'member')",
-    )
-    .bind(s)
-    .bind(memberid)
-    .execute(&pool)
-    .await
-    .unwrap();
     let (token, member) = a
         .identity
         .0
         .session(memberid, "browser", false)
         .await
         .unwrap();
-    let root = format!("/api/v1/wecom-distribution/workspaces/{s}");
+    let root = "/api/v1/wecom-distribution";
     // Historical projection is a sending-owned read model; no forum API creates content.
     let p = Uuid::new_v4();
-    sqlx::query("INSERT INTO distribution_source_organizations(namespace,external_organization_id,school_id) VALUES('builtin.forum',$1,$2)").bind(s.to_string()).bind(s).execute(&pool).await.unwrap();
-    sqlx::query("INSERT INTO distribution_materials(namespace,external_organization_id,external_content_id,school_id,version,title,content,allowed) VALUES('builtin.forum',$1,$2,$3,'1','Campus','Hello',true)")
-        .bind(s.to_string()).bind(p.to_string()).bind(s).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO distribution_source_organizations(namespace,external_organization_id) VALUES('builtin.forum',$1)").bind(s.to_string()).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO distribution_materials(namespace,external_organization_id,external_content_id,version,title,content,allowed) VALUES('builtin.forum',$1,$2,'1','Campus','Hello',true)")
+        .bind(s.to_string()).bind(p.to_string()).execute(&pool).await.unwrap();
     assert_eq!(
         call(
             &app,
             "GET",
-            &format!("/api/v1/wecom-distribution/workspaces/{b}/distribution-materials"),
+            "/api/v1/wecom-distribution/distribution-materials",
             &token,
             &member.csrf,
             Value::Null
@@ -245,28 +225,28 @@ async fn complete_business_flow_and_security_boundaries() {
         .0,
         403
     );
-    a.wecom_workspaces()
-        .grant(&admin, s, &format!("member{suffix}"), "operator")
-        .await
-        .unwrap();
     let selected = ok(
         &app,
         "GET",
         &format!("{root}/distribution-materials?page[size]=1"),
-        &token,
-        &member,
+        &admin_token,
+        &admin,
         Value::Null,
     )
     .await;
     assert_eq!(selected[0]["id"], json!(p));
     assert_eq!(selected[0]["version"], "1");
-    sqlx::query("UPDATE distribution_materials SET allowed=false WHERE external_content_id=$1 AND school_id=$2").bind(p.to_string()).bind(s).execute(&pool).await.unwrap();
+    sqlx::query("UPDATE distribution_materials SET allowed=false WHERE external_content_id=$1 ")
+        .bind(p.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
     let selected = ok(
         &app,
         "GET",
         &format!("{root}/distribution-materials"),
-        &token,
-        &member,
+        &admin_token,
+        &admin,
         Value::Null,
     )
     .await;
@@ -286,7 +266,7 @@ async fn complete_business_flow_and_security_boundaries() {
         422
     );
     // Offline fixture: new manual groups require a real official detail response, even if inactive.
-    let inactive = a.distribution_groups().0.group(&admin,s,json!({"name":"Inactive","corp_id":"corp-test","chat_id":format!("inactive-{suffix}"),"active":false})).await.unwrap();
+    let inactive = a.distribution_groups().0.group(&admin,json!({"name":"Inactive","corp_id":"corp-test","chat_id":format!("inactive-{suffix}"),"active":false})).await.unwrap();
     assert_eq!(call(&app, "POST", &format!("{root}/groups"), &admin_token, &admin.csrf,
         json!({"id":inactive["id"],"revision":1,"name":"Changed","corp_id":"corp-test","chat_id":"changed","active":false})).await.0,409);
     // Offline fixture only: active groups in production must pass upstream validation.
@@ -295,13 +275,12 @@ async fn complete_business_flow_and_security_boundaries() {
         .0
         .group(
             &admin,
-            s,
             json!({"name":"Group","corp_id":"corp-test","chat_id":format!("chat-{suffix}")}),
         )
         .await
         .unwrap();
     let preview = ok(&app, "POST", &format!("{root}/template-previews"), &admin_token, &admin,
-        json!({"revision":0,"name":"Daily","body":"{{school.name}}: {{post.title}}\n{{post.summary}}","note":"首次发布","sample_post_id":null,"publish":true})).await;
+        json!({"revision":0,"name":"Daily","body":"{{post.title}}\n{{post.summary}}","note":"首次发布","sample_post_id":null,"publish":true})).await;
     let template = ok(
         &app,
         "POST",
@@ -323,11 +302,6 @@ async fn complete_business_flow_and_security_boundaries() {
             404
         );
     }
-    // School revocation is effective on the next request; no stale roles are embedded in cookies.
-    a.wecom_workspaces()
-        .grant(&admin, s, &format!("member{suffix}"), "revoked")
-        .await
-        .unwrap();
     assert_eq!(
         call(
             &app,
@@ -361,7 +335,7 @@ async fn complete_business_flow_and_security_boundaries() {
         call(
             &app,
             "POST",
-            &format!("/api/v1/wecom-distribution/workspaces/{s}/binding"),
+            "/api/v1/wecom-distribution/binding",
             &token,
             &member.csrf,
             json!({})
@@ -385,7 +359,7 @@ async fn complete_business_flow_and_security_boundaries() {
     );
     let image = a
         .media
-        .put(&admin, s, {
+        .put(&admin, {
             use image::ImageEncoder;
             let mut bytes = Vec::new();
             image::codecs::png::PngEncoder::new(&mut bytes)
@@ -396,20 +370,13 @@ async fn complete_business_flow_and_security_boundaries() {
         .await
         .unwrap();
     let asset = image.rsplit('/').next().unwrap().parse().unwrap();
-    assert!(a.media.get(&admin, b, asset).await.is_err());
+    assert_eq!(a.media.get(&admin, asset).await.unwrap().0, "image/png");
     assert!(
         a.media
-            .put(&admin, s, b"<svg onload=alert(1)>".to_vec())
+            .put(&admin, b"<svg onload=alert(1)>".to_vec())
             .await
             .is_err()
     );
-    let signed = a
-        .legacy
-        .signed_media(s, &image, "https://example.test")
-        .await
-        .unwrap();
-    let media_token = signed.rsplit('/').next().unwrap();
-    assert_eq!(a.legacy.media(media_token).await.unwrap().0, "image/png");
     assert!(
         sqlx::query_scalar::<_, bool>(
             "SELECT to_regclass('legacy_id_map') IS NULL AND to_regclass('legacy_aliases') IS NULL"

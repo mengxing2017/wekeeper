@@ -51,6 +51,11 @@ async fn migrations_handle_residual_objects_after_table_only_reset() {
     .unwrap();
     database::migrate(&pool).await.unwrap();
     database::migrate(&pool).await.unwrap();
+    let obsolete: i64 = sqlx::query_scalar("SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND (column_name IN ('school_id','workspace_id','storage_scope') OR table_name IN ('wecom_workspaces','wecom_workspace_members','mobile_workspaces','mobile_workspace_members','unit_receiving_storage','mobile_shared_school_access','mobile_shared_access_events'))").fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        obsolete, 0,
+        "workspace tables and partition columns must be absent"
+    );
     let applied: i64 = sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations WHERE success")
         .fetch_one(&pool)
         .await
@@ -244,6 +249,21 @@ END $$;
 UPDATE mobile_v9_tasks SET revision=revision+1,stopped=false;
 UPDATE mobile_v9_tasks SET stopped=true;
 "#).execute(&pool).await.unwrap();
+    let migration = database::MIGRATOR
+        .iter()
+        .find(|m| m.version == 202611150185)
+        .unwrap();
+    sqlx::raw_sql(&migration.sql).execute(&pool).await.unwrap();
+    let tasks: i64 = sqlx::query_scalar("SELECT count(*) FROM mobile_v9_tasks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        tasks, 0,
+        "unreleased workspace execution data is deliberately discarded"
+    );
+    let obsolete: bool = sqlx::query_scalar("SELECT to_regclass('mobile_workspaces') IS NULL AND to_regclass('wecom_workspaces') IS NULL AND to_regclass('unit_receiving_storage') IS NULL").fetch_one(&pool).await.unwrap();
+    assert!(obsolete);
     sqlx::raw_sql(&format!(
         "SET search_path TO public; DROP SCHEMA {schema} CASCADE;"
     ))

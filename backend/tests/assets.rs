@@ -290,19 +290,9 @@ async fn asset_snapshots_leases_scope_and_school_boundaries() {
         "wecom_60020"
     );
     fake.0.lock().unwrap().error = None;
-    let school = Uuid::new_v4();
-    app.wecom_workspaces()
-        .save(&admin, school, "Workspace A")
-        .await
-        .unwrap();
-    let other = Uuid::new_v4();
-    app.wecom_workspaces()
-        .save(&admin, other, "Workspace B")
-        .await
-        .unwrap();
     let candidates = svc
         .store
-        .candidates(&admin, school, &AssetQuery::default(), 1)
+        .candidates(&admin, &AssetQuery::default(), 1)
         .await
         .unwrap();
     assert_eq!(candidates.len(), 1);
@@ -316,22 +306,20 @@ async fn asset_snapshots_leases_scope_and_school_boundaries() {
     };
     assert!(
         svc.store
-            .bind_group(&ordinary, school, &binding, &group("CHAT"))
+            .bind_group(&ordinary, &binding, &group("CHAT"))
             .await
             .is_err()
     );
     // One group, one school: concurrent administrators cannot overwrite another mapping.
     let official = group("CHAT");
     let (left, right) = tokio::join!(
-        svc.store.bind_group(&admin, school, &binding, &official),
-        svc.store.bind_group(&admin, other, &binding, &official)
+        svc.store.bind_group(&admin, &binding, &official),
+        svc.store.bind_group(&admin, &binding, &official)
     );
     assert_ne!(left.is_ok(), right.is_ok());
-    let bound_school = if left.is_ok() { school } else { other };
-    let denied_school = if left.is_ok() { other } else { school };
     assert!(
         svc.store
-            .candidates(&admin, denied_school, &AssetQuery::default(), 1)
+            .candidates(&admin, &AssetQuery::default(), 1)
             .await
             .unwrap()
             .is_empty()
@@ -354,15 +342,14 @@ async fn asset_snapshots_leases_scope_and_school_boundaries() {
         .unwrap();
     assert_eq!(current[0]["name"], "较新官方群名");
     assert_eq!(count(&pool, "members", true).await, 1);
-    let name: String = sqlx::query_scalar("SELECT name FROM wecom_groups WHERE school_id=$1")
-        .bind(bound_school)
+    let name: String = sqlx::query_scalar("SELECT name FROM wecom_groups ")
         .fetch_one(&pool)
         .await
         .unwrap();
     assert_eq!(name, "学校显示名");
     assert!(
         svc.store
-            .bind_group(&admin, school, &binding, &newer)
+            .bind_group(&admin, &binding, &newer)
             .await
             .is_err()
     );
@@ -463,7 +450,7 @@ async fn asset_snapshots_leases_scope_and_school_boundaries() {
     sqlx::query("UPDATE wecom_asset_objects SET checked_at=now()-interval '25 hours' WHERE kind IN ('groups','members')").execute(&pool).await.unwrap();
     assert!(
         svc.store
-            .candidates(&admin, bound_school, &AssetQuery::default(), 1)
+            .candidates(&admin, &AssetQuery::default(), 1)
             .await
             .unwrap()
             .is_empty()
@@ -490,7 +477,7 @@ async fn asset_snapshots_leases_scope_and_school_boundaries() {
     assert!(svc.store.finish(&old).await.is_err());
     assert!(
         svc.store
-            .candidates(&admin, school, &AssetQuery::default(), 2)
+            .candidates(&admin, &AssetQuery::default(), 2)
             .await
             .unwrap()
             .is_empty()

@@ -89,33 +89,21 @@ async fn setup_with_forum(with_forum: bool) -> (PgPool, Actor, Uuid, DraftInput,
     let template = Uuid::new_v4();
     let post = Uuid::new_v4();
     let corp = format!("corp-{s}");
-    sqlx::query("INSERT INTO wecom_workspaces(id,name) VALUES($1,'School')")
-        .bind(s)
-        .execute(&pool)
-        .await
-        .unwrap();
     sqlx::query("INSERT INTO wecom_directory_state(singleton,corp_id,credential_scope) VALUES(true,$1,'scope')").bind(&corp).execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO wecom_members(id,userid,name,status,verification,checked_at) VALUES($1,'owner','Owner',1,'verified',now())").bind(member).execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO accounts(id,username,display_name,wecom_member_id,platform_admin) VALUES($1,'admin','Admin',$2,true)").bind(actor).bind(member).execute(&pool).await.unwrap();
-    sqlx::query("INSERT INTO wecom_workspace_members VALUES($1,$2,'admin')")
-        .bind(s)
-        .bind(actor)
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("INSERT INTO templates(id,school_id,name) VALUES($1,$2,'Notice')")
+    sqlx::query("INSERT INTO templates(id,name) VALUES($1,'Notice')")
         .bind(template)
-        .bind(s)
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO template_versions(id,school_id,template_id,body,published) VALUES($1,$2,$3,'{{post.title}}',true)").bind(version).bind(s).bind(template).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO template_versions(id,template_id,body,published) VALUES($1,$2,'{{post.title}}',true)").bind(version).bind(template).execute(&pool).await.unwrap();
     if with_forum {
         // External/forum data is a distribution-owned projection, with no forum tables.
-        sqlx::query("INSERT INTO distribution_source_organizations(namespace,external_organization_id,school_id) VALUES('builtin.forum',$1,$2),('builtin.direct',$1,$2)")
-            .bind(s.to_string()).bind(s).execute(&pool).await.unwrap();
-        sqlx::query("INSERT INTO distribution_materials(namespace,external_organization_id,external_content_id,school_id,version,title,content,allowed) VALUES('builtin.forum',$1,$2,$3,'1','Notice','Body',true)")
-            .bind(s.to_string()).bind(post.to_string()).bind(s).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO distribution_source_organizations(namespace,external_organization_id) VALUES('builtin.forum',$1),('builtin.direct',$1)")
+            .bind(s.to_string()).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO distribution_materials(namespace,external_organization_id,external_content_id,version,title,content,allowed) VALUES('builtin.forum',$1,$2,'1','Notice','Body',true)")
+            .bind(s.to_string()).bind(post.to_string()).execute(&pool).await.unwrap();
     }
     sqlx::query("INSERT INTO official_channel_health(corp_id,generation,credential_scope,available,checked_at,last_success_at) VALUES($1,1,'scope',true,now(),now())").bind(&corp).execute(&pool).await.unwrap();
     let mut groups = Vec::new();
@@ -124,10 +112,10 @@ async fn setup_with_forum(with_forum: bool) -> (PgPool, Actor, Uuid, DraftInput,
         let directory = Uuid::new_v4();
         let chat = format!("chat-{i}");
         sqlx::query("INSERT INTO wecom_asset_objects(id,kind,corp_id,key,data,checked_at,credential_generation,visibility,verification) VALUES($1,'groups',$2,$3,$4,now(),1,'visible','verified')").bind(directory).bind(&corp).bind(&chat).bind(json!({"owner":"owner"})).execute(&pool).await.unwrap();
-        sqlx::query("INSERT INTO wecom_groups(id,school_id,corp_id,chat_id,name,directory_group_id) VALUES($1,$2,$3,$4,$4,$5)").bind(group).bind(s).bind(&corp).bind(chat).bind(directory).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO wecom_groups(id,corp_id,chat_id,name,directory_group_id) VALUES($1,$2,$3,$3,$4)").bind(group).bind(&corp).bind(chat).bind(directory).execute(&pool).await.unwrap();
         groups.push(group);
     }
-    let a:Actor=serde_json::from_value(json!({"id":actor,"username":"admin","display_name":"Admin","platform_admin":true,"bound_school_id":null,"grants":[{"school_id":s,"role":"admin"}],"wecom_authenticated":false})).unwrap();
+    let a:Actor=serde_json::from_value(json!({"id":actor,"username":"admin","display_name":"Admin","platform_admin":true,"wecom_authenticated":false})).unwrap();
     let input = DraftInput {
         request_key: None,
         materials: vec![],
@@ -174,26 +162,25 @@ async fn broadcast_once_partial_results_and_school_boundaries() {
         management_available: true,
         origin: "https://school.test".into(),
     };
-    let t = service.save(&a, s, None, input.clone()).await.unwrap();
+    let t = service.save(&a, None, input.clone()).await.unwrap();
     assert_eq!(t.total, 2);
     assert_eq!(t.batch_count, 1);
     assert_eq!(fake.calls.load(Ordering::SeqCst), 0);
-    assert!(service.task(&a, Uuid::new_v4(), t.id).await.is_err());
+    assert!(service.task(&a, Uuid::new_v4()).await.is_err());
     let mut confirm = action(Some(t.revision));
-    confirm.preview_digest = Some(service.preview(&a, s, t.id).await.unwrap().digest);
+    confirm.preview_digest = Some(service.preview(&a, t.id).await.unwrap().digest);
     service
-        .action(&a, s, t.id, "confirm", "key", confirm.clone())
+        .action(&a, t.id, "confirm", "key", confirm.clone())
         .await
         .unwrap();
     service
-        .action(&a, s, t.id, "confirm", "key", confirm)
+        .action(&a, t.id, "confirm", "key", confirm)
         .await
         .unwrap();
     assert!(
         service
             .action(
                 &a,
-                s,
                 t.id,
                 "confirm",
                 "key",
@@ -207,20 +194,19 @@ async fn broadcast_once_partial_results_and_school_boundaries() {
     y.unwrap();
     assert_eq!(fake.calls.load(Ordering::SeqCst), 1);
     service.run_once().await.unwrap();
-    let t = service.task(&a, s, t.id).await.unwrap();
+    let t = service.task(&a, t.id).await.unwrap();
     assert_eq!(t.sent, 1);
     assert_eq!(t.pending, 1, "missing group is not fabricated as sent");
     let rows = service
-        .rows(&a, s, t.id, "targets", Page::default())
+        .rows(&a, t.id, "targets", Page::default())
         .await
         .unwrap();
     assert!(rows.iter().any(|r| r["official_status"].is_null()));
-    let duplicate = service.save(&a, s, None, input.clone()).await.unwrap();
+    let duplicate = service.save(&a, None, input.clone()).await.unwrap();
     assert!(
         service
             .action(
                 &a,
-                s,
                 duplicate.id,
                 "confirm",
                 "duplicate",
@@ -230,7 +216,7 @@ async fn broadcast_once_partial_results_and_school_boundaries() {
             .is_err()
     );
     service
-        .action(&a, s, t.id, "stop", "stop", action(None))
+        .action(&a, t.id, "stop", "stop", action(None))
         .await
         .unwrap();
     service.run_once().await.unwrap();
@@ -245,7 +231,7 @@ async fn broadcast_once_partial_results_and_school_boundaries() {
         .filter(|r| r["official_status"] == 1)
         .map(|r| r["group_id"].as_str().unwrap().parse().unwrap())
         .collect();
-    service.save(&a, s, None, explicit_repeat).await.unwrap();
+    service.save(&a, None, explicit_repeat).await.unwrap();
     let mut retry = input;
     retry.source_task_id = Some(t.id);
     retry.reason = "failed targets only".into();
@@ -254,11 +240,10 @@ async fn broadcast_once_partial_results_and_school_boundaries() {
         .filter(|r| r["official_status"] != 1)
         .map(|r| r["group_id"].as_str().unwrap().parse().unwrap())
         .collect();
-    let retry = service.save(&a, s, None, retry).await.unwrap();
+    let retry = service.save(&a, None, retry).await.unwrap();
     service
         .action(
             &a,
-            s,
             retry.id,
             "confirm",
             "retry",
@@ -266,15 +251,10 @@ async fn broadcast_once_partial_results_and_school_boundaries() {
         )
         .await
         .unwrap();
-    // Platform administration may inspect independent workspaces, but a revoked sender cannot execute.
-    sqlx::query("DELETE FROM wecom_workspace_members WHERE account_id=$1")
-        .bind(a.id)
-        .execute(&pool)
-        .await
-        .unwrap();
-    assert!(service.list(&a, s, Page::default()).await.is_ok());
+    // Global administrators can inspect all tasks; an enabled sender executes the retry.
+    assert!(service.list(&a, Page::default()).await.is_ok());
     service.run_once().await.unwrap();
-    assert_eq!(fake.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(fake.calls.load(Ordering::SeqCst), 3);
 }
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
@@ -288,11 +268,10 @@ async fn lost_response_and_crash_never_requeue_a_create() {
         management_available: true,
         origin: "https://school.test".into(),
     };
-    let t = service.save(&a, s, None, input.clone()).await.unwrap();
+    let t = service.save(&a, None, input.clone()).await.unwrap();
     service
         .action(
             &a,
-            s,
             t.id,
             "confirm",
             "confirm",
@@ -303,13 +282,12 @@ async fn lost_response_and_crash_never_requeue_a_create() {
     service.run_once().await.unwrap();
     service.run_once().await.unwrap();
     assert_eq!(fake.calls.load(Ordering::SeqCst), 1);
-    assert_eq!(service.task(&a, s, t.id).await.unwrap().uncertain, 1);
-    let duplicate = service.save(&a, s, None, input).await.unwrap();
+    assert_eq!(service.task(&a, t.id).await.unwrap().uncertain, 1);
+    let duplicate = service.save(&a, None, input).await.unwrap();
     assert!(
         service
             .action(
                 &a,
-                s,
                 duplicate.id,
                 "confirm",
                 "dup",
@@ -326,16 +304,16 @@ async fn lost_response_and_crash_never_requeue_a_create() {
     reconcile.decision = Some("not_created".into());
     reconcile.reason = "checked enterprise admin logs".into();
     service
-        .action(&a, s, t.id, "reconcile", "evidence", reconcile)
+        .action(&a, t.id, "reconcile", "evidence", reconcile)
         .await
         .unwrap();
-    assert_eq!(service.task(&a, s, t.id).await.unwrap().uncertain, 1);
+    assert_eq!(service.task(&a, t.id).await.unwrap().uncertain, 1);
     assert_eq!(fake.calls.load(Ordering::SeqCst), 1);
     // Simulate a process dying after the persisted invocation claim.
     sqlx::query("UPDATE broadcast_batches SET state='submitting',reconciliation=NULL,claimed_at=now()-interval '3 minutes' WHERE id=$1").bind(w.id).execute(&pool).await.unwrap();
     service.run_once().await.unwrap();
     assert_eq!(fake.calls.load(Ordering::SeqCst), 1);
-    assert_eq!(service.task(&a, s, t.id).await.unwrap().uncertain, 1);
+    assert_eq!(service.task(&a, t.id).await.unwrap().uncertain, 1);
 }
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
@@ -348,12 +326,12 @@ async fn drafts_are_revisioned_and_preflight_rechecks_content() {
         management_available: true,
         origin: "https://school.test".into(),
     };
-    let t = service.save(&a, s, None, input.clone()).await.unwrap();
+    let t = service.save(&a, None, input.clone()).await.unwrap();
     let mut edit = input.clone();
     edit.revision = Some(1);
-    let updated = service.save(&a, s, Some(t.id), edit.clone()).await.unwrap();
+    let updated = service.save(&a, Some(t.id), edit.clone()).await.unwrap();
     assert_eq!(updated.revision, 2);
-    assert!(service.save(&a, s, Some(t.id), edit).await.is_err());
+    assert!(service.save(&a, Some(t.id), edit).await.is_err());
     sqlx::query("UPDATE distribution_materials SET version=(version::bigint+1)::text WHERE namespace='builtin.forum' AND external_content_id=$1::uuid::text")
         .bind(input.post_ids[0])
         .execute(&pool)
@@ -363,7 +341,6 @@ async fn drafts_are_revisioned_and_preflight_rechecks_content() {
         service
             .action(
                 &a,
-                s,
                 t.id,
                 "confirm",
                 "c",
@@ -378,12 +355,11 @@ async fn drafts_are_revisioned_and_preflight_rechecks_content() {
         management_available: false,
         ..service.clone()
     };
-    let fresh = unconfigured.save(&a, s, None, input).await.unwrap();
+    let fresh = unconfigured.save(&a, None, input).await.unwrap();
     assert!(
         unconfigured
             .action(
                 &a,
-                s,
                 fresh.id,
                 "confirm",
                 "c",
@@ -392,16 +368,12 @@ async fn drafts_are_revisioned_and_preflight_rechecks_content() {
             .await
             .is_err()
     );
-    assert_eq!(
-        service.store.list(s, Page::default()).await.unwrap().len(),
-        2
-    );
+    assert_eq!(service.store.list(Page::default()).await.unwrap().len(), 2);
     // Exercise command port without any HTTP-layer SQL.
     service
         .store
         .execute(
             &a,
-            s,
             Command::Action {
                 id: fresh.id,
                 operation: "abandon".into(),
@@ -424,11 +396,10 @@ async fn stopping_during_creation_covers_late_created_task() {
         management_available: true,
         origin: "https://school.test".into(),
     };
-    let t = service.save(&a, s, None, input).await.unwrap();
+    let t = service.save(&a, None, input).await.unwrap();
     service
         .action(
             &a,
-            s,
             t.id,
             "confirm",
             "confirm",
@@ -439,7 +410,7 @@ async fn stopping_during_creation_covers_late_created_task() {
     let w = service.store.work(Some(t.id)).await.unwrap().remove(0);
     assert!(service.store.claim(&w).await.unwrap());
     service
-        .action(&a, s, t.id, "stop", "stop", action(None))
+        .action(&a, t.id, "stop", "stop", action(None))
         .await
         .unwrap();
     service
@@ -460,7 +431,7 @@ async fn stopping_during_creation_covers_late_created_task() {
         "only the late stop is invoked"
     );
     let rows = service
-        .rows(&a, s, t.id, "targets", Page::default())
+        .rows(&a, t.id, "targets", Page::default())
         .await
         .unwrap();
     assert!(rows.iter().all(|r| r["stop_state"] == "stopped"));
@@ -469,7 +440,7 @@ async fn stopping_during_creation_covers_late_created_task() {
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn repeat_startup_preserves_current_draft_and_input() {
-    let (pool, a, s, input, fake) = setup().await;
+    let (pool, a, _s, input, fake) = setup().await;
     let service = Service {
         sources: wekeeper_api::distribution::south::adapter::in_process::Sources(pool.clone()),
         store: Repository(pool.clone()),
@@ -477,10 +448,10 @@ async fn repeat_startup_preserves_current_draft_and_input() {
         management_available: true,
         origin: "https://school.test".into(),
     };
-    let task = service.save(&a, s, None, input).await.unwrap();
+    let task = service.save(&a, None, input).await.unwrap();
     database::migrate(&pool).await.unwrap();
     database::migrate(&pool).await.unwrap();
-    let restored = service.task(&a, s, task.id).await.unwrap();
+    let restored = service.task(&a, task.id).await.unwrap();
     assert_eq!(restored.content, task.content);
     assert_eq!(restored.revision, task.revision);
     assert_eq!(restored.draft_input.group_ids, task.draft_input.group_ids);
@@ -503,7 +474,7 @@ async fn http_scope_csrf_retirement_and_real_task_contract() {
         management_available: true,
         origin: "https://school.test".into(),
     };
-    let t = service.save(&a, s, None, input).await.unwrap();
+    let t = service.save(&a, None, input).await.unwrap();
     let mut application = wekeeper_api::bootstrap::build_application(pool.clone());
     application.options.public_origin = "https://school.test".into();
     application.options.insecure_local_auth = true;
@@ -514,10 +485,7 @@ async fn http_scope_csrf_retirement_and_real_task_contract() {
         .await
         .unwrap();
     let app = wekeeper_api::http::app_router(application);
-    let path = format!(
-        "/api/v1/wecom-distribution/workspaces/{s}/broadcast-tasks/{}",
-        t.id
-    );
+    let path = format!("/api/v1/wecom-distribution/broadcast-tasks/{}", t.id);
     let request = |method: &str, path: &str, csrf: bool, body: Value| {
         let mut builder = Request::builder()
             .method(method)
@@ -602,11 +570,6 @@ async fn http_scope_csrf_retirement_and_real_task_contract() {
             .status(),
         404
     );
-    sqlx::query("DELETE FROM wecom_workspace_members WHERE account_id=$1")
-        .bind(a.id)
-        .execute(&pool)
-        .await
-        .unwrap();
     assert_eq!(
         app.clone()
             .oneshot(request("GET", &path, false, Value::Null))
@@ -629,11 +592,10 @@ async fn reminders_are_limited_and_stop_unknown_requires_evidence() {
         management_available: true,
         origin: "https://school.test".into(),
     };
-    let t = service.save(&a, s, None, input).await.unwrap();
+    let t = service.save(&a, None, input).await.unwrap();
     service
         .action(
             &a,
-            s,
             t.id,
             "confirm",
             "confirm",
@@ -656,7 +618,7 @@ async fn reminders_are_limited_and_stop_unknown_requires_evidence() {
         .unwrap();
     for n in 0..3 {
         service
-            .action(&a, s, t.id, "remind", &format!("remind-{n}"), action(None))
+            .action(&a, t.id, "remind", &format!("remind-{n}"), action(None))
             .await
             .unwrap();
         let op = service
@@ -672,12 +634,12 @@ async fn reminders_are_limited_and_stop_unknown_requires_evidence() {
     }
     assert!(
         service
-            .action(&a, s, t.id, "remind", "fourth", action(None))
+            .action(&a, t.id, "remind", "fourth", action(None))
             .await
             .is_err()
     );
     service
-        .action(&a, s, t.id, "stop", "stop", action(None))
+        .action(&a, t.id, "stop", "stop", action(None))
         .await
         .unwrap();
     let op = service
@@ -701,7 +663,7 @@ async fn reminders_are_limited_and_stop_unknown_requires_evidence() {
     );
     assert!(
         service
-            .action(&a, s, t.id, "remind", "stopped-reminder", action(None))
+            .action(&a, t.id, "remind", "stopped-reminder", action(None))
             .await
             .is_err()
     );
@@ -710,11 +672,11 @@ async fn reminders_are_limited_and_stop_unknown_requires_evidence() {
     evidence.decision = Some("stop_confirmed".into());
     evidence.reason = "checked official task stopped".into();
     service
-        .action(&a, s, t.id, "reconcile", "evidence", evidence)
+        .action(&a, t.id, "reconcile", "evidence", evidence)
         .await
         .unwrap();
     let rows = service
-        .rows(&a, s, t.id, "targets", Page::default())
+        .rows(&a, t.id, "targets", Page::default())
         .await
         .unwrap();
     assert!(rows.iter().all(|r| r["stop_state"] == "stopped"));
@@ -724,12 +686,6 @@ async fn reminders_are_limited_and_stop_unknown_requires_evidence() {
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn direct_text_without_posts_admin_confirmation_and_revocation() {
     let (pool, mut a, s, mut input, fake) = setup().await;
-    sqlx::query("UPDATE accounts SET platform_admin=false WHERE id=$1")
-        .bind(a.id)
-        .execute(&pool)
-        .await
-        .unwrap();
-    a.platform_admin = false;
     sqlx::query("DELETE FROM distribution_materials WHERE namespace='builtin.forum'")
         .execute(&pool)
         .await
@@ -747,85 +703,58 @@ async fn direct_text_without_posts_admin_confirmation_and_revocation() {
         store: Repository(pool.clone()),
         client: fake.clone(),
         management_available: true,
-        origin: "https://school.test".into(),
+        origin: "https://example.test".into(),
     };
     input.content_source = ContentSource::Text;
     input.template_version_id = None;
     input.post_ids.clear();
     input.text_content = Some("直接通知\r\n第二行😀".into());
-    sqlx::query("UPDATE wecom_workspace_members SET role='operator' WHERE account_id=$1")
+    let task = service.save(&a, None, input.clone()).await.unwrap();
+    assert_eq!(task.content, "直接通知\n第二行😀");
+    assert_eq!(task.template_version_id, None);
+    assert!(task.post_ids.is_empty());
+    let confirmation = with_preview(&service, &a, s, task.id, action(Some(task.revision))).await;
+    sqlx::query("UPDATE accounts SET platform_admin=false WHERE id=$1")
         .bind(a.id)
         .execute(&pool)
         .await
         .unwrap();
-    let t = service.save(&a, s, None, input.clone()).await.unwrap();
-    assert_eq!(t.content, "直接通知\n第二行😀");
-    assert_eq!(t.content_source, ContentSource::Text);
-    assert_eq!(t.template_version_id, None);
-    assert!(t.post_ids.is_empty());
-    assert_eq!(fake.calls.load(Ordering::SeqCst), 0);
+    a.platform_admin = false;
     assert!(
         service
-            .action(
-                &a,
-                s,
-                t.id,
-                "confirm",
-                "operator",
-                with_preview(&service, &a, s, t.id, action(Some(t.revision))).await
-            )
+            .action(&a, task.id, "confirm", "denied", confirmation.clone())
             .await
             .is_err()
     );
-    // The repository enforces the same rule, not just the HTTP/service boundary.
     assert!(
         service
             .store
             .execute(
                 &a,
-                s,
                 Command::Action {
-                    id: t.id,
+                    id: task.id,
                     operation: "confirm".into(),
                     key: "bypass".into(),
-                    input: action(Some(t.revision))
+                    input: confirmation.clone()
                 }
             )
             .await
             .is_err()
     );
-    sqlx::query("UPDATE wecom_workspace_members SET role='admin' WHERE account_id=$1")
+    assert_eq!(fake.calls.load(Ordering::SeqCst), 0);
+    sqlx::query("UPDATE accounts SET platform_admin=true WHERE id=$1")
         .bind(a.id)
         .execute(&pool)
         .await
         .unwrap();
+    a.platform_admin = true;
     service
-        .action(
-            &a,
-            s,
-            t.id,
-            "confirm",
-            "admin",
-            with_preview(&service, &a, s, t.id, action(Some(t.revision))).await,
-        )
-        .await
-        .unwrap();
-    let work = service.store.work(Some(t.id)).await.unwrap();
-    assert_eq!(work[0].content, t.content);
-    sqlx::query("UPDATE wecom_workspace_members SET role='operator' WHERE account_id=$1")
-        .bind(a.id)
-        .execute(&pool)
-        .await
-        .unwrap();
-    assert!(service.store.claim(&work[0]).await.is_err());
-    sqlx::query("UPDATE wecom_workspace_members SET role='admin' WHERE account_id=$1")
-        .bind(a.id)
-        .execute(&pool)
+        .action(&a, task.id, "confirm", "admin", confirmation)
         .await
         .unwrap();
     service.run_once().await.unwrap();
     assert_eq!(fake.calls.load(Ordering::SeqCst), 1);
-    assert!(service.save(&a, s, Some(t.id), input).await.is_err());
+    assert!(service.save(&a, Some(task.id), input).await.is_err());
 }
 
 #[tokio::test]
@@ -839,7 +768,7 @@ async fn content_source_switch_and_cross_source_duplicate_guard() {
         management_available: true,
         origin: "https://school.test".into(),
     };
-    let first = service.save(&a, s, None, posts.clone()).await.unwrap();
+    let first = service.save(&a, None, posts.clone()).await.unwrap();
     let mut text = posts.clone();
     text.content_source = ContentSource::Text;
     text.template_version_id = None;
@@ -847,7 +776,7 @@ async fn content_source_switch_and_cross_source_duplicate_guard() {
     text.text_content = Some(first.content.clone());
     text.revision = Some(first.revision);
     let changed = service
-        .save(&a, s, Some(first.id), text.clone())
+        .save(&a, Some(first.id), text.clone())
         .await
         .unwrap();
     assert_eq!(changed.revision, first.revision + 1);
@@ -856,7 +785,6 @@ async fn content_source_switch_and_cross_source_duplicate_guard() {
         service
             .action(
                 &a,
-                s,
                 changed.id,
                 "confirm",
                 "stale",
@@ -867,13 +795,12 @@ async fn content_source_switch_and_cross_source_duplicate_guard() {
     );
     let mut back = posts.clone();
     back.revision = Some(changed.revision);
-    let restored = service.save(&a, s, Some(first.id), back).await.unwrap();
+    let restored = service.save(&a, Some(first.id), back).await.unwrap();
     assert_eq!(restored.content_source, ContentSource::Posts);
     assert_eq!(restored.post_ids, posts.post_ids);
     service
         .action(
             &a,
-            s,
             restored.id,
             "confirm",
             "posts",
@@ -889,12 +816,11 @@ async fn content_source_switch_and_cross_source_duplicate_guard() {
         .await
         .unwrap();
     text.revision = None;
-    let duplicate = service.save(&a, s, None, text).await.unwrap();
+    let duplicate = service.save(&a, None, text).await.unwrap();
     assert!(
         service
             .action(
                 &a,
-                s,
                 duplicate.id,
                 "confirm",
                 "text",
@@ -931,7 +857,7 @@ async fn official_broadcast_ignores_mobile_switch_and_mobile_transaction_lock() 
         .unwrap();
     let task = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        service.save(&a, s, None, input),
+        service.save(&a, None, input),
     )
     .await
     .expect("official write waited on mobile lock")
@@ -939,7 +865,6 @@ async fn official_broadcast_ignores_mobile_switch_and_mobile_transaction_lock() 
     service
         .action(
             &a,
-            s,
             task.id,
             "confirm",
             "isolated",
@@ -969,11 +894,11 @@ async fn official_broadcast_ignores_mobile_switch_and_mobile_transaction_lock() 
 async fn with_preview<S: wekeeper_api::distribution::south::port::content_source::ContentSource>(
     service: &Service<Repository, Fake, S>,
     actor: &Actor,
-    school: Uuid,
+    _school: Uuid,
     id: Uuid,
     mut input: Action,
 ) -> Action {
-    if let Ok(preview) = service.preview(actor, school, id).await {
+    if let Ok(preview) = service.preview(actor, id).await {
         input.preview_digest = Some(preview.digest);
     }
     input
@@ -984,7 +909,6 @@ struct NoticeSource;
 impl wekeeper_api::distribution::south::port::content_source::ContentSource for NoticeSource {
     async fn check(
         &self,
-        _: Uuid,
         _: &[wekeeper_api::distribution::domain::content::SourceReference],
     ) -> Result<()> {
         Ok(())
@@ -992,7 +916,6 @@ impl wekeeper_api::distribution::south::port::content_source::ContentSource for 
     async fn read(
         &self,
         _: &Actor,
-        _: Uuid,
         refs: &[wekeeper_api::distribution::domain::content::SourceReference],
     ) -> Result<Vec<wekeeper_api::distribution::domain::content::Material>> {
         Ok(refs
@@ -1008,7 +931,7 @@ impl wekeeper_api::distribution::south::port::content_source::ContentSource for 
 }
 async fn notice(
     pool: &PgPool,
-    s: Uuid,
+    _s: Uuid,
     namespace: &str,
 ) -> wekeeper_api::distribution::domain::content::SourceReference {
     sqlx::query("INSERT INTO distribution_sources(namespace) VALUES($1)")
@@ -1016,17 +939,15 @@ async fn notice(
         .execute(pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO distribution_source_organizations VALUES($1,'1',$2,true)")
+    sqlx::query("INSERT INTO distribution_source_organizations VALUES($1,'1',true)")
         .bind(namespace)
-        .bind(s)
         .execute(pool)
         .await
         .unwrap();
     sqlx::query(
-        "INSERT INTO distribution_materials VALUES($1,'1','1',$2,'v1','独立通知',$3,true,now())",
+        "INSERT INTO distribution_materials VALUES($1,'1','1','v1','独立通知',$2,true,now())",
     )
     .bind(namespace)
-    .bind(s)
     .bind(format!("来源 {namespace} 的通知"))
     .execute(pool)
     .await
@@ -1055,10 +976,10 @@ async fn non_forum_source_replacement_idempotency_and_frozen_confirmation() {
         management_available: true,
         origin: String::new(),
     };
-    let task = service.save(&a, s, None, input.clone()).await.unwrap();
+    let task = service.save(&a, None, input.clone()).await.unwrap();
     assert_eq!(
         task.id,
-        service.save(&a, s, None, input.clone()).await.unwrap().id
+        service.save(&a, None, input.clone()).await.unwrap().id
     );
     assert_eq!(task.materials, vec![reference]);
     assert_eq!(
@@ -1072,23 +993,23 @@ async fn non_forum_source_replacement_idempotency_and_frozen_confirmation() {
     );
     let mut changed = input.clone();
     changed.group_ids.pop();
-    assert!(service.save(&a, s, None, changed).await.is_err());
+    assert!(service.save(&a, None, changed).await.is_err());
     assert!(
         service
-            .action(&a, s, task.id, "confirm", "no-preview", action(Some(1)))
+            .action(&a, task.id, "confirm", "no-preview", action(Some(1)))
             .await
             .is_err()
     );
-    let preview = service.preview(&a, s, task.id).await.unwrap();
+    let preview = service.preview(&a, task.id).await.unwrap();
     assert_eq!(preview.content, task.content);
     let mut confirm = action(Some(task.revision));
     confirm.preview_digest = Some(preview.digest);
     service
-        .action(&a, s, task.id, "confirm", "confirmed", confirm.clone())
+        .action(&a, task.id, "confirm", "confirmed", confirm.clone())
         .await
         .unwrap();
     service
-        .action(&a, s, task.id, "confirm", "confirmed", confirm)
+        .action(&a, task.id, "confirm", "confirmed", confirm)
         .await
         .unwrap();
     service.run_once().await.unwrap();
@@ -1098,7 +1019,7 @@ async fn non_forum_source_replacement_idempotency_and_frozen_confirmation() {
         .await
         .unwrap();
     assert_eq!(
-        service.task(&a, s, task.id).await.unwrap().content,
+        service.task(&a, task.id).await.unwrap().content,
         task.content
     );
 }
@@ -1122,10 +1043,10 @@ async fn two_sources_share_official_resource_budget_and_unknown_does_not_release
     let mut tasks = Vec::new();
     for reference in [first, second] {
         input.materials = vec![reference];
-        let t = service.save(&a, s, None, input.clone()).await.unwrap();
+        let t = service.save(&a, None, input.clone()).await.unwrap();
         let body = with_preview(&service, &a, s, t.id, action(Some(t.revision))).await;
         service
-            .action(&a, s, t.id, "confirm", &format!("confirm-{}", t.id), body)
+            .action(&a, t.id, "confirm", &format!("confirm-{}", t.id), body)
             .await
             .unwrap();
         tasks.push(t);
@@ -1182,10 +1103,10 @@ async fn source_material_changes_do_not_revoke_confirmed_messages_or_snapshots()
         management_available: true,
         origin: "https://school.test".into(),
     };
-    let task = service.save(&a, s, None, input.clone()).await.unwrap();
+    let task = service.save(&a, None, input.clone()).await.unwrap();
     let body = with_preview(&service, &a, s, task.id, action(Some(1))).await;
     service
-        .action(&a, s, task.id, "confirm", "confirm", body)
+        .action(&a, task.id, "confirm", "confirm", body)
         .await
         .unwrap();
     sqlx::query("UPDATE distribution_materials SET allowed=false,version=(version::bigint+1)::text WHERE namespace='builtin.forum' AND external_content_id=$1::uuid::text")
@@ -1196,7 +1117,7 @@ async fn source_material_changes_do_not_revoke_confirmed_messages_or_snapshots()
     service.run_once().await.unwrap();
     assert_eq!(fake.calls.load(Ordering::SeqCst), 1);
     assert_eq!(
-        service.task(&a, s, task.id).await.unwrap().content,
+        service.task(&a, task.id).await.unwrap().content,
         task.content
     );
     assert!(
@@ -1221,11 +1142,7 @@ async fn sender_qualification_is_platform_only_and_blocks_final_call() {
     let (pool, mut a, s, input, fake) = setup().await;
     let senders =
         wekeeper_api::distribution::south::adapter::postgres::senders::Repository(pool.clone());
-    let sender = senders
-        .list(&a, Some(s), Page::default())
-        .await
-        .unwrap()
-        .remove(0);
+    let sender = senders.list(&a, Page::default()).await.unwrap().remove(0);
     let service = Service {
         store: Repository(pool.clone()),
         sources: wekeeper_api::distribution::south::adapter::in_process::Sources(pool.clone()),
@@ -1233,10 +1150,10 @@ async fn sender_qualification_is_platform_only_and_blocks_final_call() {
         management_available: true,
         origin: "https://school.test".into(),
     };
-    let task = service.save(&a, s, None, input).await.unwrap();
+    let task = service.save(&a, None, input).await.unwrap();
     let body = with_preview(&service, &a, s, task.id, action(Some(1))).await;
     service
-        .action(&a, s, task.id, "confirm", "confirm", body)
+        .action(&a, task.id, "confirm", "confirm", body)
         .await
         .unwrap();
     use wekeeper_api::distribution::domain::content::SenderQualificationInput;
@@ -1245,7 +1162,6 @@ async fn sender_qualification_is_platform_only_and_blocks_final_call() {
         senders
             .qualify(
                 &a,
-                s,
                 sender.id,
                 SenderQualificationInput {
                     enabled: false,
@@ -1259,7 +1175,6 @@ async fn sender_qualification_is_platform_only_and_blocks_final_call() {
     senders
         .qualify(
             &a,
-            s,
             sender.id,
             SenderQualificationInput {
                 enabled: false,
@@ -1275,7 +1190,7 @@ async fn sender_qualification_is_platform_only_and_blocks_final_call() {
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn product_unavailable_draft_replays_without_sender_or_external_work() {
-    let (pool, a, s, mut input, fake) = setup().await;
+    let (pool, a, _s, mut input, fake) = setup().await;
     input.content_source = ContentSource::Text;
     input.text_content = Some("待开通通知".into());
     input.template_version_id = None;
@@ -1289,7 +1204,7 @@ async fn product_unavailable_draft_replays_without_sender_or_external_work() {
         origin: "https://school.test".into(),
     };
     let first = service
-        .save_preview(&a, s, None, input.clone(), "draft-preview")
+        .save_preview(&a, None, input.clone(), "draft-preview")
         .await
         .unwrap();
     assert!(first["preview"].is_null());
@@ -1297,19 +1212,19 @@ async fn product_unavailable_draft_replays_without_sender_or_external_work() {
     assert_eq!(
         first,
         service
-            .save_preview(&a, s, None, input.clone(), "draft-preview")
+            .save_preview(&a, None, input.clone(), "draft-preview")
             .await
             .unwrap()
     );
     input.text_content = Some("不同通知".into());
     assert!(
         service
-            .save_preview(&a, s, None, input, "draft-preview")
+            .save_preview(&a, None, input, "draft-preview")
             .await
             .is_err()
     );
     let id = first["task_id"].as_str().unwrap().parse().unwrap();
-    let task = service.task(&a, s, id).await.unwrap();
+    let task = service.task(&a, id).await.unwrap();
     assert_eq!(task.total, 0);
     assert_eq!(task.state, "draft");
     let scope: Option<String> =
@@ -1331,19 +1246,19 @@ async fn product_template_confirmation_is_one_time_and_draft_preserves_published
         north::local::workflows::Service as W,
         south::adapter::postgres::workflows::Repository as R,
     };
-    let (pool, a, s, _, _) = setup().await;
+    let (pool, a, _s, _, _) = setup().await;
     let service = W(R(pool.clone()));
     let input = TemplateInput {
         id: None,
         revision: 0,
         name: "两步通知".into(),
-        body: "{{school.name}} 通知".into(),
+        body: "{{post.title}} 通知".into(),
         note: "首次发布".into(),
         sample_post_id: None,
         publish: true,
     };
     let preview = service
-        .command(&a, Some(s), C::TemplatePreview(input.clone()))
+        .command(&a, C::TemplatePreview(input.clone()))
         .await
         .unwrap();
     assert!(preview.get("dependencies").is_none());
@@ -1352,8 +1267,8 @@ async fn product_template_confirmation_is_one_time_and_draft_preserves_published
         digest: preview["digest"].as_str().unwrap().into(),
     };
     let (one, two) = tokio::join!(
-        service.command(&a, Some(s), C::TemplateConfirm(c.clone())),
-        service.command(&a, Some(s), C::TemplateConfirm(c.clone()))
+        service.command(&a, C::TemplateConfirm(c.clone())),
+        service.command(&a, C::TemplateConfirm(c.clone()))
     );
     let one = one.unwrap();
     assert_eq!(one, two.unwrap());
@@ -1373,13 +1288,12 @@ async fn product_template_confirmation_is_one_time_and_draft_preserves_published
         ..input
     };
     let p = service
-        .command(&a, Some(s), C::TemplatePreview(input))
+        .command(&a, C::TemplatePreview(input))
         .await
         .unwrap();
     let result = service
         .command(
             &a,
-            Some(s),
             C::TemplateConfirm(Confirmation {
                 preview_id: p["id"].as_str().unwrap().parse().unwrap(),
                 digest: p["digest"].as_str().unwrap().into(),
@@ -1389,13 +1303,18 @@ async fn product_template_confirmation_is_one_time_and_draft_preserves_published
         .unwrap();
     assert_eq!(result["published"], false);
     let body:String=sqlx::query_scalar("SELECT v.body FROM templates t JOIN template_versions v ON v.id=t.current_version_id WHERE t.id=$1").bind(id).fetch_one(&pool).await.unwrap();
-    assert_eq!(body, "{{school.name}} 通知");
-    assert!(
-        service
-            .command(&a, Some(Uuid::new_v4()), C::TemplateConfirm(c))
-            .await
-            .is_err()
+    assert_eq!(body, "{{post.title}} 通知");
+    assert_eq!(
+        service.command(&a, C::TemplateConfirm(c)).await.unwrap(),
+        one
     );
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM template_versions WHERE template_id=$1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 1);
 }
 
 #[tokio::test]
@@ -1406,7 +1325,7 @@ async fn product_member_policy_reuses_existing_key_and_usage_ledger() {
         north::local::workflows::Service as W,
         south::adapter::postgres::workflows::Repository as R,
     };
-    let (pool, a, s, input, fake) = setup().await;
+    let (pool, a, _s, input, fake) = setup().await;
     let service = W(R(pool.clone()));
     let member: Uuid = sqlx::query_scalar("SELECT wecom_member_id FROM accounts WHERE id=$1")
         .bind(a.id)
@@ -1420,7 +1339,7 @@ async fn product_member_policy_reuses_existing_key_and_usage_ledger() {
         management_available: true,
         origin: "https://school.test".into(),
     }
-    .save(&a, s, None, input)
+    .save(&a, None, input)
     .await
     .unwrap();
     let batch = Repository(pool.clone()).work(Some(draft.id)).await.unwrap()[0].id;
@@ -1438,7 +1357,6 @@ async fn product_member_policy_reuses_existing_key_and_usage_ledger() {
     let p = service
         .command(
             &a,
-            None,
             C::PolicyPreview(MemberPolicyInput {
                 member_id: member,
                 generation: 1,
@@ -1455,15 +1373,12 @@ async fn product_member_policy_reuses_existing_key_and_usage_ledger() {
         digest: p["digest"].as_str().unwrap().into(),
     };
     let result = service
-        .command(&a, None, C::PolicyConfirm(c.clone()))
+        .command(&a, C::PolicyConfirm(c.clone()))
         .await
         .unwrap();
     assert_eq!(
         result,
-        service
-            .command(&a, None, C::PolicyConfirm(c))
-            .await
-            .unwrap()
+        service.command(&a, C::PolicyConfirm(c)).await.unwrap()
     );
     let after: Value = sqlx::query_scalar(
         "SELECT to_jsonb(p) FROM distribution_resource_policies p WHERE resource_key=$1",
@@ -1483,9 +1398,9 @@ async fn product_member_policy_reuses_existing_key_and_usage_ledger() {
     assert_eq!(count, 1);
     assert_eq!(after["enabled"], false);
     assert_eq!(after["window_seconds"], 7200);
-    assert!(service.options(&a, Some(Uuid::new_v4())).await.is_err());
+    assert!(service.options(&a).await.is_err());
     assert!(
-        service.channel(&a, s, true, "scope").await.unwrap()["broadcast_available"]
+        service.channel(&a, true, "scope").await.unwrap()["broadcast_available"]
             .as_bool()
             .unwrap()
     );
@@ -1493,126 +1408,9 @@ async fn product_member_policy_reuses_existing_key_and_usage_ledger() {
         .execute(&pool)
         .await
         .unwrap();
-    let unavailable = service.channel(&a, s, true, "scope").await.unwrap();
+    let unavailable = service.channel(&a, true, "scope").await.unwrap();
     assert_eq!(unavailable["broadcast_available"], false);
     assert_eq!(unavailable["health_state"], "checking");
-}
-
-#[tokio::test]
-#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn product_usage_request_has_no_early_grant_and_approval_revalidates_directory() {
-    use wekeeper_api::distribution::{
-        domain::workflows::{Command as C, Confirmation, RequestDecision, UsageInput},
-        north::local::workflows::Service as W,
-        south::adapter::postgres::workflows::Repository as R,
-    };
-    let (pool, mut school_actor, s, _, _) = setup().await;
-    let admin_id = Uuid::new_v4();
-    sqlx::query("INSERT INTO accounts(id,username,display_name,platform_admin) VALUES($1,'approver','负责人',true)").bind(admin_id).execute(&pool).await.unwrap();
-    let mut platform = school_actor.clone();
-    platform.id = admin_id;
-    sqlx::query("UPDATE accounts SET platform_admin=false WHERE id=$1")
-        .bind(school_actor.id)
-        .execute(&pool)
-        .await
-        .unwrap();
-    school_actor.platform_admin = false;
-    sqlx::query("INSERT INTO wecom_sender_qualifications(school_id,account_id,enabled,updated_by) VALUES($1,$2,false,$2)").bind(s).bind(school_actor.id).execute(&pool).await.unwrap();
-    let member: Uuid = sqlx::query_scalar("SELECT wecom_member_id FROM accounts WHERE id=$1")
-        .bind(school_actor.id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    let groups: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT directory_group_id FROM wecom_groups WHERE school_id=$1 ORDER BY id",
-    )
-    .bind(s)
-    .fetch_all(&pool)
-    .await
-    .unwrap();
-    let service = W(R(pool.clone()));
-    let v = UsageInput {
-        member_id: member,
-        account_id: school_actor.id,
-        generation: 1,
-        role: "admin".into(),
-        group_ids: groups.clone(),
-    };
-    let p = service
-        .command(&school_actor, Some(s), C::UsagePreview(v))
-        .await
-        .unwrap();
-    assert_eq!(p["requires_approval"], true);
-    let c = Confirmation {
-        preview_id: p["id"].as_str().unwrap().parse().unwrap(),
-        digest: p["digest"].as_str().unwrap().into(),
-    };
-    let req = service
-        .command(&school_actor, Some(s), C::UsageConfirm(c.clone()))
-        .await
-        .unwrap();
-    assert!(req["payload"].get("snapshot").is_none());
-    assert_eq!(req["state"], "pending");
-    assert_eq!(
-        req,
-        service
-            .command(&school_actor, Some(s), C::UsageConfirm(c))
-            .await
-            .unwrap()
-    );
-    let enabled: bool = sqlx::query_scalar(
-        "SELECT enabled FROM wecom_sender_qualifications WHERE school_id=$1 AND account_id=$2",
-    )
-    .bind(s)
-    .bind(school_actor.id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert!(!enabled);
-    sqlx::query(
-        "UPDATE wecom_asset_objects SET data=jsonb_set(data,'{owner}','\"different\"') WHERE id=$1",
-    )
-    .bind(groups[0])
-    .execute(&pool)
-    .await
-    .unwrap();
-    let id = req["id"].as_str().unwrap().parse().unwrap();
-    assert!(
-        service
-            .command(
-                &platform,
-                None,
-                C::Decision {
-                    id,
-                    input: RequestDecision {
-                        revision: 1,
-                        state: "approved".into(),
-                        response: "已核对范围".into(),
-                        owner_id: None
-                    }
-                }
-            )
-            .await
-            .is_err()
-    );
-    let state: String = sqlx::query_scalar("SELECT state FROM product_requests WHERE id=$1")
-        .bind(id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(state, "pending");
-    let enabled: bool = sqlx::query_scalar(
-        "SELECT enabled FROM wecom_sender_qualifications WHERE school_id=$1 AND account_id=$2",
-    )
-    .bind(s)
-    .bind(school_actor.id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert!(
-        !enabled,
-        "failed approval cannot leave partial authorization"
-    );
 }
 
 #[tokio::test]
@@ -1622,7 +1420,7 @@ async fn automatic_health_never_unpauses_explicit_business_control() {
         domain::workflows::{ChannelControl, ChannelHealth},
         south::{adapter::postgres::workflows::Repository, port::workflows::Store},
     };
-    let (pool, actor, school, _, _) = setup().await;
+    let (pool, actor, _school, _, _) = setup().await;
     let repo = Repository(pool.clone());
     let corp: String =
         sqlx::query_scalar("SELECT corp_id FROM wecom_directory_state WHERE singleton")
@@ -1649,7 +1447,7 @@ async fn automatic_health_never_unpauses_explicit_business_control() {
         error_code: None,
     };
     repo.record_health(observation.clone()).await.unwrap();
-    let paused = repo.channel(&actor, school, true, "scope").await.unwrap();
+    let paused = repo.channel(&actor, true, "scope").await.unwrap();
     assert_eq!(paused["broadcast_available"], false);
     assert_eq!(paused["health_state"], "paused");
     assert_eq!(paused["management_available"], true);
@@ -1666,7 +1464,7 @@ async fn automatic_health_never_unpauses_explicit_business_control() {
     .await
     .unwrap();
     assert_eq!(
-        repo.channel(&actor, school, true, "scope").await.unwrap()["broadcast_available"],
+        repo.channel(&actor, true, "scope").await.unwrap()["broadcast_available"],
         true
     );
     repo.record_health(ChannelHealth {
@@ -1676,7 +1474,7 @@ async fn automatic_health_never_unpauses_explicit_business_control() {
     })
     .await
     .unwrap();
-    let failed = repo.channel(&actor, school, true, "scope").await.unwrap();
+    let failed = repo.channel(&actor, true, "scope").await.unwrap();
     assert_eq!(failed["broadcast_available"], false);
     let history: (bool, bool, Option<String>) = sqlx::query_as("SELECT last_success_at IS NOT NULL,last_failure_at IS NOT NULL,error_code FROM official_channel_health WHERE credential_scope='scope'")
         .fetch_one(&pool).await.unwrap();
@@ -1694,11 +1492,10 @@ async fn execution_evidence_preserves_creation_pending_success_and_read_backoff(
         management_available: true,
         origin: "https://school.test".into(),
     };
-    let task = service.save(&a, s, None, input).await.unwrap();
+    let task = service.save(&a, None, input).await.unwrap();
     service
         .action(
             &a,
-            s,
             task.id,
             "confirm",
             "confirm",
@@ -1736,7 +1533,7 @@ async fn execution_evidence_preserves_creation_pending_success_and_read_backoff(
         )
         .await
         .unwrap();
-    let created = service.task(&a, s, task.id).await.unwrap();
+    let created = service.task(&a, task.id).await.unwrap();
     assert_eq!((created.sent, created.pending), (0, 2));
     let (digest, submitted): (Option<String>, bool) = sqlx::query_as(
         "SELECT request_digest,submitted_at IS NOT NULL FROM broadcast_batches WHERE id=$1",
@@ -1759,7 +1556,7 @@ async fn execution_evidence_preserves_creation_pending_success_and_read_backoff(
         )
         .await
         .unwrap();
-    assert_eq!(service.task(&a, s, task.id).await.unwrap().sent, 0);
+    assert_eq!(service.task(&a, task.id).await.unwrap().sent, 0);
     let result = Results {
         member_status: Some(2),
         groups: vec![Observation {
@@ -1781,9 +1578,9 @@ async fn execution_evidence_preserves_creation_pending_success_and_read_backoff(
         .unwrap();
     let backoff:(i32,bool)=sqlx::query_as("SELECT sync_failures,next_sync_at BETWEEN clock_timestamp()+interval '3 seconds' AND clock_timestamp()+interval '10 seconds' FROM broadcast_batches WHERE id=$1").bind(work.id).fetch_one(&pool).await.unwrap();
     assert_eq!(backoff, (1, true));
-    assert_eq!(service.task(&a, s, task.id).await.unwrap().sent, 1);
+    assert_eq!(service.task(&a, task.id).await.unwrap().sent, 1);
     let rows = service
-        .rows(&a, s, task.id, "observations", Page::default())
+        .rows(&a, task.id, "observations", Page::default())
         .await
         .unwrap();
     assert!(
@@ -1811,7 +1608,7 @@ async fn execution_evidence_preserves_creation_pending_success_and_read_backoff(
             .is_err()
     );
     let targets = service
-        .rows(&a, s, task.id, "targets", Page::default())
+        .rows(&a, task.id, "targets", Page::default())
         .await
         .unwrap();
     assert!(
@@ -1824,8 +1621,89 @@ async fn execution_evidence_preserves_creation_pending_success_and_read_backoff(
     outsider.platform_admin = false;
     assert!(
         service
-            .rows(&outsider, s, task.id, "observations", Page::default())
+            .rows(&outsider, task.id, "observations", Page::default())
             .await
             .is_err()
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn global_official_usage_revalidates_identity_and_confirmation_is_idempotent() {
+    use wekeeper_api::distribution::{
+        domain::workflows::{Command as C, Confirmation, UsageInput},
+        north::local::workflows::Service as W,
+        south::adapter::postgres::workflows::Repository as R,
+    };
+    let (pool, actor, _, _, _) = setup().await;
+    let member = sqlx::query_scalar("SELECT wecom_member_id FROM accounts WHERE id=$1")
+        .bind(actor.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let groups: Vec<Uuid> =
+        sqlx::query_scalar("SELECT directory_group_id FROM wecom_groups ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    let service = W(R(pool.clone()));
+    let input = UsageInput {
+        member_id: member,
+        account_id: actor.id,
+        generation: 1,
+        group_ids: groups.clone(),
+    };
+    let preview = service
+        .command(&actor, C::UsagePreview(input.clone()))
+        .await
+        .unwrap();
+    let confirm = Confirmation {
+        preview_id: preview["id"].as_str().unwrap().parse().unwrap(),
+        digest: preview["digest"].as_str().unwrap().into(),
+    };
+    let original: serde_json::Value =
+        sqlx::query_scalar("SELECT data FROM wecom_asset_objects WHERE id=$1")
+            .bind(groups[0])
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    sqlx::query(
+        "UPDATE wecom_asset_objects SET data=jsonb_set(data,'{owner}','\"changed\"') WHERE id=$1",
+    )
+    .bind(groups[0])
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert!(
+        service
+            .command(&actor, C::UsageConfirm(confirm))
+            .await
+            .is_err()
+    );
+    sqlx::query("UPDATE wecom_asset_objects SET data=$2 WHERE id=$1")
+        .bind(groups[0])
+        .bind(original)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let preview = service
+        .command(&actor, C::UsagePreview(input))
+        .await
+        .unwrap();
+    let confirm = Confirmation {
+        preview_id: preview["id"].as_str().unwrap().parse().unwrap(),
+        digest: preview["digest"].as_str().unwrap().into(),
+    };
+    let result = service
+        .command(&actor, C::UsageConfirm(confirm.clone()))
+        .await
+        .unwrap();
+    assert_eq!(result["state"], "approved");
+    assert_eq!(
+        service
+            .command(&actor, C::UsageConfirm(confirm))
+            .await
+            .unwrap(),
+        result
     );
 }

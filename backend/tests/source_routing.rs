@@ -312,7 +312,7 @@ async fn interrupted_ad_commit_uses_original_frozen_targets_and_decision() {
 async fn unavailable_target_does_not_block_other_targets() {
     let f = Fixture::new().await;
     let missing = Uuid::new_v4();
-    sqlx::query("INSERT INTO mobile_targets(id,school_id,search_text,created_by,updated_by) VALUES($1,$2,'没有手机的群',$3,$3)").bind(missing).bind(f.scope).bind(f.actor.id).execute(&f.pool).await.unwrap();
+    sqlx::query("INSERT INTO mobile_targets(id,search_text,created_by,updated_by) VALUES($1,'没有手机的群',$2,$2)").bind(missing).bind(f.actor.id).execute(&f.pool).await.unwrap();
     f.configure(vec![missing, f.target]).await;
     sqlx::query("DELETE FROM mobile_device_target_bindings WHERE target_id=$1")
         .bind(missing)
@@ -349,15 +349,10 @@ async fn both_channels_share_one_ad_and_aggregate_official_results_without_membe
     };
     let f = Fixture::new().await;
     f.configure(vec![f.target]).await;
-    let workspace = Uuid::new_v4();
+    let _workspace = Uuid::new_v4();
     let member = Uuid::new_v4();
     let target = Uuid::new_v4();
     let directory = Uuid::new_v4();
-    sqlx::query("INSERT INTO wecom_workspaces(id,name,active) VALUES($1,'内部存储分区',false)")
-        .bind(workspace)
-        .execute(&f.pool)
-        .await
-        .unwrap();
     sqlx::query("INSERT INTO wecom_directory_state(singleton,corp_id,credential_scope) VALUES(true,'test-corp','scope')").execute(&f.pool).await.unwrap();
     sqlx::query("INSERT INTO wecom_members(id,userid,name,status,verification,checked_at) VALUES($1,'owner','Owner',1,'verified',now())").bind(member).execute(&f.pool).await.unwrap();
     sqlx::query("UPDATE accounts SET wecom_member_id=$2 WHERE id=$1")
@@ -367,7 +362,7 @@ async fn both_channels_share_one_ad_and_aggregate_official_results_without_membe
         .await
         .unwrap();
     sqlx::query("INSERT INTO wecom_asset_objects(id,kind,corp_id,key,data,checked_at,credential_generation,visibility,verification) VALUES($1,'groups','test-corp','chat',jsonb_build_object('owner','owner'),now(),1,'visible','verified')").bind(directory).execute(&f.pool).await.unwrap();
-    sqlx::query("INSERT INTO wecom_groups(id,school_id,corp_id,chat_id,name,directory_group_id) VALUES($1,$2,'test-corp','chat','客户群',$3)").bind(target).bind(workspace).bind(directory).execute(&f.pool).await.unwrap();
+    sqlx::query("INSERT INTO wecom_groups(id,corp_id,chat_id,name,directory_group_id) VALUES($1,'test-corp','chat','客户群',$2)").bind(target).bind(directory).execute(&f.pool).await.unwrap();
     Service(Repository(f.pool.clone()))
         .save(
             &f.actor,
@@ -384,7 +379,7 @@ async fn both_channels_share_one_ad_and_aggregate_official_results_without_membe
         )
         .await
         .unwrap();
-    sqlx::query("INSERT INTO wecom_sender_qualifications(school_id,account_id,enabled,updated_by) VALUES($1,$2,false,$2)").bind(workspace).bind(f.actor.id).execute(&f.pool).await.unwrap();
+    sqlx::query("INSERT INTO wecom_sender_qualifications(account_id,enabled,updated_by) VALUES($1,false,$1)").bind(f.actor.id).execute(&f.pool).await.unwrap();
     f.ad("共同广告", "unit").await;
     let (id, receipt) = f.message(1).await;
     f.run().await;

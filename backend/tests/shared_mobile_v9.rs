@@ -16,7 +16,6 @@ struct Fixture {
     base: PgPool,
     schema: String,
     actor: Actor,
-    school: Uuid,
     device: Uuid,
     targets: Vec<Uuid>,
     release: Uuid,
@@ -50,40 +49,25 @@ impl Fixture {
             .unwrap();
         database::migrate(&pool).await.unwrap();
         let actor_id = Uuid::new_v4();
-        let school = Uuid::new_v4();
         let device = Uuid::new_v4();
         sqlx::query("INSERT INTO accounts(id,username,display_name,platform_admin) VALUES($1,'v9-admin','Admin',true)").bind(actor_id).execute(&pool).await.unwrap();
-        sqlx::query("INSERT INTO mobile_workspaces(id,name) VALUES($1,'V9 test')")
-            .bind(school)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(
-            "INSERT INTO mobile_workspace_members(workspace_id,account_id,role) VALUES($1,$2,'admin')",
-        )
-        .bind(school)
-        .bind(actor_id)
-        .execute(&pool)
-        .await
-        .unwrap();
         sqlx::query("INSERT INTO execution_devices(id,name,enabled,credential_generation) VALUES($1,'Offline phone',true,1)").bind(device).execute(&pool).await.unwrap();
         let targets = vec![Uuid::new_v4(), Uuid::new_v4()];
         for target in &targets {
-            sqlx::query("INSERT INTO mobile_targets(id,school_id,search_text,created_by,updated_by) VALUES($1,$2,'测试群',$3,$3)").bind(target).bind(school).bind(actor_id).execute(&pool).await.unwrap();
-            sqlx::query("INSERT INTO mobile_device_target_bindings(id,school_id,device_id,target_id,created_by,updated_by) VALUES($1,$2,$3,$4,$5,$5)").bind(Uuid::new_v4()).bind(school).bind(device).bind(target).bind(actor_id).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO mobile_targets(id,search_text,created_by,updated_by) VALUES($1,'测试群',$2,$2)").bind(target).bind(actor_id).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO mobile_device_target_bindings(id,device_id,target_id,created_by,updated_by) VALUES($1,$2,$3,$4,$4)").bind(Uuid::new_v4()).bind(device).bind(target).bind(actor_id).execute(&pool).await.unwrap();
         }
         let release = Uuid::new_v4();
         let acceptance = Uuid::new_v4();
         if seed_adapter {
             Self::seed_adapter(&pool, actor_id, device, release, acceptance).await;
         }
-        let actor=serde_json::from_value(json!({"id":actor_id,"username":"v9-admin","display_name":"Admin","platform_admin":true,"grants":[],"wecom_authenticated":false})).unwrap();
+        let actor=serde_json::from_value(json!({"id":actor_id,"username":"v9-admin","display_name":"Admin","platform_admin":true,"wecom_authenticated":false})).unwrap();
         Self {
             pool,
             base,
             schema,
             actor,
-            school,
             device,
             targets,
             release,
@@ -174,19 +158,18 @@ async fn offline_binding_is_selectable_and_confirmable_without_environment_or_co
         "scope",
         PlatformCommand::Manage(ManagementCommand::Scopes(ScopeInput {
             acceptance_id: f.acceptance,
-            school_id: f.school,
+
             device_ids: vec![f.device],
             target_ids: f.targets.clone(),
             auto_targets: false,
             max_calls: 2,
             expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
-            expected_access: [(f.device, 0)].into(),
             reason: "Synthetic test".into(),
         })),
     )
     .await
     .unwrap();
-    let status = r.school_read(&f.actor, f.school, None).await.unwrap();
+    let status = r.task_read(&f.actor, None).await.unwrap();
     assert_eq!(status["readiness"][0]["plan_selectable"], true);
     assert_eq!(status["readiness"][0]["confirmable"], true);
     assert_eq!(status["readiness"][0]["execution_ready"], false);
@@ -198,20 +181,14 @@ async fn offline_binding_is_selectable_and_confirmable_without_environment_or_co
         between_targets_seconds: 30,
     };
     let draft = r
-        .school_write(
-            &f.actor,
-            f.school,
-            "draft",
-            SchoolCommand::Draft(None, input),
-        )
+        .task_write(&f.actor, "draft", TaskCommand::Draft(None, input))
         .await
         .unwrap();
     let preview = r
-        .school_write(
+        .task_write(
             &f.actor,
-            f.school,
             "preview",
-            SchoolCommand::Preview(PreviewInput {
+            TaskCommand::Preview(PreviewInput {
                 draft_id: serde_json::from_value(draft["id"].clone()).unwrap(),
                 expected_revision: 1,
                 selections: vec![],
@@ -237,12 +214,7 @@ async fn offline_binding_is_selectable_and_confirmable_without_environment_or_co
         confirmed: true,
     };
     let task = r
-        .school_write(
-            &f.actor,
-            f.school,
-            "confirm",
-            SchoolCommand::Confirm(confirm.clone()),
-        )
+        .task_write(&f.actor, "confirm", TaskCommand::Confirm(confirm.clone()))
         .await
         .unwrap();
     let id: Uuid = serde_json::from_value(task["id"].clone()).unwrap();
@@ -329,7 +301,7 @@ async fn offline_binding_is_selectable_and_confirmable_without_environment_or_co
             .iter()
             .all(|i| i["attempt_state"] == "invalidated")
     );
-    let receipt_detail = r.school_read(&f.actor, f.school, Some(id)).await.unwrap();
+    let receipt_detail = r.task_read(&f.actor, Some(id)).await.unwrap();
     assert!(
         receipt_detail["items"]
             .as_array()
@@ -375,7 +347,7 @@ async fn offline_binding_is_selectable_and_confirmable_without_environment_or_co
     .unwrap();
     held.rollback().await.unwrap();
 
-    let detail = r.school_read(&f.actor, f.school, Some(id)).await.unwrap();
+    let detail = r.task_read(&f.actor, Some(id)).await.unwrap();
     let status = &detail["items"][0]["attempts"][0]["execution_status"];
     assert_eq!(
         status["phase"], "blocked",
@@ -400,14 +372,9 @@ async fn offline_binding_is_selectable_and_confirmable_without_environment_or_co
         "  测试\n🙂  "
     );
     assert_eq!(
-        r.school_write(
-            &f.actor,
-            f.school,
-            "confirm",
-            SchoolCommand::Confirm(confirm)
-        )
-        .await
-        .unwrap(),
+        r.task_write(&f.actor, "confirm", TaskCommand::Confirm(confirm))
+            .await
+            .unwrap(),
         task
     );
     let artifact: Uuid =
@@ -436,7 +403,7 @@ struct ObjectLimits;
 impl ObjectLimits {
     fn value() -> Value {
         let l = json!({"interval_seconds":60,"window_seconds":3600,"max_calls":10,"daily_max_calls":20});
-        json!({"global":l,"school":l,"device":l,"target":l})
+        json!({"global":l,"device":l,"target":l})
     }
 }
 
@@ -482,7 +449,6 @@ async fn business_usage_is_atomic_scoped_idempotent_and_survives_delivery_change
     let preview = r
         .usage_write(
             &f.actor,
-            f.school,
             "usage-preview",
             UsageCommand::Preview(input.clone()),
         )
@@ -493,19 +459,19 @@ async fn business_usage_is_atomic_scoped_idempotent_and_survives_delivery_change
         digest: preview["digest"].as_str().unwrap().into(),
     });
     let approved = r
-        .usage_write(&f.actor, f.school, "usage-confirm", confirm.clone())
+        .usage_write(&f.actor, "usage-confirm", confirm.clone())
         .await
         .unwrap();
     assert_eq!(approved["items"][0]["approval"], "approved");
     assert_eq!(approved["items"][0]["delivery"], "available");
     assert_eq!(
-        r.usage_write(&f.actor, f.school, "usage-confirm", confirm.clone())
+        r.usage_write(&f.actor, "usage-confirm", confirm.clone())
             .await
             .unwrap(),
         approved
     );
     assert_eq!(
-        r.usage_write(&f.actor, f.school, "same-summary-new-key", confirm)
+        r.usage_write(&f.actor, "same-summary-new-key", confirm)
             .await
             .unwrap(),
         approved
@@ -526,30 +492,17 @@ async fn business_usage_is_atomic_scoped_idempotent_and_survives_delivery_change
     .execute(&f.pool)
     .await
     .unwrap();
-    sqlx::query(
-        "INSERT INTO mobile_workspace_members(workspace_id,account_id,role) VALUES($1,$2,'admin')",
-    )
-    .bind(f.school)
-    .bind(school_actor_id)
-    .execute(&f.pool)
-    .await
-    .unwrap();
-    let school_actor:Actor=serde_json::from_value(json!({"id":school_actor_id,"username":"school-only","display_name":"School admin","platform_admin":false,"grants":[],"wecom_authenticated":false})).unwrap();
+    let school_actor:Actor=serde_json::from_value(json!({"id":school_actor_id,"username":"school-only","display_name":"School admin","platform_admin":false,"wecom_authenticated":false})).unwrap();
+    assert!(r.usage_read(&school_actor, None, false).await.is_err());
     assert!(
-        r.usage_read(&school_actor, None, None, false)
+        r.usage_read(&school_actor, Some(Uuid::new_v4()), false)
             .await
             .is_err()
     );
-    assert!(
-        r.usage_read(&school_actor, Some(Uuid::new_v4()), None, false)
-            .await
-            .is_err()
-    );
-    // The school must reuse the approved budget rather than mint a second allowance.
+    // Repeated global confirmation must reuse the same budget.
     let p = r
         .usage_write(
-            &school_actor,
-            f.school,
+            &f.actor,
             "school-preview",
             UsageCommand::Preview(input.clone()),
         )
@@ -557,8 +510,7 @@ async fn business_usage_is_atomic_scoped_idempotent_and_survives_delivery_change
         .unwrap();
     let reused = r
         .usage_write(
-            &school_actor,
-            f.school,
+            &f.actor,
             "school-confirm",
             UsageCommand::Confirm(UsageConfirm {
                 preview_id: serde_json::from_value(p["id"].clone()).unwrap(),
@@ -568,24 +520,18 @@ async fn business_usage_is_atomic_scoped_idempotent_and_survives_delivery_change
         .await
         .unwrap();
     assert_eq!(reused["items"][0]["id"], json!(id));
-    // Renewal retains the original budget, requires platform approval, and never mutates old scopes.
+    // Renewal keeps the budget root and never mutates old execution scopes.
     let mut renewal = input;
     renewal.renewal_of = Some(id);
     renewal.expected_revision = Some(1);
     renewal.expires_at += chrono::Duration::hours(1);
     let p = r
-        .usage_write(
-            &school_actor,
-            f.school,
-            "renew-preview",
-            UsageCommand::Preview(renewal),
-        )
+        .usage_write(&f.actor, "renew-preview", UsageCommand::Preview(renewal))
         .await
         .unwrap();
     let pending = r
         .usage_write(
-            &school_actor,
-            f.school,
+            &f.actor,
             "renew-confirm",
             UsageCommand::Confirm(UsageConfirm {
                 preview_id: serde_json::from_value(p["id"].clone()).unwrap(),
@@ -594,25 +540,7 @@ async fn business_usage_is_atomic_scoped_idempotent_and_survives_delivery_change
         )
         .await
         .unwrap();
-    assert_eq!(pending["items"][0]["approval"], "pending");
-    let next: Uuid = serde_json::from_value(pending["items"][0]["id"].clone()).unwrap();
-    assert!(
-        r.usage_write(
-            &school_actor,
-            f.school,
-            "forged-approve",
-            UsageCommand::Mutate {
-                id: next,
-                operation: "approve".into(),
-                mutation: UsageMutation {
-                    expected_revision: 1,
-                    reason: "越权".into()
-                }
-            }
-        )
-        .await
-        .is_err()
-    );
+    assert_eq!(pending["items"][0]["approval"], "approved");
     let roots: Vec<Uuid> = sqlx::query_scalar("SELECT budget_root FROM mobile_usages")
         .fetch_all(&f.pool)
         .await
@@ -621,7 +549,6 @@ async fn business_usage_is_atomic_scoped_idempotent_and_survives_delivery_change
     let paused = r
         .usage_write(
             &f.actor,
-            f.school,
             "pause-usage",
             UsageCommand::Mutate {
                 id,
@@ -638,7 +565,6 @@ async fn business_usage_is_atomic_scoped_idempotent_and_survives_delivery_change
     assert!(
         r.usage_write(
             &f.actor,
-            f.school,
             "stale-revoke",
             UsageCommand::Mutate {
                 id,
@@ -696,18 +622,12 @@ async fn business_scope_materializes_without_delivery_acceptance_or_activation_a
         expected_revision: None,
     };
     let p = r
-        .usage_write(
-            &f.actor,
-            f.school,
-            "production-preview",
-            UsageCommand::Preview(input),
-        )
+        .usage_write(&f.actor, "production-preview", UsageCommand::Preview(input))
         .await
         .unwrap();
     let u = r
         .usage_write(
             &f.actor,
-            f.school,
             "production-confirm",
             UsageCommand::Confirm(UsageConfirm {
                 preview_id: serde_json::from_value(p["id"].clone()).unwrap(),
@@ -739,7 +659,6 @@ async fn business_scope_materializes_without_delivery_acceptance_or_activation_a
     let preview = r
         .usage_write(
             &f.actor,
-            f.school,
             "auto-save-preview",
             UsageCommand::TaskPreview(send),
         )
@@ -751,7 +670,6 @@ async fn business_scope_materializes_without_delivery_acceptance_or_activation_a
     let task = r
         .usage_write(
             &f.actor,
-            f.school,
             "confirm-without-delivery",
             UsageCommand::TaskConfirm(Confirmation {
                 preview_id: serde_json::from_value(preview["preview"]["id"].clone()).unwrap(),
@@ -773,7 +691,6 @@ async fn business_scope_materializes_without_delivery_acceptance_or_activation_a
     let id: Uuid = serde_json::from_value(u["items"][0]["id"].clone()).unwrap();
     r.usage_write(
         &f.actor,
-        f.school,
         "pause-production",
         UsageCommand::Mutate {
             id,
@@ -786,7 +703,7 @@ async fn business_scope_materializes_without_delivery_acceptance_or_activation_a
     )
     .await
     .unwrap();
-    let overview = r.school_read(&f.actor, f.school, None).await.unwrap();
+    let overview = r.task_read(&f.actor, None).await.unwrap();
     let row = overview["readiness"]
         .as_array()
         .unwrap()
@@ -803,16 +720,12 @@ async fn business_configuration_does_not_require_technical_delivery() {
     use wekeeper_api::distribution::domain::shared_mobile::usage::*;
     let f = Fixture::with_adapter(false).await;
     let r = f.repo();
-    let options = r
-        .usage_read(&f.actor, Some(f.school), None, true)
-        .await
-        .unwrap();
+    let options = r.usage_read(&f.actor, None, true).await.unwrap();
     assert!(options["sending_status"].get("delivery").is_none());
     assert_eq!(options["sending_status"]["platform"], "default");
     let result = r
         .usage_write(
             &f.actor,
-            f.school,
             "blocked-preview",
             UsageCommand::TaskPreview(UsageTaskInput {
                 draft_id: None,
@@ -843,7 +756,6 @@ async fn business_configuration_does_not_require_technical_delivery() {
     let task = r
         .usage_write(
             &f.actor,
-            f.school,
             "binding-only-confirm",
             UsageCommand::TaskConfirm(Confirmation {
                 preview_id: Uuid::parse_str(p["id"].as_str().unwrap()).unwrap(),
@@ -983,7 +895,6 @@ async fn approved_business_resources_exist_without_any_adapter_or_delivery_recor
     let p = r
         .usage_write(
             &f.actor,
-            f.school,
             "business-only-preview",
             UsageCommand::Preview(input),
         )
@@ -992,7 +903,6 @@ async fn approved_business_resources_exist_without_any_adapter_or_delivery_recor
     let u = r
         .usage_write(
             &f.actor,
-            f.school,
             "business-only-confirm",
             UsageCommand::Confirm(UsageConfirm {
                 preview_id: serde_json::from_value(p["id"].clone()).unwrap(),
@@ -1037,15 +947,7 @@ async fn approved_business_resources_exist_without_any_adapter_or_delivery_recor
             .unwrap(),
         0
     );
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>(
-            "SELECT count(*) FROM mobile_shared_school_access WHERE enabled"
-        )
-        .fetch_one(&f.pool)
-        .await
-        .unwrap(),
-        1
-    );
+
     let mut stopped: BusinessSchemeInput = serde_json::from_str(include_str!(
         "../../api-contract/fixtures/mobile-business-scheme.json"
     ))
@@ -1059,14 +961,11 @@ async fn approved_business_resources_exist_without_any_adapter_or_delivery_recor
     .await
     .unwrap();
     r.reconcile_usages().await.unwrap();
-    let options = r
-        .usage_read(&f.actor, Some(f.school), None, true)
-        .await
-        .unwrap();
+    let options = r.usage_read(&f.actor, None, true).await.unwrap();
     assert_eq!(options["sending_status"]["can_confirm"], true);
     let target: Uuid =
         serde_json::from_value(u["items"][0]["body"]["targets"][0]["id"].clone()).unwrap();
-    let overview = r.school_read(&f.actor, f.school, None).await.unwrap();
+    let overview = r.task_read(&f.actor, None).await.unwrap();
     let row = overview["readiness"]
         .as_array()
         .unwrap()
@@ -1078,7 +977,6 @@ async fn approved_business_resources_exist_without_any_adapter_or_delivery_recor
     let p = r
         .usage_write(
             &f.actor,
-            f.school,
             "no-rules-task-preview",
             UsageCommand::TaskPreview(UsageTaskInput {
                 draft_id: None,
@@ -1095,7 +993,6 @@ async fn approved_business_resources_exist_without_any_adapter_or_delivery_recor
     let task = r
         .usage_write(
             &f.actor,
-            f.school,
             "no-rules-task-confirm",
             UsageCommand::TaskConfirm(Confirmation {
                 preview_id: serde_json::from_value(p["preview"]["id"].clone()).unwrap(),
@@ -1178,7 +1075,7 @@ async fn usage_group_name_reuse_and_renewal_keep_one_business_family() {
     let r = f.repo();
     let second = Uuid::now_v7();
     sqlx::query("INSERT INTO execution_devices(id,name,enabled,credential_generation) VALUES($1,'第二台手机',true,1)").bind(second).execute(&f.pool).await.unwrap();
-    sqlx::query("INSERT INTO mobile_device_target_bindings(id,school_id,device_id,target_id,created_by,updated_by) VALUES($1,$2,$3,$4,$5,$5)").bind(Uuid::now_v7()).bind(f.school).bind(second).bind(f.targets[0]).bind(f.actor.id).execute(&f.pool).await.unwrap();
+    sqlx::query("INSERT INTO mobile_device_target_bindings(id,device_id,target_id,created_by,updated_by) VALUES($1,$2,$3,$4,$4)").bind(Uuid::now_v7()).bind(second).bind(f.targets[0]).bind(f.actor.id).execute(&f.pool).await.unwrap();
     let input = UsageInput {
         device_ids: vec![f.device, second],
         targets: vec![UsageTarget {
@@ -1195,7 +1092,6 @@ async fn usage_group_name_reuse_and_renewal_keep_one_business_family() {
     let p = r
         .usage_write(
             &f.actor,
-            f.school,
             "override-preview",
             UsageCommand::Preview(input.clone()),
         )
@@ -1207,7 +1103,6 @@ async fn usage_group_name_reuse_and_renewal_keep_one_business_family() {
     let opened = r
         .usage_write(
             &f.actor,
-            f.school,
             "override-confirm",
             UsageCommand::Confirm(UsageConfirm {
                 preview_id: serde_json::from_value(p["id"].clone()).unwrap(),
@@ -1222,7 +1117,6 @@ async fn usage_group_name_reuse_and_renewal_keep_one_business_family() {
     let p = r
         .usage_write(
             &f.actor,
-            f.school,
             "repeat-preview",
             UsageCommand::Preview(input.clone()),
         )
@@ -1231,7 +1125,6 @@ async fn usage_group_name_reuse_and_renewal_keep_one_business_family() {
     let reused = r
         .usage_write(
             &f.actor,
-            f.school,
             "repeat-confirm",
             UsageCommand::Confirm(UsageConfirm {
                 preview_id: serde_json::from_value(p["id"].clone()).unwrap(),
@@ -1250,7 +1143,6 @@ async fn usage_group_name_reuse_and_renewal_keep_one_business_family() {
     );
     r.usage_write(
         &f.actor,
-        f.school,
         "pause-family",
         UsageCommand::Mutate {
             id,
@@ -1270,7 +1162,6 @@ async fn usage_group_name_reuse_and_renewal_keep_one_business_family() {
     let p = r
         .usage_write(
             &f.actor,
-            f.school,
             "renew-override-preview",
             UsageCommand::Preview(renewal.clone()),
         )
@@ -1279,7 +1170,6 @@ async fn usage_group_name_reuse_and_renewal_keep_one_business_family() {
     let renewed = r
         .usage_write(
             &f.actor,
-            f.school,
             "renew-override-confirm",
             UsageCommand::Confirm(UsageConfirm {
                 preview_id: serde_json::from_value(p["id"].clone()).unwrap(),
@@ -1292,14 +1182,9 @@ async fn usage_group_name_reuse_and_renewal_keep_one_business_family() {
     assert_eq!(renewed["items"][0]["budget_root"], root);
     assert_eq!(renewed["items"][0]["state"], "paused");
     assert!(
-        r.usage_write(
-            &f.actor,
-            f.school,
-            "fork-preview",
-            UsageCommand::Preview(renewal)
-        )
-        .await
-        .is_err()
+        r.usage_write(&f.actor, "fork-preview", UsageCommand::Preview(renewal))
+            .await
+            .is_err()
     );
     f.close().await;
 }
@@ -1465,8 +1350,8 @@ async fn seed_usage(
         "targets": [{"id": target}],
         "max_calls": 5,
     });
-    sqlx::query("INSERT INTO mobile_usages(id,school_id,actor_id,approval,state,revision,body,confirmed_until,expires_at,created_at,budget_root,approved_by,supersedes) VALUES($1,$2,$3,$4,$5,1,$6,$7,$8,$9,$10,$11,$12)")
-        .bind(id).bind(f.school).bind(f.actor.id).bind(approval).bind(state).bind(&body)
+    sqlx::query("INSERT INTO mobile_usages(id,actor_id,approval,state,revision,body,confirmed_until,expires_at,created_at,budget_root,approved_by,supersedes) VALUES($1,$2,$3,$4,1,$5,$6,$7,$8,$9,$10,$11)")
+        .bind(id).bind(f.actor.id).bind(approval).bind(state).bind(&body)
         .bind(expires_at).bind(expires_at).bind(created_at).bind(budget_root).bind(f.actor.id).bind(supersedes)
         .execute(&f.pool).await.unwrap();
 }
@@ -1525,7 +1410,7 @@ async fn pending_declined_history_does_not_implicitly_disable_a_valid_binding() 
         None,
     )
     .await;
-    let overview = r.school_read(&f.actor, f.school, None).await.unwrap();
+    let overview = r.task_read(&f.actor, None).await.unwrap();
     let row = readiness_row(&overview, device, target);
     assert_eq!(row["plan_selectable"], true);
     assert_eq!(
@@ -1536,11 +1421,10 @@ async fn pending_declined_history_does_not_implicitly_disable_a_valid_binding() 
     // Exercise the failing path as well as its readiness explanation: a pending
     // application must not prevent preview and confirmation of the bound task.
     let draft = r
-        .school_write(
+        .task_write(
             &f.actor,
-            f.school,
             "history-draft",
-            SchoolCommand::Draft(
+            TaskCommand::Draft(
                 None,
                 DraftInput {
                     target_ids: vec![target],
@@ -1554,11 +1438,10 @@ async fn pending_declined_history_does_not_implicitly_disable_a_valid_binding() 
         .await
         .unwrap();
     let preview = r
-        .school_write(
+        .task_write(
             &f.actor,
-            f.school,
             "history-preview",
-            SchoolCommand::Preview(PreviewInput {
+            TaskCommand::Preview(PreviewInput {
                 draft_id: serde_json::from_value(draft["id"].clone()).unwrap(),
                 expected_revision: 1,
                 selections: vec![],
@@ -1568,11 +1451,10 @@ async fn pending_declined_history_does_not_implicitly_disable_a_valid_binding() 
         .unwrap();
     assert!(preview["plan"]["items"][0]["blocker"].is_null());
     let task = r
-        .school_write(
+        .task_write(
             &f.actor,
-            f.school,
             "history-confirm",
-            SchoolCommand::Confirm(Confirmation {
+            TaskCommand::Confirm(Confirmation {
                 preview_id: serde_json::from_value(preview["id"].clone()).unwrap(),
                 preview_digest: preview["digest"].as_str().unwrap().into(),
                 confirmed: true,
@@ -1604,7 +1486,7 @@ async fn paused_revoked_and_expired_operative_usage_block_with_accurate_reasons(
         None,
     )
     .await;
-    let overview = r.school_read(&f.actor, f.school, None).await.unwrap();
+    let overview = r.task_read(&f.actor, None).await.unwrap();
     assert_eq!(
         readiness_row(&overview, device, target)["confirmable"],
         true
@@ -1630,7 +1512,7 @@ async fn paused_revoked_and_expired_operative_usage_block_with_accurate_reasons(
             .execute(&f.pool)
             .await
             .unwrap();
-        let overview = r.school_read(&f.actor, f.school, None).await.unwrap();
+        let overview = r.task_read(&f.actor, None).await.unwrap();
         let row = readiness_row(&overview, device, target);
         assert_eq!(
             row["confirmable"], false,
@@ -1678,7 +1560,7 @@ async fn superseded_lineage_resolves_to_the_operative_version() {
         Some(older),
     )
     .await;
-    let overview = r.school_read(&f.actor, f.school, None).await.unwrap();
+    let overview = r.task_read(&f.actor, None).await.unwrap();
     let row = readiness_row(&overview, device, target);
     assert_eq!(row["confirmable"], true, "the live renewal is operative");
     assert_eq!(scope_blocker(&row), None);
@@ -1689,7 +1571,7 @@ async fn superseded_lineage_resolves_to_the_operative_version() {
         .execute(&f.pool)
         .await
         .unwrap();
-    let overview = r.school_read(&f.actor, f.school, None).await.unwrap();
+    let overview = r.task_read(&f.actor, None).await.unwrap();
     let row = readiness_row(&overview, device, target);
     assert_eq!(row["confirmable"], false);
     assert_eq!(
@@ -1711,7 +1593,7 @@ async fn superseded_lineage_resolves_to_the_operative_version() {
         None,
     )
     .await;
-    let overview = r.school_read(&f.actor, f.school, None).await.unwrap();
+    let overview = r.task_read(&f.actor, None).await.unwrap();
     assert_eq!(
         readiness_row(&overview, device, target)["confirmable"],
         true
@@ -1719,88 +1601,10 @@ async fn superseded_lineage_resolves_to_the_operative_version() {
     // An explicit newer revoke must still win, including an action on an ancestor.
     sqlx::query("INSERT INTO mobile_usage_events(id,usage_id,actor_id,action,body) VALUES($1,$2,$3,'revoke','{}')")
         .bind(Uuid::now_v7()).bind(older).bind(f.actor.id).execute(&f.pool).await.unwrap();
-    let overview = r.school_read(&f.actor, f.school, None).await.unwrap();
+    let overview = r.task_read(&f.actor, None).await.unwrap();
     assert_eq!(
         scope_blocker(&readiness_row(&overview, device, target)).as_deref(),
         Some("business_scope_revoked")
-    );
-    f.close().await;
-}
-
-#[tokio::test]
-#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn repeated_identical_pool_binding_save_does_not_advance_locator_revision() {
-    let f = Fixture::with_adapter(false).await;
-    let r = f.repo();
-    // A school-pool device shared into the school, bound to an existing target.
-    let pool_device = Uuid::now_v7();
-    let target = f.targets[0];
-    sqlx::query("INSERT INTO execution_devices(id,name,enabled,credential_generation) VALUES($1,'共享池手机',true,1)").bind(pool_device).execute(&f.pool).await.unwrap();
-    sqlx::query("INSERT INTO mobile_shared_school_access(device_id,school_id,enabled,revision,updated_by) VALUES($1,$2,true,1,$3)").bind(pool_device).bind(f.school).bind(f.actor.id).execute(&f.pool).await.unwrap();
-
-    async fn locator(pool: &PgPool, device: Uuid, target: Uuid) -> i64 {
-        sqlx::query_scalar::<_, i64>(
-            "SELECT locator_revision FROM mobile_device_target_bindings WHERE device_id=$1 AND target_id=$2",
-        )
-        .bind(device)
-        .bind(target)
-        .fetch_one(pool)
-        .await
-        .unwrap()
-    }
-
-    // First save establishes the locator.
-    r.school_write(
-        &f.actor,
-        f.school,
-        "pool-bind-1",
-        SchoolCommand::PoolBinding(PoolBindingInput {
-            target_id: target,
-            device_id: pool_device,
-            expected_access_revision: 1,
-        }),
-    )
-    .await
-    .unwrap();
-    assert_eq!(locator(&f.pool, pool_device, target).await, 1);
-
-    // Re-saving identical content must not advance locator_revision.
-    r.school_write(
-        &f.actor,
-        f.school,
-        "pool-bind-2",
-        SchoolCommand::PoolBinding(PoolBindingInput {
-            target_id: target,
-            device_id: pool_device,
-            expected_access_revision: 1,
-        }),
-    )
-    .await
-    .unwrap();
-    assert_eq!(
-        locator(&f.pool, pool_device, target).await,
-        1,
-        "re-saving identical content must not advance locator_revision"
-    );
-
-    // Re-enabling a disabled binding advances its authorization revision.
-    sqlx::query("UPDATE mobile_device_target_bindings SET enabled=false WHERE device_id=$1 AND target_id=$2").bind(pool_device).bind(target).execute(&f.pool).await.unwrap();
-    r.school_write(
-        &f.actor,
-        f.school,
-        "pool-bind-3",
-        SchoolCommand::PoolBinding(PoolBindingInput {
-            target_id: target,
-            device_id: pool_device,
-            expected_access_revision: 1,
-        }),
-    )
-    .await
-    .unwrap();
-    assert_eq!(
-        locator(&f.pool, pool_device, target).await,
-        2,
-        "a genuine effective-locator change advances locator_revision"
     );
     f.close().await;
 }
@@ -1826,18 +1630,12 @@ async fn device_reenable_and_projection_drift_do_not_permanently_invalidate_scop
         expected_revision: None,
     };
     let p = r
-        .usage_write(
-            &f.actor,
-            f.school,
-            "drift-preview",
-            UsageCommand::Preview(input),
-        )
+        .usage_write(&f.actor, "drift-preview", UsageCommand::Preview(input))
         .await
         .unwrap();
     let u = r
         .usage_write(
             &f.actor,
-            f.school,
             "drift-confirm",
             UsageCommand::Confirm(UsageConfirm {
                 preview_id: serde_json::from_value(p["id"].clone()).unwrap(),
@@ -1898,7 +1696,7 @@ async fn device_reenable_and_projection_drift_do_not_permanently_invalidate_scop
             .unwrap();
     assert_eq!(snapshot["binding_locator_revision"].as_i64(), Some(2));
 
-    let overview = r.school_read(&f.actor, f.school, None).await.unwrap();
+    let overview = r.task_read(&f.actor, None).await.unwrap();
     let row = readiness_row(&overview, f.device, target);
     assert_eq!(
         row["confirmable"], true,
@@ -1920,7 +1718,7 @@ async fn device_reenable_and_projection_drift_do_not_permanently_invalidate_scop
         None,
     )
     .await;
-    let overview = r.school_read(&f.actor, f.school, None).await.unwrap();
+    let overview = r.task_read(&f.actor, None).await.unwrap();
     let row = readiness_row(&overview, f.device, target);
     assert_eq!(
         row["confirmable"], false,
@@ -1994,7 +1792,6 @@ async fn runtime_configuration_is_independent_and_invalid_update_does_not_replac
         .repo()
         .usage_write(
             &f.actor,
-            f.school,
             "runtime-only-preview",
             UsageCommand::TaskPreview(UsageTaskInput {
                 draft_id: None,
@@ -2018,11 +1815,7 @@ async fn runtime_configuration_is_independent_and_invalid_update_does_not_replac
         .execute(&f.pool)
         .await
         .unwrap();
-    let overview = f
-        .repo()
-        .school_read(&f.actor, f.school, None)
-        .await
-        .unwrap();
+    let overview = f.repo().task_read(&f.actor, None).await.unwrap();
     assert!(overview.get("configuration").is_none());
     for row in overview["readiness"].as_array().unwrap() {
         assert!(row["configuration_issue"].is_null());
@@ -2055,7 +1848,7 @@ async fn pool_phone(f: &Fixture, name: &str) -> Uuid {
     .await
     .unwrap();
     for target in &f.targets {
-        sqlx::query("INSERT INTO mobile_device_target_bindings(id,school_id,device_id,target_id,created_by,updated_by) VALUES($1,$2,$3,$4,$5,$5)").bind(Uuid::new_v4()).bind(f.school).bind(id).bind(target).bind(f.actor.id).execute(&f.pool).await.unwrap();
+        sqlx::query("INSERT INTO mobile_device_target_bindings(id,device_id,target_id,created_by,updated_by) VALUES($1,$2,$3,$4,$4)").bind(Uuid::new_v4()).bind(id).bind(target).bind(f.actor.id).execute(&f.pool).await.unwrap();
     }
     id
 }
@@ -2101,7 +1894,6 @@ async fn pool_confirm_keyed(f: &Fixture, targets: Vec<Uuid>, key: &str) -> Value
     let p = r
         .usage_write(
             &f.actor,
-            f.school,
             &format!("{key}-preview"),
             UsageCommand::TaskPreview(UsageTaskInput {
                 draft_id: None,
@@ -2122,7 +1914,6 @@ async fn pool_confirm_keyed(f: &Fixture, targets: Vec<Uuid>, key: &str) -> Value
         .unwrap();
     r.usage_write(
         &f.actor,
-        f.school,
         &format!("{key}-confirm"),
         UsageCommand::TaskConfirm(Confirmation {
             preview_id: serde_json::from_value(p["preview"]["id"].clone()).unwrap(),
@@ -2150,9 +1941,8 @@ async fn pool_expire_round(f: &Fixture) {
 }
 async fn pool_detail(f: &Fixture, t: &Value) -> Value {
     f.repo()
-        .school_read(
+        .task_read(
             &f.actor,
-            f.school,
             Some(serde_json::from_value(t["id"].clone()).unwrap()),
         )
         .await
@@ -2573,9 +2363,8 @@ async fn renamed_business_group_never_delivers_the_old_target() {
     pool_tick(&f).await;
     let detail = f
         .repo()
-        .school_read(
+        .task_read(
             &f.actor,
-            f.school,
             Some(serde_json::from_value(task["id"].clone()).unwrap()),
         )
         .await
@@ -2781,11 +2570,7 @@ async fn group_name_alone_is_confirmable_and_delivered_for_device_resolution() {
     let f = Fixture::with_adapter(false).await;
     let (c, epoch) = pool_ready(&f, f.device).await;
     let task = pool_confirm(&f, vec![f.targets[0]]).await;
-    let overview = f
-        .repo()
-        .school_read(&f.actor, f.school, None)
-        .await
-        .unwrap();
+    let overview = f.repo().task_read(&f.actor, None).await.unwrap();
     let row = readiness_row(&overview, f.device, f.targets[0]);
     assert_eq!(row["confirmable"], true);
     assert!(
@@ -2850,7 +2635,6 @@ async fn legacy_override_data_never_reaches_preview_failover_or_signed_delivery(
         .repo()
         .usage_write(
             &f.actor,
-            f.school,
             "legacy-source-preview",
             UsageCommand::TaskPreview(UsageTaskInput {
                 draft_id: None,
@@ -3165,11 +2949,10 @@ async fn dispatch_three_offline_rounds_stop_and_report_once() {
     let old = pool_current(&failed["items"][0]);
     let reassigned = f
         .repo()
-        .school_write(
+        .task_write(
             &f.actor,
-            f.school,
             "after-failed-reassign",
-            SchoolCommand::Reassign(
+            TaskCommand::Reassign(
                 serde_json::from_value(old["id"].clone()).unwrap(),
                 Reassignment {
                     expected_revision: old["revision"].as_i64().unwrap(),
@@ -3602,11 +3385,7 @@ async fn task_list_status_matches_detail_and_completion_survives_manual_stop() {
     let task = pool_confirm(&f, vec![f.targets[0]]).await;
     let task_id = serde_json::from_value::<Uuid>(task["id"].clone()).unwrap();
     async fn check(f: &Fixture, task: &Value, expected: &str) {
-        let overview = f
-            .repo()
-            .school_read(&f.actor, f.school, None)
-            .await
-            .unwrap();
+        let overview = f.repo().task_read(&f.actor, None).await.unwrap();
         let listed = overview["tasks"]
             .as_array()
             .unwrap()
@@ -3636,11 +3415,10 @@ async fn task_list_status_matches_detail_and_completion_survives_manual_stop() {
     check(&f, &task, "completed").await;
     let stopped = f
         .repo()
-        .school_write(
+        .task_write(
             &f.actor,
-            f.school,
             "stop-completed-task",
-            SchoolCommand::Stop(
+            TaskCommand::Stop(
                 task_id,
                 Mutation {
                     expected_revision: task["revision"].as_i64().unwrap(),
@@ -3657,11 +3435,10 @@ async fn task_list_status_matches_detail_and_completion_survives_manual_stop() {
     let other_id = serde_json::from_value::<Uuid>(other["id"].clone()).unwrap();
     let stopped = f
         .repo()
-        .school_write(
+        .task_write(
             &f.actor,
-            f.school,
             "stop-running-task",
-            SchoolCommand::Stop(
+            TaskCommand::Stop(
                 other_id,
                 Mutation {
                     expected_revision: other["revision"].as_i64().unwrap(),
@@ -3674,56 +3451,6 @@ async fn task_list_status_matches_detail_and_completion_survives_manual_stop() {
     assert_eq!(stopped["status"], "stopped");
     check(&f, &other, "stopped").await;
     check(&f, &task, "completed").await;
-    f.close().await;
-}
-
-#[tokio::test]
-#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn mobile_membership_is_independent_of_school_membership_and_revocation() {
-    let f = Fixture::with_adapter(false).await;
-    assert!(
-        sqlx::query_scalar::<_, bool>(
-            "SELECT to_regclass('schools') IS NULL AND to_regclass('school_memberships') IS NULL"
-        )
-        .fetch_one(&f.pool)
-        .await
-        .unwrap()
-    );
-    let id = Uuid::new_v4();
-    sqlx::query("INSERT INTO accounts(id,username,display_name) VALUES($1,'mobile-operator','Mobile operator')").bind(id).execute(&f.pool).await.unwrap();
-    sqlx::query("INSERT INTO mobile_workspace_members(workspace_id,account_id,role) VALUES($1,$2,'operator')").bind(f.school).bind(id).execute(&f.pool).await.unwrap();
-    let actor: Actor = serde_json::from_value(json!({"id":id,"username":"mobile-operator","display_name":"Mobile operator","platform_admin":false,"grants":[],"wecom_authenticated":false})).unwrap();
-    let service = wekeeper_api::distribution::north::local::shared_send_v2::Service(Repository(
-        f.pool.clone(),
-    ));
-    assert!(service.school_read(&actor, f.school, None).await.is_ok());
-    assert!(
-        service
-            .school_read(&actor, Uuid::new_v4(), None)
-            .await
-            .is_err()
-    );
-    sqlx::query("DELETE FROM mobile_workspace_members WHERE workspace_id=$1 AND account_id=$2")
-        .bind(f.school)
-        .bind(id)
-        .execute(&f.pool)
-        .await
-        .unwrap();
-    // An independent WeCom admin grant cannot restore revoked mobile access.
-    sqlx::query("INSERT INTO wecom_workspaces(id,name) VALUES($1,'Unrelated WeCom workspace')")
-        .bind(f.school)
-        .execute(&f.pool)
-        .await
-        .unwrap();
-    sqlx::query(
-        "INSERT INTO wecom_workspace_members(school_id,account_id,role) VALUES($1,$2,'admin')",
-    )
-    .bind(f.school)
-    .bind(id)
-    .execute(&f.pool)
-    .await
-    .unwrap();
-    assert!(service.school_read(&actor, f.school, None).await.is_err());
     f.close().await;
 }
 

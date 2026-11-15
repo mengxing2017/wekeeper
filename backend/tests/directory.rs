@@ -327,20 +327,7 @@ async fn directory_sync_binding_and_identity_boundaries() {
         .session(bound, "browser", true)
         .await
         .unwrap();
-    let school = Uuid::now_v7();
-    sqlx::query("INSERT INTO wecom_workspaces(id,name) VALUES($1,'Rotation school')")
-        .bind(school)
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(
-        "INSERT INTO wecom_workspace_members(account_id,school_id,role) VALUES($1,$2,'operator')",
-    )
-    .bind(bound)
-    .bind(school)
-    .execute(&pool)
-    .await
-    .unwrap();
+    let _school = Uuid::now_v7();
     svc.enqueue(&admin).await.unwrap();
     let old_job = svc.store.claim(1).await.unwrap().unwrap();
     let mut rotated = svc.clone();
@@ -468,13 +455,7 @@ async fn directory_sync_binding_and_identity_boundaries() {
         svc.store.account_userid(bound).await.is_err(),
         "unbind works without upstream"
     );
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM wecom_workspace_members")
-            .fetch_one(&pool)
-            .await
-            .unwrap(),
-        1
-    );
+
     assert_eq!(
         sqlx::query_scalar::<_, String>("SELECT display_name FROM accounts WHERE id=$1")
             .bind(user)
