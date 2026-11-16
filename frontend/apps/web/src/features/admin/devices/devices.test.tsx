@@ -44,6 +44,9 @@ it.each([undefined, {}])('registers a phone without Web Crypto (%s)', async (cry
       <ExecutionDevices />
     </QueryClientProvider>,
   )
+  expect(screen.getByRole('link', {name: '前往手机群消息使用管理'}).getAttribute('href')).toBe('/admin?view=shared-mobile-resources')
+  expect(screen.queryByRole('tab', {name: '业务使用开通'})).toBeNull()
+  expect(screen.queryByRole('button', {name: /^开\s*通$/})).toBeNull()
   fireEvent.click(await screen.findByRole('button', { name: /登\s*记/ }))
   fireEvent.change(await screen.findByRole('textbox', { name: '设备名称' }), { target: { value: '测试手机' } })
   fireEvent.click(screen.getByRole('button', { name: /保\s*存/ }))

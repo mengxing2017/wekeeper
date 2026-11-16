@@ -1,10 +1,9 @@
-import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MobileTargets } from './targets'
-import { api, sharedSend } from './api'
-vi.mock('./api', () => ({sharedSend:{overview:vi.fn().mockResolvedValue({id:'school',tasks:[],drafts:[],readiness:[],pool:[],inspections:[]})}, api: { targets: vi.fn(), bindings: vi.fn(), devices: vi.fn(), fieldInvitations: vi.fn().mockResolvedValue({items:[]}), schoolFieldChecks: vi.fn().mockResolvedValue({items:[]}) } }))
-beforeEach(()=>{vi.mocked(sharedSend.overview).mockResolvedValue({id:'school',tasks:[],drafts:[],readiness:[],pool:[],inspections:[]})})
+import { api } from './api'
+vi.mock('./api', () => ({api: {targets: vi.fn(), bindings: vi.fn(), devices: vi.fn()}}))
 afterEach(() => { cleanup(); vi.resetAllMocks() })
 it('operators can inspect independent targets without account registration or official resource calls', async () => {
   vi.mocked(api.targets).mockResolvedValue({ items: [{ id: 'target', search_text: '手机备注  家长群', remark: '', enabled: true, metadata_revision: 1, locator_revision: 1, archived_at: null }] })
@@ -17,10 +16,12 @@ it('operators can inspect independent targets without account registration or of
   await waitFor(() => expect(api.targets).toHaveBeenCalledWith( 1, ''))
 })
 
-it('school admins create targets without a device grant or binding form', async () => {
+it('system administrators create targets without a device grant or binding form', async () => {
   vi.mocked(api.targets).mockResolvedValue({ items: [] })
   vi.mocked(api.bindings).mockResolvedValue({ items: [] })
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MobileTargets admin /></QueryClientProvider>)
+  expect(screen.getByRole('link', {name: '前往手机群消息使用管理'}).getAttribute('href')).toBe('/admin?view=shared-mobile-resources')
+  expect(screen.queryByRole('button', {name: /^开\s*通$/})).toBeNull()
   fireEvent.click(await screen.findByRole('button', { name: /^新\s*增$/ }))
   expect(await screen.findByLabelText('群名称')).toBeTruthy()
   expect(screen.queryByLabelText('企业微信完整群名')).toBeNull()

@@ -1,10 +1,9 @@
 import { TableRowActions } from '../../../shared/table-row-actions'
 import { TableText } from '../../../shared/table-text'
 import { createIdempotencyKey } from '../../../shared/idempotency-key'
-import { MobileTargetBindings } from './bindings'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Alert, Button, Card, Form, Input, Modal, Switch, Table, Tag } from 'antd'
+import { Alert, Button, Card, Form, Input, Modal, Space, Switch, Table, Tag } from 'antd'
 import { api, type MobileTarget, type TargetInput } from './api'
 import { PaginationControls } from '../../../shared/pagination-controls'
 
@@ -27,7 +26,7 @@ export function MobileTargets({  admin }: { admin: boolean }) {
     setPendingDuplicate(undefined); setOpen(false); form.resetFields(); void invalidate()
   } })
   const archive = useMutation({ mutationFn: (row: MobileTarget) => api.archiveTarget(row.id, row.metadata_revision, '管理员归档目标', createIdempotencyKey()), onSuccess: invalidate })
-  return <><Card title="手机目标群" extra={admin && <Button type="primary" onClick={() => { setEditing(undefined); form.resetFields(); setOpen(true) }}>新增</Button>}>
+  return <Card title="手机目标群" extra={admin && <Space wrap><Button href="/admin?view=shared-mobile-resources">前往手机群消息使用管理</Button><Button type="primary" onClick={() => { setEditing(undefined); form.resetFields(); setOpen(true) }}>新增</Button></Space>}>
     <Alert type="info" showIcon title="手机目标群独立于官方客户群" description="填写一个群名称即可。手机自行搜索并识别目标，识别失败只影响本次设备尝试。" />
     <Input.Search aria-label="搜索手机目标群" placeholder="搜索群名称" allowClear onSearch={value => { setSearch(value); setPage(1) }} />
     {(targets.error || save.error || archive.error) && <Alert type="error" title={(targets.error || save.error || archive.error)?.message} />}
@@ -50,5 +49,5 @@ export function MobileTargets({  admin }: { admin: boolean }) {
     <Modal title="存在相同群名称的目标" open={!!pendingDuplicate} confirmLoading={save.isPending} okText="仍作为独立目标新增" onCancel={() => setPendingDuplicate(undefined)} onOk={() => pendingDuplicate && save.mutate({ ...pendingDuplicate.input, duplicate_confirmation: pendingDuplicate.token })}>
       相同群名称不代表同一真实群。确认后将新增独立记录。
     </Modal>
-  </Card><MobileTargetBindings admin={admin} /></>
+  </Card>
 }
