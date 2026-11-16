@@ -32,7 +32,7 @@ function TaskList({  admin }: { admin: boolean }) {
   const [targets, setTargets] = useState<string[]>([])
   const [draft, setDraft] = useState<SharedDraft>()
   const [preview, setPreview] = useState<SharedPreview>()
-  const [selected, setSelected] = useState<{id:string}>()
+  const [selected, setSelected] = useState<{id:string}|undefined>(()=>{const id=new URLSearchParams(window.location.search).get('task');return id?{id}:undefined})
   const detailKey=['mobile-execution','shared-task',selected?.id]
   const detailQuery=useQuery({queryKey:detailKey,queryFn:()=>sharedSend.task(selected!.id),enabled:!!selected,refetchInterval:query=>taskNeedsPolling(query.state.data)?5_000:false,refetchOnWindowFocus:'always'})
   const detail=selected?detailQuery.data:undefined
