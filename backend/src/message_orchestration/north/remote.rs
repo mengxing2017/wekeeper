@@ -34,6 +34,7 @@ async fn list(
     actor: Actor,
     Query(f): Query<Filter>,
 ) -> Result<ApiResponse> {
+    actor.platform()?;
     let page = f.pagination();
     page.bounds()?;
     let v = Repository(a.pool)

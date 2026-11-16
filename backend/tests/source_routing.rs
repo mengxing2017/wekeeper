@@ -239,12 +239,14 @@ async fn unavailable_ad_sends_original_without_count_and_results_are_visible() {
     let mut actor = f.actor.clone();
     actor.id = outsider;
     actor.platform_admin = false;
-    let list =
+    let result =
         wekeeper_api::message_orchestration::south::adapter::postgres::Repository(f.pool.clone())
             .list(&actor, None, None, wekeeper_api::business::Page::default())
-            .await
-            .unwrap();
-    assert!(list["items"].as_array().unwrap().is_empty());
+            .await;
+    assert!(matches!(
+        result,
+        Err(wekeeper_api::business::Error::Forbidden)
+    ));
     f.close().await;
 }
 
@@ -509,5 +511,283 @@ async fn first_dependency_failure_backs_off_fifty_messages_and_allows_new_work()
             .await
             .is_err()
     );
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn admin_list_http_pagination_and_message_authorization() {
+    use axum::{
+        body::{Body, to_bytes},
+        http::Request,
+    };
+    use tower::ServiceExt;
+    use wekeeper_api::{
+        advertising::{
+            domain::{
+                Content,
+                targeting::{CreateAdPlacement, CreateMaterial, PublishMaterial, TargetScope},
+            },
+            north::local::{AdPlacementService, MaterialService},
+            south::adapter::postgres::Repository as Ads,
+        },
+        bootstrap, http,
+    };
+    async fn read(app: &axum::Router, path: &str, token: Option<&str>, status: u16) -> Value {
+        let mut request = Request::builder().uri(path);
+        if let Some(token) = token {
+            request = request.header("cookie", format!("wekeeper_session={token}"));
+        }
+        let response = app
+            .clone()
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status().as_u16(), status, "{path}");
+        assert_eq!(
+            response.headers()["content-type"],
+            "application/vnd.api+json"
+        );
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap()).unwrap()
+    }
+    let f = Fixture::new().await;
+    let (token, _) = wekeeper_api::identity::south::adapter::postgres::Repository(f.pool.clone())
+        .session(f.actor.id, "browser", false)
+        .await
+        .unwrap();
+    let app = http::app_router(bootstrap::build_application(f.pool.clone()));
+    let path = "/api/v2/admin/messages?page%5Bnumber%5D=1&page%5Bsize%5D=30";
+    let empty = read(&app, path, Some(&token), 200).await;
+    assert_eq!(empty["data"]["type"], "messages");
+    assert_eq!(empty["data"]["id"], "result");
+    assert_eq!(
+        empty["data"]["attributes"],
+        serde_json::json!({"items":[],"has_more":false})
+    );
+    let mut receipt = Uuid::nil();
+    for n in 1..=31 {
+        receipt = f.message(n).await.1;
+        if [1, 30, 31].contains(&n) {
+            let page = read(&app, path, Some(&token), 200).await;
+            assert_eq!(
+                page["data"]["attributes"]["items"]
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                n.min(30) as usize
+            );
+            assert_eq!(page["data"]["attributes"]["has_more"], n > 30);
+        }
+    }
+    let first = read(&app, path, Some(&token), 200).await;
+    let second = read(
+        &app,
+        "/api/v2/admin/messages?page[number]=2&page[size]=30",
+        Some(&token),
+        200,
+    )
+    .await;
+    let last = &second["data"]["attributes"]["items"];
+    assert_eq!(last.as_array().unwrap().len(), 1);
+    assert_eq!(second["data"]["attributes"]["has_more"], false);
+    assert!(
+        first["data"]["attributes"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["id"] != last[0]["id"])
+    );
+    let filtered = read(
+        &app,
+        &format!(
+            "/api/v2/admin/messages?route_id={}&receipt_id={receipt}&page[number]=1&page[size]=1",
+            f.route
+        ),
+        Some(&token),
+        200,
+    )
+    .await;
+    assert_eq!(
+        filtered["data"]["attributes"]["items"][0]["receipt_id"],
+        receipt.to_string()
+    );
+    assert_eq!(
+        filtered["data"]["attributes"]["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(filtered["data"]["attributes"]["has_more"], false);
+    let missing = read(
+        &app,
+        "/api/v2/admin/messages?route_id=missing",
+        Some(&token),
+        200,
+    )
+    .await;
+    assert_eq!(
+        missing["data"]["attributes"]["items"],
+        serde_json::json!([])
+    );
+    // Seed at least two entries per related list to exercise SQL size and offset.
+    let key = Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO source_credentials(key_id,source_id,unit_name,encryption_version,status,valid_from,created_by) VALUES($1,$2,'pagination','v1','active',now(),$3)").bind(&key).bind(f.platform).bind(f.actor.id).execute(&f.pool).await.unwrap();
+    for n in 0..2 {
+        let platform = Uuid::new_v4();
+        sqlx::query("INSERT INTO source_callers(source_id) VALUES($1)")
+            .bind(platform)
+            .execute(&f.pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO source_credentials(key_id,source_id,unit_name,encryption_version,status,valid_from,created_by) VALUES($1,$2,'pagination','v1','active',now(),$3)").bind(Uuid::new_v4().to_string()).bind(platform).bind(f.actor.id).execute(&f.pool).await.unwrap();
+        let unit = Uuid::new_v4();
+        sqlx::query("INSERT INTO business_units(id,platform_id,name,created_by,updated_by) VALUES($1,$2,$3,$4,$4)").bind(unit).bind(f.platform).bind(format!("unit-{n}")).bind(f.actor.id).execute(&f.pool).await.unwrap();
+        let route = format!("{}-{n}", f.route);
+        sqlx::query("INSERT INTO source_routes(route_id,source_id,business_unit_id,route_name,status) VALUES($1,$2,$3,'pagination','active')").bind(&route).bind(f.platform).bind(unit).execute(&f.pool).await.unwrap();
+        sqlx::query("INSERT INTO source_key_routes(key_id,route_id,source_id,status) VALUES($1,$2,$3,'active')").bind(&key).bind(&route).bind(f.platform).execute(&f.pool).await.unwrap();
+    }
+    let material_service = MaterialService(Ads(f.pool.clone()));
+    let content = Content {
+        name: "pagination".into(),
+        body: "正文".into(),
+        link: None,
+    };
+    let mut material = material_service
+        .create(
+            &f.actor,
+            CreateMaterial {
+                content: content.clone(),
+            },
+        )
+        .await
+        .unwrap();
+    let material_id = material.id;
+    for _ in 0..2 {
+        material = material_service
+            .publish(
+                &f.actor,
+                material.id,
+                PublishMaterial {
+                    expected_revision: material.revision,
+                    content: content.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        let other = material_service
+            .create(
+                &f.actor,
+                CreateMaterial {
+                    content: content.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        AdPlacementService(Ads(f.pool.clone()))
+            .create(
+                &f.actor,
+                CreateAdPlacement {
+                    material_id: other.id,
+                    scope: TargetScope::Global {},
+                    enabled: true,
+                    valid_from: chrono::Utc::now(),
+                    valid_until: None,
+                },
+            )
+            .await
+            .unwrap();
+    }
+    let paths = [
+        "/api/v2/admin/ad-materials".into(),
+        format!("/api/v2/admin/ad-materials/{material_id}/versions"),
+        "/api/v2/admin/ad-placements".into(),
+        "/api/v2/admin/business-platforms".into(),
+        format!("/api/v2/admin/business-platforms/{}/units", f.platform),
+        "/api/v2/admin/source-credentials".into(),
+        "/api/v2/admin/source-routes".into(),
+        format!("/api/v2/admin/source-credentials/{key}/routes"),
+        format!("/api/v2/admin/source-routes/{}/receipts", f.route),
+        "/api/v2/admin/messages".into(),
+    ];
+    for base in &paths {
+        let one = read(
+            &app,
+            &format!("{base}?page%5Bnumber%5D=1&page%5Bsize%5D=1"),
+            Some(&token),
+            200,
+        )
+        .await;
+        let two = read(
+            &app,
+            &format!("{base}?page[number]=2&page[size]=1"),
+            Some(&token),
+            200,
+        )
+        .await;
+        let a = &one["data"]["attributes"];
+        let b = &two["data"]["attributes"];
+        assert_eq!(a["items"].as_array().unwrap().len(), 1, "{base}");
+        assert_eq!(b["items"].as_array().unwrap().len(), 1, "{base}");
+        assert_eq!(a["has_more"], true, "{base}");
+        assert_ne!(a["items"][0], b["items"][0], "{base}");
+        for query in [
+            "page=1",
+            "page_size=1",
+            "page[number]=abc",
+            "page[number]=1&page[number]=2",
+            "unknown=x",
+        ] {
+            let error = read(&app, &format!("{base}?{query}"), Some(&token), 400).await;
+            assert_eq!(error["errors"][0]["code"], "invalid_request");
+        }
+        for query in ["page[number]=0", "page[size]=101"] {
+            read(&app, &format!("{base}?{query}"), Some(&token), 422).await;
+        }
+    }
+    read(&app, path, None, 401).await;
+    let ordinary = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO accounts(id,username,display_name) VALUES($1,'pagination-manager','Manager')",
+    )
+    .bind(ordinary)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO source_route_managers(route_id,account_id,granted_by) VALUES($1,$2,$3)",
+    )
+    .bind(&f.route)
+    .bind(ordinary)
+    .bind(f.actor.id)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    let (ordinary_token, _) =
+        wekeeper_api::identity::south::adapter::postgres::Repository(f.pool.clone())
+            .session(ordinary, "browser", false)
+            .await
+            .unwrap();
+    read(&app, path, Some(&ordinary_token), 403).await;
+    let mut stale = f.actor.clone();
+    stale.id = ordinary;
+    assert!(matches!(
+        wekeeper_api::message_orchestration::south::adapter::postgres::Repository(f.pool.clone())
+            .list(&stale, None, None, Default::default())
+            .await,
+        Err(wekeeper_api::business::Error::Forbidden)
+    ));
+    sqlx::query("UPDATE accounts SET active=false WHERE id=$1")
+        .bind(f.actor.id)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    read(&app, path, Some(&token), 401).await;
+    assert!(matches!(
+        wekeeper_api::message_orchestration::south::adapter::postgres::Repository(f.pool.clone())
+            .list(&f.actor, None, None, Default::default())
+            .await,
+        Err(wekeeper_api::business::Error::Forbidden)
+    ));
     f.close().await;
 }
