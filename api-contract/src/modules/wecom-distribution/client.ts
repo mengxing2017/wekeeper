@@ -2,15 +2,14 @@ import type {ChannelObservation,ExecutionCapability} from '../execution-evidence
 export {executionEvidenceLabels} from '../execution-evidence'
 export type {ChannelObservation,ExecutionCapability} from '../execution-evidence'
 import type { Client } from '../../http/client';
-import type { SourceReference } from '../distribution-content';
 const part=(s:string)=>encodeURIComponent(s);
 const scope=(path:string)=>`/api/v1/wecom-distribution/${path}`;
 export type BroadcastObservation=Omit<ChannelObservation,'id'>&{id:string}
 export interface BroadcastTask {
-    id: string; creator_id: string; template_version_id: string|null; content_source: 'posts'|'text'|'materials'; source_namespace: string; materials: SourceReference[]; content: string;
+    id: string; creator_id: string; content_source: 'text'; source_namespace: string; content: string;
     revision: number; state: 'draft'|'confirmed'|'abandoned'; stopped: boolean; created_at: string;
     total: number; sent: number; rejected: number; uncertain: number; pending: number; batch_count: number;
-    post_ids: string[]; source_task_id: string|null; resend_reason: string; draft_input:BroadcastDraftInput;
+    source_task_id: string|null; resend_reason: string; draft_input:BroadcastDraftInput;
 }
 export interface BroadcastTarget {
     execution_mode?:string;sync_failures?:number;next_sync_at?:string|null;evidence?:ChannelObservation|null;
@@ -23,11 +22,8 @@ export interface BroadcastTarget {
 export type BroadcastDraftInput = {
     group_ids: string[]; revision?: number;
     source_task_id?: string; reason?: string;
-} & (
-    {content_source: 'posts'; template_version_id: string; post_ids: string[]; text_content?: never} |
-    {content_source: 'text'; text_content: string; template_version_id?: null; post_ids?: never[]} |
-    {content_source: 'materials'; materials: SourceReference[]; template_version_id?: null; post_ids?: never[]; text_content?: never}
-);
+    content_source: 'text'; text_content: string;
+};
 export interface BroadcastAction {
     preview_digest?: string; revision?: number; batch_id?: string; decision?: 'not_created'|'sent'|'linked'|'stop_confirmed'|'reminder_reviewed'; evidence_id?:string; reason?: string;
 }

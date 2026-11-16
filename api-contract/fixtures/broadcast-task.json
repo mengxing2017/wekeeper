@@ -4,7 +4,6 @@
     "id": "00000000-0000-0000-0000-000000000001",
     "attributes": {
       "creator_id": "00000000-0000-0000-0000-000000000001",
-      "template_version_id": "00000000-0000-0000-0000-000000000001",
       "content": "校园通知",
       "revision": 1,
       "state": "confirmed",
@@ -16,22 +15,13 @@
       "uncertain": 0,
       "pending": 1,
       "batch_count": 1,
-      "post_ids": [
-        "00000000-0000-0000-0000-000000000001"
-      ],
       "source_task_id": null,
       "resend_reason": "",
-      "content_source": "posts",
-      "source_namespace": "builtin.forum",
-      "materials": [],
+      "content_source": "text",
+      "source_namespace": "builtin.direct",
       "draft_input": {
-        "text_content": null,
-        "template_version_id": "00000000-0000-0000-0000-000000000001",
-        "content_source": "posts",
-        "post_ids": [
-          "00000000-0000-0000-0000-000000000001"
-        ],
-        "materials": [],
+        "text_content": "校园通知",
+        "content_source": "text",
         "group_ids": [
           "00000000-0000-0000-0000-000000000001"
         ],

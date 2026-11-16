@@ -1,13 +1,4 @@
 {
-  "template": {
-    "id": null,
-    "revision": 0,
-    "name": "通知",
-    "body": "{{post.title}}",
-    "note": "新通知",
-    "sample_post_id": null,
-    "publish": true
-  },
   "policy": {
     "member_id": "00000000-0000-4000-8000-000000000001",
     "generation": 1,

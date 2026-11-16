@@ -1,7 +1,6 @@
 import type {Client} from '../../http/client'
 export interface Confirmation {preview_id:string;digest:string}
-export interface BusinessPreview<T> {id:string;digest:string;expires_at:string;summary:T;rendered?:string;sample?:boolean}
-export interface TemplateInput {id?:string|null;revision:number;name:string;body:string;note:string;sample_post_id?:string|null;publish:boolean}
+export interface BusinessPreview<T> {id:string;digest:string;expires_at:string;summary:T}
 export interface MemberPolicyInput {member_id:string;generation:number;revision:number;enabled:boolean;window_seconds:number;max_calls:number}
 export interface UsageInput {member_id:string;account_id:string;generation:number;group_ids:string[]}
 export interface RequestInput {reason:string;task_id?:string|null;batch_id?:string|null}
@@ -14,7 +13,6 @@ export function createProductClient(client:Pick<Client,'requestResource'|'reques
  return {
  officialChannelStatus:()=>r<{id:string;configured:boolean;paused:boolean;revision:number;health_state:'available'|'checking'|'paused';health:{checked_at:string|null;last_success_at:string|null;last_failure_at:string|null}|null}>('/api/v1/platform/official-channel-controls'),
  officialChannelControl:(input:{paused:boolean;expected_revision:number;reason:string})=>r<{id:string;paused:boolean;revision:number}>('/api/v1/platform/official-channel-controls','POST',input),
- templates:{preview:(input:TemplateInput)=>r<BusinessPreview<TemplateInput>>(`${root()}/template-previews`,'POST',{...input,id:input.id??undefined}),confirm:(input:Confirmation)=>r<{id:string;published:boolean;version_id:string|null}>(`${root()}/template-publications`,'POST',input)},
  officialUsage:{options:()=>r<OfficialUsageOptions>(`${root()}/official-usage-options`),preview:(input:UsageInput)=>r<BusinessPreview<UsageInput>>(`${root()}/official-usage-previews`,'POST',input),confirm:(input:Confirmation)=>r<{id:string;state:string}>(`${root()}/official-usages`,'POST',input)},
  memberPolicies:{preview:(input:MemberPolicyInput)=>r<BusinessPreview<MemberPolicyInput>>('/api/v1/platform/member-policy-previews','POST',input),confirm:(input:Confirmation)=>r<{id:string;updated:boolean}>('/api/v1/platform/member-policies','POST',input)},
  requests:{list:(page=1)=>c<BusinessRequest>(`${root()}/business-requests?page[number]=${page}&page[size]=30`),channel:(input:RequestInput)=>r<BusinessRequest>(`${root()}/broadcast-access-requests`,'POST',input),issue:(input:RequestInput)=>r<BusinessRequest>(`${root()}/broadcast-issues`,'POST',input),decide:(id:string,input:RequestDecision)=>r<BusinessRequest>(`/api/v1/platform/business-requests/${encodeURIComponent(id)}/decisions`,'POST',input)},

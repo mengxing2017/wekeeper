@@ -18,7 +18,6 @@
     "./media": "./src/modules/media/index.ts",
     "./mobile-execution": "./src/modules/mobile-execution/index.ts",
     "./wecom-distribution": "./src/modules/wecom-distribution/index.ts",
-    "./distribution-content": "./src/modules/distribution-content/index.ts",
     "./wecom-distribution/client": "./src/modules/wecom-distribution/client.ts",
     "./mobile-execution/shared-send": "./src/modules/mobile-execution/shared-send/index.ts",
     "./mobile-execution/shared-send/v2": "./src/modules/mobile-execution/shared-send/v2.ts",

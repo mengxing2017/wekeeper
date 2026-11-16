@@ -16,5 +16,4 @@ export interface Session {
     user: User;
     csrf: string;
 }
-export interface DistributionMaterial extends Row { title: string; content: string; version: string }
-export type Resource = 'distribution-materials' | 'groups' | 'templates';
+export type Resource = 'groups';

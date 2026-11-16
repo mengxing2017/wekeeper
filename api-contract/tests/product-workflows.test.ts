@@ -1,18 +1,16 @@
 import {afterEach,expect,it,vi} from 'vitest'
 import {product,broadcast} from '../src/modules/business'
 import fixture from '../fixtures/product-workflows.json'
-import type {TemplateInput,UsageInput,MemberPolicyInput,RequestInput,RequestDecision,Confirmation} from '../src/modules/product-workflows/client'
+import type {UsageInput,MemberPolicyInput,RequestInput,RequestDecision,Confirmation} from '../src/modules/product-workflows/client'
 afterEach(()=>vi.unstubAllGlobals())
 function mock(){const fetch=vi.fn().mockImplementation(async()=>Response.json({data:{type:'business-results',id:'result',attributes:{state:'pending'}}},{headers:{'Content-Type':'application/vnd.api+json'}}));vi.stubGlobal('fetch',fetch);return fetch}
 it('uses the same typed Rust business inputs for all preview and confirm operations',async()=>{
  const fetch=mock()
  const operations:[()=>Promise<unknown>,string,string,unknown][]=[
- [()=>product.templates.preview(fixture.template as TemplateInput),'/wecom-distribution/template-previews','template-previews',fixture.template],
  [()=>product.officialUsage.preview(fixture.usage as UsageInput),'/wecom-distribution/official-usage-previews','official-usage-previews',fixture.usage],
  [()=>product.memberPolicies.preview(fixture.policy as MemberPolicyInput),'/platform/member-policy-previews','member-policy-previews',fixture.policy],
  [()=>product.requests.channel(fixture.request as RequestInput),'/wecom-distribution/broadcast-access-requests','broadcast-access-requests',fixture.request],
  [()=>product.requests.decide('request',fixture.decision as RequestDecision),'/platform/business-requests/request/decisions','business-requests',fixture.decision],
- [()=>product.templates.confirm(fixture.confirmation as Confirmation),'/wecom-distribution/template-publications','template-publications',fixture.confirmation],
  [()=>product.officialUsage.confirm(fixture.confirmation as Confirmation),'/wecom-distribution/official-usages','official-usages',fixture.confirmation],
  [()=>product.memberPolicies.confirm(fixture.confirmation as Confirmation),'/platform/member-policies','member-policies',fixture.confirmation],
  ]

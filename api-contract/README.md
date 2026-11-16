@@ -41,7 +41,7 @@ pnpm --dir api-contract test
 
 `broadcast` client 提供任务草稿创建/修改、确认、目标与事件分页、刷新、提醒、停止和核对。所有操作绑定学校，写操作使用 JSON:API `broadcast-tasks`，确认与管理动作带 Idempotency-Key。Task 汇总、成员状态和群级 official_status 分别建模；人工分享及旧历史读取 client 已移除。Rust 序列化测试与 TypeScript 共用 broadcast-task / broadcast-target fixture。
 
-群发新增 `content_source: posts | text`；来源必须显式提交，缺失来源的旧请求被拒绝。text 请求使用 `text_content`，不需模板或帖子；输出统一使用冻结 `content`，`template_version_id` 为 null，`post_ids` 为空数组。posts/text 请求互斥，草稿 PATCH 仍需 revision。`broadcast-text-task.json` 与 posts 来源 fixture 均经 Rust 实际序列化及 TS client 验证。
+手动群发仅接受显式 `content_source: text` 与 `text_content`，输出使用冻结 `content`；草稿 PATCH 仍需 revision。论坛帖子、历史素材及模板字段和接口已移除。群发 fixture 均经过 Rust 实际序列化与 TS client 验证。
 
 论坛 community client、小程序登录和展示资源 client 已迁至 linjian；本包不再导出这些接口。发送素材使用学校范围的 `distribution-materials` 只读接口。
 
