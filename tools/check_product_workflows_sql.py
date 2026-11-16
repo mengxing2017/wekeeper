@@ -24,7 +24,6 @@ sources = [
  "backend/src/distribution/south/adapter/postgres/shared_send_v2/inspections.rs",
  "backend/src/distribution/south/adapter/postgres/shared_send_v2/usage_budgets.rs",
  "backend/src/distribution/south/adapter/postgres/shared_send_v2/wait_states.rs",
- "backend/src/distribution/south/adapter/in_process.rs",
  "backend/src/distribution/south/adapter/postgres.rs",
  "backend/src/distribution/south/adapter/postgres/groups.rs",
  "backend/src/audit/south/adapter/postgres.rs",
@@ -50,7 +49,7 @@ DO $$ BEGIN
  IF to_regclass('official_channel_deliveries') IS NOT NULL OR (SELECT count(*) FROM official_channel_health)<>0 THEN RAISE EXCEPTION 'migration retained delivery gate or fabricated health';END IF;
  IF to_regclass('official_channel_legacy') IS NOT NULL OR EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='school_resources' AND column_name IN ('url','needs_review')) THEN RAISE EXCEPTION 'obsolete compatibility schema retained';END IF;
 END $$;
-INSERT INTO product_previews(id,actor_id,kind,payload,digest) VALUES('{preview}','{a}','template','{{}}','digest');
+INSERT INTO product_previews(id,actor_id,kind,payload,digest) VALUES('{preview}','{a}','member_policy','{{}}','digest');
 UPDATE product_previews SET result='{{"id":"one"}}',confirmed_at=now() WHERE id='{preview}' AND result IS NULL;
 UPDATE product_previews SET result='{{"id":"two"}}',confirmed_at=now() WHERE id='{preview}' AND result IS NULL;
 DO $$ BEGIN

@@ -63,12 +63,9 @@ reset-dev-database:
 smoke:
 	sh tools/smoke.sh
 
-.PHONY: test-business test-migration
+.PHONY: test-business
 test-business:
 	python3 tools/check_business.py
-
-test-migration:
-	python3 -B tools/migration/test_convert.py
 
 .PHONY: test-live
 test-live:
