@@ -6,7 +6,6 @@ import {
   Alert,
   Button,
   Card,
-  Checkbox,
   Descriptions,
   Drawer,
   Table,
@@ -28,8 +27,6 @@ import {
   type BroadcastTarget,
   type BroadcastDraftInput,
   type BroadcastAction,
-  type DistributionMaterial,
-  type Row,
 } from './api'
 
 const creation: Record<string, string> = {
@@ -204,7 +201,7 @@ export default function BroadcastTasks({
                 },
                 {
                   title: '内容来源',
-                  render: (_, t) => (t.content_source === 'text' ? '直接填写' : t.content_source === 'materials' ? '独立来源素材' : '论坛内容'),
+                  render: () => '直接填写',
                 },
                 {
                   title: '目标群 / 批次',
@@ -259,9 +256,6 @@ function DraftEditor({
   const [currentId,setCurrentId]=useState(id),[currentRevision,setCurrentRevision]=useState(initial?.revision)
   const [result,setResult]=useState<Awaited<ReturnType<typeof broadcast.savePreview>>>(),[previewTargets,setPreviewTargets]=useState<BroadcastTarget[]>([])
   const confirmKey=useRef(createIdempotencyKey())
-  const [source, setSource] = useState<'posts' | 'text' | 'materials'>(
-    initial ? (initial.content_source ?? 'posts') : 'text',
-  )
   const [text, setText] = useState(initial?.content_source === 'text' ? initial.text_content : '')
   const dialogs = useDialogs()
   const normalized = text.replace(/\r\n?/g, '\n'),
@@ -273,42 +267,16 @@ function DraftEditor({
       const n = c.codePointAt(0)!
       return (n < 32 || (n >= 127 && n <= 159)) && c !== '\n' && c !== '\t'
     })
-  const [chosen, setChosen] = useState(initial?.post_ids ?? []),
-    [groups, setGroups] = useState(initial?.group_ids ?? []),
-    [version, setVersion] = useState(initial?.template_version_id ?? '')
-  const [search, setSearch] = useState(''),
-    [page, setPage] = useState(1),
-    [reason, setReason] = useState(initial?.reason ?? '')
+  const [groups, setGroups] = useState(initial?.group_ids ?? [])
+  const [reason, setReason] = useState(initial?.reason ?? '')
   const [error, setError] = useState(''),
     [busy, setBusy] = useState(false)
   const lock = useRef(false)
   const saveIntent = useRef<{ payload: string; key: string } | null>(null)
-  const posts = useQuery({
-    enabled: source === 'posts',
-    queryKey: ['business', 'broadcast-posts', search, page],
-    queryFn: () =>
-      workspace.list<DistributionMaterial>(
-        'distribution-materials',
-        `?page[number]=${page}&page[size]=30&search=${encodeURIComponent(search)}`,
-      ),
-  })
   const targets = useQuery({
     queryKey: ['business', 'groups'],
     queryFn: () => workspace.list('groups'),
   })
-  const templates = useQuery({
-    enabled: source === 'posts',
-    queryKey: ['business', 'templates'],
-    queryFn: () => workspace.list('templates'),
-  })
-  const versions =
-    templates.data?.items.flatMap((t) =>
-      Array.isArray(t.versions)
-        ? (t.versions as Row[])
-            .filter((v) => v.published && v.id===t.current_version_id)
-            .map((v) => ({ value: v.id, label: `${String(t.name)} · ${formatDate(String(v.published_at))}` }))
-        : [],
-    ) ?? []
   async function save() {
     if (lock.current) return
     lock.current = true
@@ -321,11 +289,7 @@ function DraftEditor({
         revision: currentRevision,
         source_task_id: initial?.source_task_id,
       }
-      const input: BroadcastDraftInput =
-        source === 'text'
-          ? { ...common, content_source: 'text', text_content: normalized }
-          : source === 'materials' && initial?.content_source === 'materials' ? { ...common, content_source: 'materials', materials: initial.materials }
-          : { ...common, content_source: 'posts', template_version_id: version, post_ids: chosen }
+      const input: BroadcastDraftInput = {...common, content_source: 'text', text_content: normalized}
       const payload = JSON.stringify(input)
       if (saveIntent.current?.payload !== payload) saveIntent.current = { payload, key: createIdempotencyKey() }
       const response=await broadcast.savePreview(input,currentId,saveIntent.current.key)
@@ -345,40 +309,13 @@ function DraftEditor({
       <p>预览会自动保留草稿，不创建企业微信任务。正文上限 4000 UTF-8 字节。</p>
       {error && <Alert type="error" title={error} />}
       {!result&&<>
-      <Field label="内容来源">
-        <Select
-          aria-label="内容来源"
-          value={source}
-          disabled={busy}
-          options={[
-            { value: 'text', label: '直接填写' },
-            { value: 'posts', label: '从来源素材生成' },
-          ]}
-          onChange={(v) =>
-            void (async () => {
-              if (
-                v !== source &&
-                (await dialogs.confirm('切换内容来源将清空当前正文、帖子及模板选择，是否继续？'))
-              ) {
-                setSource(v)
-                setText('')
-                setChosen([])
-                setVersion('')
-              }
-            })()
-          }
-        />
-      </Field>
-      {source === 'materials' && <Alert type="info" title="独立来源素材" description="修改目标后需要重新预览；素材内容与版本由受控来源提供。" />}
-      {source === 'text' && (
-        <>
           <Field label="群发正文">
             <Input.TextArea
               aria-label="群发正文"
               rows={6}
               value={text}
               onChange={(e) => setText(e.target.value)}
-              placeholder="直接输入通知，无需社区帖子或模板"
+              placeholder="输入群发通知正文"
             />
           </Field>
           <p>{bytes} / 4000 UTF-8 字节 · 直接文本需管理员确认提交，运营人员可保存草稿。</p>
@@ -391,58 +328,7 @@ function DraftEditor({
               title="正文须为非空文本，不超过 4000 UTF-8 字节，且不能包含不支持的控制字符"
             />
           )}
-        </>
-      )}
-      {(source === 'posts' ? [posts, targets, templates] : [targets]).map(
-        (q, i) => q.error && <Alert key={i} type="error" title={q.error.message} />,
-      )}
-      {source === 'posts' && (
-        <>
-          <Field label="搜索已审核内容">
-            <Input
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value)
-                setPage(1)
-              }}
-            />
-          </Field>
-          <p>
-            已选 {chosen.length} 条<Button onClick={() => setChosen([])}>清空内容</Button>
-          </p>
-          {posts.data?.items
-            .map((p) => (
-              <Checkbox
-                className="check-row"
-                key={p.id}
-                checked={chosen.includes(p.id)}
-                onChange={(e) =>
-                  setChosen(
-                    e.target.checked ? [...chosen, p.id] : chosen.filter((id) => id !== p.id),
-                  )
-                }
-              >
-                {p.title}
-              </Checkbox>
-            ))}
-          <PaginationControls
-            page={page}
-            more={posts.data?.page?.has_more}
-            busy={posts.isFetching}
-            change={setPage}
-            subject="内容"
-          />
-          <Field label="已发布模板">
-            <Select
-              aria-label="已发布模板"
-              className="full-width"
-              value={version || undefined}
-              options={versions}
-              onChange={setVersion}
-            />
-          </Field>
-        </>
-      )}
+      {targets.error && <Alert type="error" title={targets.error.message} />}
       <Field label="目标客户群">
         <Select
           aria-label="目标客户群"
@@ -475,7 +361,7 @@ function DraftEditor({
         <Button
           type="primary"
           loading={busy}
-          disabled={(source === 'text' ? !textValid : source === 'materials' ? initial?.content_source !== 'materials' : !chosen.length || !version)}
+          disabled={!textValid}
           onClick={() => void save()}
         >
           预览
@@ -488,22 +374,15 @@ function DraftEditor({
       {result&&<>
        {result.preview?<><h3>完整发送预览</h3><pre>{result.preview.content}</pre><p>全部 {result.preview.target_count} 个群；确认仅创建官方任务，执行成员仍需在企业微信确认。</p><ul>{previewTargets.map(v=><li key={v.id}>{v.group_name} · 执行成员：{v.sender}</li>)}</ul>
        <Button disabled={busy} onClick={()=>{setResult(undefined);saveIntent.current=null}}>返回修改</Button>
-       <Button type="primary" disabled={busy||(source==='text'&&!admin)||previewTargets.length!==result.preview.target_count} onClick={()=>{if(lock.current)return;lock.current=true;setBusy(true);setError('');void broadcast.action(result.task_id,'confirm',confirmKey.current,{revision:result.preview!.revision,preview_digest:result.preview!.digest}).then(saved).catch(e=>setError(e instanceof Error?e.message:'确认失败')).finally(()=>{lock.current=false;setBusy(false)})}}>确认创建官方群发任务</Button>
-       {source==='text'&&!admin&&<p>请管理员从同一草稿核对确认；当前已保存正文。</p>}</>:<Alert type="info" title={result.reason??'草稿已保存'}/>}
+       <Button type="primary" disabled={busy||!admin||previewTargets.length!==result.preview.target_count} onClick={()=>{if(lock.current)return;lock.current=true;setBusy(true);setError('');void broadcast.action(result.task_id,'confirm',confirmKey.current,{revision:result.preview!.revision,preview_digest:result.preview!.digest}).then(saved).catch(e=>setError(e instanceof Error?e.message:'确认失败')).finally(()=>{lock.current=false;setBusy(false)})}}>确认创建官方群发任务</Button>
+       {!admin&&<p>请管理员从同一草稿核对确认；当前已保存正文。</p>}</>:<Alert type="info" title={result.reason??'草稿已保存'}/>}
        <Button disabled={busy} onClick={()=>void broadcast.task(result.task_id).then(saved)}>查看已保存草稿</Button>
       </>}
     </Card>
   )
 }
 function taskContent(t: BroadcastTask) {
-  if (t.content_source === 'materials') return { content_source: 'materials' as const, materials: t.materials }
-  return t.content_source === 'text'
-    ? { content_source: 'text' as const, text_content: t.content }
-    : {
-        content_source: 'posts' as const,
-        template_version_id: t.template_version_id!,
-        post_ids: t.post_ids,
-      }
+  return { content_source: 'text' as const, text_content: t.content }
 }
 async function allTargets(id: string) {
   const rows: BroadcastTarget[] = []
@@ -617,7 +496,7 @@ function Detail({
           title="已确认提交，后台正在创建或跟踪企业微信任务。取得官方任务 ID 后，请执行成员到企业微信群发助手确认发送；逐群结果见下方。"
         />
       )}
-      <Tag>{t.content_source === 'text' ? '直接填写' : t.content_source === 'materials' ? '独立来源素材' : '论坛内容'}</Tag>
+      <Tag>{'直接填写'}</Tag>
       {t.state === 'draft' && t.content_source === 'text' && !admin && (
         <p>直接文本草稿需管理员检查并确认提交。</p>
       )}

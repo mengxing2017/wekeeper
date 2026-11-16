@@ -11,7 +11,7 @@ Object.defineProperty(window,'matchMedia',{writable:true,value:()=>({matches:fal
 configure({asyncUtilTimeout:5000})
 afterEach(()=>{cleanup();vi.clearAllMocks()})
 it('one confirmation submits a draft and immediately displays server-confirmed state',async()=>{
- const task:BroadcastTask={id:'task-123456',creator_id:'admin',content_source:'text',source_namespace:'builtin.direct',materials:[],template_version_id:null,content:'测试通知',revision:1,state:'draft',stopped:false,created_at:'2026-10-22T00:00:00Z',total:1,sent:0,rejected:0,uncertain:0,pending:1,batch_count:1,post_ids:[],source_task_id:null,draft_input:{content_source:'text',text_content:'测试通知',group_ids:['group']},resend_reason:''}
+ const task:BroadcastTask={id:'task-123456',creator_id:'admin',content_source:'text',source_namespace:'builtin.direct',content:'测试通知',revision:1,state:'draft',stopped:false,created_at:'2026-10-22T00:00:00Z',total:1,sent:0,rejected:0,uncertain:0,pending:1,batch_count:1,source_task_id:null,draft_input:{content_source:'text',text_content:'测试通知',group_ids:['group']},resend_reason:''}
  vi.mocked(broadcast.preview).mockResolvedValue({id:task.id,revision:1,digest:'preview-digest',expires_at:'2026-11-01T00:00:00Z',content:task.content,target_count:task.total,channel:'wecom'})
  vi.mocked(broadcast.list).mockResolvedValue({items:[task]})
  vi.mocked(broadcast.task).mockResolvedValue(task)

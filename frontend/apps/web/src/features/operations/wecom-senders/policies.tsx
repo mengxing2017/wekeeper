@@ -24,7 +24,7 @@ export function DistributionPolicyPanel() {
     <p>来源积压按来源累计，官方资源调用量跨来源累计。这里的额度是平台运营限制，不代表官方安全发送次数。手机业务状态在手机使用管理中查看。</p>
     {(error || query.error) && <Alert type="error" title={error || query.error?.message} />}
     <Table<SourcePolicy> rowKey="namespace" pagination={false} dataSource={query.data?.sources ?? []} columns={[
-      { title: '受信来源', render: (_,r) => ({'builtin.forum':'校园社区','builtin.direct':'直接通知'}[r.namespace]??'已登记业务来源') }, { title: '草稿/待执行限制', dataIndex: 'max_pending' },
+      { title: '受信来源', render: (_,r) => ({'builtin.direct':'直接通知'}[r.namespace]??'已登记业务来源') }, { title: '草稿/待执行限制', dataIndex: 'max_pending' },
       { title: '状态', render: (_, row) => row.enabled ? '允许受理' : '已暂停新发送' },
       { title: '操作', render: (_, row) => <Button onClick={() => { setSource({ ...row }); setResource(undefined) }}>调整来源政策</Button> },
     ]} />

@@ -11,7 +11,6 @@ export const pageHelp: Record<string, string> = {
   'mobile-receiving-configurations': 'workspaces',
   'wecom-receiving-configurations': 'workspaces',
   groups: 'operator/groups-and-templates',
-  templates: 'operator/groups-and-templates',
   'broadcast-tasks': 'operator/broadcast-tasks',
   audit: 'platform-admin/audit-and-resources#audit',
   administrators: 'platform-admin/administrators',

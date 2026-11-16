@@ -4,7 +4,6 @@ import {Advertising} from '../../operations/advertising'
 import { KeywordRules } from '../../operations/source-access/keywords'
 import { AssignedRoutes } from '../../operations/source-access/assigned'
 import { SourceAccess } from '../../operations/source-access'
-import { TemplateManager } from './template-manager'
 import { OfficialSenders } from '../../operations/wecom-senders'
 import { MobileExecutionTasks } from '../../operations/mobile-execution/tasks'
 import { SharedMobileResources } from '../mobile-resources'
@@ -86,7 +85,7 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
   else if (tab === 'mobile-targets') page = <MobileTargets admin />
   else if (tab === 'wecom-senders') page = <OfficialSenders />
   else if (tab === 'broadcast-tasks') page = <BroadcastTasks admin platformAdmin />
-  else if (tab === 'groups' || tab === 'templates') page = <Panel administrator platformAdmin resource={tab} refresh={refresh} />
+  else if (tab === 'groups') page = <Panel administrator platformAdmin resource={tab} refresh={refresh} />
   else if (tab === 'execution-devices') page = <ExecutionDevices view={params.get('subview')==='usage'?'usage':'devices'} onViewChange={setSubview} />
   else if (tab === 'shared-mobile-resources') page = <SharedMobileResources />
   else if (tab === 'wecom-assets') page = <Assets />
@@ -119,7 +118,6 @@ function Panel({
     await workspace.mutate(path, body, method)
     await refresh()
   }
-  if(resource==='templates')return <TemplateManager/>
   return (
     <>
       {q.error && <Alert type="error" title={q.error.message} />}

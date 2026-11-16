@@ -11,7 +11,7 @@ vi.stubGlobal('ResizeObserver',Resize)
 Object.defineProperty(window,'matchMedia',{writable:true,value:()=>({matches:false,addListener:vi.fn(),removeListener:vi.fn(),addEventListener:vi.fn(),removeEventListener:vi.fn()})})
 configure({asyncUtilTimeout:5000})
 afterEach(()=>{cleanup();vi.clearAllMocks()})
-const task:BroadcastTask={id:'task-123456',creator_id:'actor',content_source:'posts',source_namespace:'builtin.forum',materials:[],template_version_id:'v',content:'冻结通知',revision:1,state:'draft',stopped:false,created_at:'2026-10-22T00:00:00Z',total:2,sent:0,rejected:0,uncertain:0,pending:2,batch_count:1,post_ids:['p'],source_task_id:null,draft_input:{content_source:'posts',template_version_id:'v',post_ids:['p'],group_ids:['group']},resend_reason:''}
+const task:BroadcastTask={id:'task-123456',creator_id:'actor',content_source:'text',source_namespace:'builtin.direct',content:'冻结通知',revision:1,state:'draft',stopped:false,created_at:'2026-10-22T00:00:00Z',total:2,sent:0,rejected:0,uncertain:0,pending:2,batch_count:1,source_task_id:null,draft_input:{content_source:'text',text_content:'冻结通知',group_ids:['group']},resend_reason:''}
 const target:BroadcastTarget={id:'target',group_id:'g',chat_id:'chat',group_name:'测试群',batch_id:'batch',sender:'owner',creation_state:'created',msgid:'official-task',rejected:false,official_status:null,send_time:null,member_status:2,last_synced_at:null,sync_error:null,error_code:null,stop_state:'none',reconciliation:null,operation_unknown:false}
 function show(admin=true, selectedTask:BroadcastTask=task, blockedReason:string|null=null){
  vi.mocked(broadcast.preview).mockResolvedValue({id:selectedTask.id,revision:selectedTask.revision,digest:'frozen-preview',expires_at:'2026-11-01T00:00:00Z',content:selectedTask.content,target_count:selectedTask.total,channel:'wecom'})
@@ -66,7 +66,7 @@ it('previews direct text with no posts or templates, and saves only selected gro
  expect(broadcast.action).not.toHaveBeenCalled()
 })
 it('operator can inspect text draft but cannot confirm it',async()=>{
- show(false,{...task,content_source:'text',source_namespace:'builtin.direct',materials:[],template_version_id:null,post_ids:[]})
+ show(false,{...task,content_source:'text',source_namespace:'builtin.direct'})
  fireEvent.click(await screen.findByRole('button',{name:'查看任务 123456'}))
  // Wait for the task payload before scanning the drawer's accessible controls.
  const detail=within(await screen.findByRole('dialog'))

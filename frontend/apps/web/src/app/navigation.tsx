@@ -33,15 +33,6 @@ export const navigation: NavigationItem[] = [
 
   },
   {
-    key: 'templates',
-    icon: <SnippetsOutlined />,
-    label: '消息模板',
-    description: '管理模板正文、版本与发布状态。',
-    domain: 'wecom',
-
-
-  },
-  {
     key: 'broadcast-tasks',
     icon: <SendOutlined />,
     label: '群发任务',
