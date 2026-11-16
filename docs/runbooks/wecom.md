@@ -11,7 +11,6 @@
 | `WEKEEPER_PUBLIC_ORIGIN` | 浏览器 origin 与内容链接地址；不作为服务端群发的门禁 |
 | `WEKEEPER_WECOM_CORP_ID` / `WEKEEPER_WECOM_SECRET` | 企业及配置到客户联系“可调用应用”的自建应用凭据 |
 | `WEKEEPER_INSECURE_LOCAL_AUTH` | 生产必须 false；仅控制登录方式，不控制群发 |
-| `WEKEEPER_WECOM_AGENT_ID` | 仅保留旧配置识别兼容，群发、目录及 OAuth 均不要求 |
 
 配置有效 CorpID/Secret 后自动提供群发能力，无需额外部署开关。开发与运维应验证应用具备客户联系群发及结果读取权限，执行群主在应用可见范围内；群主终端至少 4.1.10，指定 chat_id_list 时无需重新选群。目录读取成功不能替代群发权限验证；真实权限由官方接口校验。
 

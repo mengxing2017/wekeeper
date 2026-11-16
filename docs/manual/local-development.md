@@ -48,18 +48,16 @@ python3 tools/repair_rustup_linker.py
 export WEKEEPER_WECOM_CORP_ID='替换为企业 CorpID'
 read -rs WEKEEPER_WECOM_SECRET
 export WEKEEPER_WECOM_SECRET
-export WEKEEPER_WECOM_AGENT_ID=''
 devbox run -- make dev-embedded
 ```
 
-目录同步与成员绑定可留空 AgentID；填写时与 Secret 对应同一自建应用。需填写真实 AgentID 的功能按 [企业微信接入手册](../runbooks/wecom.md) 配置。真实凭据会触发官方接口访问，还需出口可信 IP 和应用可见范围。
+企业微信接入方式见 [企业微信接入手册](../runbooks/wecom.md)。真实凭据会触发官方接口访问，还需出口可信 IP 和应用可见范围。
 
 可创建已忽略的 `.env.wecom.local`（合法 shell 赋值，不提交）：
 
 ```dotenv
 WEKEEPER_WECOM_CORP_ID='替换为企业 CorpID'
 WEKEEPER_WECOM_SECRET='替换为应用 Secret'
-WEKEEPER_WECOM_AGENT_ID=''
 ```
 
 显式在子 shell 加载，避免污染其他终端：

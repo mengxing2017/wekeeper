@@ -122,9 +122,6 @@ export WEKEEPER_WECOM_CORP_ID='替换为企业 CorpID'
 # 执行下一行后输入应用 Secret 并按回车，输入不会回显。
 read -rs WEKEEPER_WECOM_SECRET
 export WEKEEPER_WECOM_SECRET
-# 目录同步和成员绑定可留空；填写时须与 Secret 属于同一自建应用。
-export WEKEEPER_WECOM_AGENT_ID=''
-# 如需填写：export WEKEEPER_WECOM_AGENT_ID='1000002'
 devbox run -- make dev-embedded
 # 若当前终端已有项目所需工具链，最后一行也可直接使用 make dev-embedded。
 ```
@@ -136,7 +133,6 @@ devbox run -- make dev-embedded
 ```bash
 WEKEEPER_WECOM_CORP_ID='替换为企业 CorpID'
 WEKEEPER_WECOM_SECRET='替换为应用 Secret'
-WEKEEPER_WECOM_AGENT_ID=''
 ```
 
 然后显式加载并启动，括号使变量仅作用于本次启动的子 shell：
@@ -153,7 +149,7 @@ chmod 600 .env.wecom.local
 
 修改终端变量或配置文件后需重启后端才会生效；嵌入式库重启会清空目录、账号绑定和其他临时数据，需要重新同步、绑定。
 
-**嵌入式入口强制 `insecure_local_auth=true`**，设置 `WEKEEPER_INSECURE_LOCAL_AUTH=false` 或 HTTPS origin 也不会覆盖这一行为。注入 CorpID/Secret 可验证目录与绑定，注入 AgentID 可验证配置识别，OAuth 始终关闭；服务端群发独立控制，配置凭据后即可在本地按正常预览、人工确认流程调试。OAuth 验收仍须使用普通 API 或 Compose 的 HTTPS 部署并关闭 insecure_local_auth，步骤见 [企业微信接入手册](docs/runbooks/wecom.md)。
+**嵌入式入口强制 `insecure_local_auth=true`**，设置 `WEKEEPER_INSECURE_LOCAL_AUTH=false` 或 HTTPS origin 也不会覆盖这一行为。注入 CorpID/Secret 可验证目录与绑定，OAuth 始终关闭；服务端群发独立控制，配置凭据后即可在本地按正常预览、人工确认流程调试。OAuth 验收仍须使用普通 API 或 Compose 的 HTTPS 部署并关闭 insecure_local_auth，步骤见 [企业微信接入手册](docs/runbooks/wecom.md)。
 
 
 ### 外部 PostgreSQL / Docker 数据库（保留开发数据）
@@ -329,7 +325,7 @@ docker compose --env-file .env -f compose.yaml logs --tail 100 api web
 
 ### 客户群目录同步
 
-平台后台的「客户群管理」保留客户群/群成员、运营成员统计与同步任务，不再提供客户、客户跟进关系和客户联系成员目录。先完整同步「企业通讯录」，再同步客户群。接口只读取当前应用可见资产，不要求 `WEKEEPER_WECOM_AGENT_ID`；CorpID/Secret 的终端注入方式见上文。
+平台后台的「客户群管理」保留客户群/群成员、运营成员统计与同步任务，不再提供客户、客户跟进关系和客户联系成员目录。先完整同步「企业通讯录」，再同步客户群。接口只读取当前应用可见资产；CorpID/Secret 的终端注入方式见上文。
 
 ```bash
 export WEKEEPER_WECOM_ASSET_SYNC_INTERVAL_SECONDS=1800
@@ -345,7 +341,7 @@ devbox run -- make dev-embedded
 
 企业微信“群发任务”支持直接填写文本；选择多个客户群，预览后人工确认；成员在企业微信确认执行。按群主拆分、每批最多 2000 群，文本最多 4000 UTF-8 字节；unknown 不自动重发。
 
-配置有效 CorpID/Secret 后，群发自动可用，无需额外部署启用开关。实际执行仍校验客户联系权限、群主分发授权和官方接口状态；客户端需支持指定群发送。AgentID 不再是发送前提。平台明确暂停新发送时，仍可查询和停止既有任务。详见 [企业微信接入与验收](docs/runbooks/wecom.md)。
+配置有效 CorpID/Secret 后，群发自动可用，无需额外部署启用开关。实际执行仍校验客户联系权限、群主分发授权和官方接口状态；客户端需支持指定群发送。平台明确暂停新发送时，仍可查询和停止既有任务。详见 [企业微信接入与验收](docs/runbooks/wecom.md)。
 
 官方群发与直接文本结构已合并到 `backend/migrations/202610310102_broadcast.sql`，按当前初始化基线建库。重复启动依据 SQLx 账本跳过已应用迁移；旧分段迁移库不自动转换。真实企业权限及终端行为仍需部署验收。
 

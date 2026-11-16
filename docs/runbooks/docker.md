@@ -226,7 +226,7 @@ React 使用同源 `/api/...` 请求，由 Web 容器的 Caddy 转发到 API。�
 | `WEKEEPER_WEB_LISTEN` | `:80` | Caddy 监听 HTTP；直接提供 HTTPS 时改为 `keeper.example.com`，详见第 6 节 |
 | `WEKEEPER_API_UPSTREAM` | `api:8080` | Caddy 可访问的后端地址；同一 Docker 网络内使用 API 容器名和容器端口 |
 
-前端不需要数据库密码、CorpSecret 或 AgentID。`WEKEEPER_PUBLIC_ORIGIN` 是后端验证浏览器来源的配置，不是前端监听变量。
+前端不需要数据库密码或 CorpSecret。`WEKEEPER_PUBLIC_ORIGIN` 是后端验证浏览器来源的配置，不是前端监听变量。
 
 `WEB_BIND_HOST`、`WEB_HTTP_PORT`、`WEB_HTTPS_PORT` 是 Compose 的宿主机端口映射参数，不是 Caddy 环境变量。独立 `docker run` 使用 `-p` 设置映射。
 
@@ -249,7 +249,6 @@ React 使用同源 `/api/...` 请求，由 Web 容器的 Caddy 转发到 API。�
 | `WEKEEPER_INSECURE_LOCAL_AUTH` | `false` | 本机 HTTP 调试设 `true`，生产 HTTPS 保持 `false` |
 | `WEKEEPER_WECOM_CORP_ID` | 空或实际 CorpID | 企业微信服务端配置，与 Secret 成对填写 |
 | `WEKEEPER_WECOM_SECRET` | 空或实际 Secret | 目录、客户群、成员核验及 OAuth 所需的应用凭据 |
-| `WEKEEPER_WECOM_AGENT_ID` | 空或同一应用的正整数 AgentID | 当前客户端分享必需；目录同步与 OAuth 可留空 |
 | `WEKEEPER_WECOM_DIRECTORY_INTERVAL_SECONDS` | `1800` | 内部通讯录周期同步；`0` 仅手动，非零至少 60 秒 |
 | `WEKEEPER_WECOM_ASSET_SYNC_INTERVAL_SECONDS` | `1800` | 客户群周期同步；`0` 仅手动，非零至少 60 秒 |
 | `RUST_LOG` | `wekeeper_api=info,tower_http=info` | 后端日志级别 |
@@ -286,7 +285,6 @@ RUST_LOG=wekeeper_api=info,tower_http=info
 # 后端 API：企业微信（需要时填写）
 WEKEEPER_WECOM_CORP_ID=
 WEKEEPER_WECOM_SECRET=
-WEKEEPER_WECOM_AGENT_ID=
 WEKEEPER_WECOM_DIRECTORY_INTERVAL_SECONDS=1800
 WEKEEPER_WECOM_ASSET_SYNC_INTERVAL_SECONDS=1800
 ```
@@ -433,7 +431,6 @@ WEKEEPER_PUBLIC_ORIGIN=http://127.0.0.1:8088
 WEKEEPER_INSECURE_LOCAL_AUTH=true
 WEKEEPER_WECOM_CORP_ID=
 WEKEEPER_WECOM_SECRET=
-WEKEEPER_WECOM_AGENT_ID=
 WEKEEPER_WECOM_DIRECTORY_INTERVAL_SECONDS=1800
 WEKEEPER_WECOM_ASSET_SYNC_INTERVAL_SECONDS=1800
 RUST_LOG=wekeeper_api=info,tower_http=info

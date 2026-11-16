@@ -27,7 +27,6 @@
 | `WEKEEPER_PUBLIC_ORIGIN` | 浏览器 Origin 校验与公开链接，生产使用实际 HTTPS origin |
 | `WEKEEPER_INSECURE_LOCAL_AUTH` | 仅本地 HTTP 登录；生产 false，嵌入式入口强制本地模式 |
 | `WEKEEPER_WECOM_CORP_ID` / `WEKEEPER_WECOM_SECRET` | 单企业后端凭据，不能注入前端 |
-| `WEKEEPER_WECOM_AGENT_ID` | 旧配置识别兼容；当前目录、群发与 OAuth 不要求 |
 | `WEKEEPER_WECOM_DIRECTORY_INTERVAL_SECONDS` / `WEKEEPER_WECOM_ASSET_SYNC_INTERVAL_SECONDS` | 周期同步；0 关闭周期调度，不关闭手工同步 |
 | `WEKEEPER_SOURCE_MASTER_KEY_V1` | 调用方 secret 的数据库存储加密主密钥，32 随机字节、无填充 base64url 编码；Docker 使用调用方凭据时必填且仅注入 API；跨重启/实例/恢复保持原值，详见 [Docker 配置](../runbooks/docker.md#调用方凭据主密钥-首次配置与已有部署更新) |
 | `WEKEEPER_SHARED_SEND_KEY` | 共享手机发送恢复材料的后端加密密钥；`openssl rand -hex 32` 生成，跨重启/实例保持一致并配套备份；仅注入 API，详见 [Docker 配置](../runbooks/docker.md#共享手机发送密钥-首次配置与已有部署更新) |
