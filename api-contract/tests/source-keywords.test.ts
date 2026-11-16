@@ -13,3 +13,12 @@ it('uses the sensitive words endpoint and JSON API type with CSRF',async()=>{
  expect(transport.mock.calls[0][0].headers['X-CSRF-Token']).toBe('csrf-test')
  expect(JSON.parse(transport.mock.calls[0][0].body)).toEqual({data:{type:'sensitive-words',attributes:fixture.update}})
 })
+it('reads the persisted global switch and writes both switch values',async()=>{
+ const transport=vi.fn().mockResolvedValue({status:200,headers:{'content-type':'application/vnd.api+json'},body:{data:{type:'sensitive-words',id:'current',attributes:fixture.current}}})
+ const rules=createKeywordRulesClient(createClient(transport))
+ expect(await rules.list()).toEqual({...fixture.current,id:"current"})
+ for(const filter_enabled of [true,false]){
+  await rules.save({...fixture.update,filter_enabled})
+  expect(JSON.parse(transport.mock.calls.at(-1)![0].body).data.attributes).toEqual({...fixture.update,filter_enabled})
+ }
+})

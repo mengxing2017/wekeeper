@@ -7,7 +7,8 @@
         "word": "Ｓtraße",
         "enabled": true
       }
-    ]
+    ],
+    "filter_enabled": false
   },
   "normalization": [
     {
@@ -25,6 +26,17 @@
   ],
   "update": {
     "expected_revision": 1,
+    "entries": [
+      {
+        "word": "Ｓtraße",
+        "enabled": true
+      }
+    ],
+    "filter_enabled": false
+  },
+  "current": {
+    "revision": 2,
+    "filter_enabled": false,
     "entries": [
       {
         "word": "Ｓtraße",
