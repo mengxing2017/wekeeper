@@ -57,14 +57,13 @@ pub(crate) async fn context_for_scope(
         rules,
     ))
 }
-async fn scope_access(tx: &mut Tx<'_>, actor: Uuid, admin: bool, scope: &str) -> Result<()> {
+async fn scope_access(tx: &mut Tx<'_>, scope: &str) -> Result<()> {
     let row = sqlx::query("SELECT * FROM keyword_scope_heads WHERE id=$1")
         .bind(scope)
         .fetch_optional(&mut **tx)
         .await?
         .ok_or(Fault("not_found"))?;
-    let _ = (tx, actor);
-    ensure(admin && row.get::<String, _>("id") == "global", "forbidden")?;
+    ensure(row.get::<String, _>("id") == "global", "forbidden")?;
     Ok(())
 }
 impl KeywordStore for KeywordRepository {
@@ -73,7 +72,7 @@ impl KeywordStore for KeywordRepository {
         if matches!(&command, k::Command::Publish { .. }) {
             guard(&mut tx).await?;
         }
-        let admin = super::routing::administrator(&mut tx, actor.id).await?;
+        super::routing::administrator(&mut tx, actor.id).await?;
         let audit_context = match &command {
             k::Command::Scopes => json!({"action":"list_scopes"}),
             k::Command::Versions { scope, .. } => json!({"action":"versions","scope_id":scope}),
@@ -89,12 +88,12 @@ impl KeywordStore for KeywordRepository {
                 let mut items = vec![];
                 for r in rows {
                     let id: String = r.get("id");
-                    match scope_access(&mut tx,actor.id,admin,&id).await{Ok(())=>items.push(json!({"id":id,"kind":r.get::<String,_>("kind"),"object_id":r.get::<String,_>("object_id"),"channel":r.get::<Option<String>,_>("channel"),"label":r.get::<String,_>("label"),"revision":r.get::<i64,_>("revision"),"version_id":r.get::<Uuid,_>("version_id"),"can_edit":true})),Err(Fault("forbidden"))=>{},Err(e)=>return Err(e)}
+                    match scope_access(&mut tx,&id).await{Ok(())=>items.push(json!({"id":id,"kind":r.get::<String,_>("kind"),"object_id":r.get::<String,_>("object_id"),"channel":r.get::<Option<String>,_>("channel"),"label":r.get::<String,_>("label"),"revision":r.get::<i64,_>("revision"),"version_id":r.get::<Uuid,_>("version_id"),"can_edit":true})),Err(Fault("forbidden"))=>{},Err(e)=>return Err(e)}
                 }
                 json!({"items":items})
             }
             k::Command::Versions { scope, page } => {
-                scope_access(&mut tx, actor.id, admin, &scope).await?;
+                scope_access(&mut tx, &scope).await?;
                 let rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(v) FROM keyword_rule_versions v WHERE scope_id=$1 ORDER BY revision DESC LIMIT 31 OFFSET $2").bind(&scope).bind((page-1)*30).fetch_all(&mut *tx).await?;
                 let items: Vec<Value> = rows
                     .iter()
@@ -113,7 +112,7 @@ impl KeywordStore for KeywordRepository {
                 json!({"items":items,"has_more":rows.len()>30,"algorithm":k::ALGORITHM,"unicode_version":k::UNICODE_VERSION})
             }
             k::Command::Publish { scope, input } => {
-                scope_access(&mut tx, actor.id, admin, &scope).await?;
+                scope_access(&mut tx, &scope).await?;
                 k::validate(&input.entries)?;
                 let revision: i64 = sqlx::query_scalar(
                     "SELECT revision FROM keyword_scope_heads WHERE id=$1 FOR UPDATE",

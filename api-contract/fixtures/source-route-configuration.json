@@ -1,0 +1,11 @@
+{
+  "data": {
+    "type": "source-route-configurations",
+    "id": "result",
+    "attributes": {
+      "business_unit_id": "00000000-0000-0000-0000-000000000001",
+      "name": "单位",
+      "status": "active"
+    }
+  }
+}

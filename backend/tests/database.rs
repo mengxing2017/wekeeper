@@ -51,7 +51,7 @@ async fn migrations_handle_residual_objects_after_table_only_reset() {
     .unwrap();
     database::migrate(&pool).await.unwrap();
     database::migrate(&pool).await.unwrap();
-    let obsolete: i64 = sqlx::query_scalar("SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND (column_name IN ('school_id','workspace_id','storage_scope') OR table_name IN ('media_access_tokens','distribution_forum_materials','distribution_materials','distribution_source_organizations','broadcast_task_posts','broadcast_content_references','templates','template_versions','wecom_workspaces','wecom_workspace_members','mobile_workspaces','mobile_workspace_members','unit_receiving_storage','mobile_shared_school_access','mobile_shared_access_events'))").fetch_one(&pool).await.unwrap();
+    let obsolete: i64 = sqlx::query_scalar("SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND (column_name IN ('school_id','workspace_id','storage_scope') OR table_name IN ('source_route_managers','media_access_tokens','distribution_forum_materials','distribution_materials','distribution_source_organizations','broadcast_task_posts','broadcast_content_references','templates','template_versions','wecom_workspaces','wecom_workspace_members','mobile_workspaces','mobile_workspace_members','unit_receiving_storage','mobile_shared_school_access','mobile_shared_access_events'))").fetch_one(&pool).await.unwrap();
     assert_eq!(
         obsolete, 0,
         "workspace tables and partition columns must be absent"
@@ -264,6 +264,105 @@ UPDATE mobile_v9_tasks SET stopped=true;
     );
     let obsolete: bool = sqlx::query_scalar("SELECT to_regclass('mobile_workspaces') IS NULL AND to_regclass('wecom_workspaces') IS NULL AND to_regclass('unit_receiving_storage') IS NULL").fetch_one(&pool).await.unwrap();
     assert!(obsolete);
+    sqlx::raw_sql(&format!(
+        "SET search_path TO public; DROP SCHEMA {schema} CASCADE;"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn route_viewer_retirement_preserves_business_and_audit_data() {
+    let url = std::env::var("WEKEEPER_TEST_DATABASE_URL")
+        .expect("explicit isolated test database required");
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&url)
+        .await
+        .unwrap();
+    let schema = format!("retire_viewers_{}", uuid::Uuid::new_v4().simple());
+    sqlx::raw_sql(&format!(
+        "CREATE SCHEMA {schema}; SET search_path TO {schema},public;"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    for migration in database::MIGRATOR
+        .iter()
+        .filter(|m| m.version < 202611160188)
+    {
+        sqlx::raw_sql(&migration.sql).execute(&pool).await.unwrap();
+    }
+    sqlx::raw_sql(r#"
+DO $$
+DECLARE actor uuid=gen_random_uuid(); platform uuid=gen_random_uuid(); unit uuid=gen_random_uuid();
+ receipt uuid=gen_random_uuid(); draft uuid=gen_random_uuid(); preview uuid=gen_random_uuid(); intent uuid=gen_random_uuid();
+BEGIN
+ INSERT INTO accounts(id,username,display_name,platform_admin) VALUES(actor,'retirement-admin','Admin',true);
+ INSERT INTO source_callers(source_id) VALUES(platform);
+ INSERT INTO business_units(id,platform_id,name,created_by,updated_by) VALUES(unit,platform,'Unit',actor,actor);
+ INSERT INTO source_routes(route_id,source_id,business_unit_id,route_name,status) VALUES('kept-route',platform,unit,'Route','active');
+ INSERT INTO source_route_managers(route_id,account_id,granted_by,can_recheck) VALUES('kept-route',actor,actor,true);
+ INSERT INTO source_receipts(receipt_id,source_id,business_unit_id,event_id,route_id,body_sha256,schema_version)
+ VALUES(receipt,platform,unit,gen_random_uuid(),'kept-route','original',2);
+ INSERT INTO orchestration_messages(id,platform_id,unit_id,source_event_id,evidence_ref,original)
+ VALUES(gen_random_uuid(),platform,unit,gen_random_uuid(),receipt,'{"content":"Frozen message"}');
+ INSERT INTO channel_receiving_configurations(id,business_unit_id,channel,configuration,authorized_by)
+ VALUES(gen_random_uuid(),unit,'mobile','{"enabled":true,"target_ids":[],"device_ids":[]}',actor);
+ INSERT INTO source_access_audit(id,source_id,actor_id,action,result_code,request_id,detail)
+ VALUES(gen_random_uuid(),platform,actor,'source.manager.changed','ok','retirement-test','{"route_id":"kept-route","granted":true}');
+ INSERT INTO mobile_v9_task_drafts(id,intent_id,actor_id,target_ids,message,content_digest,between_targets_seconds)
+ VALUES(draft,intent,actor,'{}','Frozen task','digest',30);
+ INSERT INTO mobile_v9_previews(id,draft_id,draft_revision,plan,digest) VALUES(preview,draft,1,'{}','digest');
+ INSERT INTO mobile_v9_tasks(id,draft_id,intent_id,preview_id,confirmed_by,confirmed_until)
+ VALUES(gen_random_uuid(),draft,intent,preview,actor,clock_timestamp()+interval '1 hour');
+END $$;
+"#).execute(&pool).await.unwrap();
+    let tables = [
+        "source_routes",
+        "source_receipts",
+        "orchestration_messages",
+        "channel_receiving_configurations",
+        "source_access_audit",
+        "accounts",
+        "mobile_v9_task_drafts",
+        "mobile_v9_previews",
+        "mobile_v9_tasks",
+    ];
+    let mut before = Vec::new();
+    for table in tables {
+        let rows: serde_json::Value =
+            sqlx::query_scalar(&format!("SELECT jsonb_agg(to_jsonb(t)) FROM {table} t"))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(
+            rows.as_array().is_some_and(|rows| !rows.is_empty()),
+            "{table}"
+        );
+        before.push(rows);
+    }
+    let migration = database::MIGRATOR
+        .iter()
+        .find(|m| m.version == 202611160188)
+        .unwrap();
+    sqlx::raw_sql(&migration.sql).execute(&pool).await.unwrap();
+    let removed: bool = sqlx::query_scalar("SELECT to_regclass('source_route_managers') IS NULL")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(removed);
+    for (table, expected) in tables.into_iter().zip(before) {
+        let rows: serde_json::Value =
+            sqlx::query_scalar(&format!("SELECT jsonb_agg(to_jsonb(t)) FROM {table} t"))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(rows, expected, "{table} must remain intact");
+    }
     sqlx::raw_sql(&format!(
         "SET search_path TO public; DROP SCHEMA {schema} CASCADE;"
     ))

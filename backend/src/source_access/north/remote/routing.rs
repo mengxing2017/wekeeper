@@ -34,45 +34,11 @@ async fn configuration(
     )
     .await
 }
-async fn managers(
-    State(a): State<Application>,
-    actor: Actor,
-    Path(route): Path<String>,
-) -> std::result::Result<Response, Response> {
-    run(
-        a,
-        actor,
-        Command::Managers { route },
-        "source-route-managers",
-    )
-    .await
-}
-async fn manager(
-    State(a): State<Application>,
-    actor: Actor,
-    Path(route): Path<String>,
-    input: crate::http::jsonapi::Input,
-) -> std::result::Result<Response, Response> {
-    let input = input
-        .decode::<ManagerInput>("source-route-managers")
-        .map_err(|_| Fault("invalid_request").response(&actor.request_id))?;
-    run(
-        a,
-        actor,
-        Command::Manager { route, input },
-        "source-route-managers",
-    )
-    .await
-}
 pub fn router() -> Router<Application> {
     Router::new()
         .route("/api/v2/admin/source-route-assignments", get(assigned))
         .route(
             "/api/v2/admin/source-routes/{route}/configuration",
             get(configuration),
-        )
-        .route(
-            "/api/v2/admin/source-routes/{route}/managers",
-            get(managers).put(manager),
         )
 }

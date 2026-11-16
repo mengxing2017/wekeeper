@@ -557,6 +557,39 @@ async fn admin_list_http_pagination_and_message_authorization() {
         .unwrap();
     let app = http::app_router(bootstrap::build_application(f.pool.clone()));
     let path = "/api/v2/admin/messages?page%5Bnumber%5D=1&page%5Bsize%5D=30";
+    let protected_paths = [
+        "/api/v2/admin/source-route-assignments".to_string(),
+        format!("/api/v2/admin/source-routes/{}/configuration", f.route),
+        format!("/api/v2/admin/source-routes/{}/receipts", f.route),
+    ];
+    for protected in &protected_paths {
+        read(&app, protected, Some(&token), 200).await;
+        read(&app, protected, None, 401).await;
+    }
+    let configuration = read(&app, &protected_paths[1], Some(&token), 200).await;
+    let mut expected: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/source-route-configuration.json"
+    ))
+    .unwrap();
+    expected["data"]["attributes"]["business_unit_id"] = serde_json::json!(f.unit);
+    assert_eq!(configuration, expected);
+    let managers = format!("/api/v2/admin/source-routes/{}/managers", f.route);
+    for method in ["GET", "PUT"] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(&managers)
+                    .header("cookie", format!("wekeeper_session={token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status().as_u16(), 404);
+    }
+
     let empty = read(&app, path, Some(&token), 200).await;
     assert_eq!(empty["data"]["type"], "messages");
     assert_eq!(empty["data"]["id"], "result");
@@ -754,21 +787,53 @@ async fn admin_list_http_pagination_and_message_authorization() {
     .execute(&f.pool)
     .await
     .unwrap();
-    sqlx::query(
-        "INSERT INTO source_route_managers(route_id,account_id,granted_by) VALUES($1,$2,$3)",
-    )
-    .bind(&f.route)
-    .bind(ordinary)
-    .bind(f.actor.id)
-    .execute(&f.pool)
-    .await
-    .unwrap();
     let (ordinary_token, _) =
         wekeeper_api::identity::south::adapter::postgres::Repository(f.pool.clone())
             .session(ordinary, "browser", false)
             .await
             .unwrap();
     read(&app, path, Some(&ordinary_token), 403).await;
+    for protected in &protected_paths {
+        read(&app, protected, Some(&ordinary_token), 403).await;
+    }
+    // A stale in-memory admin flag must not bypass the transactional account check.
+    let mut stale_admin = f.actor.clone();
+    stale_admin.id = ordinary;
+    use wekeeper_api::source_access::{
+        domain::{projection, routing},
+        south::{
+            adapter::postgres::{projection::ReceiptsRepository, routing::RoutingRepository},
+            port::{ProjectionStore, RoutingStore},
+        },
+    };
+    let routing = RoutingRepository(f.pool.clone());
+    let receipts = ReceiptsRepository(f.pool.clone());
+    for command in [
+        routing::Command::Assigned,
+        routing::Command::Configuration {
+            route: f.route.clone(),
+        },
+    ] {
+        assert_eq!(
+            routing.execute(&stale_admin, command).await.unwrap_err().0,
+            "forbidden"
+        );
+    }
+    assert_eq!(
+        receipts
+            .execute(
+                &stale_admin,
+                projection::Command::List {
+                    route: f.route.clone(),
+                    page: Default::default()
+                }
+            )
+            .await
+            .unwrap_err()
+            .0,
+        "forbidden"
+    );
+
     let mut stale = f.actor.clone();
     stale.id = ordinary;
     assert!(matches!(
@@ -783,6 +848,32 @@ async fn admin_list_http_pagination_and_message_authorization() {
         .await
         .unwrap();
     read(&app, path, Some(&token), 401).await;
+    for protected in &protected_paths {
+        read(&app, protected, Some(&token), 401).await;
+    }
+    assert_eq!(
+        routing
+            .execute(&f.actor, routing::Command::Assigned)
+            .await
+            .unwrap_err()
+            .0,
+        "forbidden"
+    );
+    assert_eq!(
+        receipts
+            .execute(
+                &f.actor,
+                projection::Command::List {
+                    route: f.route.clone(),
+                    page: Default::default()
+                }
+            )
+            .await
+            .unwrap_err()
+            .0,
+        "forbidden"
+    );
+
     assert!(matches!(
         wekeeper_api::message_orchestration::south::adapter::postgres::Repository(f.pool.clone())
             .list(&f.actor, None, None, Default::default())

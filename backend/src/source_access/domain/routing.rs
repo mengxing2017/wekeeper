@@ -6,18 +6,10 @@ impl From<serde_json::Error> for Fault {
         Self("invalid_request")
     }
 }
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ManagerInput {
-    pub username: String,
-    pub granted: bool,
-}
 #[derive(Clone, Debug)]
 pub enum Command {
     Assigned,
     Configuration { route: String },
-    Managers { route: String },
-    Manager { route: String, input: ManagerInput },
 }
 /// Machine-visible metadata deliberately excludes internal organization and resources.
 #[derive(Debug, Serialize, Deserialize)]
