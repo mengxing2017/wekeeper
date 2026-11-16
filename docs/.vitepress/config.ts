@@ -32,7 +32,7 @@ export default defineConfig({
         ] },
         { text: "企业微信分发管理", items: [
           { text: "全局分发权限", link: "/guide/workspaces" },
-          { text: "客户群与模板", link: "/guide/operator/groups-and-templates" },
+          { text: "客户群", link: "/guide/operator/groups-and-templates" },
           { text: "官方发送账号", link: "/guide/operator/official-senders" },
           { text: "官方群发任务", link: "/guide/operator/broadcast-tasks" },
           { text: "通讯录与客户群目录", link: "/guide/platform-admin/directory-and-assets" },

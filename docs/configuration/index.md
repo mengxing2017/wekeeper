@@ -24,7 +24,6 @@
 | --- | --- |
 | `POSTGRES_*` | Compose 数据库初始化；修改 env 不会自动更改已有卷中的密码 |
 | `WEKEEPER_DATABASE_*` | 普通 API 数据库连接；本地进程需显式注入 |
-| `WEKEEPER_FORUM_ORIGIN` | linjian 的实际 HTTPS origin；历史素材消息详情链接使用 |
 | `WEKEEPER_PUBLIC_ORIGIN` | 浏览器 Origin 校验与公开链接，生产使用实际 HTTPS origin |
 | `WEKEEPER_INSECURE_LOCAL_AUTH` | 仅本地 HTTP 登录；生产 false，嵌入式入口强制本地模式 |
 | `WEKEEPER_WECOM_CORP_ID` / `WEKEEPER_WECOM_SECRET` | 单企业后端凭据，不能注入前端 |
