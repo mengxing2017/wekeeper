@@ -49,6 +49,9 @@ impl Fault {
             "调用方凭据加密服务未配置，请联系部署人员完成配置"
         } else {
             match self.0 {
+                "unsupported_event_type" => "不支持此事件类型；仅接收普通消息，不接收撤回通知",
+                "content_empty" => "消息正文不能为空或全为空白",
+                "content_too_long" => "消息正文不能超过 200 个字符（汉字、标点、空格和换行均计入）",
                 "invalid_page" => "分页参数不合法",
                 "invalid_keyword" => {
                     "关键字不能为空白，原始长度最多 512 字节，规范化后最多 128 个字符"
@@ -69,7 +72,18 @@ impl Fault {
         let retryable = !configuration_required
             && (matches!(status, 429 | 500 | 503)
                 || matches!(self.0, "replay_detected" | "timestamp_expired"));
-        let mut response=(StatusCode::from_u16(status).unwrap(),[("content-type",MEDIA_TYPE)],Json(json!({"errors":[{"status":status.to_string(),"code":code,"title":title,"meta":{"retryable":retryable,"supported_versions":[2],"request_id":request_id}}]}))).into_response();
+        let mut error = json!({"status":status.to_string(),"code":code,"title":title,"meta":{"retryable":retryable,"supported_versions":[2],"request_id":request_id}});
+        if code == "unsupported_event_type" {
+            error["source"] = json!({"pointer":"/data/attributes/event_type"});
+        } else if matches!(code, "content_empty" | "content_too_long") {
+            error["source"] = json!({"pointer":"/data/attributes/content"});
+        }
+        let mut response = (
+            StatusCode::from_u16(status).unwrap(),
+            [("content-type", MEDIA_TYPE)],
+            Json(json!({"errors":[error]})),
+        )
+            .into_response();
         if status == 503 {
             response
                 .headers_mut()
@@ -173,7 +187,7 @@ async fn machine(State(a): State<Application>, req: Request) -> Response {
                 } else {
                     StatusCode::OK
                 },
-                [("content-type", MEDIA_TYPE), ("x-source-poll-after", "5")],
+                [("content-type", MEDIA_TYPE)],
                 Json(value),
             )
                 .into_response(),
@@ -472,6 +486,32 @@ mod response_tests {
                 .unwrap()
                 .contains("加密服务未配置")
         );
+    }
+    #[tokio::test]
+    async fn content_errors_identify_the_field_and_explain_the_limit() {
+        for (code, title) in [
+            ("content_empty", "消息正文不能为空或全为空白"),
+            (
+                "content_too_long",
+                "消息正文不能超过 200 个字符（汉字、标点、空格和换行均计入）",
+            ),
+        ] {
+            let response = Fault(code).response("content-validation");
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let value: serde_json::Value = serde_json::from_slice(
+                &axum::body::to_bytes(response.into_body(), MAX_BODY)
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(value["errors"][0]["code"], code);
+            assert_eq!(value["errors"][0]["title"], title);
+            assert_eq!(
+                value["errors"][0]["source"]["pointer"],
+                "/data/attributes/content"
+            );
+            assert_eq!(value["errors"][0]["meta"]["retryable"], false);
+        }
     }
     #[tokio::test]
     async fn published_error_matches_rust_response() {

@@ -227,16 +227,6 @@ pub fn evaluate(rules: &[Rule], fields: &[(&str, &str)]) -> Result<Evaluation> {
     result.truncated = result.total_hits > result.samples.len() as i64;
     Ok(result)
 }
-pub fn compose(title: Option<&str>, content: Option<&str>, url: &str) -> String {
-    format!(
-        "{}\n{}\n{}",
-        title.unwrap_or_default(),
-        content.unwrap_or_default(),
-        url
-    )
-    .replace("\r\n", "\n")
-    .replace('\r', "\n")
-}
 /// Candidate adapters keep slot identities, ordering and cursor transactions; filtering never consumes a slot.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CandidateDecision {
@@ -403,10 +393,6 @@ mod tests {
             check_candidate(&rules, Uuid::nil(), Uuid::nil(), "原文正常广告")
                 .unwrap()
                 .eligible
-        );
-        assert_eq!(
-            compose(Some("T"), Some("C"), "https://e.test"),
-            "T\nC\nhttps://e.test"
         );
     }
 }

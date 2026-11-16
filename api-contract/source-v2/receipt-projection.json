@@ -1,17 +1,10 @@
 {
-  "contract_version": "source-v2-6",
+  "contract_version": "source-v2-7",
   "statuses": [
-    "received",
-    "applied",
-    "rejected"
+    "received"
   ],
-  "processing_stages": [
-    "received",
-    "delegation_pending",
-    "task_created",
-    "not_dispatched"
-  ],
+  "processing_stages": [],
   "identity": "platform and event id; identical retry returns the same receipt, conflicting bytes are rejected",
-  "source_metadata": "version and sequence are audit facts, never ordering, replacement or delivery rules",
-  "results": "durable per-target and per-attempt channel outcomes"
+  "source_metadata": "complete content supplied by caller; no content versions, sequence, replacement or withdrawal",
+  "results": "acceptance only; internal processing and per-target sending results are administrator-only"
 }

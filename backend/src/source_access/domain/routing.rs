@@ -19,8 +19,6 @@ pub struct RouteCapability {
     pub available: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub execution_state: Option<String>,
 }
 #[cfg(test)]
 mod capability_contract_tests {
@@ -35,7 +33,6 @@ mod capability_contract_tests {
             route_id: "fixture-route".into(),
             available: true,
             display_name: Some("通知路由".into()),
-            execution_state: Some("paused".into()),
         };
         assert_eq!(
             serde_json::to_value(route).unwrap(),
@@ -45,7 +42,6 @@ mod capability_contract_tests {
             route_id: "unknown".into(),
             available: false,
             display_name: None,
-            execution_state: None,
         };
         assert_eq!(
             serde_json::to_value(unavailable).unwrap(),

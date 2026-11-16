@@ -60,7 +60,7 @@ async fn unit_configuration_has_no_workspace_version_or_target_exclusivity() {
             .is_err()
     );
     let _ = (&f.route, f.platform, f.scope);
-    f.message(1).await;
+    f.message().await;
     f.run().await;
     f.ad("广告", "global").await;
     f.close().await;
@@ -102,7 +102,7 @@ async fn unit_creates_target_and_binds_phone_without_workspace_setup() {
         .unwrap();
     assert_eq!(replay.id, id);
     f.configure(vec![target.id]).await;
-    let (message, _) = f.message(1).await;
+    let (message, _) = f.message().await;
     f.run().await;
     let n: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM orchestration_delegates WHERE message_id=$1 AND state='delegated'",

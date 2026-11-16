@@ -22,8 +22,7 @@
         {
           "route_id": "fixture-route",
           "available": true,
-          "display_name": "通知路由",
-          "execution_state": "paused"
+          "display_name": "通知路由"
         }
       ],
       "next_cursor": null

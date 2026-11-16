@@ -48,13 +48,8 @@ pub struct Event {
     pub schema_version: u32,
     pub route_id: String,
     pub event_type: String,
-    pub external_content_id: String,
-    pub version: String,
-    pub sequence: i64,
     pub occurred_at: chrono::DateTime<chrono::Utc>,
-    pub title: Option<String>,
-    pub content: Option<String>,
-    pub detail_url: String,
+    pub content: String,
 }
 #[derive(Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -165,19 +160,6 @@ pub fn window(timestamp: &str, now: i64) -> Result<i64> {
     ensure(seconds.abs_diff(now) <= 300, "timestamp_expired")?;
     Ok(seconds)
 }
-pub fn origin(value: &str) -> Result<url::Url> {
-    let u = url::Url::parse(value).map_err(|_| Fault("invalid_request"))?;
-    ensure(
-        u.scheme() == "https"
-            && u.host_str().is_some()
-            && u.username().is_empty()
-            && u.password().is_none()
-            && u.fragment().is_none()
-            && u.query().is_none(),
-        "invalid_request",
-    )?;
-    Ok(u)
-}
 pub fn identifier(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
@@ -189,35 +171,27 @@ impl Event {
     pub fn validate(&self) -> Result<()> {
         ensure(self.schema_version == 2, "unsupported_version")?;
         ensure(
-            identifier(&self.route_id)
-                && !self.external_content_id.is_empty()
-                && self.external_content_id.len() <= 256
-                && !self.version.is_empty()
-                && self.version.len() <= 256
-                && (1..=9_007_199_254_740_991).contains(&self.sequence),
-            "invalid_request",
+            self.event_type == "content.upsert",
+            "unsupported_event_type",
         )?;
-        ensure(
-            matches!(self.event_type.as_str(), "content.upsert"),
-            "invalid_request",
-        )?;
-        ensure(
-            self.title.as_ref().is_some_and(|v| !v.trim().is_empty())
-                && self.content.as_ref().is_some_and(|v| !v.trim().is_empty()),
-            "invalid_request",
-        )?;
-        ensure(
-            self.title.as_ref().is_none_or(|v| v.chars().count() <= 512)
-                && self
-                    .content
-                    .as_ref()
-                    .is_none_or(|v| v.chars().count() <= 100_000)
-                && self.detail_url.len() <= 2048,
-            "invalid_request",
-        )?;
-        origin(&self.detail_url)?;
+        ensure(identifier(&self.route_id), "invalid_request")?;
+        ensure(!self.content.trim().is_empty(), "content_empty")?;
+        ensure(self.content.chars().count() <= 200, "content_too_long")?;
         Ok(())
     }
+}
+/// Inspect the event discriminator before validating the ordinary message body.
+/// Withdrawals are rejected even when they do not contain a content field.
+pub fn parse_event(body: &[u8]) -> Result<Document<Event>> {
+    let value: serde_json::Value =
+        serde_json::from_slice(body).map_err(|_| Fault("invalid_request"))?;
+    if let Some(kind) = value
+        .pointer("/data/attributes/event_type")
+        .and_then(serde_json::Value::as_str)
+    {
+        ensure(kind == "content.upsert", "unsupported_event_type")?;
+    }
+    serde_json::from_value(value).map_err(|_| Fault("forbidden_field"))
 }
 #[cfg(test)]
 mod tests {
@@ -342,6 +316,89 @@ pub struct Signed {
 mod boundary_tests {
     use super::*;
     use serde_json::json;
+    fn message(content: &str) -> serde_json::Value {
+        json!({"data":{"type":"source-events","id":Uuid::nil(),"attributes":{
+            "event_id":Uuid::nil(),"schema_version":2,"route_id":"route-1",
+            "event_type":"content.upsert","occurred_at":"2026-11-16T00:00:00Z","content":content
+        }}})
+    }
+    #[test]
+    fn complete_content_roundtrips_without_composition_or_url_validation() {
+        for content in [
+            "正文",
+            " 标题\r\n正文\n#小程序://Linjian/示例 ",
+            "http://localhost:5173/a?q=1#part",
+            "https://example.test/a?q=1#part",
+        ] {
+            let value = message(content);
+            let doc = parse_event(&serde_json::to_vec(&value).unwrap()).unwrap();
+            doc.data.attributes.validate().unwrap();
+            assert_eq!(doc.data.attributes.content, content);
+            assert_eq!(serde_json::to_value(doc).unwrap(), value);
+        }
+        for removed in [
+            "title",
+            "detail_url",
+            "external_content_id",
+            "version",
+            "sequence",
+        ] {
+            let mut value = message("正文");
+            value["data"]["attributes"][removed] = json!("legacy");
+            assert!(parse_event(&serde_json::to_vec(&value).unwrap()).is_err());
+        }
+    }
+    #[test]
+    fn content_bounds_use_unicode_scalars_and_reject_empty_content() {
+        for content in ["", " \r\n\t"] {
+            let doc = parse_event(&serde_json::to_vec(&message(content)).unwrap()).unwrap();
+            assert_eq!(
+                doc.data.attributes.validate().unwrap_err().0,
+                "content_empty"
+            );
+        }
+        for character in ["汉", "🌸", "a"] {
+            let value = message(&character.repeat(200));
+            let doc = parse_event(&serde_json::to_vec(&value).unwrap()).unwrap();
+            doc.data.attributes.validate().unwrap();
+            let value = message(&character.repeat(201));
+            let doc = parse_event(&serde_json::to_vec(&value).unwrap()).unwrap();
+            assert_eq!(
+                doc.data.attributes.validate().unwrap_err().0,
+                "content_too_long"
+            );
+        }
+        for missing in [true, false] {
+            let mut value = message("正文");
+            if missing {
+                value["data"]["attributes"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("content");
+            } else {
+                value["data"]["attributes"]["content"] = json!(null);
+            }
+            assert!(parse_event(&serde_json::to_vec(&value).unwrap()).is_err());
+        }
+    }
+    #[test]
+    fn unsupported_events_are_rejected_even_without_content() {
+        for kind in ["content.withdrawn", "unknown"] {
+            let mut value = message("正文");
+            value["data"]["attributes"]["event_type"] = json!(kind);
+            value["data"]["attributes"]
+                .as_object_mut()
+                .unwrap()
+                .remove("content");
+            assert_eq!(
+                parse_event(&serde_json::to_vec(&value).unwrap())
+                    .err()
+                    .unwrap()
+                    .0,
+                "unsupported_event_type"
+            );
+        }
+    }
     #[test]
     fn caller_credentials_do_not_accept_downstream_host_configuration() {
         let input = json!({"unit_name":"Linjian","valid_from":"2026-11-08T00:00:00Z","valid_until":"2027-11-08T00:00:00Z"});
@@ -383,7 +440,7 @@ mod boundary_tests {
     #[test]
     fn strict_envelope_forbids_execution_and_school_fields() {
         let id = Uuid::nil();
-        let attributes = json!({"event_id":id,"schema_version":2,"route_id":"route-1","event_type":"content.upsert","external_content_id":"post","version":"1","sequence":1,"occurred_at":"2026-11-08T00:00:00Z","title":"中文","content":"正文","detail_url":"https://forum.example.com/community/a/posts/1"});
+        let attributes = json!({"event_id":id,"schema_version":2,"route_id":"route-1","event_type":"content.upsert","occurred_at":"2026-11-08T00:00:00Z","content":"正文"});
         let doc = json!({"data":{"type":"source-events","id":id,"attributes":attributes}});
         let valid: Document<Event> = serde_json::from_value(doc.clone()).unwrap();
         valid.data.attributes.validate().unwrap();
@@ -411,17 +468,6 @@ mod boundary_tests {
         let mut bad = doc;
         bad["included"] = json!([]);
         assert!(serde_json::from_value::<Document<Event>>(bad).is_err());
-    }
-    #[test]
-    fn rejects_unsafe_endpoint_components() {
-        for value in [
-            "http://forum.example.com",
-            "https://user:pass@forum.example.com",
-            "https://forum.example.com/#fragment",
-            "https://forum.example.com/?next=evil",
-        ] {
-            assert!(origin(value).is_err());
-        }
     }
 }
 

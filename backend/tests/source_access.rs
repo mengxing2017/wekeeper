@@ -180,9 +180,137 @@ async fn two_instances_replay_scope_lifetime_and_deletion() {
     let one = app_router(build_application(pool.clone()));
     let two = app_router(build_application(pool.clone()));
     let event = Uuid::now_v7();
-    let body=serde_json::to_vec(&json!({"data":{"type":"source-events","id":event,"attributes":{"event_id":event,"schema_version":2,"route_id":route,"event_type":"content.upsert","external_content_id":"post-1","version":"1","sequence":1,"occurred_at":chrono::Utc::now(),"title":"中文🌸","content":"内容","detail_url":"https://content.example.net/articles/1"}}})).unwrap();
-    let nonce = Uuid::new_v4();
+    let body=serde_json::to_vec(&json!({"data":{"type":"source-events","id":event,"attributes":{"event_id":event,"schema_version":2,"route_id":route,"event_type":"content.upsert","occurred_at":chrono::Utc::now(),"content":"汉".repeat(200)}}})).unwrap();
     let path = "/api/v2/source-events";
+    for kind in ["content.withdrawn", "unknown"] {
+        let rejected_event = Uuid::new_v4();
+        let bytes = serde_json::to_vec(&json!({"data":{"type":"source-events","id":rejected_event,"attributes":{
+            "event_id":rejected_event,"schema_version":2,"route_id":route,"event_type":kind,"occurred_at":chrono::Utc::now()
+        }}})).unwrap();
+        let (status, error) = read(
+            one.clone()
+                .oneshot(signed(
+                    key,
+                    &material,
+                    path,
+                    "POST",
+                    rejected_event,
+                    Uuid::new_v4(),
+                    &bytes,
+                ))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, 400, "{error}");
+        assert_eq!(error["errors"][0]["code"], "unsupported_event_type");
+        assert_eq!(
+            error["errors"][0]["source"]["pointer"],
+            "/data/attributes/event_type"
+        );
+        assert_eq!(error["errors"][0]["meta"]["retryable"], false);
+        let count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM source_receipts WHERE event_id=$1")
+                .bind(rejected_event)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 0);
+    }
+    for (content, code, title) in [
+        (
+            "汉".repeat(201),
+            "content_too_long",
+            "消息正文不能超过 200 个字符（汉字、标点、空格和换行均计入）",
+        ),
+        (
+            "🌸".repeat(201),
+            "content_too_long",
+            "消息正文不能超过 200 个字符（汉字、标点、空格和换行均计入）",
+        ),
+        (
+            " \r\n\t".to_owned(),
+            "content_empty",
+            "消息正文不能为空或全为空白",
+        ),
+    ] {
+        let rejected_event = Uuid::new_v4();
+        let mut payload: Value = serde_json::from_slice(&body).unwrap();
+        payload["data"]["id"] = json!(rejected_event);
+        payload["data"]["attributes"]["event_id"] = json!(rejected_event);
+        payload["data"]["attributes"]["content"] = json!(content);
+        let bytes = serde_json::to_vec(&payload).unwrap();
+        let (status, error) = read(
+            one.clone()
+                .oneshot(signed(
+                    key,
+                    &material,
+                    path,
+                    "POST",
+                    rejected_event,
+                    Uuid::new_v4(),
+                    &bytes,
+                ))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, 400, "{error}");
+        assert_eq!(error["errors"][0]["code"], code);
+        assert_eq!(error["errors"][0]["title"], title);
+        assert_eq!(
+            error["errors"][0]["source"]["pointer"],
+            "/data/attributes/content"
+        );
+        assert_eq!(error["errors"][0]["meta"]["retryable"], false);
+        let count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM source_receipts WHERE event_id=$1")
+                .bind(rejected_event)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 0);
+    }
+    // Execution state is an internal setting, not intake authorization.
+    sqlx::query("UPDATE source_routes SET status='disabled' WHERE route_id=$1")
+        .bind(route)
+        .execute(&pool)
+        .await
+        .unwrap();
+    for check_path in [
+        "/api/v2/source-authentications",
+        "/api/v2/source-route-checks",
+    ] {
+        let check_id = Uuid::new_v4();
+        let kind = check_path.rsplit('/').next().unwrap();
+        let bytes = serde_json::to_vec(
+            &json!({"data":{"type":kind,"id":check_id,"attributes":{"route_id":route}}}),
+        )
+        .unwrap();
+        let (status, value) = read(
+            one.clone()
+                .oneshot(signed(
+                    key,
+                    &material,
+                    check_path,
+                    "POST",
+                    check_id,
+                    Uuid::new_v4(),
+                    &bytes,
+                ))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, 200, "{value}");
+        assert_eq!(value["data"]["attributes"]["routes"][0]["available"], true);
+        assert!(
+            value["data"]["attributes"]["routes"][0]
+                .get("execution_state")
+                .is_none()
+        );
+    }
+    let nonce = Uuid::new_v4();
     let (r1, r2) = tokio::join!(
         one.clone()
             .oneshot(signed(key, &material, path, "POST", event, nonce, &body)),
@@ -200,6 +328,13 @@ async fn two_instances_replay_scope_lifetime_and_deletion() {
     } else {
         v2["data"]["id"].clone()
     };
+    let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM source_message_handoffs h JOIN source_receipts r USING(receipt_id) WHERE r.event_id=$1 AND h.state='pending'").bind(event).fetch_one(&pool).await.unwrap();
+    assert_eq!(pending, 1, "acceptance finishes before the worker runs");
+    sqlx::query("UPDATE source_routes SET status='active' WHERE route_id=$1")
+        .bind(route)
+        .execute(&pool)
+        .await
+        .unwrap();
     let accepted_unit: Uuid =
         sqlx::query_scalar("SELECT business_unit_id FROM source_receipts WHERE receipt_id=$1")
             .bind(Uuid::parse_str(receipt.as_str().unwrap()).unwrap())
@@ -333,9 +468,7 @@ async fn two_instances_replay_scope_lifetime_and_deletion() {
     assert_eq!(accepted.facts.unit_id, unit_id);
     assert_eq!(accepted.facts.source_event_id, event);
     assert_eq!(accepted.facts.original.event_kind, EventKind::Upsert);
-    assert_eq!(accepted.facts.original.external_content_id, "post-1");
-    assert_eq!(accepted.facts.original.sequence, 1);
-    assert_eq!(accepted.facts.original.content.as_deref(), Some("内容"));
+    assert_eq!(accepted.facts.original.content, "汉".repeat(200));
     assert_eq!(
         bridge.accept(platform_id, receipt_id).await.unwrap().id,
         accepted.id
@@ -475,7 +608,6 @@ async fn two_instances_replay_scope_lifetime_and_deletion() {
     let mut concurrent_body: Value = serde_json::from_slice(&body).unwrap();
     concurrent_body["data"]["id"] = json!(concurrent_event);
     concurrent_body["data"]["attributes"]["event_id"] = json!(concurrent_event);
-    concurrent_body["data"]["attributes"]["external_content_id"] = json!("parallel-event");
     let concurrent_body = serde_json::to_vec(&concurrent_body).unwrap();
     let (left, right) = tokio::join!(
         one.clone().oneshot(signed(
@@ -505,7 +637,7 @@ async fn two_instances_replay_scope_lifetime_and_deletion() {
     );
     assert_eq!(left["data"]["id"], right["data"]["id"]);
     let mut changed: Value = serde_json::from_slice(&body).unwrap();
-    changed["data"]["attributes"]["title"] = json!("different");
+    changed["data"]["attributes"]["content"] = json!("different");
     let changed = serde_json::to_vec(&changed).unwrap();
     assert_eq!(
         read(
@@ -628,27 +760,28 @@ async fn two_instances_replay_scope_lifetime_and_deletion() {
             .unwrap(),
     )
     .await;
-    assert_eq!(state["data"]["attributes"]["status"], "applied");
-    assert_eq!(
-        state["data"]["attributes"]["processing_stage"],
-        "not_dispatched"
-    );
-    assert_eq!(state["data"]["attributes"]["retryable"], false);
-    assert!(state["data"]["attributes"]["observed_sequence"].is_null());
+    assert_eq!(state["data"]["attributes"]["status"], "received");
+    assert_eq!(state["data"]["attributes"].as_object().unwrap().len(), 3);
+    let internal: String =
+        sqlx::query_scalar("SELECT processing_stage FROM source_receipts WHERE receipt_id=$1")
+            .bind(receipt_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(internal, "not_dispatched");
     let conflicts:Value=sqlx::query_scalar("SELECT detail FROM source_access_audit WHERE source_id=$1 AND action='source.event.conflict' LIMIT 1").bind(source.parse::<Uuid>().unwrap()).fetch_one(&pool).await.unwrap();
     assert_ne!(conflicts["first_digest"], conflicts["conflicting_digest"]);
-    for (seq, title, expected) in [
-        (1, "中文🌸", "applied"),
-        (1, "另一份正文", "applied"),
-        (6, "更高版本", "applied"),
-        (5, "迟到旧版", "applied"),
+    for (content, expected) in [
+        ("中文🌸", "received"),
+        ("另一份正文", "received"),
+        ("#小程序://Linjian/示例", "received"),
+        (" http://example.test/a?q=1#part\r\n正文 ", "received"),
     ] {
         let eid = Uuid::new_v4();
         let mut payload: Value = serde_json::from_slice(&body).unwrap();
         payload["data"]["id"] = json!(eid);
         payload["data"]["attributes"]["event_id"] = json!(eid);
-        payload["data"]["attributes"]["sequence"] = json!(seq);
-        payload["data"]["attributes"]["title"] = json!(title);
+        payload["data"]["attributes"]["content"] = json!(content);
         let bytes = serde_json::to_vec(&payload).unwrap();
         let (status, accepted) = read(
             two.clone()
@@ -685,7 +818,7 @@ async fn two_instances_replay_scope_lifetime_and_deletion() {
             ))
             .await
             .unwrap();
-        assert_eq!(response.headers()["x-source-poll-after"], "5");
+        assert!(!response.headers().contains_key("x-source-poll-after"));
         let (status, projected) = read(response).await;
         assert_eq!(status, 200);
         assert_eq!(

@@ -13,10 +13,10 @@ impl crate::source_access::south::port::ProjectionStore for ReceiptsRepository {
         let mut tx = self.0.begin().await?;
         super::routing::administrator(&mut tx, actor.id).await?;
         let projection::Command::List { route, .. } = &command;
-        let fields = "jsonb_build_object('id',r.receipt_id,'event_id',r.event_id,'status',COALESCE(c.status,r.status),'reason_code',CASE WHEN c.receipt_id IS NOT NULL THEN c.reason_code ELSE r.reason_code END,'processing_stage',r.processing_stage,'received_at',r.received_at,'updated_at',greatest(r.updated_at,c.updated_at),'revision',r.processing_revision,'observed_sequence',r.observed_sequence,'sending',COALESCE(c.sending,r.sending),'summary_version',COALESCE(c.summary_version,r.summary_version),'summary_revision',CASE WHEN c.summary_version IS NOT NULL THEN c.summary_revision ELSE r.summary_revision END,'summary_total',COALESCE(c.summary_total,r.summary_total),'external_content_id',convert_from(i.request_body,'UTF8')::jsonb #>> '{data,attributes,external_content_id}','sequence',(convert_from(i.request_body,'UTF8')::jsonb #>> '{data,attributes,sequence}')::bigint)";
+        let fields = "jsonb_build_object('id',r.receipt_id,'event_id',r.event_id,'status',r.status,'reason_code',r.reason_code,'processing_stage',r.processing_stage,'received_at',r.received_at,'updated_at',r.updated_at,'revision',r.processing_revision,'sending',r.sending,'summary_version',r.summary_version,'summary_revision',r.summary_revision,'summary_total',r.summary_total)";
         let value = {
             let query = format!(
-                "SELECT {fields} FROM source_receipts r JOIN source_inbox i USING(receipt_id) LEFT JOIN source_receipts c ON c.receipt_id=r.canonical_receipt_id WHERE r.route_id=$1 ORDER BY r.received_at DESC,r.receipt_id DESC LIMIT $2 OFFSET $3"
+                "SELECT {fields} FROM source_receipts r WHERE r.route_id=$1 ORDER BY r.received_at DESC,r.receipt_id DESC LIMIT $2 OFFSET $3"
             );
             let rows: Vec<Value> = sqlx::query_scalar(&query)
                 .bind(route)

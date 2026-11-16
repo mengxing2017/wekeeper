@@ -1,5 +1,5 @@
 use crate::message_orchestration::{
-    domain::{AcceptMessage, AcceptedMessage, Error, EventKind, Result},
+    domain::{AcceptMessage, AcceptedMessage, Error, Result},
     south::port::MessageStore,
 };
 
@@ -12,29 +12,8 @@ impl<S: MessageStore> MessageIntake<S> {
             || input.unit_id.is_nil()
             || input.source_event_id.is_nil()
             || input.evidence_ref.is_nil()
-            || input.original.external_content_id.is_empty()
-            || input.original.external_content_id.len() > 256
-            || input.original.version.is_empty()
-            || input.original.version.len() > 256
-            || !(1..=9_007_199_254_740_991).contains(&input.original.sequence)
-            || input.original.detail_url.len() > 2048
-            || match input.original.event_kind {
-                EventKind::Upsert => {
-                    input
-                        .original
-                        .title
-                        .as_ref()
-                        .is_none_or(|v| v.trim().is_empty())
-                        || input
-                            .original
-                            .content
-                            .as_ref()
-                            .is_none_or(|v| v.trim().is_empty())
-                }
-            }
-            || input.original.title.as_ref().map_or(0, String::len)
-                + input.original.content.as_ref().map_or(0, String::len)
-                > 1_048_576
+            || input.original.content.trim().is_empty()
+            || input.original.content.chars().count() > 100_000
         {
             return Err(Error::InvalidInput);
         }

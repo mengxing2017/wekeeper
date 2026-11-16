@@ -59,11 +59,10 @@ impl Repository {
         let row=sqlx::query("SELECT platform_id,unit_id,evidence_ref,original FROM orchestration_messages WHERE id=$1").bind(id).fetch_one(&self.0).await?;
         let receipt: Uuid = row.get("evidence_ref");
         let original: Value = row.get("original");
-        let text = crate::source_access::domain::keyword_filter::compose(
-            original["title"].as_str(),
-            original["content"].as_str(),
-            original["detail_url"].as_str().unwrap_or(""),
-        );
+        let text = original["content"]
+            .as_str()
+            .ok_or(Error::Unavailable)?
+            .to_owned();
         let mut tx = self.0.begin().await?;
         // A transaction lock, not an in-memory per-message waiting thread.
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,178))")
@@ -77,7 +76,13 @@ impl Repository {
         .fetch_optional(&mut *tx)
         .await?;
         if existing.as_ref().is_some_and(|d| d["state"] == "pending") {
-            let plans = receiving::plans(&mut tx, row.get("unit_id")).await?;
+            let execution_enabled: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM business_units u JOIN source_routes r ON r.business_unit_id=u.id WHERE u.id=$1 AND u.active AND r.status='active' AND r.retired_at IS NULL)")
+                .bind(row.get::<Uuid, _>("unit_id")).fetch_one(&mut *tx).await?;
+            let plans = if execution_enabled {
+                receiving::plans(&mut tx, row.get("unit_id")).await?
+            } else {
+                vec![]
+            };
             // Evaluate current global keyword restrictions once. Configuration changes
             // never reinterpret an already frozen message or a delivered attempt.
             let (context, filter_enabled, rules) =
@@ -93,10 +98,7 @@ impl Repository {
                 filter_enabled,
                 context.versions,
                 &rules,
-                &[
-                    ("title", original["title"].as_str().unwrap_or("")),
-                    ("content", original["content"].as_str().unwrap_or("")),
-                ],
+                &[("content", original["content"].as_str().unwrap_or(""))],
             )
             .map_err(|_| Error::Unavailable)?;
             sqlx::query(
@@ -108,6 +110,8 @@ impl Repository {
             .await?;
             let reason = if checked.outcome == "blocked" {
                 Some("keyword_blocked")
+            } else if !execution_enabled {
+                Some("route_execution_disabled")
             } else if plans.is_empty() {
                 Some("route_no_targets")
             } else if plans

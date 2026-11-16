@@ -101,23 +101,18 @@ impl Fixture {
             .unwrap();
         id
     }
-    pub async fn message(&self, sequence: i64) -> (Uuid, Uuid) {
-        self.message_with_content(sequence, "原消息").await
+    pub async fn message(&self) -> (Uuid, Uuid) {
+        self.message_with_content("原消息").await
     }
-    pub async fn message_with_content(&self, sequence: i64, content: &str) -> (Uuid, Uuid) {
+    pub async fn message_with_content(&self, content: &str) -> (Uuid, Uuid) {
         let receipt = Uuid::new_v4();
         let event = Uuid::new_v4();
         let original = OriginalMessage {
             event_kind: EventKind::Upsert,
-            external_content_id: "same-content".into(),
-            version: sequence.to_string(),
-            sequence,
             occurred_at: chrono::Utc::now(),
-            title: Some("标题".into()),
-            content: Some(content.into()),
-            detail_url: "https://example.org/message".into(),
+            content: content.into(),
         };
-        let body=serde_json::to_vec(&json!({"data":{"type":"source-events","id":event,"attributes":{"event_id":event,"schema_version":2,"route_id":self.route,"event_type":"content.upsert","external_content_id":original.external_content_id,"version":original.version,"sequence":sequence,"occurred_at":original.occurred_at,"title":original.title,"content":original.content,"detail_url":original.detail_url}}})).unwrap();
+        let body=serde_json::to_vec(&json!({"data":{"type":"source-events","id":event,"attributes":{"event_id":event,"schema_version":2,"route_id":self.route,"event_type":"content.upsert","occurred_at":original.occurred_at,"content":original.content}}})).unwrap();
         sqlx::query("INSERT INTO source_receipts(receipt_id,source_id,business_unit_id,event_id,route_id,body_sha256,schema_version) VALUES($1,$2,$3,$4,$5,$6,2)").bind(receipt).bind(self.platform).bind(self.unit).bind(event).bind(&self.route).bind(wekeeper_api::source_access::domain::digest(&body)).execute(&self.pool).await.unwrap();
         sqlx::query("INSERT INTO source_inbox(receipt_id,request_body) VALUES($1,$2)")
             .bind(receipt)

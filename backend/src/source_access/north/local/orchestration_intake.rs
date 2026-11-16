@@ -45,13 +45,8 @@ impl<I: AcceptedEventStore, S: MessageStore> AcceptedMessageBridge<I, S> {
                 evidence_ref: accepted.receipt_id,
                 original: OriginalMessage {
                     event_kind: kind,
-                    external_content_id: event.external_content_id,
-                    version: event.version,
-                    sequence: event.sequence,
                     occurred_at: event.occurred_at,
-                    title: event.title,
                     content: event.content,
-                    detail_url: event.detail_url,
                 },
             })
             .await

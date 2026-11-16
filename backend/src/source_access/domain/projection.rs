@@ -1,23 +1,17 @@
-//! Version decisions and receipt wire types; no transport or database dependencies.
+//! Text fingerprints, internal processing views and machine acceptance facts.
 use super::*;
 pub fn fingerprint(event: &Event) -> String {
     #[derive(Serialize)]
     struct Payload<'a> {
         algorithm: &'static str,
         event_type: &'a str,
-        version: &'a str,
-        title: &'a Option<String>,
-        content: &'a Option<String>,
-        detail_url: &'a str,
+        content: &'a str,
     }
     digest(
         &serde_json::to_vec(&Payload {
-            algorithm: "source-payload/1",
+            algorithm: "source-payload/2",
             event_type: &event.event_type,
-            version: &event.version,
-            title: &event.title,
             content: &event.content,
-            detail_url: &event.detail_url,
         })
         .expect("serializing fixed payload"),
     )
@@ -35,7 +29,6 @@ pub struct Sending {
 pub enum ReceiptStatus {
     Received,
     Applied,
-    IgnoredStale,
     Rejected,
 }
 #[derive(Debug, Serialize, Deserialize)]
@@ -47,10 +40,20 @@ pub struct Receipt {
     pub processing_stage: String,
     pub received_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
-    pub retryable: bool,
     pub sending: Option<Sending>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub observed_sequence: Option<i64>,
+}
+/// Machine-visible immutable acceptance fact, independent of processing outcomes.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AcceptanceReceipt {
+    pub event_id: Uuid,
+    pub status: AcceptanceStatus,
+    pub received_at: chrono::DateTime<chrono::Utc>,
+}
+#[derive(Debug, Serialize, Deserialize)]
+pub enum AcceptanceStatus {
+    #[serde(rename = "received")]
+    Received,
 }
 pub enum Command {
     List {
@@ -73,7 +76,7 @@ mod tests {
         event.event_id = Uuid::new_v4();
         event.occurred_at = chrono::Utc::now();
         assert_eq!(fingerprint(&event), expected);
-        event.content = Some(format!("{} ", event.content.unwrap()));
+        event.content.push(' ');
         assert_ne!(fingerprint(&event), expected);
     }
     #[test]
@@ -93,7 +96,8 @@ mod tests {
             "../../../../api-contract/fixtures/source-receipt-v2.json"
         ))
         .unwrap();
-        let typed: Receipt = serde_json::from_value(value["data"]["attributes"].clone()).unwrap();
+        let typed: AcceptanceReceipt =
+            serde_json::from_value(value["data"]["attributes"].clone()).unwrap();
         assert_eq!(
             serde_json::to_value(typed).unwrap(),
             value["data"]["attributes"]

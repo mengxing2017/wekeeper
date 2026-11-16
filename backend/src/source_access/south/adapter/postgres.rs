@@ -28,8 +28,7 @@ impl crate::source_access::south::port::AcceptedEventStore for Repository {
         if digest(&body) != row.get::<String, _>("body_sha256") {
             return Err(Fault("evidence_mismatch"));
         }
-        let document: Document<Event> =
-            serde_json::from_slice(&body).map_err(|_| Fault("evidence_mismatch"))?;
+        let document = parse_event(&body).map_err(|_| Fault("evidence_mismatch"))?;
         let event_id: Uuid = row.get("event_id");
         if document.data.kind != "source-events"
             || document.data.id != event_id
@@ -152,7 +151,7 @@ impl Repository {
                 ensure(value.starts_with(&prefix), "cursor_stale")?;
                 after = value[prefix.len()..].into();
             }
-            let rows=sqlx::query("SELECT r.route_id,r.route_name,r.status,CASE WHEN EXISTS(SELECT 1 FROM channel_receiving_configurations cc WHERE cc.business_unit_id=r.business_unit_id AND (cc.configuration->>'enabled')::boolean) THEN 'running' ELSE 'paused' END AS execution_state,r.retired_at FROM source_key_routes k JOIN source_routes r USING(route_id,source_id) WHERE k.key_id=$1 AND k.source_id=$2 AND k.status='active' AND r.route_id>$3 AND ($4::text IS NULL OR r.route_id=$4) ORDER BY r.route_id LIMIT $5").bind(&s.key_id).bind(source).bind(after).bind(&check.route_id).bind((limit+1) as i64).fetch_all(&mut *tx).await?;
+            let rows=sqlx::query("SELECT r.route_id,r.route_name,r.retired_at FROM source_key_routes k JOIN source_routes r USING(route_id,source_id) WHERE k.key_id=$1 AND k.source_id=$2 AND k.status='active' AND r.route_id>$3 AND ($4::text IS NULL OR r.route_id=$4) ORDER BY r.route_id LIMIT $5").bind(&s.key_id).bind(source).bind(after).bind(&check.route_id).bind((limit+1) as i64).fetch_all(&mut *tx).await?;
             let next = if rows.len() > limit {
                 Some(encode(
                     format!(
@@ -170,11 +169,10 @@ impl Repository {
                 .take(limit)
                 .map(|r| crate::source_access::domain::routing::RouteCapability {
                     route_id: r.get("route_id"),
-                    available: r.get::<String, _>("status") == "active"
-                        && r.get::<Option<chrono::DateTime<chrono::Utc>>, _>("retired_at")
-                            .is_none(),
+                    available: r
+                        .get::<Option<chrono::DateTime<chrono::Utc>>, _>("retired_at")
+                        .is_none(),
                     display_name: Some(r.get("route_name")),
-                    execution_state: Some(r.get("execution_state")),
                 })
                 .collect();
             if routes.is_empty()
@@ -184,7 +182,6 @@ impl Repository {
                     route_id: route,
                     available: false,
                     display_name: None,
-                    execution_state: None,
                 });
             }
             (
@@ -192,8 +189,7 @@ impl Repository {
                 json!({"data":{"type":kind,"id":s.identity,"attributes":{"source_id":source,"signature_versions":[2],"schema_versions":[2],"paths":{"authentication":"/api/v2/source-authentications","events":"/api/v2/source-events","receipts":"/api/v2/source-receipts/{id}","routes":"/api/v2/source-route-checks"},"authorization_revision":revision,"credential_revision":c.get::<i64,_>("revision"),"routes":routes,"next_cursor":next}}}),
             )
         } else if s.method == "POST" {
-            let doc: Document<Event> =
-                serde_json::from_slice(&body).map_err(|_| Fault("forbidden_field"))?;
+            let doc = parse_event(&body)?;
             ensure(
                 doc.data.kind == "source-events"
                     && doc.data.id == s.identity
@@ -294,7 +290,7 @@ impl Repository {
         route: &str,
         submit: bool,
     ) -> Result<()> {
-        let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_key_routes k JOIN source_routes r USING(route_id,source_id) WHERE k.key_id=$1 AND k.route_id=$2 AND k.source_id=$3 AND k.status='active' AND (NOT $4 OR (r.status='active' AND r.retired_at IS NULL)))").bind(key).bind(route).bind(source).bind(submit).fetch_one(&mut **tx).await?;
+        let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_key_routes k JOIN source_routes r USING(route_id,source_id) WHERE k.key_id=$1 AND k.route_id=$2 AND k.source_id=$3 AND k.status='active' AND (NOT $4 OR r.retired_at IS NULL))").bind(key).bind(route).bind(source).bind(submit).fetch_one(&mut **tx).await?;
         ensure(allowed, "route_unavailable")
     }
     async fn receipt(
@@ -303,8 +299,9 @@ impl Repository {
         source: Uuid,
         id: Uuid,
     ) -> Result<Value> {
-        let value:Value=sqlx::query_scalar("SELECT jsonb_build_object('event_id',r.event_id,'status',COALESCE(c.status,r.status),'reason_code',CASE WHEN c.receipt_id IS NOT NULL THEN c.reason_code ELSE r.reason_code END,'processing_stage',r.processing_stage,'received_at',r.received_at,'updated_at',greatest(r.updated_at,c.updated_at),'retryable',false,'sending',COALESCE(c.sending,r.sending),'observed_sequence',r.observed_sequence) FROM source_receipts r LEFT JOIN source_receipts c ON c.receipt_id=r.canonical_receipt_id WHERE r.source_id=$1 AND r.receipt_id=$2").bind(source).bind(id).fetch_one(&mut **tx).await?;
-        let value: crate::source_access::domain::projection::Receipt =
+        let value: Value = sqlx::query_scalar("SELECT jsonb_build_object('event_id',event_id,'status','received','received_at',received_at) FROM source_receipts WHERE source_id=$1 AND receipt_id=$2")
+            .bind(source).bind(id).fetch_one(&mut **tx).await?;
+        let value: crate::source_access::domain::projection::AcceptanceReceipt =
             serde_json::from_value(value)?;
         Ok(json!({"data":{"type":"source-receipts","id":id,"attributes":value}}))
     }

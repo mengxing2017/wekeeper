@@ -47,13 +47,8 @@ async fn intake_is_idempotent_immutable_and_scoped_to_business_identity() {
         evidence_ref: Uuid::new_v4(),
         original: OriginalMessage {
             event_kind: EventKind::Upsert,
-            external_content_id: "post-1".into(),
-            version: "1".into(),
-            sequence: 1,
             occurred_at: chrono::Utc::now(),
-            title: Some("标题".into()),
-            content: Some("正文".into()),
-            detail_url: "https://example.org/1".into(),
+            content: "正文".into(),
         },
     };
     let mut tasks = Vec::new();
@@ -71,7 +66,7 @@ async fn intake_is_idempotent_immutable_and_scoped_to_business_identity() {
     assert!(ids.iter().all(|id| *id == ids[0]));
     let service = MessageIntake(Repository(pool.clone()));
     let mut modified = input.clone();
-    modified.original.content = Some("changed".into());
+    modified.original.content = "changed".into();
     assert_eq!(service.accept(modified).await, Err(Error::Conflict));
     let mut modified = input.clone();
     modified.source_event_id = Uuid::new_v4();
@@ -94,7 +89,7 @@ async fn intake_is_idempotent_immutable_and_scoped_to_business_identity() {
     bad.evidence_ref = Uuid::nil();
     assert_eq!(service.accept(bad).await, Err(Error::InvalidInput));
     let mut invalid_body = input.clone();
-    invalid_body.original.content = None;
+    invalid_body.original.content = " ".into();
     assert_eq!(service.accept(invalid_body).await, Err(Error::InvalidInput));
     let update = sqlx::query("UPDATE orchestration_messages SET original='{}' WHERE id=$1")
         .bind(ids[0])

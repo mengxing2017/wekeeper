@@ -56,6 +56,12 @@ async fn migrations_handle_residual_objects_after_table_only_reset() {
         obsolete, 0,
         "workspace tables and partition columns must be absent"
     );
+    let source_obsolete: i64 = sqlx::query_scalar("SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND ((table_name='source_receipts' AND column_name IN ('observed_sequence','canonical_receipt_id','keyword_terminal_rejected')) OR (table_name='source_inbox' AND column_name IN ('event_type','reason_class','projected','failures','last_error','next_attempt_at','job_state')))")
+        .fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        source_obsolete, 0,
+        "obsolete source projection and withdrawal fields must be absent"
+    );
     let applied: i64 = sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations WHERE success")
         .fetch_one(&pool)
         .await

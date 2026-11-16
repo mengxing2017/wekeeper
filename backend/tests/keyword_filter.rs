@@ -58,13 +58,8 @@ async fn message(pool: &PgPool, platform: Uuid, unit: Uuid) -> Uuid {
             evidence_ref: Uuid::new_v4(),
             original: OriginalMessage {
                 event_kind: EventKind::Upsert,
-                external_content_id: Uuid::new_v4().to_string(),
-                version: "1".into(),
-                sequence: 1,
                 occurred_at: chrono::Utc::now(),
-                title: Some("诈骗".into()),
-                content: Some("欺诈".into()),
-                detail_url: "https://example.org/test".into(),
+                content: "诈骗\n欺诈".into(),
             },
         })
         .await
@@ -138,6 +133,8 @@ async fn global_switch_preserves_words_versions_authorization_and_frozen_decisio
             .unwrap();
         sqlx::query("INSERT INTO business_units(id,platform_id,name,created_by,updated_by) VALUES($1,$2,'test',$3,$3)")
             .bind(unit).bind(platform).bind(id).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO source_routes(route_id,source_id,business_unit_id,route_name,status) VALUES($1,$2,$3,'test','active')")
+            .bind(Uuid::new_v4().to_string()).bind(platform).bind(unit).execute(&pool).await.unwrap();
         identities.push((platform, unit));
     }
     let worker = Repository(pool.clone());
@@ -165,7 +162,7 @@ async fn global_switch_preserves_words_versions_authorization_and_frozen_decisio
     assert_eq!(enabled["filter_enabled"], true);
     assert_eq!(enabled["entries"], disabled["entries"]);
     // A legacy ready dispatch already froze its content before the switch changed.
-    // A missing historical decision must not trigger a new check of its matching title.
+    // A missing historical decision must not trigger a new check of its matching body.
     let frozen_id = message(&pool, identities[0].0, identities[0].1).await;
     sqlx::query("INSERT INTO orchestration_dispatches(message_id,content,decision,plans,state) VALUES($1,'frozen body','{}','[]','ready')")
         .bind(frozen_id).execute(&pool).await.unwrap();

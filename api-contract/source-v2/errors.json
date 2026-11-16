@@ -1,13 +1,16 @@
 {
   "400": [
     "invalid_request",
+    "content_empty",
+    "content_too_long",
     "forbidden_field",
     "event_identity_mismatch",
     "unsupported_version",
     "invalid_keyword",
     "duplicate_keyword",
     "keyword_limit_exceeded",
-    "keyword_input_too_large"
+    "keyword_input_too_large",
+    "unsupported_event_type"
   ],
   "401": [
     "authentication_failed",

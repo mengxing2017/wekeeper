@@ -14,10 +14,10 @@ async fn scoped_advertising_rotates_once_with_inactive_storage_partition() {
     f.ad("平台", "platform").await;
     let a = f.ad("单位甲", "unit").await;
     let b = f.ad("单位乙", "unit").await;
-    let (one, _) = f.message(2).await;
+    let (one, _) = f.message().await;
     f.run().await;
     f.run().await;
-    let (two, _) = f.message(1).await;
+    let (two, _) = f.message().await;
     f.run().await;
     let decisions:Vec<Value>=sqlx::query_scalar("SELECT decision FROM orchestration_dispatches WHERE message_id=ANY($1) ORDER BY created_at").bind(vec![one,two]).fetch_all(&f.pool).await.unwrap();
     assert_eq!(decisions.len(), 2);
@@ -63,7 +63,7 @@ async fn scoped_advertising_rotates_once_with_inactive_storage_partition() {
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn no_targets_is_terminal_and_new_messages_continue() {
     let f = Fixture::new().await;
-    let (id, receipt) = f.message(1).await;
+    let (id, receipt) = f.message().await;
     f.run().await;
     let reason: String =
         sqlx::query_scalar("SELECT reason_code FROM orchestration_dispatches WHERE message_id=$1")
@@ -107,7 +107,7 @@ async fn no_targets_is_terminal_and_new_messages_continue() {
             .await
             .unwrap();
     assert_eq!(stage, "not_dispatched");
-    f.message(1).await;
+    f.message().await;
     f.run().await;
     let tasks: i64 = sqlx::query_scalar("SELECT count(*) FROM orchestration_delegates")
         .fetch_one(&f.pool)
@@ -124,7 +124,7 @@ async fn failed_child_reuses_frozen_ad_and_candidate_plan() {
     f.ad("一次广告", "unit").await;
     sqlx::query("CREATE FUNCTION fail_child() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected transient failure'; END $$").execute(&f.pool).await.unwrap();
     sqlx::query("CREATE TRIGGER fail_child BEFORE INSERT ON mobile_v9_tasks FOR EACH ROW EXECUTE FUNCTION fail_child()").execute(&f.pool).await.unwrap();
-    let (id, _) = f.message(1).await;
+    let (id, _) = f.message().await;
     f.run().await;
     let state: String =
         sqlx::query_scalar("SELECT state FROM orchestration_dispatches WHERE message_id=$1")
@@ -178,7 +178,7 @@ async fn shared_target_is_delivered_once_and_missing_resources_do_not_wait() {
     let f = Fixture::new().await;
     f.configure(vec![f.target]).await;
     f.configure(vec![f.target]).await;
-    f.message(1).await;
+    f.message().await;
     f.run().await;
     let n: i64 = sqlx::query_scalar("SELECT count(*) FROM mobile_v9_task_items")
         .fetch_one(&f.pool)
@@ -186,7 +186,7 @@ async fn shared_target_is_delivered_once_and_missing_resources_do_not_wait() {
         .unwrap();
     assert_eq!(n, 1);
     sqlx::query("UPDATE channel_receiving_configurations SET configuration=jsonb_set(configuration,'{device_ids}','[]')").execute(&f.pool).await.unwrap();
-    let (id, _) = f.message(1).await;
+    let (id, _) = f.message().await;
     f.run().await;
     let reason: String =
         sqlx::query_scalar("SELECT reason_code FROM orchestration_dispatches WHERE message_id=$1")
@@ -207,7 +207,7 @@ async fn unavailable_ad_sends_original_without_count_and_results_are_visible() {
         .execute(&f.pool)
         .await
         .unwrap();
-    let (id, receipt) = f.message(1).await;
+    let (id, receipt) = f.message().await;
     f.run().await;
     let d: Value =
         sqlx::query_scalar("SELECT decision FROM orchestration_dispatches WHERE message_id=$1")
@@ -258,7 +258,7 @@ async fn interrupted_ad_commit_uses_original_frozen_targets_and_decision() {
     f.ad("冻结广告", "unit").await;
     sqlx::query("CREATE FUNCTION fail_ready() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF OLD.state='preparing' AND NEW.state='ready' THEN RAISE EXCEPTION 'injected interruption after ad commit'; END IF; RETURN NEW; END $$").execute(&f.pool).await.unwrap();
     sqlx::query("CREATE TRIGGER fail_ready BEFORE UPDATE ON orchestration_dispatches FOR EACH ROW EXECUTE FUNCTION fail_ready()").execute(&f.pool).await.unwrap();
-    let (id, _) = f.message(1).await;
+    let (id, _) = f.message().await;
     f.run().await;
     let state: String =
         sqlx::query_scalar("SELECT state FROM orchestration_dispatches WHERE message_id=$1")
@@ -321,7 +321,7 @@ async fn unavailable_target_does_not_block_other_targets() {
         .execute(&f.pool)
         .await
         .unwrap();
-    let (_, receipt) = f.message(1).await;
+    let (_, receipt) = f.message().await;
     f.run().await;
     let sending: Value =
         sqlx::query_scalar("SELECT sending FROM source_receipts WHERE receipt_id=$1")
@@ -383,7 +383,7 @@ async fn both_channels_share_one_ad_and_aggregate_official_results_without_membe
         .unwrap();
     sqlx::query("INSERT INTO wecom_sender_qualifications(account_id,enabled,updated_by) VALUES($1,false,$1)").bind(f.actor.id).execute(&f.pool).await.unwrap();
     f.ad("共同广告", "unit").await;
-    let (id, receipt) = f.message(1).await;
+    let (id, receipt) = f.message().await;
     f.run().await;
     let n: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM orchestration_delegates WHERE message_id=$1 AND state='delegated'",
@@ -440,7 +440,7 @@ async fn both_channels_share_one_ad_and_aggregate_official_results_without_membe
         serde_json::json!({"sent":1,"failed":0,"pending":1,"unknown":0})
     );
     // A long but channel-valid original must reach both channels without an ad.
-    let (long, _) = f.message_with_content(2, &"原".repeat(250)).await;
+    let (long, _) = f.message_with_content(&"原".repeat(250)).await;
     f.run().await;
     f.run().await;
     let contents: Vec<String> = sqlx::query_scalar("SELECT s.content FROM orchestration_delegates d JOIN distribution_message_snapshots s ON s.id=d.snapshot_id WHERE d.message_id=$1 AND d.state='delegated'")
@@ -476,8 +476,8 @@ async fn first_dependency_failure_backs_off_fifty_messages_and_allows_new_work()
     sqlx::query("UPDATE channel_receiving_configurations SET configuration=configuration-'target_ids' WHERE id=$1")
         .bind(config).execute(&f.pool).await.unwrap();
     let mut failed = Vec::new();
-    for sequence in 1..=50 {
-        failed.push(f.message(sequence).await.0);
+    for _ in 1..=50 {
+        failed.push(f.message().await.0);
     }
     f.run().await;
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM orchestration_dispatches WHERE message_id=ANY($1) AND state='pending' AND failures=1 AND next_attempt_at>clock_timestamp() AND plans='[]'")
@@ -489,7 +489,7 @@ async fn first_dependency_failure_backs_off_fifty_messages_and_allows_new_work()
         .execute(&f.pool)
         .await
         .unwrap();
-    let (new, _) = f.message(51).await;
+    let (new, _) = f.message().await;
     f.run().await;
     let state: String =
         sqlx::query_scalar("SELECT state FROM orchestration_dispatches WHERE message_id=$1")
@@ -599,7 +599,7 @@ async fn admin_list_http_pagination_and_message_authorization() {
     );
     let mut receipt = Uuid::nil();
     for n in 1..=31 {
-        receipt = f.message(n).await.1;
+        receipt = f.message().await.1;
         if [1, 30, 31].contains(&n) {
             let page = read(&app, path, Some(&token), 200).await;
             assert_eq!(
@@ -880,5 +880,53 @@ async fn admin_list_http_pagination_and_message_authorization() {
             .await,
         Err(wekeeper_api::business::Error::Forbidden)
     ));
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn complete_text_is_preserved_and_internal_pause_only_blocks_dispatch() {
+    let f = Fixture::new().await;
+    f.configure(vec![f.target]).await;
+    let text = " 完整标题\r\n正文\n#小程序://Linjian/示例 ";
+    let (id, _) = f.message_with_content(text).await;
+    f.run().await;
+    let content: String =
+        sqlx::query_scalar("SELECT content FROM orchestration_dispatches WHERE message_id=$1")
+            .bind(id)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(content, text);
+    sqlx::query("UPDATE source_routes SET status='disabled' WHERE route_id=$1")
+        .bind(&f.route)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let (paused, receipt) = f.message().await;
+    f.run().await;
+    let reason: String =
+        sqlx::query_scalar("SELECT reason_code FROM orchestration_dispatches WHERE message_id=$1")
+            .bind(paused)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(reason, "route_execution_disabled");
+    let delegated: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM orchestration_delegates WHERE message_id=$1")
+            .bind(paused)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(delegated, 0);
+    assert!(
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM source_inbox WHERE receipt_id=$1)"
+        )
+        .bind(receipt)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap()
+    );
     f.close().await;
 }

@@ -12,13 +12,8 @@ pub enum EventKind {
 #[serde(deny_unknown_fields)]
 pub struct OriginalMessage {
     pub event_kind: EventKind,
-    pub external_content_id: String,
-    pub version: String,
-    pub sequence: i64,
     pub occurred_at: chrono::DateTime<chrono::Utc>,
-    pub title: Option<String>,
-    pub content: Option<String>,
-    pub detail_url: String,
+    pub content: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

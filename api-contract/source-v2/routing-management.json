@@ -5,6 +5,6 @@
     "/api/v1/wecom-distribution/business-units/{unit}/receiving-configurations"
   ],
   "configuration": "system administrator; enabling authorizes automatic processing of future messages",
-  "result_access": "system administrator or explicit unit route viewer",
+  "result_access": "system administrator",
   "no_targets": "terminal not_dispatched; later configuration affects new messages only"
 }
