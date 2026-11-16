@@ -1,39 +1,7 @@
-//! Platform-owned material contracts. No forum entities, database or HTTP types.
-use crate::business::{Result, require};
+//! Platform-owned sender and preview contracts.
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct SourceReference {
-    pub namespace: String,
-    pub external_organization_id: String,
-    pub external_content_id: String,
-    pub version: String,
-}
-impl SourceReference {
-    pub fn validate(&self) -> Result<()> {
-        for value in [
-            &self.namespace,
-            &self.external_organization_id,
-            &self.external_content_id,
-            &self.version,
-        ] {
-            require(
-                !value.trim().is_empty() && value.len() <= 200,
-                "来源引用无效",
-            )?;
-        }
-        Ok(())
-    }
-}
-#[derive(Clone, Debug)]
-pub struct Material {
-    pub reference: SourceReference,
-    pub title: String,
-    pub content: String,
-    pub detail_url: String,
-}
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct OfficialSender {
     pub id: Uuid,
@@ -68,17 +36,6 @@ pub struct Preview {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn references_are_namespaced_and_wire_is_not_a_forum_post() {
-        let a: SourceReference = serde_json::from_value(serde_json::json!({"namespace":"test.notice","external_organization_id":"1","external_content_id":"1","version":"v2"})).unwrap();
-        a.validate().unwrap();
-        let mut b = a.clone();
-        b.namespace = "test.other".into();
-        assert_ne!(a, b);
-        assert!(serde_json::from_value::<SourceReference>(serde_json::json!({"namespace":"x","external_organization_id":"1","external_content_id":"1","version":"1","confirmed":true})).is_err());
-        let value = serde_json::to_value(a).unwrap();
-        assert_eq!(value["external_content_id"], "1");
-    }
     #[test]
     fn sender_and_preview_wire_shape() {
         let p = Preview {

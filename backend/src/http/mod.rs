@@ -39,7 +39,6 @@ pub fn app_router(application: Application) -> Router {
 .merge(crate::integrations::north::remote::router())
 .merge(crate::integrations::north::directory_remote::router())
         .merge(crate::integrations::north::assets_remote::router())
-.merge(crate::legacy::north::remote::router())
 .merge(crate::media::north::remote::router())
 .route("/api/v1/audit-events",get(crate::audit::list))
         .fallback(not_found)

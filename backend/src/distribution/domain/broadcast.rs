@@ -52,16 +52,12 @@ pub fn read_retry_seconds(failures: i32, jitter: u64) -> i64 {
 #[serde(rename_all = "snake_case")]
 pub enum ContentSource {
     #[default]
-    Posts,
     Text,
-    Materials,
 }
 impl ContentSource {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Posts => "posts",
             Self::Text => "text",
-            Self::Materials => "materials",
         }
     }
 }
@@ -72,12 +68,7 @@ pub struct DraftInput {
     #[serde(skip)]
     pub request_key: Option<String>,
     pub text_content: Option<String>,
-    pub template_version_id: Option<Uuid>,
     pub content_source: ContentSource,
-    #[serde(default)]
-    pub post_ids: Vec<Uuid>,
-    #[serde(default)]
-    pub materials: Vec<super::content::SourceReference>,
     pub group_ids: Vec<Uuid>,
     pub revision: Option<i64>,
     pub source_task_id: Option<Uuid>,
@@ -86,60 +77,12 @@ pub struct DraftInput {
 }
 impl DraftInput {
     pub fn validate(&self) -> Result<()> {
-        require(self.materials.len() <= 20, "最多选择20条素材")?;
-        if self.content_source != ContentSource::Materials {
-            require(self.materials.is_empty(), "内容形态不能混用")?;
-        }
-        match self.content_source {
-            ContentSource::Posts => {
-                require(
-                    self.template_version_id.is_some() && (1..=20).contains(&self.post_ids.len()),
-                    "请选择已发布模板及 1–20 条内容",
-                )?;
-                require(
-                    self.text_content.as_deref().is_none_or(str::is_empty),
-                    "社区内容模式不能填写直接文本",
-                )?;
-            }
-            ContentSource::Materials => {
-                require(
-                    !self.materials.is_empty()
-                        && self.post_ids.is_empty()
-                        && self.template_version_id.is_none()
-                        && self.text_content.is_none(),
-                    "请选择独立来源素材，不可混入论坛模板或正文",
-                )?;
-                for reference in &self.materials {
-                    require(
-                        !reference.namespace.starts_with("builtin."),
-                        "内置来源须通过对应受控入口",
-                    )?;
-                    reference.validate()?;
-                }
-                require(
-                    self.materials.iter().all(|v| {
-                        v.namespace == self.materials[0].namespace
-                            && v.external_organization_id
-                                == self.materials[0].external_organization_id
-                    }),
-                    "单个任务不能混用来源或组织",
-                )?;
-            }
-            ContentSource::Text => {
-                require(
-                    self.template_version_id.is_none() && self.post_ids.is_empty(),
-                    "直接文本不能关联帖子或模板",
-                )?;
-                normalize_text(self.text_content.as_deref().unwrap_or_default())?;
-            }
-        }
+        normalize_text(self.text_content.as_deref().unwrap_or_default())?;
         require(self.group_ids.len() <= 10000, "最多选择 10000 个客户群")?;
-        for ids in [&self.post_ids, &self.group_ids] {
-            require(
-                ids.iter().collect::<BTreeSet<_>>().len() == ids.len(),
-                "目标或内容不可重复",
-            )?;
-        }
+        require(
+            self.group_ids.iter().collect::<BTreeSet<_>>().len() == self.group_ids.len(),
+            "目标不可重复",
+        )?;
         require(self.reason.chars().count() <= 1000, "原因过长")?;
         if self.source_task_id.is_some() {
             require(!self.reason.trim().is_empty(), "再次发送必须填写原因")?;
@@ -165,11 +108,8 @@ pub struct Task {
     pub id: Uuid,
 
     pub creator_id: Uuid,
-    pub template_version_id: Option<Uuid>,
     pub content_source: ContentSource,
     pub source_namespace: String,
-    #[serde(default)]
-    pub materials: Vec<super::content::SourceReference>,
     pub content: String,
     pub revision: i64,
     pub state: String,
@@ -181,7 +121,6 @@ pub struct Task {
     pub uncertain: i64,
     pub pending: i64,
     pub batch_count: i64,
-    pub post_ids: Vec<Uuid>,
     pub source_task_id: Option<Uuid>,
     pub resend_reason: String,
     pub draft_input: DraftInput,
@@ -345,19 +284,10 @@ mod tests {
             assert!(normalize_text(bad).is_err());
         }
         let id = Uuid::new_v4();
-        let posts = serde_json::json!({"content_source":"posts","template_version_id":id,"post_ids":[id],"group_ids":[id]});
-        let input: DraftInput = serde_json::from_value(posts).unwrap();
-        assert_eq!(input.content_source, ContentSource::Posts);
-        assert!(input.validate().is_ok());
         let direct =
             serde_json::json!({"content_source":"text","text_content":"notice","group_ids":[id]});
-        let mut input: DraftInput = serde_json::from_value(direct.clone()).unwrap();
+        let input: DraftInput = serde_json::from_value(direct.clone()).unwrap();
         assert!(input.validate().is_ok());
-        input.template_version_id = Some(id);
-        assert!(input.validate().is_err());
-        input.template_version_id = None;
-        input.post_ids = vec![id];
-        assert!(input.validate().is_err());
         let mut unknown = direct;
         unknown["content_source"] = serde_json::json!("other");
         assert!(serde_json::from_value::<DraftInput>(unknown).is_err());

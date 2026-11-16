@@ -12,20 +12,12 @@ use crate::{
 use serde_json::Value;
 use uuid::Uuid;
 #[derive(Clone)]
-pub struct Service<
-    R = Repository,
-    C = broadcast_http::Client,
-    S = crate::distribution::south::adapter::in_process::Sources,
-> {
-    pub sources: S,
+pub struct Service<R = Repository, C = broadcast_http::Client> {
     pub store: R,
     pub client: C,
     pub management_available: bool,
-    pub origin: String,
 }
-impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::ContentSource>
-    Service<R, C, S>
-{
+impl<R: Store, C: Client> Service<R, C> {
     pub async fn list(&self, a: &Actor, page: Page) -> Result<Vec<Task>> {
         self.store.authorize(a.id, false).await?;
         self.store.list(page).await
@@ -48,21 +40,6 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
         {
             return Ok(task);
         }
-        let references = if input.content_source == ContentSource::Posts {
-            self.store.source_references(&input.post_ids).await?
-        } else {
-            input.materials.clone()
-        };
-        let mut materials = self.sources.read(a, &references).await?;
-        for material in &mut materials {
-            if material.detail_url.starts_with('/') {
-                material.detail_url =
-                    crate::distribution::south::adapter::in_process::absolute_detail_url(
-                        &self.origin,
-                        &material.detail_url,
-                    )?;
-            }
-        }
         let scope = if self.management_available {
             self.client.generation().await.ok()
         } else {
@@ -77,7 +54,6 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
                 Command::Save {
                     id,
                     input,
-                    materials,
                     corp,
                     generation,
                     preview_key: None,
@@ -101,21 +77,6 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
             return Ok(prior);
         }
         // Drafts are retained even while delivery is unavailable; no external write occurs here.
-        let references = if input.content_source == ContentSource::Posts {
-            self.store.source_references(&input.post_ids).await?
-        } else {
-            input.materials.clone()
-        };
-        let mut materials = self.sources.read(a, &references).await?;
-        for m in &mut materials {
-            if m.detail_url.starts_with('/') {
-                m.detail_url =
-                    crate::distribution::south::adapter::in_process::absolute_detail_url(
-                        &self.origin,
-                        &m.detail_url,
-                    )?;
-            }
-        }
         let ready = self.management_available;
         let scope = if ready {
             self.client.generation().await.ok()
@@ -131,7 +92,6 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
         let command = Command::Save {
             id,
             input,
-            materials,
             corp,
             generation,
             preview_key: Some(format!("{key}:{input_hash}")),
@@ -151,7 +111,6 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
             if let Command::Save {
                 id,
                 input,
-                materials,
                 preview_key,
                 ..
             } = command
@@ -162,7 +121,6 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
                         Command::Save {
                             id,
                             input,
-                            materials,
                             corp: None,
                             generation: None,
                             preview_key,
@@ -249,14 +207,13 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
         id: Uuid,
     ) -> Result<crate::distribution::domain::content::Preview> {
         self.store.authorize(a.id, false).await?;
-        let mut task = self.store.task(id).await?;
+        let task = self.store.task(id).await?;
         if task.total == 0 {
             let mut input = task.draft_input.clone();
             input.revision = Some(task.revision);
             input.request_key = None;
-            task = self.save(a, Some(id), input).await?;
+            self.save(a, Some(id), input).await?;
         }
-        self.sources.check(&task.materials).await?;
         self.store.preview(a, id).await
     }
     pub async fn action(
@@ -312,7 +269,6 @@ impl<R: Store, C: Client, S: crate::distribution::south::port::content_source::C
             );
         }
         if operation == "confirm" && task.state == "draft" {
-            self.sources.check(&task.materials).await?;
             require(input.revision == Some(task.revision), "草稿版本冲突")?;
             for w in self.store.work(Some(id)).await? {
                 self.client.verify(&w).await?;
@@ -466,11 +422,9 @@ impl crate::bootstrap::Application {
         // Server-to-server operations do not depend on browser origin or OAuth login.
         let management_available = self.integrations.server_configured();
         Service {
-            sources: crate::distribution::south::adapter::in_process::Sources(self.pool.clone()),
             store: Repository(self.pool.clone()),
             client: broadcast_http::Client(self.integrations.clone()),
             management_available,
-            origin: std::env::var("WEKEEPER_FORUM_ORIGIN").unwrap_or_default(),
         }
     }
 }

@@ -9,23 +9,6 @@ pub struct Confirmation {
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct TemplateInput {
-    pub id: Option<Uuid>,
-    #[serde(default)]
-    pub revision: i64,
-    pub name: String,
-    pub body: String,
-    #[serde(default)]
-    pub note: String,
-    pub sample_post_id: Option<Uuid>,
-    #[serde(default = "yes")]
-    pub publish: bool,
-}
-fn yes() -> bool {
-    true
-}
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct MemberPolicyInput {
     pub member_id: Uuid,
     pub generation: i64,
@@ -59,8 +42,6 @@ pub struct RequestDecision {
 }
 #[derive(Clone)]
 pub enum Command {
-    TemplatePreview(TemplateInput),
-    TemplateConfirm(Confirmation),
     PolicyPreview(MemberPolicyInput),
     PolicyConfirm(Confirmation),
     UsagePreview(UsageInput),
@@ -71,12 +52,6 @@ pub enum Command {
 impl Command {
     pub fn validate(&self) -> Result<()> {
         match self {
-            Self::TemplatePreview(v) => {
-                text(&v.name, 1, 100)?;
-                text(&v.note, 0, 1000)?;
-                crate::distribution::domain::validate(&v.body)?;
-                require(v.revision >= 0, "修订无效")
-            }
             Self::PolicyPreview(v) => require(
                 v.generation > 0
                     && v.revision >= 0

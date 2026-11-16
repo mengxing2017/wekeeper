@@ -10,7 +10,6 @@ pub enum Command {
     Save {
         id: Option<Uuid>,
         input: DraftInput,
-        materials: Vec<crate::distribution::domain::content::Material>,
         corp: Option<String>,
         generation: Option<i64>,
         preview_key: Option<String>,
@@ -65,10 +64,6 @@ pub trait Store: Clone + Send + Sync + 'static {
         actor: &Actor,
         input: &DraftInput,
     ) -> impl Future<Output = Result<Option<Task>>> + Send;
-    fn source_references(
-        &self,
-        ids: &[Uuid],
-    ) -> impl Future<Output = Result<Vec<crate::distribution::domain::content::SourceReference>>> + Send;
     fn preview(
         &self,
         actor: &Actor,

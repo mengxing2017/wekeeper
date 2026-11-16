@@ -86,18 +86,6 @@ macro_rules! business_handler {
     };
 }
 business_handler!(
-    template_preview,
-    "template-previews",
-    TemplatePreview,
-    "template-previews"
-);
-business_handler!(
-    template_confirm,
-    "template-publications",
-    TemplateConfirm,
-    "templates"
-);
-business_handler!(
     usage_preview,
     "official-usage-previews",
     UsagePreview,
@@ -223,14 +211,6 @@ pub fn router() -> Router<Application> {
             post(channel_request),
         )
         .route("/api/v1/wecom-distribution/broadcast-issues", post(issue))
-        .route(
-            "/api/v1/wecom-distribution/template-previews",
-            post(template_preview),
-        )
-        .route(
-            "/api/v1/wecom-distribution/template-publications",
-            post(template_confirm),
-        )
         .route(
             "/api/v1/wecom-distribution/official-usage-previews",
             post(usage_preview),

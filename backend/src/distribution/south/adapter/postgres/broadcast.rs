@@ -42,7 +42,7 @@ async fn event(
     .await?;
     Ok(())
 }
-const TASK: &str = "SELECT to_jsonb(t)||jsonb_build_object('total',(SELECT count(*) FROM broadcast_targets x WHERE x.task_id=t.id),'sent',(SELECT count(*) FROM broadcast_targets x WHERE x.task_id=t.id AND x.official_status=1),'rejected',(SELECT count(*) FROM broadcast_targets x JOIN broadcast_batches b ON b.id=x.batch_id WHERE x.task_id=t.id AND x.official_status IS DISTINCT FROM 1 AND (x.rejected OR x.official_status IN (2,3) OR b.state='rejected')),'uncertain',(SELECT count(*) FROM broadcast_batches b WHERE b.task_id=t.id AND (b.state='unknown' OR b.stop_state='unknown' OR EXISTS(SELECT 1 FROM broadcast_targets z WHERE z.batch_id=b.id AND z.official_status IS NOT NULL AND z.official_status NOT IN (0,1,2,3)))),'pending',(SELECT count(*) FROM broadcast_targets x JOIN broadcast_batches b ON b.id=x.batch_id WHERE x.task_id=t.id AND (x.official_status IS NULL OR x.official_status=0) AND NOT x.rejected AND b.stop_state<>'stopped' AND b.state IN ('queued','submitting','created')),'batch_count',(SELECT count(*) FROM broadcast_batches b WHERE b.task_id=t.id),'materials',coalesce((SELECT jsonb_agg(jsonb_build_object('namespace',r.namespace,'external_organization_id',r.external_organization_id,'external_content_id',r.external_content_id,'version',r.version) ORDER BY r.position) FROM broadcast_content_references r WHERE r.task_id=t.id),'[]'::jsonb),'post_ids',coalesce((SELECT jsonb_agg(p.post_id ORDER BY p.position) FROM broadcast_task_posts p WHERE p.task_id=t.id),'[]'::jsonb)) FROM broadcast_tasks t";
+const TASK: &str = "SELECT to_jsonb(t)||jsonb_build_object('total',(SELECT count(*) FROM broadcast_targets x WHERE x.task_id=t.id),'sent',(SELECT count(*) FROM broadcast_targets x WHERE x.task_id=t.id AND x.official_status=1),'rejected',(SELECT count(*) FROM broadcast_targets x JOIN broadcast_batches b ON b.id=x.batch_id WHERE x.task_id=t.id AND x.official_status IS DISTINCT FROM 1 AND (x.rejected OR x.official_status IN (2,3) OR b.state='rejected')),'uncertain',(SELECT count(*) FROM broadcast_batches b WHERE b.task_id=t.id AND (b.state='unknown' OR b.stop_state='unknown' OR EXISTS(SELECT 1 FROM broadcast_targets z WHERE z.batch_id=b.id AND z.official_status IS NOT NULL AND z.official_status NOT IN (0,1,2,3)))),'pending',(SELECT count(*) FROM broadcast_targets x JOIN broadcast_batches b ON b.id=x.batch_id WHERE x.task_id=t.id AND (x.official_status IS NULL OR x.official_status=0) AND NOT x.rejected AND b.stop_state<>'stopped' AND b.state IN ('queued','submitting','created')),'batch_count',(SELECT count(*) FROM broadcast_batches b WHERE b.task_id=t.id)) FROM broadcast_tasks t";
 const WORK: &str = "SELECT to_jsonb(b)||jsonb_build_object('content',t.content,'generation',t.generation,'operation','create','operation_id',NULL,'chats',coalesce((SELECT jsonb_agg(x.chat_id ORDER BY x.chat_id) FROM broadcast_targets x WHERE x.batch_id=b.id),'[]'::jsonb)) FROM broadcast_batches b JOIN broadcast_tasks t ON t.id=b.task_id";
 impl Repository {
     #[allow(clippy::too_many_arguments)] // Frozen draft plus credential scope are one transaction.
@@ -51,7 +51,6 @@ impl Repository {
         a: &Actor,
         id: Option<Uuid>,
         input: DraftInput,
-        materials: Vec<crate::distribution::domain::content::Material>,
         corp: Option<String>,
         generation: Option<i64>,
         preview_key: Option<String>,
@@ -118,11 +117,7 @@ impl Repository {
                 "再次发送仅允许原任务的目标群，已成功目标需明确选择并填写原因",
             )?;
         }
-        let source_namespace = match input.content_source {
-            ContentSource::Text => "builtin.direct",
-            ContentSource::Posts => "builtin.forum",
-            ContentSource::Materials => &input.materials[0].namespace,
-        };
+        let source_namespace = "builtin.direct";
         let policy = sqlx::query(
             "SELECT enabled,max_pending FROM distribution_sources WHERE namespace=$1 FOR SHARE",
         )
@@ -142,48 +137,7 @@ impl Repository {
                 "来源草稿积压已达限制",
             )?;
         }
-        super::content::validate_materials(&mut tx, &materials).await?;
-        let mut revisions = Vec::new();
-        let content = match input.content_source {
-            ContentSource::Text => {
-                normalize_text(input.text_content.as_deref().unwrap_or_default())?
-            }
-            ContentSource::Materials => materials
-                .iter()
-                .map(|m| m.content.clone())
-                .collect::<Vec<_>>()
-                .join("\n\n"),
-            ContentSource::Posts => {
-                let body: String = sqlx::query_scalar(
-                    "SELECT body FROM template_versions WHERE id=$1 AND published FOR SHARE",
-                )
-                .bind(input.template_version_id)
-                .fetch_optional(&mut *tx)
-                .await?
-                .ok_or(Error::NotFound)?;
-                let mut snippets = Vec::new();
-                for material in &materials {
-                    snippets.push(crate::distribution::domain::render(
-                        &body,
-                        &std::collections::BTreeMap::from([
-                            ("post.title", material.title.clone()),
-                            ("post.summary", material.content.chars().take(200).collect()),
-                            ("post.detail_url", material.detail_url.clone()),
-                        ]),
-                    )?);
-                    revisions.push(
-                        material
-                            .reference
-                            .version
-                            .parse::<i64>()
-                            .map_err(|_| Error::Conflict)?,
-                    );
-                }
-                snippets.join("\n\n")
-            }
-        };
-        let content = normalize_text(&content)?;
-        validate_content(&content)?;
+        let content = normalize_text(input.text_content.as_deref().unwrap_or_default())?;
         let mut groups = Vec::new();
         let mut sorted = input.group_ids.clone();
         sorted.sort();
@@ -201,13 +155,9 @@ impl Repository {
                 .bind(task)
                 .execute(&mut *tx)
                 .await?;
-            sqlx::query("DELETE FROM broadcast_task_posts WHERE task_id=$1")
-                .bind(task)
-                .execute(&mut *tx)
-                .await?;
-            sqlx::query("UPDATE broadcast_tasks SET revision=revision+1,template_version_id=$2,content=$3,content_hash=$4,corp_id=$5,generation=$6,source_task_id=$7,resend_reason=$8,content_source=$9 WHERE id=$1").bind(task).bind(input.template_version_id).bind(&content).bind(hash(&content)).bind(&corp).bind(generation).bind(input.source_task_id).bind(&input.reason).bind(input.content_source.as_str()).execute(&mut *tx).await?;
+            sqlx::query("UPDATE broadcast_tasks SET revision=revision+1,content=$2,content_hash=$3,corp_id=$4,generation=$5,source_task_id=$6,resend_reason=$7,content_source=$8 WHERE id=$1").bind(task).bind(&content).bind(hash(&content)).bind(&corp).bind(generation).bind(input.source_task_id).bind(&input.reason).bind(input.content_source.as_str()).execute(&mut *tx).await?;
         } else {
-            sqlx::query("INSERT INTO broadcast_tasks(id,creator_id,template_version_id,content,content_hash,corp_id,generation,source_task_id,resend_reason,content_source,draft_input) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)").bind(task).bind(a.id).bind(input.template_version_id).bind(&content).bind(hash(&content)).bind(&corp).bind(generation).bind(input.source_task_id).bind(&input.reason).bind(input.content_source.as_str()).bind(json!(input)).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO broadcast_tasks(id,creator_id,content,content_hash,corp_id,generation,source_task_id,resend_reason,content_source,draft_input) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)").bind(task).bind(a.id).bind(&content).bind(hash(&content)).bind(&corp).bind(generation).bind(input.source_task_id).bind(&input.reason).bind(input.content_source.as_str()).bind(json!(input)).execute(&mut *tx).await?;
         }
         sqlx::query("UPDATE broadcast_tasks SET source_namespace=$2,draft_input=$3 WHERE id=$1")
             .bind(task)
@@ -215,17 +165,7 @@ impl Repository {
             .bind(json!(input))
             .execute(&mut *tx)
             .await?;
-        super::content::save_snapshot(&mut tx, task, &content, &materials).await?;
-        for (position, (post, revision)) in input.post_ids.iter().zip(revisions).enumerate() {
-            sqlx::query("INSERT INTO broadcast_task_posts(task_id,post_id,post_revision,position) VALUES($1,$2,$3,$4)")
-
-                .bind(task)
-                .bind(post)
-                .bind(revision)
-                .bind(position as i32)
-                .execute(&mut *tx)
-                .await?;
-        }
+        super::content::save_snapshot(&mut tx, task, &content).await?;
         for (ordinal, (owner, rows)) in chunks(groups).into_iter().enumerate() {
             let batch = Uuid::now_v7();
             let first = &rows[0];
@@ -306,7 +246,7 @@ impl Repository {
             .fetch_one(&mut **tx)
             .await?;
 
-        let prior=sqlx::query("SELECT DISTINCT p.id,b.state,b.stop_state,b.reconciliation FROM broadcast_tasks p JOIN broadcast_targets x ON x.task_id=p.id JOIN broadcast_targets target ON target.group_id=x.group_id AND target.task_id=$1 JOIN broadcast_batches b ON b.id=x.batch_id WHERE p.id<>$1  AND p.state='confirmed' AND (p.content_hash=$2 OR EXISTS(SELECT 1 FROM broadcast_content_references a JOIN broadcast_content_references z USING(namespace,external_organization_id,external_content_id) WHERE a.task_id=p.id AND z.task_id=$1))")
+        let prior=sqlx::query("SELECT DISTINCT p.id,b.state,b.stop_state,b.reconciliation FROM broadcast_tasks p JOIN broadcast_targets x ON x.task_id=p.id JOIN broadcast_targets target ON target.group_id=x.group_id AND target.task_id=$1 JOIN broadcast_batches b ON b.id=x.batch_id WHERE p.id<>$1  AND p.state='confirmed' AND (p.content_hash=$2)")
             .bind(task).bind(t.get::<String,_>("content_hash")).fetch_all(&mut **tx).await?;
         for p in &prior {
             let state: String = p.get("state");
@@ -609,12 +549,6 @@ impl Store for Repository {
         }
         Ok(None)
     }
-    async fn source_references(
-        &self,
-        ids: &[Uuid],
-    ) -> Result<Vec<crate::distribution::domain::content::SourceReference>> {
-        super::content::forum_references(&self.0, ids).await
-    }
     async fn preview(
         &self,
         actor: &Actor,
@@ -648,12 +582,11 @@ impl Store for Repository {
             Command::Save {
                 id,
                 input,
-                materials,
                 corp,
                 generation,
                 preview_key,
             } => {
-                self.save(a, id, input, materials, corp, generation, preview_key)
+                self.save(a, id, input, corp, generation, preview_key)
                     .await?
             }
             Command::Action {

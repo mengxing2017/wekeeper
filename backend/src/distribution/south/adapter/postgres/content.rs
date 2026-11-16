@@ -1,61 +1,16 @@
 //! Platform-owned content, qualification, preview and resource persistence.
 use crate::{
     business::{Error, Result, hash, require},
-    distribution::domain::{
-        broadcast::Work,
-        content::{Material, Preview, SourceReference},
-    },
+    distribution::domain::{broadcast::Work, content::Preview},
 };
-use sqlx::{PgPool, Postgres, Row, Transaction};
+use sqlx::{Postgres, Row, Transaction};
 use uuid::Uuid;
 type Tx<'a> = Transaction<'a, Postgres>;
-pub async fn forum_references(pool: &PgPool, ids: &[Uuid]) -> Result<Vec<SourceReference>> {
-    let mut out = Vec::new();
-    for id in ids {
-        let source:(String,String)=sqlx::query_as("SELECT external_organization_id,version FROM distribution_materials WHERE namespace='builtin.forum'  AND external_content_id=$1 AND allowed").bind(id.to_string()).fetch_optional(pool).await?.ok_or(Error::Conflict)?;
-        out.push(SourceReference {
-            namespace: "builtin.forum".into(),
-            external_organization_id: source.0,
-            external_content_id: id.to_string(),
-            version: source.1,
-        });
-    }
-    Ok(out)
-}
-pub async fn validate_materials(tx: &mut Tx<'_>, materials: &[Material]) -> Result<()> {
-    for material in materials {
-        let r = &material.reference;
-        sqlx::query("SELECT m.version FROM distribution_materials m JOIN distribution_sources s USING(namespace) JOIN distribution_source_organizations o USING(namespace,external_organization_id) WHERE m.namespace=$1 AND m.external_organization_id=$2 AND m.external_content_id=$3  AND m.version=$4 AND m.allowed AND m.title=$5 AND m.content=$6 AND s.enabled AND o.enabled FOR SHARE OF m,s,o")
-            .bind(&r.namespace).bind(&r.external_organization_id).bind(&r.external_content_id).bind(&r.version).bind(&material.title).bind(&material.content).fetch_optional(&mut **tx).await?.ok_or(Error::Conflict)?;
-    }
-    Ok(())
-}
-pub async fn save_snapshot(
-    tx: &mut Tx<'_>,
-    task: Uuid,
-    content: &str,
-    materials: &[Material],
-) -> Result<()> {
+pub async fn save_snapshot(tx: &mut Tx<'_>, task: Uuid, content: &str) -> Result<()> {
     let snapshot = Uuid::now_v7();
     sqlx::query("INSERT INTO distribution_message_snapshots(id,channel,content,content_hash,source_references) VALUES($1,'wecom',$2,$3,$4)")
-        .bind(snapshot).bind(content).bind(hash(content)).bind(serde_json::json!(materials.iter().map(|m| &m.reference).collect::<Vec<_>>())).execute(&mut **tx).await?;
+        .bind(snapshot).bind(content).bind(hash(content)).bind(serde_json::json!([])).execute(&mut **tx).await?;
     sqlx::query("INSERT INTO broadcast_task_snapshots SELECT id,revision,$2 FROM broadcast_tasks WHERE id=$1").bind(task).bind(snapshot).execute(&mut **tx).await?;
-    sqlx::query("DELETE FROM broadcast_content_references WHERE task_id=$1")
-        .bind(task)
-        .execute(&mut **tx)
-        .await?;
-    for (position, material) in materials.iter().enumerate() {
-        let r = &material.reference;
-        sqlx::query("INSERT INTO broadcast_content_references VALUES($1,$2,$3,$4,$5,$6)")
-            .bind(task)
-            .bind(position as i32)
-            .bind(&r.namespace)
-            .bind(&r.external_organization_id)
-            .bind(&r.external_content_id)
-            .bind(&r.version)
-            .execute(&mut **tx)
-            .await?;
-    }
     sqlx::query("DELETE FROM broadcast_previews WHERE task_id=$1")
         .bind(task)
         .execute(&mut **tx)
@@ -69,36 +24,21 @@ pub async fn validate_task(tx: &mut Tx<'_>, task: Uuid) -> Result<()> {
     if !frozen {
         require(row.get("enabled"), "内容来源已暂停")?;
     }
-    let refs=sqlx::query("SELECT r.*,m.version AS current_version,m.allowed,o.enabled AS organization_enabled FROM broadcast_content_references r LEFT JOIN distribution_materials m USING(namespace,external_organization_id,external_content_id) LEFT JOIN distribution_source_organizations o USING(namespace,external_organization_id) WHERE r.task_id=$1 ORDER BY r.position")
-        .bind(task).fetch_all(&mut **tx).await?;
     let namespace: String = row.get("source_namespace");
-    if row.get::<String, _>("content_source") == "text" {
-        // Automatic messages use the durable delegation and frozen snapshot.
-        let source_route = namespace == "builtin.source-route"
-            && row.get::<String, _>("authorization_kind") == "source_route"
-            && sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM orchestration_delegates WHERE task_id=$1 AND channel='wecom' )")
-                .bind(task).fetch_one(&mut **tx).await?;
-        require(
-            refs.is_empty() && (namespace == "builtin.direct" || source_route),
-            "来源不匹配",
-        )?;
-    } else {
-        require(!refs.is_empty(), "缺少来源资格证据")?;
-        // Before confirmation check the selected material. Confirmed messages use
-        // their immutable content and references even if the source later changes.
-        for r in &refs {
-            if !frozen {
-                sqlx::query("SELECT m.version FROM distribution_materials m JOIN distribution_source_organizations o USING(namespace,external_organization_id) WHERE m.namespace=$1 AND m.external_organization_id=$2 AND m.external_content_id=$3  AND m.version=$4 AND m.allowed AND o.enabled FOR SHARE OF m,o")
-                .bind(r.get::<String,_>("namespace")).bind(r.get::<String,_>("external_organization_id")).bind(r.get::<String,_>("external_content_id")).bind(r.get::<String,_>("version")).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("source_content_unavailable"))?;
-            }
-            require(r.get::<String, _>("namespace") == namespace, "来源不匹配")?;
-        }
-    }
+    let source_route = namespace == "builtin.source-route"
+        && row.get::<String, _>("authorization_kind") == "source_route"
+        && sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM orchestration_delegates WHERE task_id=$1 AND channel='wecom')")
+            .bind(task).fetch_one(&mut **tx).await?;
+    require(
+        row.get::<String, _>("content_source") == "text"
+            && (namespace == "builtin.direct" || source_route),
+        "来源不匹配",
+    )?;
     let matches:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM broadcast_tasks t JOIN broadcast_task_snapshots l ON l.task_id=t.id AND l.task_revision=t.revision JOIN distribution_message_snapshots s ON s.id=l.snapshot_id WHERE t.id=$1 AND s.content=t.content AND s.content_hash=t.content_hash AND s.channel='wecom')").bind(task).fetch_one(&mut **tx).await?;
     require(matches, "消息快照不匹配")
 }
 async fn digest(tx: &mut Tx<'_>, task: Uuid) -> Result<(i64, String, String, i64)> {
-    let row=sqlx::query("SELECT t.revision,t.content,(SELECT count(*) FROM broadcast_targets WHERE task_id=t.id) AS total,jsonb_build_object('task',t.id,'revision',t.revision,'content',t.content,'corp',t.corp_id,'generation',t.generation,'source',t.source_namespace,'source_policy',(SELECT to_jsonb(s) FROM distribution_sources s WHERE s.namespace=t.source_namespace),'resource_policies',(SELECT jsonb_agg(to_jsonb(p) ORDER BY p.resource_key) FROM distribution_resource_policies p),'references',(SELECT jsonb_agg(to_jsonb(r) ORDER BY r.position) FROM broadcast_content_references r WHERE r.task_id=t.id),'targets',(SELECT jsonb_agg(to_jsonb(x) ORDER BY x.id) FROM broadcast_targets x WHERE x.task_id=t.id))::text AS payload FROM broadcast_tasks t WHERE id=$1")
+    let row=sqlx::query("SELECT t.revision,t.content,(SELECT count(*) FROM broadcast_targets WHERE task_id=t.id) AS total,jsonb_build_object('task',t.id,'revision',t.revision,'content',t.content,'corp',t.corp_id,'generation',t.generation,'source',t.source_namespace,'source_policy',(SELECT to_jsonb(s) FROM distribution_sources s WHERE s.namespace=t.source_namespace),'resource_policies',(SELECT jsonb_agg(to_jsonb(p) ORDER BY p.resource_key) FROM distribution_resource_policies p),'targets',(SELECT jsonb_agg(to_jsonb(x) ORDER BY x.id) FROM broadcast_targets x WHERE x.task_id=t.id))::text AS payload FROM broadcast_tasks t WHERE id=$1")
         .bind(task).fetch_one(&mut **tx).await?;
     Ok((
         row.get("revision"),
@@ -154,12 +94,8 @@ pub async fn reserve_resource(tx: &mut Tx<'_>, work: &Work) -> Result<bool> {
     Ok(true)
 }
 fn draft_namespace(input: &crate::distribution::domain::broadcast::DraftInput) -> &str {
-    use crate::distribution::domain::broadcast::ContentSource;
-    match input.content_source {
-        ContentSource::Text => "builtin.direct",
-        ContentSource::Posts => "builtin.forum",
-        ContentSource::Materials => &input.materials[0].namespace,
-    }
+    let _ = input;
+    "builtin.direct"
 }
 pub async fn find_draft_request(
     tx: &mut Tx<'_>,
