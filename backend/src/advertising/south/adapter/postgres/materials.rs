@@ -94,11 +94,11 @@ impl MaterialStore for Repository {
         }))
     }
 
-    async fn materials(&self, actor: &Actor, offset: i64) -> Result<Vec<MaterialView>> {
+    async fn materials(&self, actor: &Actor, limit: i64, offset: i64) -> Result<Vec<MaterialView>> {
         let mut tx = self.0.begin().await.map_err(unavailable)?;
         authorize(&mut tx, actor).await?;
-        let rows = sqlx::query("SELECT m.id,m.revision,m.archived,v.id AS version_id,v.name,v.body,v.link FROM ad_materials m JOIN ad_material_versions v ON v.material_id=m.id AND v.id=m.current_version_id ORDER BY m.id LIMIT 31 OFFSET $1")
-            .bind(offset).fetch_all(&mut *tx).await.map_err(unavailable)?;
+        let rows = sqlx::query("SELECT m.id,m.revision,m.archived,v.id AS version_id,v.name,v.body,v.link FROM ad_materials m JOIN ad_material_versions v ON v.material_id=m.id AND v.id=m.current_version_id ORDER BY m.id LIMIT $1 OFFSET $2")
+            .bind(limit).bind(offset).fetch_all(&mut *tx).await.map_err(unavailable)?;
         let items = rows
             .into_iter()
             .map(|r| MaterialView {
@@ -121,6 +121,7 @@ impl MaterialStore for Repository {
         &self,
         actor: &Actor,
         id: Uuid,
+        limit: i64,
         offset: i64,
     ) -> Result<Option<Vec<MaterialVersionView>>> {
         let mut tx = self.0.begin().await.map_err(unavailable)?;
@@ -134,8 +135,8 @@ impl MaterialStore for Repository {
         if !exists {
             return Ok(None);
         }
-        let rows = sqlx::query("SELECT id,material_id,version,name,body,link,created_by,created_at FROM ad_material_versions WHERE material_id=$1 ORDER BY version ASC LIMIT 31 OFFSET $2")
-            .bind(id).bind(offset).fetch_all(&mut *tx).await.map_err(unavailable)?;
+        let rows = sqlx::query("SELECT id,material_id,version,name,body,link,created_by,created_at FROM ad_material_versions WHERE material_id=$1 ORDER BY version ASC LIMIT $2 OFFSET $3")
+            .bind(id).bind(limit).bind(offset).fetch_all(&mut *tx).await.map_err(unavailable)?;
         let versions = rows
             .into_iter()
             .map(|r| MaterialVersionView {
@@ -392,13 +393,14 @@ impl crate::advertising::south::port::AdPlacementStore for Repository {
     async fn placements(
         &self,
         actor: &Actor,
+        limit: i64,
         offset: i64,
     ) -> Result<Vec<crate::advertising::domain::targeting::AdPlacementView>> {
         use crate::advertising::domain::targeting::AdPlacementView;
         let mut tx = self.0.begin().await.map_err(unavailable)?;
         authorize(&mut tx, actor).await?;
-        let rows = sqlx::query("SELECT id,material_id,scope_kind,platform_id,unit_id,enabled,valid_from,valid_until,revision FROM ad_placements ORDER BY id LIMIT 31 OFFSET $1")
-            .bind(offset).fetch_all(&mut *tx).await.map_err(unavailable)?;
+        let rows = sqlx::query("SELECT id,material_id,scope_kind,platform_id,unit_id,enabled,valid_from,valid_until,revision FROM ad_placements ORDER BY id LIMIT $1 OFFSET $2")
+            .bind(limit).bind(offset).fetch_all(&mut *tx).await.map_err(unavailable)?;
         let items = rows
             .into_iter()
             .map(|r| -> Result<AdPlacementView> {

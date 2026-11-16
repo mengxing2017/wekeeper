@@ -140,7 +140,7 @@ async fn two_instances_replay_scope_lifetime_and_deletion() {
         .bind(Uuid::new_v4().to_string()).bind(route).execute(&pool).await;
     assert!(duplicate.is_err());
     let associations = Repository(pool.clone())
-        .associations(&a, key, 1)
+        .associations(&a, key, &wekeeper_api::business::Page::default())
         .await
         .unwrap();
     assert_eq!(associations["items"][0]["route_id"], route);

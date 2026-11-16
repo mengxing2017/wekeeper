@@ -19,7 +19,7 @@ client 统一编码/解码协议，向 feature 提供 `{id,...attributes}` 领�
 
 ## 分页与任务记录
 
-来源素材、审计及任务记录采用 `page[number]`、`page[size]`，默认 1/30，size 为 1–100，number 为 1–100000。旧 `page/page_size` 被拒绝。数据库多取一条，响应只保留请求页大小，并提供 `meta.page = {number,size,has_more}`；不伪造 total。前端据 `has_more` 控制翻页。学校/账号/成员/配置等完整选择列表不分页、不暗中截断，故没有 `meta.page`。
+分页列表采用 `page[number]`、`page[size]`，默认 1/30，size 为 1–100，number 为 1–100000。旧 `page/page_size`、未知字段、重复分页字段与非整数返回 400；整数越界返回 422。数据库多取一条，响应只保留请求页大小，不伪造 total。普通 collection 使用 `meta.page = {number,size,has_more}`；v2 管理列表保留 singleton 的 `{items,has_more}`，包括广告、广告版本、投放、业务目录、来源凭据、来源路由、凭据关联路由、来源回执和即时消息。前端据 `has_more` 控制翻页。完整选择列表不分页、不暗中截断，故没有 `meta.page`。
 
 
 ## 验证

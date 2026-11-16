@@ -53,7 +53,10 @@ pub struct Receipt {
     pub observed_sequence: Option<i64>,
 }
 pub enum Command {
-    List { route: String, page: i64 },
+    List {
+        route: String,
+        page: crate::business::Page,
+    },
 }
 #[cfg(test)]
 mod tests {

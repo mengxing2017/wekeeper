@@ -18,5 +18,5 @@ it('locks semantic payload bytes independently of signed request bytes',()=>{
  expect(wire.retryable).toBe(false);expect(wire.sending).toBeNull()
 })
 it('uses receipt queries without content control commands',async()=>{
- const requestResource=vi.fn().mockResolvedValue({items:[],has_more:false});const client=createSourceReceiptsClient({requestResource});await client.list('route',2);expect(requestResource).toHaveBeenCalledWith('/api/v2/admin/source-routes/route/receipts?page=2');expect('recheck' in client).toBe(false)
+ const requestResource=vi.fn().mockResolvedValue({items:[],has_more:false});const client=createSourceReceiptsClient({requestResource});await client.list('route',2);expect(requestResource).toHaveBeenCalledWith('/api/v2/admin/source-routes/route/receipts?page%5Bnumber%5D=2&page%5Bsize%5D=30');expect('recheck' in client).toBe(false)
 })

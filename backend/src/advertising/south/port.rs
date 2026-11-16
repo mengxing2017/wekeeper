@@ -40,6 +40,7 @@ pub trait MaterialStore: Send + Sync {
     fn materials(
         &self,
         actor: &Actor,
+        limit: i64,
         offset: i64,
     ) -> impl std::future::Future<
         Output = Result<Vec<crate::advertising::domain::targeting::MaterialView>>,
@@ -48,6 +49,7 @@ pub trait MaterialStore: Send + Sync {
         &self,
         actor: &Actor,
         id: uuid::Uuid,
+        limit: i64,
         offset: i64,
     ) -> impl std::future::Future<
         Output = Result<Option<Vec<crate::advertising::domain::targeting::MaterialVersionView>>>,
@@ -88,6 +90,7 @@ pub trait AdPlacementStore: Send + Sync {
     fn placements(
         &self,
         actor: &Actor,
+        limit: i64,
         offset: i64,
     ) -> impl std::future::Future<
         Output = Result<Vec<crate::advertising::domain::targeting::AdPlacementView>>,

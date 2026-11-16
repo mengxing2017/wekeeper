@@ -46,24 +46,27 @@ impl<S: super::super::south::port::MaterialStore> MaterialService<S> {
     pub async fn list(
         &self,
         actor: &Actor,
-        page: i64,
+        page: &crate::business::Page,
     ) -> Result<targeting::ManagementPage<targeting::MaterialView>> {
-        let offset = management_offset(actor, page)?;
-        Ok(management_page(self.0.materials(actor, offset).await?))
+        let (limit, offset) = management_bounds(actor, page)?;
+        Ok(management_page(
+            self.0.materials(actor, limit, offset).await?,
+            limit - 1,
+        ))
     }
     pub async fn versions(
         &self,
         actor: &Actor,
         id: uuid::Uuid,
-        page: i64,
+        page: &crate::business::Page,
     ) -> Result<targeting::ManagementPage<targeting::MaterialVersionView>> {
-        let offset = management_offset(actor, page)?;
+        let (limit, offset) = management_bounds(actor, page)?;
         let versions = self
             .0
-            .material_versions(actor, id, offset)
+            .material_versions(actor, id, limit, offset)
             .await?
             .ok_or(AdvertisingError("not_found"))?;
-        Ok(management_page(versions))
+        Ok(management_page(versions, limit - 1))
     }
     pub async fn archive(
         &self,
@@ -123,10 +126,13 @@ impl<S: super::super::south::port::AdPlacementStore> AdPlacementService<S> {
     pub async fn list(
         &self,
         actor: &Actor,
-        page: i64,
+        page: &crate::business::Page,
     ) -> Result<targeting::ManagementPage<targeting::AdPlacementView>> {
-        let offset = management_offset(actor, page)?;
-        Ok(management_page(self.0.placements(actor, offset).await?))
+        let (limit, offset) = management_bounds(actor, page)?;
+        Ok(management_page(
+            self.0.placements(actor, limit, offset).await?,
+            limit - 1,
+        ))
     }
     pub async fn set_state(
         &self,
@@ -140,15 +146,15 @@ impl<S: super::super::south::port::AdPlacementStore> AdPlacementService<S> {
     }
 }
 
-fn management_offset(actor: &Actor, page: i64) -> Result<i64> {
+fn management_bounds(actor: &Actor, page: &crate::business::Page) -> Result<(i64, i64)> {
     ensure(actor.platform_admin, "forbidden")?;
-    ensure((1..=100_000).contains(&page), "invalid_request")?;
-    Ok((page - 1) * 30)
+    page.fetch_bounds()
+        .map_err(|_| AdvertisingError("invalid_page"))
 }
 
-fn management_page<T>(mut items: Vec<T>) -> targeting::ManagementPage<T> {
-    let has_more = items.len() > 30;
-    items.truncate(30);
+fn management_page<T>(mut items: Vec<T>, size: i64) -> targeting::ManagementPage<T> {
+    let has_more = items.len() > size as usize;
+    items.truncate(size as usize);
     targeting::ManagementPage { items, has_more }
 }
 

@@ -3,7 +3,7 @@ import type {SourceReceiptV2} from './protocol'
 export interface ReceiptRow extends Omit<SourceReceiptV2,'retryable'|'observed_sequence'> {id:string;observed_sequence:number|null;revision:number;external_content_id:string;sequence:number;summary_version:string|null;summary_revision:number;summary_total:number|null}
 const routePath=(route:string)=>`/api/v2/admin/source-routes/${encodeURIComponent(route)}/receipts`
 export function createSourceReceiptsClient({requestResource}:Pick<Client,'requestResource'>){return {
- list:(route:string,page=1)=>requestResource<{items:ReceiptRow[];has_more:boolean}>(`${routePath(route)}?page=${page}`),
+ list:(route:string,page=1,size=30)=>requestResource<{items:ReceiptRow[];has_more:boolean}>(`${routePath(route)}?page%5Bnumber%5D=${page}&page%5Bsize%5D=${size}`),
 
 }}
 export const receiptStatusLabels:Record<string,string>={received:'处理中',applied:'已处理',rejected:'已拒绝'}

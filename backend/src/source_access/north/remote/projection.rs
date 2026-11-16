@@ -3,11 +3,7 @@ use crate::source_access::{
     domain::projection::Command, north::local::projection::Service as ProjectionService,
     south::adapter::postgres::projection::ReceiptsRepository,
 };
-#[derive(Default, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Page {
-    page: Option<i64>,
-}
+type Page = crate::business::Pagination;
 async fn execute(
     a: Application,
     actor: Actor,
@@ -31,7 +27,7 @@ async fn list(
         actor,
         Command::List {
             route,
-            page: page.page.unwrap_or(1),
+            page: page.page(),
         },
         "source-receipt-lists",
     )

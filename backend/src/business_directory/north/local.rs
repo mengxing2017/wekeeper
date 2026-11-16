@@ -15,12 +15,12 @@ impl<S: UnitStore> UnitDirectory<S> {
     pub async fn platforms(
         &self,
         actor: &crate::business::Actor,
-        page: i64,
+        page: &crate::business::Page,
     ) -> Result<DirectoryPage<BusinessPlatform>> {
-        let offset = management_offset(actor, page)?;
-        let mut items = self.0.list_platforms(offset).await?;
-        let has_more = items.len() > 30;
-        items.truncate(30);
+        let (limit, offset) = management_bounds(actor, page)?;
+        let mut items = self.0.list_platforms(limit, offset).await?;
+        let has_more = items.len() >= limit as usize;
+        items.truncate(limit as usize - 1);
         Ok(DirectoryPage { items, has_more })
     }
 
@@ -28,22 +28,22 @@ impl<S: UnitStore> UnitDirectory<S> {
         &self,
         actor: &crate::business::Actor,
         platform_id: Uuid,
-        page: i64,
+        page: &crate::business::Page,
     ) -> Result<DirectoryPage<BusinessUnit>> {
-        let offset = management_offset(actor, page)?;
-        let mut items = self.0.list_units(platform_id, offset).await?;
-        let has_more = items.len() > 30;
-        items.truncate(30);
+        let (limit, offset) = management_bounds(actor, page)?;
+        let mut items = self.0.list_units(platform_id, limit, offset).await?;
+        let has_more = items.len() >= limit as usize;
+        items.truncate(limit as usize - 1);
         Ok(DirectoryPage { items, has_more })
     }
 }
 
-fn management_offset(actor: &crate::business::Actor, page: i64) -> Result<i64> {
+fn management_bounds(
+    actor: &crate::business::Actor,
+    page: &crate::business::Page,
+) -> Result<(i64, i64)> {
     if !actor.platform_admin {
         return Err(DirectoryError::Forbidden);
     }
-    if !(1..=100_000).contains(&page) {
-        return Err(DirectoryError::InvalidPage);
-    }
-    Ok((page - 1) * 30)
+    page.fetch_bounds().map_err(|_| DirectoryError::InvalidPage)
 }

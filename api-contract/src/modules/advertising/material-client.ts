@@ -15,10 +15,10 @@ export interface SetPlacementState {expected_revision:number;enabled:boolean}
 /** Independent material management; the host supplies its own transport. */
 export function createScopedMaterialClient({requestResource}:Pick<Client,'requestResource'>) {
  return {
-  list:(page=1)=>requestResource<ManagementPage<ScopedMaterial>>(`/api/v2/admin/ad-materials?page=${page}`),
+  list:(page=1,size=30)=>requestResource<ManagementPage<ScopedMaterial>>(`/api/v2/admin/ad-materials?page%5Bnumber%5D=${page}&page%5Bsize%5D=${size}`),
   create:(input:CreateScopedMaterial)=>requestResource<ScopedMaterial>('/api/v2/admin/ad-materials','POST',input),
   get:(id:string)=>requestResource<ScopedMaterial>(`/api/v2/admin/ad-materials/${encodeURIComponent(id)}`),
-  versions:(id:string,page=1)=>requestResource<ManagementPage<ScopedMaterialVersion>>(`/api/v2/admin/ad-materials/${encodeURIComponent(id)}/versions?page=${page}`),
+  versions:(id:string,page=1,size=30)=>requestResource<ManagementPage<ScopedMaterialVersion>>(`/api/v2/admin/ad-materials/${encodeURIComponent(id)}/versions?page%5Bnumber%5D=${page}&page%5Bsize%5D=${size}`),
   archive:(id:string,input:ArchiveScopedMaterial)=>requestResource<ScopedMaterial>(`/api/v2/admin/ad-materials/${encodeURIComponent(id)}/archive`,'PUT',input),
   publish:(id:string,input:PublishScopedMaterial)=>requestResource<ScopedMaterial>(`/api/v2/admin/ad-materials/${encodeURIComponent(id)}/publications`,'POST',input),
  }
@@ -26,7 +26,7 @@ export function createScopedMaterialClient({requestResource}:Pick<Client,'reques
 
 export function createAdPlacementClient({requestResource}:Pick<Client,'requestResource'>) {
  return {
-  list:(page=1)=>requestResource<ManagementPage<AdPlacement>>(`/api/v2/admin/ad-placements?page=${page}`),
+  list:(page=1,size=30)=>requestResource<ManagementPage<AdPlacement>>(`/api/v2/admin/ad-placements?page%5Bnumber%5D=${page}&page%5Bsize%5D=${size}`),
   create:(input:CreateAdPlacement)=>requestResource<AdPlacement>('/api/v2/admin/ad-placements','POST',input),
   get:(id:string)=>requestResource<AdPlacement>(`/api/v2/admin/ad-placements/${encodeURIComponent(id)}`),
   setState:(id:string,input:SetPlacementState)=>requestResource<AdPlacement>(`/api/v2/admin/ad-placements/${encodeURIComponent(id)}/state`,'PUT',input),

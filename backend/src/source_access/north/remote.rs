@@ -36,6 +36,7 @@ impl Fault {
             "unsupported_media_type" => 415,
             "payload_too_large" => 413,
             "rate_limited" => 429,
+            "invalid_page" => 422,
             _ => 400,
         };
         let configuration_required = self.0 == "source_key_configuration_required";
@@ -48,6 +49,7 @@ impl Fault {
             "调用方凭据加密服务未配置，请联系部署人员完成配置"
         } else {
             match self.0 {
+                "invalid_page" => "分页参数不合法",
                 "invalid_keyword" => {
                     "关键字不能为空白，原始长度最多 512 字节，规范化后最多 128 个字符"
                 }
@@ -273,7 +275,7 @@ async fn associations(
     Query(q): Query<Filter>,
 ) -> std::result::Result<Response, Response> {
     let v = Repository(a.pool)
-        .associations(&actor, &key, q.page.unwrap_or(1))
+        .associations(&actor, &key, &q.pagination())
         .await
         .map_err(|e| e.response(&actor.request_id))?;
     Ok(crate::http::jsonapi::singleton("source-key-routes", key, v).into_response())

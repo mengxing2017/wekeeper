@@ -10,12 +10,14 @@ pub trait UnitStore: Send + Sync {
 
     fn list_platforms(
         &self,
+        limit: i64,
         offset: i64,
     ) -> impl std::future::Future<Output = Result<Vec<BusinessPlatform>>> + Send;
 
     fn list_units(
         &self,
         platform_id: Uuid,
+        limit: i64,
         offset: i64,
     ) -> impl std::future::Future<Output = Result<Vec<BusinessUnit>>> + Send;
 }

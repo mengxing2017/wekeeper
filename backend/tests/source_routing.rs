@@ -81,7 +81,7 @@ async fn no_targets_is_terminal_and_new_messages_continue() {
         &f.actor,
         wekeeper_api::source_access::domain::projection::Command::List {
             route: f.route.clone(),
-            page: 1,
+            page: wekeeper_api::business::Page::default(),
         },
     )
     .await

@@ -1,7 +1,7 @@
 use crate::{
     business::Actor,
     source_access::{
-        domain::{Result, ensure, projection::Command},
+        domain::{Fault, Result, projection::Command},
         south::port::ProjectionStore,
     },
 };
@@ -10,7 +10,7 @@ pub struct Service<R: ProjectionStore>(pub R);
 impl<R: ProjectionStore> Service<R> {
     pub async fn execute(&self, actor: &Actor, command: Command) -> Result<serde_json::Value> {
         let Command::List { page, .. } = &command;
-        ensure((1..=100_000).contains(page), "invalid_request")?;
+        page.bounds().map_err(|_| Fault("invalid_page"))?;
         self.0.execute(actor, command).await
     }
 }

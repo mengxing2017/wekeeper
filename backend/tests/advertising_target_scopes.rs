@@ -276,7 +276,7 @@ async fn matches_business_scopes_without_routes_or_selection() {
     ] {
         for (session_token, expected_status) in [(&token, 200), (&other_token, 403)] {
             let request = Request::builder()
-                .uri(format!("{path}?page=1"))
+                .uri(format!("{path}?page[number]=1&page[size]=30"))
                 .header("cookie", format!("wekeeper_session={session_token}"))
                 .body(Body::empty())
                 .unwrap();
@@ -298,11 +298,11 @@ async fn matches_business_scopes_without_routes_or_selection() {
             }
         }
         let invalid = Request::builder()
-            .uri(format!("{path}?page=0"))
+            .uri(format!("{path}?page[number]=0&page[size]=30"))
             .header("cookie", format!("wekeeper_session={token}"))
             .body(Body::empty())
             .unwrap();
-        assert_eq!(router.clone().oneshot(invalid).await.unwrap().status(), 400);
+        assert_eq!(router.clone().oneshot(invalid).await.unwrap().status(), 422);
     }
     new_placement["scope"] =
         serde_json::json!({"kind":"unit","platform_id":platform,"unit_id":other_unit});
@@ -415,7 +415,8 @@ async fn matches_business_scopes_without_routes_or_selection() {
             .iter()
             .all(|item| !created_placements.contains(&item.placement_id))
     );
-    let versions_uri = format!("/api/v2/admin/ad-materials/{created_id}/versions?page=1");
+    let versions_uri =
+        format!("/api/v2/admin/ad-materials/{created_id}/versions?page[number]=1&page[size]=30");
     for (session_token, status) in [(&token, 200), (&other_token, 403)] {
         let req = Request::builder()
             .uri(&versions_uri)
@@ -443,8 +444,10 @@ async fn matches_business_scopes_without_routes_or_selection() {
     }
     for (path, status) in [
         (
-            format!("/api/v2/admin/ad-materials/{created_id}/versions?page=0"),
-            400,
+            format!(
+                "/api/v2/admin/ad-materials/{created_id}/versions?page[number]=0&page[size]=30"
+            ),
+            422,
         ),
         (
             format!("/api/v2/admin/ad-materials/{}/versions", Uuid::new_v4()),

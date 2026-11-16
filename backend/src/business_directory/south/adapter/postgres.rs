@@ -30,9 +30,9 @@ impl UnitStore for Repository {
         }))
     }
 
-    async fn list_platforms(&self, offset: i64) -> Result<Vec<BusinessPlatform>> {
-        let rows = sqlx::query("SELECT source_id,unit_name,status FROM source_credentials ORDER BY source_id LIMIT 31 OFFSET $1")
-            .bind(offset).fetch_all(&self.0).await.map_err(|error| {
+    async fn list_platforms(&self, limit: i64, offset: i64) -> Result<Vec<BusinessPlatform>> {
+        let rows = sqlx::query("SELECT source_id,unit_name,status FROM source_credentials ORDER BY source_id LIMIT $1 OFFSET $2")
+            .bind(limit).bind(offset).fetch_all(&self.0).await.map_err(|error| {
                 tracing::error!(error = %error, "business platform listing failed");
                 DirectoryError::Unavailable
             })?;
@@ -46,9 +46,14 @@ impl UnitStore for Repository {
             .collect())
     }
 
-    async fn list_units(&self, platform_id: Uuid, offset: i64) -> Result<Vec<BusinessUnit>> {
-        let rows = sqlx::query("SELECT id,platform_id,name,active,revision FROM business_units WHERE platform_id=$1 ORDER BY id LIMIT 31 OFFSET $2")
-            .bind(platform_id).bind(offset).fetch_all(&self.0).await.map_err(|error| {
+    async fn list_units(
+        &self,
+        platform_id: Uuid,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<BusinessUnit>> {
+        let rows = sqlx::query("SELECT id,platform_id,name,active,revision FROM business_units WHERE platform_id=$1 ORDER BY id LIMIT $2 OFFSET $3")
+            .bind(platform_id).bind(limit).bind(offset).fetch_all(&self.0).await.map_err(|error| {
                 tracing::error!(error = %error, "business unit listing failed");
                 DirectoryError::Unavailable
             })?;

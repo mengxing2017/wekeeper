@@ -13,11 +13,7 @@ use axum::{
 };
 use uuid::Uuid;
 
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Filter {
-    page: Option<i64>,
-}
+type Filter = crate::business::Pagination;
 
 fn error(error: DirectoryError) -> Response {
     match error {
@@ -34,7 +30,7 @@ async fn platforms(
     Query(filter): Query<Filter>,
 ) -> Result<Response, Response> {
     let page = UnitDirectory(Repository(app.pool))
-        .platforms(&actor, filter.page.unwrap_or(1))
+        .platforms(&actor, &filter.page())
         .await
         .map_err(error)?;
     Ok(crate::http::jsonapi::singleton("business-platforms", "list", page).into_response())
@@ -47,7 +43,7 @@ async fn units(
     Query(filter): Query<Filter>,
 ) -> Result<Response, Response> {
     let page = UnitDirectory(Repository(app.pool))
-        .units(&actor, platform_id, filter.page.unwrap_or(1))
+        .units(&actor, platform_id, &filter.page())
         .await
         .map_err(error)?;
     Ok(crate::http::jsonapi::singleton("business-units", "list", page).into_response())

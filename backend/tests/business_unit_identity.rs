@@ -100,14 +100,33 @@ async fn route_creates_distinct_unit_and_database_enforces_scope() {
             .unwrap()
             .is_none()
     );
-    let platforms = directory.platforms(&actor, 1).await.unwrap();
+    let platforms = directory
+        .platforms(
+            &actor,
+            &wekeeper_api::business::Page {
+                page: Some(1),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
     assert!(
         platforms
             .items
             .iter()
             .any(|item| item.id == platform && item.name == "platform")
     );
-    let units = directory.units(&actor, platform, 1).await.unwrap();
+    let units = directory
+        .units(
+            &actor,
+            platform,
+            &wekeeper_api::business::Page {
+                page: Some(1),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
     assert!(
         units
             .items
@@ -116,7 +135,14 @@ async fn route_creates_distinct_unit_and_database_enforces_scope() {
     );
     assert!(
         directory
-            .units(&actor, other_platform, 1)
+            .units(
+                &actor,
+                other_platform,
+                &wekeeper_api::business::Page {
+                    page: Some(1),
+                    ..Default::default()
+                }
+            )
             .await
             .unwrap()
             .items
@@ -125,21 +151,66 @@ async fn route_creates_distinct_unit_and_database_enforces_scope() {
     let mut non_admin = actor.clone();
     non_admin.platform_admin = false;
     assert!(matches!(
-        directory.platforms(&non_admin, 1).await,
+        directory
+            .platforms(
+                &non_admin,
+                &wekeeper_api::business::Page {
+                    page: Some(1),
+                    ..Default::default()
+                }
+            )
+            .await,
         Err(wekeeper_api::business_directory::domain::DirectoryError::Forbidden)
     ));
     assert!(matches!(
-        directory.units(&non_admin, platform, 1).await,
+        directory
+            .units(
+                &non_admin,
+                platform,
+                &wekeeper_api::business::Page {
+                    page: Some(1),
+                    ..Default::default()
+                }
+            )
+            .await,
         Err(wekeeper_api::business_directory::domain::DirectoryError::Forbidden)
     ));
     assert!(matches!(
-        directory.platforms(&actor, 0).await,
+        directory
+            .platforms(
+                &actor,
+                &wekeeper_api::business::Page {
+                    page: Some(0),
+                    ..Default::default()
+                }
+            )
+            .await,
         Err(wekeeper_api::business_directory::domain::DirectoryError::InvalidPage)
     ));
     sqlx::query("INSERT INTO business_units(id,platform_id,name,active,created_by,updated_by) SELECT gen_random_uuid(),$1,'inactive fixture',false,$2,$2 FROM generate_series(1,31)")
         .bind(platform).bind(actor_id).execute(&pool).await.unwrap();
-    let first_page = directory.units(&actor, platform, 1).await.unwrap();
-    let second_page = directory.units(&actor, platform, 2).await.unwrap();
+    let first_page = directory
+        .units(
+            &actor,
+            platform,
+            &wekeeper_api::business::Page {
+                page: Some(1),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let second_page = directory
+        .units(
+            &actor,
+            platform,
+            &wekeeper_api::business::Page {
+                page: Some(2),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
     assert_eq!(first_page.items.len(), 30);
     assert!(first_page.has_more);
     assert_eq!(second_page.items.len(), 2);
@@ -171,7 +242,7 @@ async fn route_creates_distinct_unit_and_database_enforces_scope() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/api/v2/admin/business-platforms?page=1")
+                .uri("/api/v2/admin/business-platforms?page[number]=1&page[size]=30")
                 .header("cookie", format!("wekeeper_session={admin_token}"))
                 .body(Body::empty())
                 .unwrap(),
@@ -193,7 +264,8 @@ async fn route_creates_distinct_unit_and_database_enforces_scope() {
             .iter()
             .any(|item| item["id"] == platform.to_string() && item["name"] == "platform")
     );
-    let path = format!("/api/v2/admin/business-platforms/{platform}/units?page=1");
+    let path =
+        format!("/api/v2/admin/business-platforms/{platform}/units?page[number]=1&page[size]=30");
     let request = |token: &str| {
         Request::builder()
             .uri(&path)

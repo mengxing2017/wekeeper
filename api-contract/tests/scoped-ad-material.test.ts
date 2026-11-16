@@ -35,8 +35,8 @@ it('lists independent material and placement resources',async()=>{
  vi.stubGlobal('fetch',fetchMock)
  expect(await scopedMaterials.list()).toMatchObject({items:[fixture.material],has_more:false})
  expect(await adPlacements.list(2)).toMatchObject({items:[fixture.placement_view],has_more:false})
- expect(fetchMock.mock.calls[0][0]).toBe('/api/v2/admin/ad-materials?page=1')
- expect(fetchMock.mock.calls[1][0]).toBe('/api/v2/admin/ad-placements?page=2')
+ expect(fetchMock.mock.calls[0][0]).toBe('/api/v2/admin/ad-materials?page%5Bnumber%5D=1&page%5Bsize%5D=30')
+ expect(fetchMock.mock.calls[1][0]).toBe('/api/v2/admin/ad-placements?page%5Bnumber%5D=2&page%5Bsize%5D=30')
 })
 
 it('archives an independent material with its revision without an operation reason',async()=>{
@@ -52,5 +52,5 @@ it('reads immutable material versions',async()=>{
  const fetchMock=vi.fn().mockImplementation(async()=>Response.json({data:{type:'ad-material-versions',id:'list',attributes:{items:[fixture.material_version],has_more:false}}},{headers:{'content-type':'application/vnd.api+json'}}))
  vi.stubGlobal('fetch',fetchMock)
  expect(await scopedMaterials.versions(fixture.material.id,2)).toMatchObject({items:[fixture.material_version],has_more:false})
- expect(fetchMock.mock.calls[0][0]).toBe(`/api/v2/admin/ad-materials/${fixture.material.id}/versions?page=2`)
+ expect(fetchMock.mock.calls[0][0]).toBe(`/api/v2/admin/ad-materials/${fixture.material.id}/versions?page%5Bnumber%5D=2&page%5Bsize%5D=30`)
 })

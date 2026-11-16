@@ -316,7 +316,7 @@ impl Repository {
         id: Option<&str>,
         method: &str,
         input: Option<AdminInput>,
-        page: i64,
+        page: &crate::business::Page,
         search: &str,
         status: &str,
         filter_source: Option<Uuid>,
@@ -326,7 +326,7 @@ impl Repository {
         ),
     ) -> Result<Value> {
         ensure(a.platform_admin, "forbidden")?;
-        ensure((1..=100_000).contains(&page), "invalid_request")?;
+        let (limit, offset) = page.fetch_bounds().map_err(|_| Fault("invalid_page"))?;
         let table = match kind {
             "source-credentials" => "source_credentials",
             "source-routes" => "source_routes",
@@ -349,7 +349,7 @@ impl Repository {
                 "'{}'::jsonb"
             };
             let query = format!(
-                "SELECT to_jsonb(t) - 'encrypted_secret' - 'delivery_pending' - 'source_id' || jsonb_build_object('id',t.{pk},'key_id',{owner_key}) || {unit_projection} FROM {table} t JOIN source_callers p USING(source_id) WHERE ($1::text IS NULL OR {pk}::text=$1) AND ($2='' OR to_jsonb(t)->>'name' ILIKE $2 OR to_jsonb(t)->>'unit_name' ILIKE $2 OR to_jsonb(t)->>'route_name' ILIKE $2 OR {pk}::text ILIKE $2) AND ($3='' OR t.status=$3) AND ($4::uuid IS NULL OR source_id=$4) AND ($6::timestamptz IS NULL OR (to_jsonb(t)->>'valid_from')::timestamptz<=$6) AND ($7::timestamptz IS NULL OR (to_jsonb(t)->>'valid_until')::timestamptz<=$7) ORDER BY t.{pk} LIMIT 31 OFFSET $5"
+                "SELECT to_jsonb(t) - 'encrypted_secret' - 'delivery_pending' - 'source_id' || jsonb_build_object('id',t.{pk},'key_id',{owner_key}) || {unit_projection} FROM {table} t JOIN source_callers p USING(source_id) WHERE ($1::text IS NULL OR {pk}::text=$1) AND ($2='' OR to_jsonb(t)->>'name' ILIKE $2 OR to_jsonb(t)->>'unit_name' ILIKE $2 OR to_jsonb(t)->>'route_name' ILIKE $2 OR {pk}::text ILIKE $2) AND ($3='' OR t.status=$3) AND ($4::uuid IS NULL OR source_id=$4) AND ($6::timestamptz IS NULL OR (to_jsonb(t)->>'valid_from')::timestamptz<=$6) AND ($7::timestamptz IS NULL OR (to_jsonb(t)->>'valid_until')::timestamptz<=$7) ORDER BY t.{pk} LIMIT $8 OFFSET $5"
             );
             let pattern = if search.is_empty() {
                 String::new()
@@ -361,9 +361,10 @@ impl Repository {
                 .bind(pattern)
                 .bind(status)
                 .bind(filter_source)
-                .bind((page - 1) * 30)
+                .bind(offset)
                 .bind(validity.0)
                 .bind(validity.1)
+                .bind(limit)
                 .fetch_all(&mut *tx)
                 .await?;
             let audit_source = if let Some(source) = filter_source {
@@ -392,9 +393,9 @@ impl Repository {
                 .await?;
             }
             tx.commit().await?;
-            let more = rows.len() > 30;
+            let more = rows.len() >= limit as usize;
             return Ok(
-                json!({"items":rows.into_iter().take(30).collect::<Vec<_>>(),"has_more":more}),
+                json!({"items":rows.into_iter().take(limit as usize - 1).collect::<Vec<_>>(),"has_more":more}),
             );
         }
         let v = input.ok_or(Fault("invalid_request"))?;
@@ -621,12 +622,14 @@ impl Repository {
         &self,
         a: &crate::business::Actor,
         key: &str,
-        page: i64,
+        page: &crate::business::Page,
     ) -> Result<Value> {
         ensure(a.platform_admin, "forbidden")?;
-        ensure(page > 0 && page <= 100000, "invalid_request")?;
-        let rows:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('route_id',r.route_id,'route_name',r.route_name,'remark',r.remark,'status',k.status,'revision',k.revision) FROM source_key_routes k JOIN source_routes r USING(route_id,source_id) WHERE k.key_id=$1 ORDER BY r.route_id LIMIT 31 OFFSET $2").bind(key).bind((page-1)*30).fetch_all(&self.0).await?;
-        Ok(json!({"has_more":rows.len()>30,"items":rows.into_iter().take(30).collect::<Vec<_>>()}))
+        let (limit, offset) = page.fetch_bounds().map_err(|_| Fault("invalid_page"))?;
+        let rows:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('route_id',r.route_id,'route_name',r.route_name,'remark',r.remark,'status',k.status,'revision',k.revision) FROM source_key_routes k JOIN source_routes r USING(route_id,source_id) WHERE k.key_id=$1 ORDER BY r.route_id LIMIT $2 OFFSET $3").bind(key).bind(limit).bind(offset).fetch_all(&self.0).await?;
+        Ok(
+            json!({"has_more":rows.len() >= limit as usize,"items":rows.into_iter().take(limit as usize - 1).collect::<Vec<_>>()}),
+        )
     }
     pub async fn reveal_secret(
         &self,

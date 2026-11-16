@@ -35,6 +35,7 @@ fn failure(error: AdvertisingError) -> Response {
             StatusCode::BAD_REQUEST,
             "广告正文不能为空且最多 140 字，名称不能为空且最多 120 字",
         ),
+        "invalid_page" => (StatusCode::UNPROCESSABLE_ENTITY, "分页参数不合法"),
         "invalid_request" | "invalid_ad_link" | "invalid_ad_scope" => {
             (StatusCode::BAD_REQUEST, "广告内容或请求不合法")
         }
@@ -43,11 +44,7 @@ fn failure(error: AdvertisingError) -> Response {
     crate::http::error::response(status, error.0, detail)
 }
 
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ListQuery {
-    page: Option<i64>,
-}
+type ListQuery = crate::business::Pagination;
 
 async fn list_materials(
     State(app): State<Application>,
@@ -55,7 +52,7 @@ async fn list_materials(
     Query(query): Query<ListQuery>,
 ) -> Result<Response, Response> {
     let result = MaterialService(Repository(app.pool))
-        .list(&actor, query.page.unwrap_or(1))
+        .list(&actor, &query.page())
         .await
         .map_err(failure)?;
     Ok(crate::http::jsonapi::singleton("ad-materials", "list", result).into_response())
@@ -66,7 +63,7 @@ async fn list_placements(
     Query(query): Query<ListQuery>,
 ) -> Result<Response, Response> {
     let result = AdPlacementService(Repository(app.pool))
-        .list(&actor, query.page.unwrap_or(1))
+        .list(&actor, &query.page())
         .await
         .map_err(failure)?;
     Ok(crate::http::jsonapi::singleton("ad-placements", "list", result).into_response())
@@ -119,7 +116,7 @@ async fn versions(
     Query(query): Query<ListQuery>,
 ) -> Result<Response, Response> {
     let result = MaterialService(Repository(app.pool))
-        .versions(&actor, id, query.page.unwrap_or(1))
+        .versions(&actor, id, &query.page())
         .await
         .map_err(failure)?;
     Ok(crate::http::jsonapi::singleton("ad-material-versions", "list", result).into_response())

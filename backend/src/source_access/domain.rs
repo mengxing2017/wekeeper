@@ -428,13 +428,25 @@ mod boundary_tests {
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ManagementFilter {
+    #[serde(rename = "page[number]")]
     pub page: Option<i64>,
+    #[serde(rename = "page[size]")]
+    pub page_size: Option<i64>,
     pub search: Option<String>,
     pub status: Option<String>,
     pub key_id: Option<String>,
     /// Filter credentials that start on/before this instant and expire on/before this instant.
     pub valid_from: Option<chrono::DateTime<chrono::Utc>>,
     pub valid_until: Option<chrono::DateTime<chrono::Utc>>,
+}
+impl ManagementFilter {
+    pub fn pagination(&self) -> crate::business::Page {
+        crate::business::Page {
+            page: self.page,
+            page_size: self.page_size,
+            ..Default::default()
+        }
+    }
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

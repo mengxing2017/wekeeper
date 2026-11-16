@@ -57,7 +57,10 @@ impl Service {
                 id,
                 method,
                 input,
-                page,
+                &crate::business::Page {
+                    page: Some(page),
+                    ..Default::default()
+                },
                 search,
                 status,
                 source,
@@ -74,6 +77,7 @@ impl Service {
         kind: &str,
         q: ManagementFilter,
     ) -> Result<Value> {
+        q.pagination().bounds().map_err(|_| Fault("invalid_page"))?;
         let repo = Repository(self.0.clone());
         repo.management_read_audit(actor, kind).await?;
         ensure(actor.platform_admin, "forbidden")?;
@@ -88,7 +92,7 @@ impl Service {
             None,
             "GET",
             None,
-            q.page.unwrap_or(1),
+            &q.pagination(),
             q.search.as_deref().unwrap_or(""),
             q.status.as_deref().unwrap_or(""),
             source,

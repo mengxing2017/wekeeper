@@ -13,10 +13,10 @@ function save(kind:SourceKind,v:SourceInput,id?:string):Promise<{id:string;busin
 export const sourceAccess={
  revealSecret:(id:string)=>requestResource<CredentialSecret>(`/api/v2/admin/source-credentials/${encodeURIComponent(id)}/secret-reveals`,'POST',{}),
  associate:(key:string,route:string,revision:number,status:'active'|'revoked')=>requestResource(`/api/v2/admin/source-credentials/${encodeURIComponent(key)}/routes/${encodeURIComponent(route)}`,'PUT',{revision,status}),
- list:(kind:SourceKind,page=1,search='',status='',key_id='',valid_until='')=>requestResource<{items:SourceRow[];has_more:boolean}>(`/api/v2/admin/${kind}?${new URLSearchParams({page:String(page),search,status,...(key_id?{key_id}:{}),...(valid_until?{valid_until}:{})})}`),
+ list:(kind:SourceKind,page=1,search='',status='',key_id='',valid_until='',size=30)=>requestResource<{items:SourceRow[];has_more:boolean}>(`/api/v2/admin/${kind}?${new URLSearchParams({'page[number]':String(page),'page[size]':String(size),search,status,...(key_id?{key_id}:{}),...(valid_until?{valid_until}:{})})}`),
  save,
  remove:(id:string)=>requestResource(`/api/v2/admin/source-credentials/${encodeURIComponent(id)}`,'DELETE'),
- routes:(id:string,page=1)=>requestResource<{items:Association[];has_more:boolean}>(`/api/v2/admin/source-credentials/${encodeURIComponent(id)}/routes?page=${page}`),
+ routes:(id:string,page=1,size=30)=>requestResource<{items:Association[];has_more:boolean}>(`/api/v2/admin/source-credentials/${encodeURIComponent(id)}/routes?page%5Bnumber%5D=${page}&page%5Bsize%5D=${size}`),
 }
 
 export type {SourceEventV2,SourceReceiptV2,SourceCheckV2,SourceCapabilitiesV2,SourceDocument} from './protocol'

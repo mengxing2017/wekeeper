@@ -61,6 +61,25 @@ impl Actor {
         }
     }
 }
+/// Strict pagination-only HTTP query. Keep fields flat for URL deserialization.
+#[derive(Clone, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct Pagination {
+    #[serde(rename = "page[number]")]
+    pub number: Option<i64>,
+    #[serde(rename = "page[size]")]
+    pub size: Option<i64>,
+}
+impl Pagination {
+    pub fn page(self) -> Page {
+        Page {
+            page: self.number,
+            page_size: self.size,
+            ..Default::default()
+        }
+    }
+}
+
 #[derive(Clone, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct Page {
