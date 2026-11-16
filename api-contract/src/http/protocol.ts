@@ -113,7 +113,7 @@ export function resourceType(path: string): string {
     if (parts[3] === 'ad-placements') return parts[5] === 'state' ? 'ad-placement-states' : 'ad-placements';
     if (parts[3] === 'sensitive-words' && !parts[4]) return 'sensitive-words';
     if (parts[3] === 'source-routes' && parts[5]) {
-      const types:Record<string,string>={configuration:'source-route-configurations',managers:'source-route-managers'};
+      const types:Record<string,string>={configuration:'source-route-configurations'};
       if (types[parts[5]]) return types[parts[5]];
     }
     if (['source-routes','source-credentials'].includes(parts[3])) return parts[5] === 'routes' ? 'source-key-routes' : parts[5] === 'secret-reveals' ? 'source-credential-secret-reveals' : parts[3];
