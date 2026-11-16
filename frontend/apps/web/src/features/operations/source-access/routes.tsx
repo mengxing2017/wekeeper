@@ -72,7 +72,7 @@ export function CallerRoutes({caller,onChanged}:{caller:SourceRow;onChanged:()=>
     <Form.Item name="status" label="状态"><Select aria-label="路由状态" options={[{value:'active',label:'启用'},{value:'disabled',label:'停用'}]}/></Form.Item>
    </Form>
   </Modal>
- <Drawer open={configuring!==null} title="路由执行配置" onClose={()=>setConfiguring(null)} size="large">{configuring&&<Space orientation="vertical" style={{width:'100%'}}><RouteConfigurationEditor key={configuring} route={configuring}/><RouteAdvertising route={configuring}/></Space>}</Drawer>
+ <Drawer open={configuring!==null} title="路由执行配置" onClose={()=>setConfiguring(null)} size="large">{configuring&&<Space orientation="vertical" style={{width:'100%'}}><RouteConfigurationEditor key={configuring} route={configuring}/><RouteAdvertising/></Space>}</Drawer>
  <Drawer open={!!receipts} title="收件与回执" onClose={()=>setReceipts(null)} size="large">{receipts&&<SourceReceipts key={receipts} route={receipts}/>}</Drawer>
  </>
 }

@@ -67,10 +67,10 @@ function TaskList({  admin }: { admin: boolean }) {
   const liveOverview=synchronized ? overview.data : undefined
   const resourcesChanged=preview ? previewResourcesChanged(preview,liveOverview) : false
   const confirmationIssues = !admin ? ['当前账号没有管理员发送权限'] : preview?.plan.items.flatMap(i => !i.selected ? [`${i.target.name}：请选择已绑定手机`] : i.blocker ? [`${i.target.name}：${i.blocker}`] : []) ?? []
-  return <Card title="手机共享发送">
+  return <Card title="手机任务">
     {errorContext}
     <Space orientation="vertical" style={{ width: '100%' }}>
-      <Button href={'/admin?view=source-automation-tasks'}>自动任务</Button>
+      <Button href={'/admin?view=source-automation-tasks'}>即时消息与发送结果</Button>
       <Alert type="info" showIcon title="按目标群创建，逐群选择共享手机" description="填写文字和目标群后直接预览，系统自动保存草稿。核对预览后确认发送。确认时同时授权预览中的有效候选，所选手机为首选；离线或调用前失败时自动选择下一候选。结果不确定时保留原尝试风险，接收后五分钟无最终结果按原授权候选换机；跨手机可能重复。企业微信官方群发独立使用。" />
       {overview.data?.sending_status&&<Alert type={overview.data.sending_status.can_confirm?'info':'warning'} title={overview.data.sending_status.message}/>}
       {overview.isError&&<Alert type="warning" title="当前状态同步失败，预览快照不能作为实时状态" description={<Button onClick={()=>void overview.refetch()}>重试</Button>}/>}

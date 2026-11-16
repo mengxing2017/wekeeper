@@ -28,7 +28,7 @@ it('does not equate member execution or absent results with group success',()=>{
 it('double click claims once; retry after a lost response retains its idempotency key',async()=>{
  let reject:(e:Error)=>void=()=>{}
  vi.mocked(broadcast.action).mockImplementationOnce(()=>new Promise((_,r)=>{reject=r})).mockResolvedValue(task)
- show();expect(screen.getByRole('link',{name: '自动任务'}).getAttribute('href')).toBe('/admin?view=source-automation-tasks');fireEvent.click(await screen.findByRole('button',{name: '详情 123456'}))
+ show();expect(screen.getByRole('link',{name: '即时消息与发送结果'}).getAttribute('href')).toBe('/admin?view=source-automation-tasks');fireEvent.click(await screen.findByRole('button',{name: '详情 123456'}))
  // Wait for the task payload before scanning the drawer's accessible controls.
  const detail=within(await screen.findByRole('dialog'))
  await detail.findByText('冻结通知')

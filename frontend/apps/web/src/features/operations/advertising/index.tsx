@@ -49,8 +49,8 @@ function PlacementEditor({onSaved}:{onSaved:()=>Promise<void>}){
   <Input aria-label="生效时间" placeholder="生效时间（含时区）" value={from} onChange={e=>setFrom(e.target.value)}/><Input aria-label="到期时间" placeholder="到期时间（可选，含时区）" value={until} onChange={e=>setUntil(e.target.value)}/><Button type="primary" loading={busy} onClick={()=>void save()}>保存</Button>
  </Space>
 }
-export function RouteAdvertising({route}:{route:string}){
- return <Alert type="info" title="消息按所属业务单位自动匹配并轮询广告，无需单独配置路由广告池。" action={<Button href={`/admin?view=advertisements&route=${encodeURIComponent(route)}`}>管理广告投放</Button>}/>
+export function RouteAdvertising(){
+ return <Alert type="info" title="消息按所属业务单位自动匹配并轮询广告，无需单独配置路由广告池。" action={<Button href="/admin?view=advertisements">前往广告素材与投放</Button>}/>
 }
 export function AdCompositions({route,receipt}:{route:string;receipt:string}){
  const q=useQuery({queryKey:['message-advertisement',route,receipt],queryFn:()=>businessMessages.list(route,receipt)})

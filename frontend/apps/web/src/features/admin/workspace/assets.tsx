@@ -135,7 +135,7 @@ export function Assets() {
   return (
     <Card
       className="data-panel"
-      title="客户群列表"
+      title="客户群总览"
       extra={
         <Button
           type="primary"
