@@ -5,10 +5,12 @@ import { PlusOutlined } from '@ant-design/icons'
 /** Keep creation and configuration forms out of the list's reading flow. */
 export function ActionDrawer({
   title,
+  buttonLabel = title,
   children,
   primary = false,
 }: {
   title: string
+  buttonLabel?: string
   children: ReactNode
   primary?: boolean
 }) {
@@ -20,7 +22,7 @@ export function ActionDrawer({
         icon={primary ? <PlusOutlined /> : undefined}
         onClick={() => setOpen(true)}
       >
-        {title}
+        {buttonLabel}
       </Button>
       {open && (
         <Drawer open size="large" title={title} onClose={() => setOpen(false)}>

@@ -15,7 +15,7 @@ it('shows terminal non-delivery without a recheck or withdrawal workflow',async(
  expect(screen.getByText('未下发成功')).toBeTruthy()
  expect(screen.getByText('没有目标群')).toBeTruthy()
  expect(screen.queryByRole('button',{name:/重检|撤回|撤销/})).toBeNull()
- fireEvent.click(screen.getByRole('button',{name:'刷新收件'}))
+ fireEvent.click(screen.getByRole('button',{name: /^刷\s*新$/}))
  await waitFor(()=>expect(api.list.mock.calls.length).toBeGreaterThan(1))
 })
 it('paginates receipt evidence independently of current configuration',async()=>{

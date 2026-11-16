@@ -14,4 +14,4 @@ it('saves unit resources without workspace, version or exclusive ownership contr
  await waitFor(()=>expect(mocks.save).toHaveBeenCalledWith('unit','configuration',{name:'新名称',enabled:true,target_ids:['target'],device_ids:['phone'],sender_ids:[]}));
  expect(screen.queryByText('版本')).toBeNull();expect(screen.queryByText('通道工作空间')).toBeNull()
 })
-it('unit viewers cannot edit configuration or select resources',async()=>{show(false);await screen.findByText('接收一');expect(screen.queryByRole('button',{name:'新增接收配置'})).toBeNull();expect(mocks.resources).not.toHaveBeenCalled()})
+it('unit viewers cannot edit configuration or select resources',async()=>{show(false);await screen.findByText('接收一');expect(screen.queryByRole('button',{name: /^新\s*增$/})).toBeNull();expect(mocks.resources).not.toHaveBeenCalled()})

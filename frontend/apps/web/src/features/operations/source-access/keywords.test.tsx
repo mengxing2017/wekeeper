@@ -10,7 +10,7 @@ afterEach(()=>{cleanup();vi.resetAllMocks()})
 it('直接显示敏感词并保存新增',async()=>{
  show();expect(await screen.findByText('诈骗')).toBeTruthy()
  expect(screen.queryByText('发布历史')).toBeNull()
- fireEvent.click(screen.getByRole('button',{name:'添加敏感词'}))
+ fireEvent.click(screen.getByRole('button',{name: /^添\s*加$/}))
  fireEvent.change(screen.getByLabelText('敏感词'),{target:{value:'违法'}})
  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button',{name:/保\s*存/}))
  await waitFor(()=>expect(api.save).toHaveBeenCalledWith({expected_revision:3,entries:[{word:'诈骗',enabled:true},{word:'违法',enabled:true}]}))
@@ -36,7 +36,7 @@ it('确认后删除敏感词',async()=>{
 it('并发冲突时保留输入',async()=>{
  api.save.mockRejectedValue(new Error('记录已被修改，请刷新后重试'))
  show();await screen.findByText('诈骗')
- fireEvent.click(screen.getByRole('button',{name:'添加敏感词'}))
+ fireEvent.click(screen.getByRole('button',{name: /^添\s*加$/}))
  fireEvent.change(screen.getByLabelText('敏感词'),{target:{value:'新词'}})
  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button',{name:/保\s*存/}))
  expect(await within(screen.getByRole('dialog')).findByText('记录已被修改，请刷新后重试')).toBeTruthy()

@@ -17,7 +17,7 @@ const sender={id:'account',userid:'verified-official',display_name:'官方成员
 function show(){vi.mocked(officialSenders.list).mockResolvedValue({items:[sender]});render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><OfficialSenders/></QueryClientProvider>)}
 it('global qualification uses official identity and optimistic version',async()=>{
  vi.mocked(officialSenders.qualify).mockResolvedValue({updated:true});show()
- fireEvent.click(await screen.findByRole('button',{name:'停用发送资格'}))
+ fireEvent.click(await screen.findByRole('button',{name: '停用资格'}))
  await waitFor(()=>expect(officialSenders.qualify).toHaveBeenCalledWith('account',{enabled:false,revision:0}))
  expect(officialSenders.list).toHaveBeenCalledWith(1)
 })

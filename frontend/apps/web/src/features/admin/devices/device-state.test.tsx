@@ -22,7 +22,7 @@ afterEach(cleanup)
 async function requestDisable() {
   await selectOption(screen.getByLabelText('设备状态'), '停用')
   fireEvent.change(screen.getByRole('textbox', { name: '变更原因' }), { target: { value: '管理员暂停本机执行' } })
-  fireEvent.click(screen.getByRole('button', { name: '保存设备状态' }))
+  fireEvent.click(screen.getByRole('button', { name: /^保\s*存$/ }))
 }
 
 it('reads the current device and saves an explicit state change with the matching revision', async () => {
@@ -48,7 +48,7 @@ it('keeps the draft when pairing advances the revision and requires confirmation
   expect(api.updateDevice).not.toHaveBeenCalled()
   view.rerender(<DeviceStateEditor device={latest} refresh={refresh} />)
   expect((screen.getByRole('textbox', { name: '变更原因' }) as HTMLInputElement).value).toBe('管理员暂停本机执行')
-  fireEvent.click(screen.getByRole('button', { name: '确认并保存设备状态' }))
+  fireEvent.click(screen.getByRole('button', { name: '确认保存' }))
   expect(await screen.findByText('设备状态已保存')).toBeTruthy()
   expect(api.updateDevice).toHaveBeenCalledExactlyOnceWith('phone', {
     expected_revision: 2, enabled: false, reason: '管理员暂停本机执行',
@@ -64,7 +64,7 @@ it('handles a concurrent PATCH conflict without replaying or losing the entered 
   expect(api.updateDevice).toHaveBeenCalledTimes(1)
   expect(screen.queryByText('手机执行约束未满足')).toBeNull()
   expect((screen.getByRole('textbox', { name: '变更原因' }) as HTMLInputElement).value).toBe('管理员暂停本机执行')
-  fireEvent.click(screen.getByRole('button', { name: '确认并保存设备状态' }))
+  fireEvent.click(screen.getByRole('button', { name: '确认保存' }))
   await screen.findByText('设备状态已保存')
   expect(api.updateDevice).toHaveBeenCalledTimes(2)
   expect(vi.mocked(api.updateDevice).mock.calls[1][1].expected_revision).toBe(2)
@@ -76,8 +76,8 @@ it('blocks writes while current state cannot be read and preserves input for an 
   await requestDisable()
   expect(await screen.findByText('网络中断')).toBeTruthy()
   expect(api.updateDevice).not.toHaveBeenCalled()
-  fireEvent.click(screen.getByRole('button', { name: '刷新设备状态' }))
-  await waitFor(() => expect(screen.getByRole('button', { name: '确认并保存设备状态' })).toBeTruthy())
+  fireEvent.click(screen.getByRole('button', { name: /^刷\s*新$/ }))
+  await waitFor(() => expect(screen.getByRole('button', { name: '确认保存' })).toBeTruthy())
   expect((screen.getByRole('textbox', { name: '变更原因' }) as HTMLInputElement).value).toBe('管理员暂停本机执行')
   expect(api.updateDevice).not.toHaveBeenCalled()
 })

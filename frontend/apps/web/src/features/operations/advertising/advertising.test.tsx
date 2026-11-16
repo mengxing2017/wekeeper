@@ -15,13 +15,13 @@ beforeEach(()=>{
 afterEach(()=>{cleanup();vi.resetAllMocks()})
 function show(node:React.ReactNode){render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}>{node}</QueryClientProvider>)}
 it('manages scoped ads without workspace controls and validates 140 Unicode characters',async()=>{
- show(<Advertising/>);await screen.findByText('广告甲');fireEvent.click(screen.getByRole('button',{name:'新增广告'}))
+ show(<Advertising/>);await screen.findByText('广告甲');fireEvent.click(screen.getByRole('button',{name: /^新\s*增$/}))
  fireEvent.change(await screen.findByLabelText('广告名称'),{target:{value:'新广告'}})
  fireEvent.change(screen.getByLabelText('广告正文'),{target:{value:'汉'.repeat(141)}})
  expect(screen.queryByLabelText('操作原因')).toBeNull()
- fireEvent.click(screen.getByRole('button',{name:'保存广告'}));await screen.findByText('单个广告正文最多 140 字');expect(api.create).not.toHaveBeenCalled()
+ fireEvent.click(screen.getByRole('button',{name: /^保\s*存$/}));await screen.findByText('单个广告正文最多 140 字');expect(api.create).not.toHaveBeenCalled()
  fireEvent.change(screen.getByLabelText('广告正文'),{target:{value:'😀'.repeat(140)}})
- fireEvent.click(screen.getByRole('button',{name:'保存广告'}));await waitFor(()=>expect(api.create).toHaveBeenCalledWith({content:{name:'新广告',body:'😀'.repeat(140),link:null}}))
+ fireEvent.click(screen.getByRole('button',{name: /^保\s*存$/}));await waitFor(()=>expect(api.create).toHaveBeenCalledWith({content:{name:'新广告',body:'😀'.repeat(140),link:null}}))
  expect(screen.queryByText('工作空间')).toBeNull()
 })
 it('binds an advertisement to a business unit without an operation reason',async()=>{
@@ -32,6 +32,6 @@ it('binds an advertisement to a business unit without an operation reason',async
  await selectOption(screen.getByLabelText('选择业务单位'),'单位甲')
  fireEvent.change(screen.getByLabelText('生效时间'),{target:{value:'2026-11-15T00:00:00Z'}})
  expect(screen.queryByLabelText('操作原因')).toBeNull()
- fireEvent.click(screen.getByRole('button',{name:'保存投放绑定'}))
+ fireEvent.click(screen.getByRole('button',{name: /^保\s*存$/}))
  await waitFor(()=>expect(api.bind).toHaveBeenCalledExactlyOnceWith({material_id:'m1',scope:{kind:'unit',platform_id:'p1',unit_id:'u1'},enabled:true,valid_from:'2026-11-15T00:00:00.000Z',valid_until:null}))
 })

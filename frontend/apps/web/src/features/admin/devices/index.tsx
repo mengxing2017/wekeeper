@@ -88,7 +88,7 @@ export function ExecutionDevices({ view, onViewChange }: { view?: string; onView
                 在 Otter 输入这 8 位数字即可，无需输入设备 ID。有效期至{' '}
                 {new Date(pairing.expiresAt).toLocaleString()}，使用一次或重新生成后失效。
               </p>
-              <Button onClick={() => setPairing(null)}>关闭配对码</Button>
+              <Button onClick={() => setPairing(null)}>关闭</Button>
             </>
           }
         />
@@ -107,10 +107,10 @@ export function ExecutionDevices({ view, onViewChange }: { view?: string; onView
             title="手机设备列表"
             extra={
               <Space>
-                <Button onClick={() => void refresh()}>刷新设备</Button>
-                <ActionDrawer title="登记手机" primary>
+                <Button onClick={() => void refresh()}>刷新</Button>
+                <ActionDrawer title="登记手机" buttonLabel="登记" primary>
                   <Editor
-                    fields={[{ name: 'name', title: '设备名称' }]}
+                    fields={[{ name: 'name', title: '名称', ariaLabel: '设备名称' }]}
                     onSave={async (v) => {
                       await api.createDevice({ name: v.name }, key())
                       await refresh()
@@ -127,7 +127,7 @@ export function ExecutionDevices({ view, onViewChange }: { view?: string; onView
               pagination={false}
               scroll={{ x: 700 }}
               columns={[
-                { title: '设备名称', dataIndex: 'name' },
+                { title: '名称', dataIndex: 'name' },
                 { title: '设备 ID', dataIndex: 'id', ellipsis: true },
                 {
                   title: '启用状态',
@@ -143,7 +143,7 @@ export function ExecutionDevices({ view, onViewChange }: { view?: string; onView
                   title: '操作',
                   render: (_, d) => (
                     <Button type="link" onClick={() => setDeviceId(d.id)}>
-                      管理设备
+                      管理
                     </Button>
                   ),
                 },

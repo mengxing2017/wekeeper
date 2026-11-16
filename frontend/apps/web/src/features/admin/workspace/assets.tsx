@@ -283,7 +283,7 @@ export function Assets() {
               onChange={(v) => update({ verification: v })}
             />
           )}
-          <Button onClick={() => void list.refetch()}>刷新目录</Button>
+          <Button onClick={() => void list.refetch()}>刷新</Button>
         </Space>
       </div>
       {list.error && <Alert type="error" title={list.error.message} />}
@@ -312,7 +312,7 @@ export function Assets() {
                       type="link"
                       onClick={() => setSelected({ kind: 'sync-runs', id: r.id })}
                     >
-                      任务详情
+                      详情
                     </Button>
                   ),
                 },
@@ -355,7 +355,7 @@ export function Assets() {
                               type="link"
                               onClick={() => setSelected({ kind: kind as 'groups', id: r.id })}
                             >
-                              查看关系
+                              关系
                             </Button>
                           ),
                         },
@@ -465,7 +465,7 @@ function AssetDetail({
               }
             }}
           >
-            确认历史群主范围变化
+            确认变更
           </Button>
           {scopeError && <Alert type="error" title={scopeError} />}
         </Space>
@@ -554,7 +554,7 @@ export function GroupPicker({  onSaved }: { onSaved: () => Promise<void> }) {
         <Alert
           type="error"
           title={error || q.error?.message}
-          action={<Button onClick={() => void q.refetch()}>刷新候选</Button>}
+          action={<Button onClick={() => void q.refetch()}>刷新</Button>}
         />
       )}
       <Table<GroupCandidate>
@@ -580,7 +580,7 @@ export function GroupPicker({  onSaved }: { onSaved: () => Promise<void> }) {
                   setName(g.name ?? '')
                 }}
               >
-                {g.already_associated ? '已关联' : '选择群'}
+                {g.already_associated ? '已关联' : '选择'}
               </Button>
             ),
           },
@@ -599,7 +599,7 @@ export function GroupPicker({  onSaved }: { onSaved: () => Promise<void> }) {
             maxLength={200}
           />
           <Button type="primary" loading={busy} onClick={() => void save()}>
-            关联为分发目标
+            关联目标
           </Button>
         </Space>
       )}

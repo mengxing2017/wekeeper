@@ -21,7 +21,7 @@ export function AuditEvents() {
         { title: '对象', dataIndex: 'object_id', render: value => value || '—' },
         { title: '请求标识', dataIndex: 'request_id', render: value => value || '—' },
         { title: '时间', dataIndex: 'created_at', render: value => formatDate(value) },
-        { title: '详情', render: (_, record) => <Button type="link" onClick={() => setSelected(record)}>查看详情</Button> },
+        { title: '详情', render: (_, record) => <Button type="link" onClick={() => setSelected(record)}>详情</Button> },
       ]} />
     </ListPanel>
     <Drawer title="审计详情" open={!!selected} onClose={() => setSelected(undefined)} size="large">

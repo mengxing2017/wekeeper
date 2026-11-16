@@ -1,6 +1,6 @@
 import { formatDate } from '../../../shared/format-date';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, configure, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { Directory, WecomBinding } from './directory';
 import { directory } from './api';
@@ -19,15 +19,15 @@ function show(node:React.ReactNode){render(<QueryClientProvider client={new Quer
 it('binds a selected member using the account binding revision',async()=>{
     const refresh=vi.fn().mockResolvedValue(undefined);vi.mocked(directory.bind).mockResolvedValue(null);
     show(<WecomBinding account={{id:'a',active:true,wecom_binding_revision:7}} refresh={refresh}/>);
-    fireEvent.click(await screen.findByText('选择成员'));
-    fireEvent.click(screen.getByText('核验并保存绑定'));
+    fireEvent.click(await screen.findByRole('button', { name: /^选\s*择$/ }));
+    fireEvent.click(screen.getByRole('button', { name: '核验并保存' }));
     await waitFor(()=>expect(directory.bind).toHaveBeenCalledWith('a','m',7));
     expect(refresh).toHaveBeenCalled();
 });
 it('does not allow a member already bound to another account',async()=>{
     vi.mocked(directory.members).mockResolvedValue({items:[{...member,bound_account_id:'other',bound_account_name:'其他账号'}]});
     show(<WecomBinding account={{id:'a',active:true}} refresh={vi.fn()}/>);
-    expect((await screen.findByText('选择成员')).closest('button')?.disabled).toBe(true);
+    expect((await screen.findByRole('button', { name: /^选\s*择$/ })).closest('button')?.disabled).toBe(true);
 });
 it('shows sync errors and the last successful snapshot without claiming success',async()=>{
     vi.mocked(directory.status).mockResolvedValue({id:'current',server_configured:true,credential_generation:1,credential_rotation_required:false,configuration_error:null,snapshot_id:'snapshot',last_success_at:'2026-10-21',latest_run:{id:'run',state:'failed',error_code:'wecom_60011',created_at:'',started_at:null,finished_at:null,department_count:0,member_count:0}});
@@ -38,13 +38,13 @@ it('shows sync errors and the last successful snapshot without claiming success'
 it('allows sync with server credentials alone and requires confirmation for rotation',async()=>{
     vi.mocked(directory.status).mockResolvedValue({id:'current',server_configured:true,credential_generation:2,credential_rotation_required:false,configuration_error:null,snapshot_id:null,last_success_at:null,latest_run:null});
     show(<Directory/>);
-    await waitFor(()=>expect(screen.getByText('立即同步').closest('button')?.disabled).toBe(false));
-    fireEvent.click(screen.getByText('立即同步'));await waitFor(()=>expect(directory.sync).toHaveBeenCalledTimes(1));
+    await waitFor(()=>expect(screen.getByRole('button', { name: /^同\s*步$/ }).closest('button')?.disabled).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: /^同\s*步$/ }));await waitFor(()=>expect(directory.sync).toHaveBeenCalledTimes(1));
     cleanup();
     vi.mocked(directory.status).mockResolvedValue({id:'current',server_configured:true,credential_generation:2,credential_rotation_required:true,configuration_error:'凭据待切换',snapshot_id:null,last_success_at:null,latest_run:null});
     vi.mocked(directory.rotate).mockResolvedValue(null);show(<Directory/>);
-    fireEvent.click(await screen.findByText('验证并切换服务端凭据'));
+    fireEvent.click(await screen.findByRole('button', { name: '验证并切换' }));
     expect(directory.rotate).not.toHaveBeenCalled();
-    fireEvent.click(await screen.findByText('验证并切换'));
+    fireEvent.click(await within(screen.getByRole('tooltip')).findByRole('button', { name: '验证并切换' }));
     await waitFor(()=>expect(directory.rotate).toHaveBeenCalledWith(2));
 });

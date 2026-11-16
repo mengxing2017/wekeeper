@@ -53,8 +53,8 @@ export function Administrators({ user }: { user: User }) {
       <p>维护系统管理员账号、姓名和启用状态。停用或删除后该账号不能登录，现有会话立即失效。</p>
       <Space wrap>
         <Input.Search aria-label="查询管理员" placeholder="按账号或姓名查询" value={keyword} maxLength={100} allowClear enterButton="查询" onChange={e => setKeyword(e.target.value)} onSearch={value => setSearch(value.trim())} />
-        <Button onClick={() => { setKeyword(''); setSearch('') }}>重置查询</Button>
-        <Button type="primary" onClick={() => openEditor()}>新增管理员</Button>
+        <Button onClick={() => { setKeyword(''); setSearch('') }}>重置</Button>
+        <Button type="primary" onClick={() => openEditor()}>新增</Button>
       </Space>
       {notice && <Alert type="success" title={notice} closable onClose={() => setNotice('')} />}
       {query.error && <Alert type="error" title={query.error.message} />}
@@ -68,7 +68,7 @@ export function Administrators({ user }: { user: User }) {
         </Space> },
       ]} />
     </Space>
-    <Modal title={editor?.row ? '编辑管理员' : '新增管理员'} okText="保存管理员" cancelText="取消" open={!!editor} confirmLoading={save.isPending} okButtonProps={{ disabled: !username.trim() || !name.trim() || (!editor?.row && new TextEncoder().encode(initialPassword).length < 12) }} onCancel={() => { setEditor(undefined); setInitialPassword('') }} onOk={() => save.mutate()}>
+    <Modal title={editor?.row ? '编辑管理员' : '新增管理员'} okText="保存" cancelText="取消" open={!!editor} confirmLoading={save.isPending} okButtonProps={{ disabled: !username.trim() || !name.trim() || (!editor?.row && new TextEncoder().encode(initialPassword).length < 12) }} onCancel={() => { setEditor(undefined); setInitialPassword('') }} onOk={() => save.mutate()}>
       <Space orientation="vertical" style={{ width: '100%' }}>
         <label>账号<Input aria-label="管理员账号" autoComplete="off" maxLength={100} disabled={!!editor?.row} value={username} onChange={e => setUsername(e.target.value)} /></label>
         <label>姓名<Input aria-label="管理员姓名" maxLength={100} value={name} onChange={e => setName(e.target.value)} /></label>
@@ -76,7 +76,7 @@ export function Administrators({ user }: { user: User }) {
         {save.error && <Alert type="error" title={save.error.message} />}
       </Space>
     </Modal>
-    <Modal title="删除管理员" okText="确认删除管理员" cancelText="取消" open={!!deleting} confirmLoading={remove.isPending} okButtonProps={{ danger: true }} onCancel={() => setDeleting(undefined)} onOk={() => remove.mutate()}>
+    <Modal title="删除管理员" okText="确认删除" cancelText="取消" open={!!deleting} confirmLoading={remove.isPending} okButtonProps={{ danger: true }} onCancel={() => setDeleting(undefined)} onOk={() => remove.mutate()}>
       <p>确认删除管理员“{deleting?.username}”？删除后撤销管理员身份、停用账号并注销所有会话，历史任务和审计记录保留。</p>
       {remove.error && <Alert type="error" title={remove.error.message} />}
     </Modal>

@@ -19,7 +19,7 @@ it('filters by explicit route without asking for a workspace',async()=>{
  window.history.replaceState(null,'','/admin?view=source-automation-tasks&route=route-1');mount()
  await waitFor(()=>expect(api.list).toHaveBeenCalledWith('route-1','',1))
  expect(screen.queryByRole('combobox')).toBeNull()
- await screen.findByText('event-1');fireEvent.click(screen.getByRole('button',{name:/刷新消息/}))
+ await screen.findByText('event-1');fireEvent.click(screen.getByRole('button',{name: /^刷\s*新$/}))
  await waitFor(()=>expect(api.list.mock.calls.length).toBeGreaterThan(1))
 })
 it('shows no-target failure and continues to display subsequent messages',async()=>{

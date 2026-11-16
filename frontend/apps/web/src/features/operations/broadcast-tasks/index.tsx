@@ -89,12 +89,12 @@ export default function BroadcastTasks({
   }
   return (
     <section>
-      <Button href={'/admin?view=source-automation-tasks'}>自动链路执行与证据</Button>
+      <Button href={'/admin?view=source-automation-tasks'}>自动任务</Button>
       <Alert type="info" title="企业微信分发管理 · 官方接口" description="客户群、模板、官方发送身份和结果属于官方渠道；失败不会自动改用手机。" />
       {capability.data && !capability.data.broadcast_available && (
         <Alert type="warning" title={capability.data.reason} />
       )}
-      {capability.data&&!capability.data.broadcast_available&&<Space orientation="vertical"><p>负责人：{capability.data.request?.owner_name??'待平台分派'} · {capability.data.request?.response??'可保留草稿；开通后仍需本人确认'}</p><Input aria-label="渠道开通用途" placeholder="填写开通用途或当前问题" value={channelReason} onChange={e=>setChannelReason(e.target.value)}/><Button loading={channelBusy} disabled={!channelReason.trim()} onClick={()=>{setChannelBusy(true);setChannelError('');void product.requests.channel({reason:channelReason}).then(()=>{setChannelReason('');return refresh()}).catch(e=>setChannelError(e instanceof Error?e.message:'提交失败')).finally(()=>setChannelBusy(false))}}>确认提交开通申请</Button></Space>}
+      {capability.data&&!capability.data.broadcast_available&&<Space orientation="vertical"><p>负责人：{capability.data.request?.owner_name??'待平台分派'} · {capability.data.request?.response??'可保留草稿；开通后仍需本人确认'}</p><Input aria-label="渠道开通用途" placeholder="填写开通用途或当前问题" value={channelReason} onChange={e=>setChannelReason(e.target.value)}/><Button loading={channelBusy} disabled={!channelReason.trim()} onClick={()=>{setChannelBusy(true);setChannelError('');void product.requests.channel({reason:channelReason}).then(()=>{setChannelReason('');return refresh()}).catch(e=>setChannelError(e instanceof Error?e.message:'提交失败')).finally(()=>setChannelBusy(false))}}>提交申请</Button></Space>}
       {channelError&&<Alert type="error" title={channelError}/>}
       {capability.data?.execution&&<Alert type="info" title="官方客户群通道：成员在企业微信客户端确认属于外部流程；来源自动任务无需平台逐条确认。创建任务不等于逐群发送成功。"/>}
       {capability.error && <Alert type="error" title={capability.error.message} />}
@@ -116,7 +116,7 @@ export default function BroadcastTasks({
                   { value: 'abandoned', label: '已放弃' },
                 ]}
               />
-              <Button onClick={() => void refresh()}>刷新列表</Button>
+              <Button onClick={() => void refresh()}>刷新</Button>
             </Space>
           </div>
           {editing && (
@@ -174,7 +174,7 @@ export default function BroadcastTasks({
                   setSelected('')
                 }}
               >
-                新建群发任务
+                新建
               </Button>
             }
           >
@@ -188,7 +188,7 @@ export default function BroadcastTasks({
               columns={[
                 { title: '消息内容', dataIndex: 'content', ellipsis: true, width: 260 },
                 {
-                  title: '任务状态',
+                  title: '状态',
                   render: (_, t) => (
                     <Tag
                       color={
@@ -224,7 +224,7 @@ export default function BroadcastTasks({
                         setEditing(null)
                       }}
                     >
-                      查看任务 {t.id.slice(-6)}
+                      详情 {t.id.slice(-6)}
                     </Button>
                   ),
                 },
@@ -309,7 +309,7 @@ function DraftEditor({
       <p>预览会自动保留草稿，不创建企业微信任务。正文上限 4000 UTF-8 字节。</p>
       {error && <Alert type="error" title={error} />}
       {!result&&<>
-          <Field label="群发正文">
+          <Field label="正文">
             <Input.TextArea
               aria-label="群发正文"
               rows={6}
@@ -374,9 +374,9 @@ function DraftEditor({
       {result&&<>
        {result.preview?<><h3>完整发送预览</h3><pre>{result.preview.content}</pre><p>全部 {result.preview.target_count} 个群；确认仅创建官方任务，执行成员仍需在企业微信确认。</p><ul>{previewTargets.map(v=><li key={v.id}>{v.group_name} · 执行成员：{v.sender}</li>)}</ul>
        <Button disabled={busy} onClick={()=>{setResult(undefined);saveIntent.current=null}}>返回修改</Button>
-       <Button type="primary" disabled={busy||!admin||previewTargets.length!==result.preview.target_count} onClick={()=>{if(lock.current)return;lock.current=true;setBusy(true);setError('');void broadcast.action(result.task_id,'confirm',confirmKey.current,{revision:result.preview!.revision,preview_digest:result.preview!.digest}).then(saved).catch(e=>setError(e instanceof Error?e.message:'确认失败')).finally(()=>{lock.current=false;setBusy(false)})}}>确认创建官方群发任务</Button>
+       <Button type="primary" disabled={busy||!admin||previewTargets.length!==result.preview.target_count} onClick={()=>{if(lock.current)return;lock.current=true;setBusy(true);setError('');void broadcast.action(result.task_id,'confirm',confirmKey.current,{revision:result.preview!.revision,preview_digest:result.preview!.digest}).then(saved).catch(e=>setError(e instanceof Error?e.message:'确认失败')).finally(()=>{lock.current=false;setBusy(false)})}}>确认创建</Button>
        {!admin&&<p>请管理员从同一草稿核对确认；当前已保存正文。</p>}</>:<Alert type="info" title={result.reason??'草稿已保存'}/>}
-       <Button disabled={busy} onClick={()=>void broadcast.task(result.task_id).then(saved)}>查看已保存草稿</Button>
+       <Button disabled={busy} onClick={()=>void broadcast.task(result.task_id).then(saved)}>查看草稿</Button>
       </>}
     </Card>
   )
@@ -486,7 +486,7 @@ function Detail({
               ? unavailableReason
               : t.content_source === 'text' && !admin
                 ? '当前账号没有管理员权限，不能提交直接文本群发。请管理员打开此草稿确认提交；系统管理员身份不能替代系统管理员权限。'
-                : '草稿尚未提交到企业微信。请检查下方正文和目标群，再点击“确认创建企业微信群发任务”。'
+                : '草稿尚未提交到企业微信。请检查下方正文和目标群，再点击“确认创建”。'
           }
         />
       )}
@@ -538,7 +538,7 @@ function Detail({
                 })
               }
             >
-              确认创建企业微信群发任务
+              确认创建
             </Button>
             <Button
               disabled={busy}
@@ -554,17 +554,17 @@ function Detail({
                 )
               }
             >
-              修改草稿
+              修改
             </Button>
             <Button disabled={busy} onClick={() => void run(() => act('abandon'))}>
-              放弃草稿
+              放弃
             </Button>
           </>
         )}
         {t.state === 'confirmed' && (
           <>
             <Button disabled={busy} onClick={() => void run(() => act('refresh'))}>
-              同步平台结果
+              同步结果
             </Button>
             <Button
               disabled={!enabled || busy || t.stopped}
@@ -608,7 +608,7 @@ function Detail({
                     })
                   }
                 >
-                  生成再次发送草稿
+                  再发草稿
                 </Button>
               </>
             )}
@@ -642,7 +642,7 @@ function Detail({
             (x.creation_state === 'unknown' ||
               x.stop_state === 'unknown' ||
               x.operation_unknown) && (
-              <Button onClick={() => {setBatch(x.batch_id);setEvidenceId('');setCandidates([])}}>核对此批次</Button>
+              <Button onClick={() => {setBatch(x.batch_id);setEvidenceId('');setCandidates([])}}>核对</Button>
             )}
         </Card>
       ))}
@@ -695,14 +695,14 @@ function Detail({
               )
             }
           >
-            保存核对依据
+            保存
           </Button>
-          <Button disabled={busy} onClick={()=>void run(async()=>{const response=await broadcast.evidenceCandidates(id,batch);setCandidates(response.items);setEvidenceReason(response.reason);setEvidenceId('')})}>查询候选证据</Button>
+          <Button disabled={busy} onClick={()=>void run(async()=>{const response=await broadcast.evidenceCandidates(id,batch);setCandidates(response.items);setEvidenceReason(response.reason);setEvidenceId('')})}>查询证据</Button>
           {evidenceReason&&<p>{evidenceReason}</p>}
 
         </Card>
       )}
-      <Card title="报告群发问题"><Input.TextArea aria-label="问题现象" placeholder="描述现象，系统自动关联任务与范围" value={issueReason} onChange={e=>setIssueReason(e.target.value)}/><Button disabled={busy||!issueReason.trim()} onClick={()=>void run(async()=>{await product.requests.issue({reason:issueReason,task_id:id,batch_id:batch||undefined});setIssueReason('')})}>确认移交负责人</Button></Card>
+      <Card title="报告群发问题"><Input.TextArea aria-label="问题现象" placeholder="描述现象，系统自动关联任务与范围" value={issueReason} onChange={e=>setIssueReason(e.target.value)}/><Button disabled={busy||!issueReason.trim()} onClick={()=>void run(async()=>{await product.requests.issue({reason:issueReason,task_id:id,batch_id:batch||undefined});setIssueReason('')})}>移交问题</Button></Card>
       <BusinessRequests/>
       <h3>操作记录</h3>
       {events.error && <Alert type="error" title={events.error.message} />}

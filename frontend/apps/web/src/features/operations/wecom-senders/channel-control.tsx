@@ -12,7 +12,7 @@ export function OfficialChannelControl(){
   <p>系统自动检查连接。接口恢复会自动继续已确认且符合条件的工作；人工暂停需要单独恢复。</p>
   {status.data?.health?.checked_at&&<p>最近检查：{new Date(status.data.health.checked_at).toLocaleString()}</p>}
   {status.error&&<Alert type="error" title={status.error.message}/>}
-  <Space><Button onClick={()=>void status.refetch()}>刷新状态</Button><Button disabled={!status.data} onClick={()=>{setOpen(true);change.reset()}}>{status.data?.paused?'恢复新发送':'暂停新发送'}</Button></Space>
+  <Space><Button onClick={()=>void status.refetch()}>刷新</Button><Button disabled={!status.data} onClick={()=>{setOpen(true);change.reset()}}>{status.data?.paused?'恢复新发送':'暂停新发送'}</Button></Space>
   <Drawer title={status.data?.paused?'恢复官方渠道新发送':'暂停官方渠道新发送'} open={open} onClose={()=>setOpen(false)} destroyOnHidden>
    <p>此操作只控制官方企业微信渠道，不改变共享手机、历史调用及未知结果。</p>
    <Input.TextArea aria-label="操作原因" value={reason} maxLength={1000} onChange={e=>setReason(e.target.value)} placeholder="填写本次暂停或恢复的业务原因"/>

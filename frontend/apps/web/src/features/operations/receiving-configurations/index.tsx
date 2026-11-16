@@ -16,7 +16,7 @@ export function ReceivingConfigurations({channel,scope,admin,platformAdmin}:{cha
  const save=useMutation({mutationFn:(v:ReceivingConfigurationInput)=>client.save(unit,editor!,{...v,device_ids:channel==='mobile'?v.device_ids:[],sender_ids:channel==='wecom'?v.sender_ids:[]}),onSuccess:async()=>{setEditor(undefined);await cache.invalidateQueries({queryKey:key})}})
  const target=useMutation({mutationFn:()=>client.target(unit,crypto.randomUUID(),{name:targetName,directory_group_id:channel==='wecom'?directory??null:null}),onSuccess:async row=>{await cache.invalidateQueries({queryKey:['receiving-resources',channel,unit]});form.setFieldValue('target_ids',[...(form.getFieldValue('target_ids')??[]),row.id]);setTargetName('');setDirectory(undefined)}})
  const edit=(row?:ReceivingConfiguration)=>{save.reset();setEditor(row?.id??crypto.randomUUID());form.setFieldsValue({name:row?.name??'',enabled:row?.enabled??false,target_ids:row?.target_ids??[],device_ids:row?.device_ids??[],sender_ids:row?.sender_ids??[]})}
- return <Card title={channel==='mobile'?'手机接收配置':'企业微信接收配置'} extra={admin&&<Button type="primary" disabled={!unit} onClick={()=>edit()}>新增接收配置</Button>}>
+ return <Card title={channel==='mobile'?'手机接收配置':'企业微信接收配置'} extra={admin&&<Button type="primary" disabled={!unit} onClick={()=>edit()}>新增</Button>}>
  <Space orientation="vertical" style={{width:'100%'}}>
  {!scope&&<Select aria-label="业务单位" placeholder="选择业务单位" style={{minWidth:280}} value={selected||undefined} onChange={v=>{setSelected(v);setPage(1)}} options={units.data?.map(u=>({value:u.id,label:u.name}))}/>}
  <Alert type="info" title="按业务单位维护接收群与发送资源" description="启用即授权系统自动处理该单位之后的新消息。同一个群可供多个配置使用；每条消息在同一通道只向该群投递一次。配置变更不追溯已有消息。"/>
@@ -31,7 +31,7 @@ export function ReceivingConfigurations({channel,scope,admin,platformAdmin}:{cha
  <Space orientation="vertical" style={{width:'100%'}}>
  <Input aria-label="新增群名称" placeholder="填写一个群名称" value={targetName} onChange={e=>setTargetName(e.target.value)}/>
  {channel==='wecom'&&<Select aria-label="已同步客户群" placeholder="选择已同步客户群" style={{width:'100%'}} value={directory} onChange={id=>{setDirectory(id);setTargetName(resources.data?.directory_groups?.find(g=>g.id===id)?.name??'')}} options={resources.data?.directory_groups?.map(g=>({value:g.id,label:g.name}))}/>}
- <Button disabled={!targetName.trim()||(channel==='wecom'&&!directory)} loading={target.isPending} onClick={()=>target.mutate()}>添加接收群</Button>
+ <Button disabled={!targetName.trim()||(channel==='wecom'&&!directory)} loading={target.isPending} onClick={()=>target.mutate()}>添加</Button>
  {target.error&&<Alert type="error" title={target.error.message}/>}
  </Space>
  <Form.Item name="target_ids" label="接收群"><Select mode="multiple" optionFilterProp="label" options={resources.data?.targets.map(t=>({value:t.id,label:t.name}))}/></Form.Item>

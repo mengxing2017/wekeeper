@@ -15,7 +15,7 @@ export function BusinessSchemeEditor({scheme}:{scheme?:BusinessScheme|null;statu
  const save=useMutation({mutationFn:()=>{const body=JSON.stringify(form);let key=keys.current.get(body);if(!key){key=createIdempotencyKey();keys.current.set(body,key)}return sharedSend.saveBusinessScheme(form,key)},onSuccess:()=>{setOpen(false);void cache.invalidateQueries({queryKey:['mobile-execution']})}})
  function begin(){setForm({expected_revision:scheme?.revision??0,enabled:scheme?scheme.mode==='enabled':true,confirmed:false,timezone:scheme?.timezone??'Asia/Shanghai',allowed_windows:structuredClone(scheme?.allowed_windows??defaultWindows),limits:structuredClone(scheme?.limits??defaults),reason:''});save.reset();setOpen(true)}
  const invalid=form.allowed_windows.length===0||form.allowed_windows.some(w=>!w.weekdays.length||w.start_minute===w.end_minute)
- return <><Button onClick={begin}>配置业务方案</Button><Drawer title="手机群消息业务方案" open={open} size={920} onClose={()=>setOpen(false)} footer={<Button type="primary" loading={save.isPending} disabled={!form.confirmed||!form.reason.trim()||invalid} onClick={()=>save.mutate()}>确认保存业务方案</Button>}>
+ return <><Button onClick={begin}>配置业务方案</Button><Drawer title="手机群消息业务方案" open={open} size={920} onClose={()=>setOpen(false)} footer={<Button type="primary" loading={save.isPending} disabled={!form.confirmed||!form.reason.trim()||invalid} onClick={()=>save.mutate()}>确认保存</Button>}>
  <Space orientation="vertical" style={{width:'100%'}}>
  <Alert type="info" title="变更影响" description="时段、额度和间隔约束实际执行，不要求重新办理已有使用范围；关闭后任务仍可提交排队，停止新执行许可。已有调用及不确定结果保留，不会重置累计额度。技术产品升级不会覆盖此方案。"/>
  <label>允许实际执行 <Switch aria-label="允许实际执行" checked={form.enabled} onChange={enabled=>setForm({...form,enabled})}/></label>
@@ -25,9 +25,9 @@ export function BusinessSchemeEditor({scheme}:{scheme?:BusinessScheme|null;statu
  {form.allowed_windows.map((w,i)=><Space key={i} wrap>
  <Select aria-label={`时段${i+1}星期`} mode="multiple" style={{minWidth:250}} value={w.weekdays} options={policyWeekdays} onChange={weekdays=>setForm({...form,allowed_windows:form.allowed_windows.map((v,n)=>n===i?{...v,weekdays}:v)})}/>
  {(['start_minute','end_minute'] as const).map(k=><Input key={k} aria-label={`时段${i+1}${k==='start_minute'?'开始':'结束'}`} type="time" value={policyClock(w[k])} onChange={e=>{const minute=policyMinute(e.target.value,k==='end_minute');if(minute!==undefined)setForm({...form,allowed_windows:form.allowed_windows.map((v,n)=>n===i?{...v,[k]:minute}:v)})}}/>)}
- <Button onClick={()=>setForm({...form,allowed_windows:form.allowed_windows.filter((_,n)=>n!==i)})}>删除时段</Button>
+ <Button onClick={()=>setForm({...form,allowed_windows:form.allowed_windows.filter((_,n)=>n!==i)})}>删除</Button>
  </Space>)}
- <Button disabled={form.allowed_windows.length>=32} onClick={()=>setForm({...form,allowed_windows:[...form.allowed_windows,newPolicyWindow()]})}>添加允许时段</Button>
+ <Button disabled={form.allowed_windows.length>=32} onClick={()=>setForm({...form,allowed_windows:[...form.allowed_windows,newPolicyWindow()]})}>添加时段</Button>
  <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(280px,1fr))',gap:16,width:'100%'}}>
  {(Object.entries({global:'平台全局',device:'每台手机',target:'每个目标群'}) as Array<[keyof BusinessSchemeInput['limits'],string]>).map(([scope,title])=><fieldset key={scope}><legend>{title}</legend><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
  {(Object.entries({interval_seconds:'最小间隔（秒）',window_seconds:'滚动窗口（秒）',max_calls:'窗口最多调用数',daily_max_calls:'每日最多调用数'}) as Array<[keyof BusinessSchemeInput['limits']['global'],string]>).map(([field,label])=><label key={field}>{label}<InputNumber aria-label={`${title}${label}`} min={1} max={field==='window_seconds'?2592000:field==='interval_seconds'?86400:100000} precision={0} value={form.limits[scope][field]} onChange={v=>{if(v!==null)setForm({...form,limits:{...form.limits,[scope]:{...form.limits[scope],[field]:v}}})}}/></label>)}

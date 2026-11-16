@@ -35,7 +35,7 @@ function CallerCredentials() {
  {title:'凭据 ID（key_id）',render:(_,r)=><Typography.Text copyable>{r.id}</Typography.Text>},{title:'备注',dataIndex:'remark'},
  {title:'状态',render:(_,r)=><Tag>{r.status}</Tag>},{title:'有效期至',render:(_,r)=>r.valid_until??'长期有效'},
  {title:'最近调用',dataIndex:'last_used_at'},
- {title:'操作',render:(_,r)=><Space><Button onClick={()=>open(r)}>详情 / 编辑</Button><Button onClick={()=>setRouteCaller(r)}>消息分发路由</Button><Popconfirm title="删除调用方凭据？" description="将永久删除凭据及其消息分发路由，历史收件和任务保留。" onConfirm={()=>act(()=>sourceAccess.remove(r.id))} okText="确认删除" cancelText="取消"><Button danger>删除凭据</Button></Popconfirm></Space>}
+ {title:'操作',render:(_,r)=><Space><Button onClick={()=>open(r)}>编辑</Button><Button onClick={()=>setRouteCaller(r)}>路由</Button><Popconfirm title="删除调用方凭据？" description="将永久删除凭据及其消息分发路由，历史收件和任务保留。" onConfirm={()=>act(()=>sourceAccess.remove(r.id))} okText="确认删除" cancelText="取消"><Button danger>删除</Button></Popconfirm></Space>}
  ]}/>
  <Space><Button disabled={page===1} onClick={()=>setPage(page-1)}>上一页</Button><span>{page}</span><Button disabled={!q.data?.has_more} onClick={()=>setPage(page+1)}>下一页</Button></Space>
  <Drawer open={editing!==undefined} title={editing?'详情 / 编辑':'新增'} onClose={()=>setEditing(undefined)} size="large">
@@ -47,9 +47,9 @@ function CallerCredentials() {
  <Alert type="info" title="下游填写 WeKeeper 服务地址、key_id 和 secret（点击“查看密钥”取得）；消息路由另选本凭据的 route_id。WeKeeper 不回调或检查下游在线状态。删除后凭据及其路由无法恢复，历史收件与任务保留。"/>
  <Form form={form} layout="vertical">
  <Form.Item name="unit_name" label="平台名称" rules={[{required:true}]}><Input/></Form.Item>
- <Form.Item name="remark" label="凭据备注"><Input.TextArea/></Form.Item>
+ <Form.Item name="remark" label="备注"><Input.TextArea aria-label="凭据备注"/></Form.Item>
  <Form.Item name="status" label="状态"><Select options={['active','disabled','revoked'].map(value=>({value,label:value}))}/></Form.Item>
- <><Form.Item name="valid_from" label="生效时间 UTC" rules={[{required:true}]}><Input/></Form.Item><Form.Item name="long_term" valuePropName="checked"><Checkbox>长期有效</Checkbox></Form.Item>{!longTerm&&<Form.Item name="valid_until" label="失效时间 UTC" rules={[{required:true,message:'请输入失效时间 UTC'}]}><Input/></Form.Item>}<Table rowKey="route_id" dataSource={links} pagination={{pageSize:10}} columns={[{title:'消息路由 ID（route_id）',dataIndex:'route_id'},{title:'路由名称',dataIndex:'route_name'},{title:'路由备注',dataIndex:'remark'},{title:'关联状态',dataIndex:'status'}]}/></>
+ <><Form.Item name="valid_from" label="生效时间 UTC" rules={[{required:true}]}><Input/></Form.Item><Form.Item name="long_term" valuePropName="checked"><Checkbox>长期有效</Checkbox></Form.Item>{!longTerm&&<Form.Item name="valid_until" label="失效时间 UTC" rules={[{required:true,message:'请输入失效时间 UTC'}]}><Input/></Form.Item>}<Table rowKey="route_id" dataSource={links} pagination={{pageSize:10}} columns={[{title:'消息路由 ID（route_id）',dataIndex:'route_id'},{title:'名称',dataIndex:'route_name'},{title:'备注',dataIndex:'remark'},{title:'关联状态',dataIndex:'status'}]}/></>
  <Button type="primary" loading={busy} onClick={save}>保存</Button>
  </Form>
  </Drawer>

@@ -105,14 +105,14 @@ function DirectoryBrowser({
         <Alert
           type="error"
           title={`部门加载失败：${departments.error.message}`}
-          action={<Button onClick={() => void departments.refetch()}>重试部门</Button>}
+          action={<Button onClick={() => void departments.refetch()}>重试</Button>}
         />
       )}
       {members.error && (
         <Alert
           type="error"
           title={`成员加载失败：${members.error.message}`}
-          action={<Button onClick={() => void members.refetch()}>重试成员</Button>}
+          action={<Button onClick={() => void members.refetch()}>重试</Button>}
         />
       )}
       <Table<DirectoryMember>
@@ -155,7 +155,7 @@ function DirectoryBrowser({
                       }
                       onClick={() => onSelect(m)}
                     >
-                      选择成员
+                      选择
                     </Button>
                   ),
                 },
@@ -215,7 +215,7 @@ export function Directory() {
         <Alert
           type="error"
           title={status.error.message}
-          action={<Button onClick={() => void status.refetch()}>重试状态</Button>}
+          action={<Button onClick={() => void status.refetch()}>重试</Button>}
         />
       )}
       {status.data?.configuration_error && (
@@ -255,10 +255,10 @@ export function Directory() {
             run?.state === 'running'
           }
         >
-          立即同步
+          同步
         </Button>
         <Button onClick={() => void cache.invalidateQueries({ queryKey: ['wecom-directory'] })}>
-          刷新目录与状态
+          刷新
         </Button>
       </Space>
       {status.data?.server_configured && status.data.credential_rotation_required && (
@@ -271,7 +271,7 @@ export function Directory() {
             cancelText="取消"
           >
             <Button loading={busy} disabled={busy}>
-              验证并切换服务端凭据
+              验证并切换
             </Button>
           </Popconfirm>
         </p>
@@ -340,13 +340,13 @@ export function WecomBinding({
           disabled={busy || !selected || !account.active}
           onClick={() => void save()}
         >
-          核验并保存绑定
+          核验并保存
         </Button>
         <Button disabled={busy || !account.wecom_member_id} onClick={() => void save(true)}>
           解除绑定
         </Button>
         <Button disabled={busy} onClick={() => void refresh()}>
-          刷新账号绑定版本
+          刷新
         </Button>
       </Space>
     </section>

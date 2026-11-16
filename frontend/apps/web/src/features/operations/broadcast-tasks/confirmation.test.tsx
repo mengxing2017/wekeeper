@@ -24,10 +24,10 @@ it('one confirmation submits a draft and immediately displays server-confirmed s
   return confirmed
  })
  render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><BroadcastTasks admin/></QueryClientProvider>)
- fireEvent.click(await screen.findByRole('button',{name:'查看任务 123456'}))
+ fireEvent.click(await screen.findByRole('button',{name: '详情 123456'}))
  await screen.findByText('已选为目标群，等待确认提交')
  expect(screen.queryByText(/成员任务：/)).toBeNull()
- fireEvent.click(await screen.findByRole('button',{name:'确认创建企业微信群发任务'}))
+ fireEvent.click(await screen.findByRole('button',{name: '确认创建'}))
  await waitFor(()=>expect(broadcast.action).toHaveBeenCalledWith(task.id,'confirm',expect.any(String),{revision:1,preview_digest:'preview-digest'}))
  await screen.findByText(/已确认提交，后台正在创建/)
  expect(screen.queryByText(/草稿尚未提交到企业微信/)).toBeNull()

@@ -1,4 +1,4 @@
-import {render,screen,waitFor,fireEvent,cleanup} from '@testing-library/react'
+import {render,screen,waitFor,fireEvent,cleanup,within} from '@testing-library/react'
 import {QueryClient,QueryClientProvider} from '@tanstack/react-query'
 import {afterEach,beforeEach,expect,it,vi} from 'vitest'
 import {SourceAccess} from './index'
@@ -9,7 +9,7 @@ beforeEach(()=>{api.list.mockResolvedValue({items:[{id:'key-1',unit_name:'运营
 it('separates credential and route remarks without a secret display',async()=>{
  const cache=new QueryClient({defaultOptions:{queries:{retry:false}}});cache.setQueryData(['source-admin','source-credentials',1,'','','',''],await api.list())
  render(<QueryClientProvider client={cache}><SourceAccess/></QueryClientProvider>)
- fireEvent.click(await screen.findByRole('button',{name:'详情 / 编辑'}))
+ fireEvent.click(await screen.findByRole('button',{name: /^编\s*辑$/}))
  expect(await screen.findByRole('cell',{name:'路由备注'}, {timeout:15000})).toBeTruthy()
  expect((screen.getByLabelText('凭据备注') as HTMLTextAreaElement).value).toBe('凭据备注')
  expect(screen.getByRole('columnheader',{name:'凭据 ID（key_id）'})).toBeTruthy()
@@ -52,10 +52,10 @@ it('manages routes inside one caller and authorizes new routes with its current 
  const cache=new QueryClient({defaultOptions:{queries:{retry:false}}})
  cache.setQueryData(['source-admin','source-credentials',1,'','','',''],{items:[caller],has_more:false})
  render(<QueryClientProvider client={cache}><SourceAccess/></QueryClientProvider>)
- fireEvent.click(screen.getByRole('button',{name:'消息分发路由'}))
+ fireEvent.click(screen.getByRole('button',{name: /^路\s*由$/}))
  expect(await screen.findByText('当前调用方路由',{}, {timeout:15000})).toBeTruthy()
  expect(api.list).toHaveBeenCalledWith('source-routes',1,'','','key-1')
- fireEvent.click(screen.getByRole('button',{name:'新增路由'}))
+ fireEvent.click(within(screen.getByRole('dialog')).getByRole('button',{name: /^新\s*增$/}))
  fireEvent.change(await screen.findByLabelText('单位名称'),{target:{value:'😀'.repeat(121)}})
  fireEvent.click(screen.getByRole('button',{name:/保\s*存/}))
  expect(await screen.findByText('请输入 1 至 120 个字符的单位名称')).toBeTruthy()
@@ -73,8 +73,8 @@ it('removes rotation and confirms permanent credential and child route deletion'
  cache.setQueryData(['source-admin','source-credentials',1,'','','',''],await api.list())
  api.remove.mockResolvedValue({})
  render(<QueryClientProvider client={cache}><SourceAccess/></QueryClientProvider>)
- expect(screen.queryByRole('button',{name:/轮换/})).toBeNull()
- fireEvent.click(screen.getByRole('button',{name:'删除凭据'}))
+ expect(screen.queryByRole('button',{name: /^轮\s*换$/})).toBeNull()
+ fireEvent.click(screen.getByRole('button',{name: /^删\s*除$/}))
  expect(api.remove).not.toHaveBeenCalled()
  expect(await screen.findByText('将永久删除凭据及其消息分发路由，历史收件和任务保留。')).toBeTruthy()
  fireEvent.click(screen.getByRole('button',{name:'确认删除'}))
@@ -85,7 +85,7 @@ it('requires an expiry for bounded credentials and can change an existing creden
  cache.setQueryData(['source-admin','source-credentials',1,'','','',''],await api.list())
  api.save.mockResolvedValue({})
  render(<QueryClientProvider client={cache}><SourceAccess/></QueryClientProvider>)
- fireEvent.click(screen.getByRole('button',{name:'详情 / 编辑'}))
+ fireEvent.click(screen.getByRole('button',{name: /^编\s*辑$/}))
  const expiry=await screen.findByLabelText('失效时间 UTC')
  fireEvent.change(expiry,{target:{value:''}})
  fireEvent.click(screen.getByRole('button',{name:/保\s*存/}))

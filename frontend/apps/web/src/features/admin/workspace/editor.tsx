@@ -6,6 +6,7 @@ import { Alert, Button, ColorPicker, DatePicker, Form, Input, InputNumber, Selec
 interface Field {
   name: string
   title: string
+  ariaLabel?: string
   type?: string
   options?: { value: string; label: string }[]
   optional?: boolean
@@ -83,7 +84,7 @@ export function Editor({
           ) : field.type === 'password' ? (
             <Input.Password readOnly={field.readOnly} />
           ) : (
-            <Input readOnly={field.readOnly} type={field.type ?? 'text'} />
+            <Input aria-label={field.ariaLabel} readOnly={field.readOnly} type={field.type ?? 'text'} />
           )}
         </Form.Item>
       ))}

@@ -76,7 +76,7 @@ export function DeviceStateEditor({ device, refresh }: { device: Device; refresh
           setError(conflictMessage)
           await refresh()
         } catch {
-          setError('设备信息已更新，但最新状态读取失败。请先刷新设备状态，核对后重新提交；已填写内容已保留。')
+          setError('设备信息已更新，但最新状态读取失败。请先点击“刷新”，核对后重新提交；已填写内容已保留。')
         }
       } else {
         setError((e as Error).message)
@@ -91,15 +91,15 @@ export function DeviceStateEditor({ device, refresh }: { device: Device; refresh
     <p>当前设备状态：{current.enabled ? '已启用' : '已停用'}。设备启用后仍需业务授权和任务确认才可执行。</p>
     {(confirm || current.revision !== revision) && <Alert type="warning" showIcon
       title="请核对最新设备状态后确认保存" description="其他管理操作或手机配对可能已更新设备信息。输入内容已保留，不会自动覆盖最新记录。" />}
-    <Form.Item name="enabled" label="设备状态" rules={[{ required: true, message: '请选择设备状态' }]}>
-      <Select options={[{ value: 'true', label: '启用' }, { value: 'false', label: '停用' }]} />
+    <Form.Item name="enabled" label="状态" rules={[{ required: true, message: '请选择设备状态' }]}>
+      <Select aria-label="设备状态" options={[{ value: 'true', label: '启用' }, { value: 'false', label: '停用' }]} />
     </Form.Item>
     <Form.Item name="reason" label="变更原因" rules={[{ required: true, whitespace: true, max: 1000, message: '请填写 1～1000 字的变更原因' }]}>
       <Input maxLength={1000} />
     </Form.Item>
     <Space wrap>
-      <Button type="primary" htmlType="submit" loading={busy}>{confirm ? '确认并保存设备状态' : '保存设备状态'}</Button>
-      <Button disabled={busy} onClick={() => void reload()}>刷新设备状态</Button>
+      <Button type="primary" htmlType="submit" loading={busy}>{confirm ? '确认保存' : '保存'}</Button>
+      <Button disabled={busy} onClick={() => void reload()}>刷新</Button>
     </Space>
     {error && <Alert type="error" title={error} showIcon />}
     {done && <Alert type="success" role="status" title="设备状态已保存" showIcon />}

@@ -15,7 +15,7 @@ export function AssignedRoutes({platformAdmin=false,receiptsOnly=false}:{platfor
   <Table rowKey="id" loading={q.isFetching} dataSource={q.data?.items??[]} pagination={{pageSize:20}} columns={[
    {title:'调用方',dataIndex:'caller_name'},{title:'路由名称',dataIndex:'route_name'},{title:'消息路由 ID',dataIndex:'id'},
    {title:'状态',render:(_,r)=>r.status==='active'?'启用':'停用'},
-   {title:'操作',render:(_,r)=><Space>{!receiptsOnly&&<Button onClick={()=>setRoute(r.id)}>执行配置</Button>}<Button href={`/admin?view=source-automation-tasks&route=${encodeURIComponent(r.id)}`}>自动链路任务</Button><Button onClick={()=>setReceipts(r.id)}>{receiptsOnly?'查看收件与回执':'收件与回执'}</Button></Space>}
+   {title:'操作',render:(_,r)=><Space>{!receiptsOnly&&<Button onClick={()=>setRoute(r.id)}>执行配置</Button>}<Button href={`/admin?view=source-automation-tasks&route=${encodeURIComponent(r.id)}`}>自动链路任务</Button><Button onClick={()=>setReceipts(r.id)}>收件与回执</Button></Space>}
   ]}/>
   <Drawer open={!!route} title="业务单位接收配置" onClose={()=>setRoute(null)} size="large">{route&&<Space orientation="vertical" style={{width:'100%'}}><RouteConfigurationEditor key={route} route={route} manageAuthorizations={platformAdmin} onChanged={async()=>{await q.refetch()}}/><RouteAdvertising key={route} route={route}/></Space>}</Drawer>
   <Drawer open={!!receipts} title="收件与回执" onClose={()=>setReceipts(null)} size="large">{receipts&&<SourceReceipts key={receipts} route={receipts}/>}</Drawer>
