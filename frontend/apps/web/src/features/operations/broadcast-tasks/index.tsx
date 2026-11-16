@@ -183,12 +183,12 @@ export default function BroadcastTasks({
               loading={query.isFetching}
               dataSource={query.data?.items ?? []}
               pagination={false}
-              scroll={{ x: 1000 }}
+              scroll={{ x: 1230 }}
               locale={{ emptyText: '暂无群发任务' }}
               columns={[
                 { title: '消息内容', dataIndex: 'content', ellipsis: true, width: 260 },
                 {
-                  title: '状态',
+                  title: '状态', width:150,
                   render: (_, t) => (
                     <Tag
                       color={
@@ -200,15 +200,15 @@ export default function BroadcastTasks({
                   ),
                 },
                 {
-                  title: '内容来源',
+                  title: '内容来源', width:120,
                   render: () => '直接填写',
                 },
                 {
-                  title: '目标群 / 批次',
+                  title: '目标群 / 批次', width:160,
                   render: (_, t) => `${t.total} 群 / ${t.batch_count} 批次`,
                 },
                 {
-                  title: '已发送 / 拒绝 / 不确定',
+                  title: '已发送 / 拒绝 / 不确定', width:200,
                   render: (_, t) => `${t.sent} / ${t.rejected} / ${t.uncertain}`,
                 },
                 { title: '创建时间', render: (_, t) => formatDate(t.created_at), width: 180 },

@@ -10,7 +10,8 @@ afterEach(cleanup)
 function mount(){render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><SourceAutomationTasks/></QueryClientProvider>)}
 it('shows frozen content and actual channel task results without old controls',async()=>{
  mount();await screen.findByText('event-1')
- expect(screen.getByText('成功 1 / 失败 0 / 待处理 1 / 不确定 0')).toBeTruthy()
+ expect(screen.getByText('成功 1 / 失败 0')).toBeTruthy()
+ expect(screen.getByText('待处理 1 / 不确定 0')).toBeTruthy()
  fireEvent.click(screen.getByRole('button',{name:/Expand row|展开行/}))
  expect(await screen.findByText('冻结原正文')).toBeTruthy();expect(screen.getByText('task-1')).toBeTruthy()
  expect(screen.queryByRole('button',{name:/停止任务|重检|推进可恢复|确认发送/})).toBeNull()

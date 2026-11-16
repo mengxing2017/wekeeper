@@ -1,3 +1,4 @@
+import { TableText, TableIdentifier } from '../../../shared/table-text'
 import {OfficialChannelControl} from './channel-control'
 import {BusinessRequests} from './business-requests'
 import {OfficialUsageManager} from './usage-manager'
@@ -26,11 +27,11 @@ export function OfficialSenders() {
     <Alert type="info" title="企业微信官方发送身份" description="来自已核实官方成员与平台身份映射。这里只展示成员基础资格；实际发送仍需核对目标群、官方目录和渠道权限。手机登录账号不可由平台认证，旧手机资料不会自动转换。" />
     {(query.error || error) && <Alert type="error" title={error || query.error?.message} />}
     <Space><Button onClick={() => void query.refetch()} >刷新</Button><a href="/docs/guide/operator/official-senders">如何配置官方身份与发送资格</a></Space>
-    <Table rowKey="id" loading={query.isPending} dataSource={query.data?.items ?? []} pagination={false} locale={{ emptyText: '没有已映射的官方发送身份。请由平台维护人员同步通讯录、核对登录身份映射和发送资格。' }} columns={[
-      { title: '官方成员', dataIndex: 'display_name' }, { title: '官方成员标识', dataIndex: 'userid' },
-      { title: '基础资格', render: (_, row) => <Tag color={row.eligible ? 'green' : 'orange'}>{row.eligible ? '基础条件满足' : '不可用'}</Tag> },
-      { title: '说明', dataIndex: 'reason' },
-      ...([{ title: '操作', render: (_: unknown, row: OfficialSender) => <Button disabled={busy} onClick={() => void qualify(row)}>{row.enabled ? '停用资格' : '启用资格'}</Button> }]),
+    <Table tableLayout="fixed" scroll={{x:700}} rowKey="id" loading={query.isPending} dataSource={query.data?.items ?? []} pagination={false} locale={{ emptyText: '没有已映射的官方发送身份。请由平台维护人员同步通讯录、核对登录身份映射和发送资格。' }} columns={[
+      { title: '官方成员 / 标识', width:240, render:(_,r)=><div className="table-record"><TableText value={r.display_name}/><TableIdentifier value={r.userid}/></div> },
+      { title: '基础资格', width:160, render: (_, row) => <Tag color={row.eligible ? 'green' : 'orange'}>{row.eligible ? '基础条件满足' : '不可用'}</Tag> },
+      { title: '说明', dataIndex:'reason', render:value=><TableText value={value}/> },
+      ...([{ title: '操作', width:128, render: (_: unknown, row: OfficialSender) => <Button type="link" disabled={busy} onClick={() => void qualify(row)}>{row.enabled ? '停用资格' : '启用资格'}</Button> }]),
     ]} />
     <OfficialChannelControl/>
     <OfficialUsageManager/><BusinessRequests global/><DistributionPolicyPanel />

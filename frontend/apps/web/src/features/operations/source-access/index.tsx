@@ -1,6 +1,9 @@
+import { formatDate } from '../../../shared/format-date'
+import { TableText, TableIdentifier } from '../../../shared/table-text'
+import { TableRowActions } from '../../../shared/table-row-actions'
 import {useState} from 'react'
 import {useQuery} from '@tanstack/react-query'
-import {Alert,Button,Card,Checkbox,Descriptions,Drawer,Form,Input,Popconfirm,Select,Space,Table,Tag,Typography} from 'antd'
+import {Alert,Button,Card,Checkbox,Descriptions,Drawer,Form,Input,Select,Space,Table,Tag,Typography} from 'antd'
 import {sourceAccess,type SourceRow,type SourceInput,type Association} from './api'
 import {CallerRoutes} from './routes'
 import {AssignedRoutes} from './assigned'
@@ -30,12 +33,15 @@ function CallerCredentials() {
  {(error||q.error)&&<Alert type="error" title={error||q.error?.message}/>}
  <Alert type="info" title="每个下游对应一条凭据：key_id 是唯一的调用方凭据 ID，secret 是配套签名密钥。下游只需填写 WeKeeper 地址、key_id 和 secret。"/>
  <Space wrap><Input.Search aria-label="搜索调用方" onSearch={s=>{setSearch(s);setPage(1)}}/><Input aria-label="凭据 ID 筛选" placeholder="调用方凭据 ID（key_id）" value={source} onChange={e=>{setSource(e.target.value);setPage(1)}}/><Input aria-label="有效期截止筛选" placeholder="失效时间不晚于（UTC）" onBlur={e=>{setExpiry(e.target.value);setPage(1)}}/><Select aria-label="状态筛选" value={status} onChange={s=>{setStatus(s);setPage(1)}} options={['','active','disabled','revoked'].map(value=>({value,label:value||'全部状态'}))}/></Space>
- <Table<SourceRow> rowKey="id" loading={q.isFetching} dataSource={q.data?.items??[]} pagination={false} columns={[
- {title:'平台名称',render:(_,r)=><Button type="link" onClick={()=>open(r)}>{r.unit_name??r.route_name}</Button>},
- {title:'凭据 ID（key_id）',render:(_,r)=><Typography.Text copyable>{r.id}</Typography.Text>},{title:'备注',dataIndex:'remark'},
- {title:'状态',render:(_,r)=><Tag>{r.status}</Tag>},{title:'有效期至',render:(_,r)=>r.valid_until??'长期有效'},
- {title:'最近调用',dataIndex:'last_used_at'},
- {title:'操作',render:(_,r)=><Space><Button onClick={()=>open(r)}>编辑</Button><Button onClick={()=>setRouteCaller(r)}>路由</Button><Popconfirm title="删除调用方凭据？" description="将永久删除凭据及其消息分发路由，历史收件和任务保留。" onConfirm={()=>act(()=>sourceAccess.remove(r.id))} okText="确认删除" cancelText="取消"><Button danger>删除</Button></Popconfirm></Space>}
+ <Table<SourceRow> rowKey="id" loading={q.isFetching} dataSource={q.data?.items??[]} pagination={false} tableLayout="fixed" scroll={{x:960}} columns={[
+ {title:'平台 / 凭据',width:240,render:(_,r)=><div className="table-record"><TableText value={r.unit_name??r.route_name} limit={24} label="平台名称"/><TableIdentifier value={r.id}/></div>},{title:'备注',dataIndex:'remark',render:value=><TableText value={value} label="备注"/>},
+ {title:'状态',width:100,render:(_,r)=><Tag>{r.status}</Tag>},{title:'有效期至',width:180,render:(_,r)=>r.valid_until?formatDate(r.valid_until):'长期有效'},
+ {title:'最近调用',width:180,dataIndex:'last_used_at',render:value=>formatDate(value)},
+ {title:'操作',width:128,render:(_,r)=><TableRowActions rowLabel={r.unit_name??r.id} actions={[
+  {key:'routes',label:'路由',onClick:()=>setRouteCaller(r)},
+  {key:'edit',label:'编辑',onClick:()=>open(r)},
+  {key:'delete',label:'删除',danger:true,confirm:{title:'删除调用方凭据？',description:'将永久删除凭据及其消息分发路由，历史收件和任务保留。',okText:'确认删除'},onClick:()=>act(()=>sourceAccess.remove(r.id))},
+ ]}/>}
  ]}/>
  <Space><Button disabled={page===1} onClick={()=>setPage(page-1)}>上一页</Button><span>{page}</span><Button disabled={!q.data?.has_more} onClick={()=>setPage(page+1)}>下一页</Button></Space>
  <Drawer open={editing!==undefined} title={editing?'详情 / 编辑':'新增'} onClose={()=>setEditing(undefined)} size="large">
@@ -49,7 +55,7 @@ function CallerCredentials() {
  <Form.Item name="unit_name" label="平台名称" rules={[{required:true}]}><Input/></Form.Item>
  <Form.Item name="remark" label="备注"><Input.TextArea aria-label="凭据备注"/></Form.Item>
  <Form.Item name="status" label="状态"><Select options={['active','disabled','revoked'].map(value=>({value,label:value}))}/></Form.Item>
- <><Form.Item name="valid_from" label="生效时间 UTC" rules={[{required:true}]}><Input/></Form.Item><Form.Item name="long_term" valuePropName="checked"><Checkbox>长期有效</Checkbox></Form.Item>{!longTerm&&<Form.Item name="valid_until" label="失效时间 UTC" rules={[{required:true,message:'请输入失效时间 UTC'}]}><Input/></Form.Item>}<Table rowKey="route_id" dataSource={links} pagination={{pageSize:10}} columns={[{title:'消息路由 ID（route_id）',dataIndex:'route_id'},{title:'名称',dataIndex:'route_name'},{title:'备注',dataIndex:'remark'},{title:'关联状态',dataIndex:'status'}]}/></>
+ <><Form.Item name="valid_from" label="生效时间 UTC" rules={[{required:true}]}><Input/></Form.Item><Form.Item name="long_term" valuePropName="checked"><Checkbox>长期有效</Checkbox></Form.Item>{!longTerm&&<Form.Item name="valid_until" label="失效时间 UTC" rules={[{required:true,message:'请输入失效时间 UTC'}]}><Input/></Form.Item>}<Table rowKey="route_id" dataSource={links} pagination={{pageSize:10}} tableLayout="fixed" scroll={{x:500}} columns={[{title:'名称 / 路由',width:220,render:(_,r)=><div className="table-record"><TableText value={r.route_name}/><TableIdentifier value={r.route_id}/></div>},{title:'备注',dataIndex:'remark',render:value=><TableText value={value}/>},{title:'关联状态',width:100,dataIndex:'status'}]}/></>
  <Button type="primary" loading={busy} onClick={save}>保存</Button>
  </Form>
  </Drawer>

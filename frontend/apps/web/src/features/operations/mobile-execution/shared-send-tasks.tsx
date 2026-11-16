@@ -1,3 +1,5 @@
+import { formatDate } from '../../../shared/format-date'
+import { TableText, TableIdentifier } from '../../../shared/table-text'
 import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Card, Input, InputNumber, Modal, Select, Space, Table } from 'antd'
@@ -88,10 +90,10 @@ function TaskList({  admin }: { admin: boolean }) {
         {preview.created_at&&<p>受理预览时间：{new Date(preview.created_at).toLocaleString()}</p>}
         {liveOverview?.readiness.some(live=>{const old=preview.plan.items.flatMap(i=>i.readiness??[]).find(r=>r.binding_id===live.binding_id);return old && (old.state!==live.state || old.ready!==live.ready)}) && <Alert type="warning" title="状态已更新；当前发送计划保持原快照" description={<Button onClick={()=>inspect.mutate()}>重新预览</Button>}/>}
         {preview.plan.sending_status&&!preview.plan.sending_status.can_confirm&&<Alert type="warning" title={preview.plan.sending_status.message}/>}
-        <p>当前为固定计划；业务范围变化后请重新点击“预览”，并重新确认。计划有效期：{preview.expires_at}。以下为实际发送文字：</p><pre style={{ whiteSpace: 'pre-wrap' }}>{preview.plan.message}</pre>
-        <Table rowKey="target_id" pagination={false} dataSource={preview.plan.items} columns={[
-          { title: '群名称', render:(_,i)=>i.selected?.target?.search_query ?? i.selected?.search_text ?? i.target.search_text }, { title: '首选手机', render: (_, i) => <Select aria-label={`目标群 ${i.target_id} 的共享手机`} style={{minWidth:150}} disabled={reselect.isPending} value={i.selected?.device_id} placeholder={i.readiness?.length ? '选择已绑定手机（可离线）' : '无绑定设备'} options={(i.readiness ?? []).map(r=>({value:r.device_id,label:r.device_name,disabled:!i.candidates.some(c=>c.device_id===r.device_id) || r.plan_selectable===false}))} onChange={device_id=>reselect.mutate(previewSelections(preview.plan.items,i.target_id,device_id))} /> },
-          { title: '受理检查与手机执行状态', render: (_, i) => <Space orientation="vertical">
+        <p>当前为固定计划；业务范围变化后请重新点击“预览”，并重新确认。计划有效期：{preview.expires_at}。以下为实际发送文字：</p><pre className="message-preview">{preview.plan.message}</pre>
+        <Table tableLayout="fixed" scroll={{x:900}} rowKey="target_id" pagination={false} dataSource={preview.plan.items} columns={[
+          { title: '群名称', width:180, render:(_,i)=><TableText value={i.selected?.target?.search_query ?? i.selected?.search_text ?? i.target.search_text}/> }, { title: '首选手机', width:200, render: (_, i) => <Select aria-label={`目标群 ${i.target_id} 的共享手机`} style={{width:'100%',minWidth:150}} disabled={reselect.isPending} value={i.selected?.device_id} placeholder={i.readiness?.length ? '选择已绑定手机（可离线）' : '无绑定设备'} options={(i.readiness ?? []).map(r=>({value:r.device_id,label:r.device_name,disabled:!i.candidates.some(c=>c.device_id===r.device_id) || r.plan_selectable===false}))} onChange={device_id=>reselect.mutate(previewSelections(preview.plan.items,i.target_id,device_id))} /> },
+          { title: '受理检查与手机执行状态', className:'table-text', render: (_, i) => <Space orientation="vertical">
             <p>{i.blocker ? `受理检查：${i.blocker}` : '可以确认提交；手机执行条件不影响任务入队'}</p>
             {(i.readiness ?? []).filter(r=>!i.selected||r.device_id===i.selected.device_id).map(snapshot=>{
               const current=currentReadiness(snapshot,liveOverview,synchronized)
@@ -107,9 +109,9 @@ function TaskList({  admin }: { admin: boolean }) {
         {confirmationIssues.length > 0 && <Alert type="warning" title={admin ? "提交时需要核对以下问题" : "没有系统管理员发送权限"} description={admin ? `${confirmationIssues.length} 个目标需要处理受理问题，请查看上表。` : confirmationIssues[0]}/>}
         <Button type="primary" loading={confirm.isPending} disabled={!admin || resourcesChanged || reselect.isPending || inspect.isPending} onClick={() => confirm.mutate()}>确认发送</Button>
       </>}
-      <Table<SharedTask> rowKey="id" loading={overview.isFetching} dataSource={overview.data?.tasks ?? []} pagination={{ pageSize: 10 }} columns={[
-        { title: '任务', dataIndex: 'id' }, { title: '创建时间', dataIndex: 'created_at' }, { title: '状态', render: (_, t) => taskProgressLabel(t) ?? '状态待同步' },
-        { title: '操作', render: (_, t) => <Button onClick={() => setSelected({id:t.id})}>详情</Button> },
+      <Table<SharedTask> tableLayout="fixed" scroll={{x:720}} rowKey="id" loading={overview.isFetching} dataSource={overview.data?.tasks ?? []} pagination={{ pageSize: 10 }} columns={[
+        { title: '任务', width:220, dataIndex:'id', render:value=><TableIdentifier value={value}/> }, { title: '创建时间', width:180, dataIndex: 'created_at', render:value=>formatDate(value) }, { title: '状态', render: (_, t) => <TableText value={taskProgressLabel(t) ?? '状态待同步'}/> },
+        { title: '操作', width:88, render: (_, t) => <Button type="link" onClick={() => setSelected({id:t.id})}>详情</Button> },
       ]} />
     </Space>
     <Modal title="手机群消息使用管理" open={usageOpen} footer={null} width={1000} onCancel={()=>setUsageOpen(false)}><UsageManagement admin={admin}/></Modal>

@@ -1,3 +1,5 @@
+import { formatDate } from '../../../shared/format-date'
+import { TableText, TableIdentifier } from '../../../shared/table-text'
 import { ControlStatus, useControlFreshness } from './control-status'
 import { DeviceControlPanel } from './device-control'
 import { createIdempotencyKey as key } from '../../../shared/idempotency-key'
@@ -120,27 +122,27 @@ export function ExecutionDevices({ view, onViewChange }: { view?: string; onView
               </Space>
             }
           >
-            <Table
+            <Table tableLayout="fixed" scroll={{x:920}}
               rowKey="id"
               loading={devices.isFetching}
               dataSource={devices.data?.items ?? []}
               pagination={false}
-              scroll={{ x: 700 }}
+
               columns={[
-                { title: '名称', dataIndex: 'name' },
-                { title: '设备 ID', dataIndex: 'id', ellipsis: true },
+                { title: '名称', dataIndex:'name', render:value=><TableText value={value}/> },
+                { title: '设备 ID',width:220, dataIndex: 'id', render:value=><TableIdentifier value={value}/> },
                 {
-                  title: '启用状态',
+                  title: '启用状态', width:104,
                   render: (_, d) => (
                     <Tag color={d.enabled ? 'success' : 'default'}>
                       {d.enabled ? '已启用' : '已停用'}
                     </Tag>
                   ),
                 },
-                { title: '控制连接', render: (_, d) => <ControlStatus state={d.control?.state} fresh={devicesFresh} /> },
-                { title: '最近控制心跳', render: (_, d) => d.control?.last_control_heartbeat_at ?? '尚未收到心跳' },
+                { title: '控制连接', width:144, render: (_, d) => <ControlStatus state={d.control?.state} fresh={devicesFresh} /> },
+                { title: '最近控制心跳', width:180, render: (_, d) => formatDate(d.control?.last_control_heartbeat_at, '尚未收到心跳') },
                 {
-                  title: '操作',
+                  title: '操作', width:88,
                   render: (_, d) => (
                     <Button type="link" onClick={() => setDeviceId(d.id)}>
                       管理

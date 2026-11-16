@@ -1,3 +1,5 @@
+import { formatDate } from '../../../shared/format-date'
+import { TableText } from '../../../shared/table-text'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Alert, Button, Card, InputNumber, Select, Space, Switch, Table } from 'antd'
@@ -23,16 +25,16 @@ export function DistributionPolicyPanel() {
   return <Card title="分发资源治理（平台权限）">
     <p>来源积压按来源累计，官方资源调用量跨来源累计。这里的额度是平台运营限制，不代表官方安全发送次数。手机业务状态在手机使用管理中查看。</p>
     {(error || query.error) && <Alert type="error" title={error || query.error?.message} />}
-    <Table<SourcePolicy> rowKey="namespace" pagination={false} dataSource={query.data?.sources ?? []} columns={[
-      { title: '受信来源', render: (_,r) => ({'builtin.direct':'直接通知'}[r.namespace]??'已登记业务来源') }, { title: '草稿/待执行限制', dataIndex: 'max_pending' },
-      { title: '状态', render: (_, row) => row.enabled ? '允许受理' : '已暂停新发送' },
-      { title: '操作', render: (_, row) => <Button onClick={() => { setSource({ ...row }); setResource(undefined) }}>调整</Button> },
+    <Table<SourcePolicy> tableLayout="fixed" scroll={{x:600}} rowKey="namespace" pagination={false} dataSource={query.data?.sources ?? []} columns={[
+      { title: '受信来源', render: (_,r) => ({'builtin.direct':'直接通知'}[r.namespace]??'已登记业务来源') }, { title: '草稿/待执行限制', width:160, dataIndex: 'max_pending' },
+      { title: '状态', width:144, render: (_, row) => row.enabled ? '允许受理' : '已暂停新发送' },
+      { title: '操作', width:88, render: (_, row) => <Button type="link" onClick={() => { setSource({ ...row }); setResource(undefined) }}>调整</Button> },
     ]} />
-    <Table rowKey="id" dataSource={members.data?.members??[]} pagination={{pageSize:10}} columns={[
-      {title:'官方成员',dataIndex:'name'},{title:'窗口',render:(_,r)=>r.policy?`${r.policy.window_seconds} 秒`:'沿用渠道限制'},
-      {title:'次数',render:(_,r)=>r.policy?`${r.used??0} / ${r.policy.max_calls}`:'沿用渠道限制'},
-      {title:'额度恢复时间',dataIndex:'restores_at'},
-      {title:'操作',render:(_,r)=><Button onClick={()=>{setSource(undefined);setPreview(undefined);setResource({member_id:r.id,generation:members.data!.generation!,revision:r.policy?.revision??0,enabled:r.policy?.enabled??true,window_seconds:r.policy?.window_seconds??3600,max_calls:r.policy?.max_calls??1})}}>调整</Button>}
+    <Table tableLayout="fixed" scroll={{x:740}} rowKey="id" dataSource={members.data?.members??[]} pagination={{pageSize:10}} columns={[
+      {title:'官方成员',dataIndex:'name', render:value=><TableText value={value}/>},{title:'窗口', width:140,render:(_,r)=>r.policy?`${r.policy.window_seconds} 秒`:'沿用渠道限制'},
+      {title:'次数', width:140,render:(_,r)=>r.policy?`${r.used??0} / ${r.policy.max_calls}`:'沿用渠道限制'},
+      {title:'额度恢复时间', width:180,dataIndex:'restores_at',render:value=>formatDate(value)},
+      {title:'操作', width:88,render:(_,r)=><Button type="link" onClick={()=>{setSource(undefined);setPreview(undefined);setResource({member_id:r.id,generation:members.data!.generation!,revision:r.policy?.revision??0,enabled:r.policy?.enabled??true,window_seconds:r.policy?.window_seconds??3600,max_calls:r.policy?.max_calls??1})}}>调整</Button>}
     ]}/>
     {(source || resource) && <Space orientation="vertical">
       {source && <><p>{source.namespace}</p><label>来源积压限制<InputNumber aria-label="来源积压限制" min={1} max={100000} value={source.max_pending} onChange={v => setSource({ ...source, max_pending: Number(v) })} /></label><Switch aria-label="来源允许新发送" checked={source.enabled} onChange={enabled => setSource({ ...source, enabled })} /></>}

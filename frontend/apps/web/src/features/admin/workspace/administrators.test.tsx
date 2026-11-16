@@ -51,12 +51,15 @@ it('edits the name and enabled state without modifying the account name', async 
 it('requires confirmation to delete and prevents deleting or disabling the current administrator', async () => {
   show()
   const self = (await screen.findByText('root')).closest('tr')!
-  expect((within(self).getByRole('button',{name:/删\s*除/}) as HTMLButtonElement).disabled).toBe(true)
+  fireEvent.click(within(self).getByRole('button',{name:/更多操作/}))
+  expect((await screen.findByRole('menuitem',{name:'删除'})).getAttribute('aria-disabled')).toBe('true')
+  fireEvent.keyDown(screen.getByRole('menu'),{key:'Escape',code:'Escape'})
   fireEvent.click(within(self).getByRole('button',{name:/编\s*辑/}))
   expect((screen.getByRole('switch',{name:'管理员启用状态'}) as HTMLButtonElement).disabled).toBe(true)
   fireEvent.click(screen.getByRole('button',{name:/取\s*消/}))
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-  fireEvent.click(within(screen.getByText('其他管理员').closest('tr')!).getByRole('button',{name:/删\s*除/}))
+  fireEvent.click(within(screen.getByText('其他管理员').closest('tr')!).getByRole('button',{name:/更多操作/}))
+  fireEvent.click(await screen.findByRole('menuitem',{name:'删除'}))
   expect(identity.deleteAdministrator).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('button',{name: '确认删除'}))
   await waitFor(() => expect(identity.deleteAdministrator).toHaveBeenCalledWith('other'))

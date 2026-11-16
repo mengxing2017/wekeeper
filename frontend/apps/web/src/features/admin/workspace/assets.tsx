@@ -1,3 +1,4 @@
+import { TableText, TableIdentifier } from '../../../shared/table-text'
 import { formatDate, formatUnixSeconds } from '../../../shared/format-date'
 import { PaginationControls as Pager } from '../../../shared/pagination-controls'
 import { useEffect, useRef, useState } from 'react'
@@ -287,26 +288,26 @@ export function Assets() {
         </Space>
       </div>
       {list.error && <Alert type="error" title={list.error.message} />}
-      <Table<Row>
+      <Table<Row> tableLayout="fixed" scroll={{x:kind==='sync-runs'?1000:kind==='member-statistics'?640:kind==='groups'?1180:980}}
         rowKey="id"
         loading={list.isFetching}
         dataSource={list.data?.items}
         pagination={false}
-        scroll={{ x: 800 }}
+
         columns={
           kind === 'sync-runs'
             ? [
-                { title: '状态', render: (_, r) => stateName(r.state) },
-                { title: '阶段', dataIndex: 'stage' },
+                { title: '状态', width:112, render: (_, r) => stateName(r.state) },
+                { title: '阶段', width:160, dataIndex:'stage', render:value=><TableText value={value}/> },
                 {
-                  title: '已处理 / 预计范围',
+                  title: '已处理 / 预计范围', width:180,
                   render: (_, r) => `${show(r.processed)} / ${show(r.total)}`,
                 },
-                { title: '页数', dataIndex: 'pages' },
-                { title: '错误码', dataIndex: 'error_code' },
-                { title: '创建时间', dataIndex: 'created_at', render: formatDateValue },
+                { title: '页数', width:80, dataIndex: 'pages' },
+                { title: '错误码', width:180, dataIndex:'error_code', render:value=><TableText value={value}/> },
+                { title: '创建时间', width:180, dataIndex: 'created_at', render: formatDateValue },
                 {
-                  title: '详情',
+                  title: '详情', width:88,
                   render: (_, r) => (
                     <Button
                       type="link"
@@ -319,37 +320,37 @@ export function Assets() {
               ]
             : kind === 'member-statistics'
               ? [
-                  { title: '企业成员', dataIndex: 'name' },
-                  { title: 'UserID', dataIndex: 'userid' },
-                  { title: '群主群', dataIndex: 'owned_group_count' },
-                  { title: '参与群', dataIndex: 'participating_group_count' },
+                  { title: '企业成员', dataIndex:'name', render:value=><TableText value={value}/> },
+                  { title: 'UserID', width:220, dataIndex:'userid', render:value=><TableIdentifier value={value}/> },
+                  { title: '群主群', width:96, dataIndex: 'owned_group_count' },
+                  { title: '参与群', width:96, dataIndex: 'participating_group_count' },
                 ]
               : [
                   {
                     title: '名称 / 成员',
-                    render: (_, r) => show(r.name ?? r.member_name ?? r.userid),
+                    render: (_, r) => <TableText value={show(r.name ?? r.member_name ?? r.userid)}/>,
                   },
-                  { title: '官方标识', render: (_, r) => show(r.chat_id ?? r.userid) },
-                  { title: '群主', render: (_, r) => show(r.member_name ?? r.owner) },
+                  { title: '官方标识', width:220, render: (_, r) => <TableIdentifier value={show(r.chat_id ?? r.userid)}/> },
+                  { title: '群主', width:160, render: (_, r) => <TableText value={show(r.member_name ?? r.owner)}/> },
                   ...(kind === 'groups'
                     ? [
-                        { title: '人数', dataIndex: 'member_count' },
+                        { title: '人数', width:80, dataIndex: 'member_count' },
                         {
-                          title: '分发目标关联',
+                          title: '分发目标关联', width:128,
                           render: (_: unknown, r: Row) => (r.associated ? '已关联' : '未关联'),
                         },
                       ]
                     : []),
                   {
-                    title: '核验',
+                    title: '核验', width:160,
                     render: (_, r) =>
                       `${verificationName(String(r.verification))}${r.visibility === 'not_seen' ? ' · 本轮未见' : ''}`,
                   },
-                  { title: '核验时间', dataIndex: 'checked_at', render: formatDateValue },
+                  { title: '核验时间', width:180, dataIndex: 'checked_at', render: formatDateValue },
                   ...(kind === 'groups'
                     ? [
                         {
-                          title: '详情',
+                          title: '详情', width:88,
                           render: (_: unknown, r: Row) => (
                             <Button
                               type="link"
@@ -472,23 +473,23 @@ function AssetDetail({
       )}
       {kind !== 'sync-runs' && (
         <>
-          <Table
+          <Table tableLayout="fixed" scroll={{x:800}}
             rowKey="id"
             loading={relations.isFetching}
             dataSource={relations.data?.items}
             pagination={false}
             columns={[
-              { title: '成员', render: (_, r) => show(r.member_name ?? r.userid) },
+              { title: '成员', render: (_, r) => <TableText value={show(r.member_name ?? r.userid)}/> },
               {
-                title: '身份',
+                title: '身份', width:128,
                 render: (_, r) => (r.member_type === 1 ? '企业成员' : '外部联系人'),
               },
               {
-                title: '资料',
+                title: '资料', width:180,
                 render: (_, r) => (r.member_id ? '已解析企业成员' : '仅保留群成员标识'),
               },
-              { title: '入群时间', render: (_, r) => formatUnixSeconds(r.join_time) },
-              { title: '核验状态', render: (_, r) => verificationName(r.verification) },
+              { title: '入群时间', width:180, render: (_, r) => formatUnixSeconds(r.join_time) },
+              { title: '核验状态', width:128, render: (_, r) => verificationName(r.verification) },
             ]}
           />
           <Pager
@@ -557,7 +558,7 @@ export function GroupPicker({  onSaved }: { onSaved: () => Promise<void> }) {
           action={<Button onClick={() => void q.refetch()}>刷新</Button>}
         />
       )}
-      <Table<GroupCandidate>
+      <Table<GroupCandidate> tableLayout="fixed" scroll={{x:560}}
         rowKey="id"
         loading={q.isFetching}
         dataSource={q.error ? [] : q.data?.items}
@@ -566,11 +567,11 @@ export function GroupPicker({  onSaved }: { onSaved: () => Promise<void> }) {
           emptyText: '暂无可选群：请检查同步状态、绑定身份及群主范围；已关联为分发目标的群不会重复显示',
         }}
         columns={[
-          { title: '官方群名', dataIndex: 'name' },
-          { title: '群主', render: (_, g) => g.owner_name ?? g.owner },
-          { title: '人数', dataIndex: 'member_count' },
+          { title: '官方群名', dataIndex:'name', render:value=><TableText value={value}/> },
+          { title: '群主', width:160, render: (_, g) => <TableText value={g.owner_name ?? g.owner}/> },
+          { title: '人数', width:80, dataIndex: 'member_count' },
           {
-            title: '操作',
+            title: '操作', width:88,
             render: (_, g) => (
               <Button
                 type="link"

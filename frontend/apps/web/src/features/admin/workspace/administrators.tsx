@@ -1,3 +1,5 @@
+import { TableText } from '../../../shared/table-text'
+import { TableRowActions } from '../../../shared/table-row-actions'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Card, Input, Modal, Space, Switch, Table, Tag } from 'antd'
@@ -58,14 +60,14 @@ export function Administrators({ user }: { user: User }) {
       </Space>
       {notice && <Alert type="success" title={notice} closable onClose={() => setNotice('')} />}
       {query.error && <Alert type="error" title={query.error.message} />}
-      <Table<Administrator> rowKey="id" dataSource={query.data ?? []} loading={query.isFetching} locale={{ emptyText: '暂无匹配的管理员' }} columns={[
-        { title: '账号', dataIndex: 'username' }, { title: '姓名', dataIndex: 'display_name' },
-        { title: '状态', render: (_, row) => <Tag>{row.active ? '启用' : '停用'}</Tag> },
-        { title: '操作', render: (_, row) => <Space wrap>
-          <Button onClick={() => openEditor(row)}>编辑</Button>
-          <Button onClick={() => { reset.reset(); setSelected(row); setPassword('') }}>重设密码</Button>
-          <Button danger disabled={row.id === user.id} onClick={() => { remove.reset(); setDeleting(row) }}>删除</Button>
-        </Space> },
+      <Table<Administrator> rowKey="id" dataSource={query.data ?? []} loading={query.isFetching} tableLayout="fixed" scroll={{x:520}} locale={{ emptyText: '暂无匹配的管理员' }} columns={[
+        { title: '账号', dataIndex: 'username', render:value=><TableText value={value} limit={24}/> }, { title: '姓名', dataIndex: 'display_name', render:value=><TableText value={value} limit={24}/> },
+        { title: '状态', width:80, render: (_, row) => <Tag>{row.active ? '启用' : '停用'}</Tag> },
+        { title: '操作', width:144, render: (_, row) => <TableRowActions rowLabel={row.username} actions={[
+          {key:'edit',label:'编辑',onClick:()=>openEditor(row)},
+          {key:'password',label:'重设密码',onClick:()=>{reset.reset();setSelected(row);setPassword('')}},
+          {key:'delete',label:'删除',danger:true,disabled:row.id===user.id,onClick:()=>{remove.reset();setDeleting(row)}},
+        ]}/> },
       ]} />
     </Space>
     <Modal title={editor?.row ? '编辑管理员' : '新增管理员'} okText="保存" cancelText="取消" open={!!editor} confirmLoading={save.isPending} okButtonProps={{ disabled: !username.trim() || !name.trim() || (!editor?.row && new TextEncoder().encode(initialPassword).length < 12) }} onCancel={() => { setEditor(undefined); setInitialPassword('') }} onOk={() => save.mutate()}>

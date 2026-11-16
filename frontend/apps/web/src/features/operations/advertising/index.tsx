@@ -1,3 +1,5 @@
+import { formatDate } from '../../../shared/format-date'
+import { TableText } from '../../../shared/table-text'
 import {businessMessages} from '../source-access/api'
 import {useState} from 'react'
 import {useQuery} from '@tanstack/react-query'
@@ -16,11 +18,11 @@ export function Advertising(){
  return <Space orientation="vertical" style={{width:'100%'}}>
   <Alert type="info" title="广告按单位、平台、全局的优先级匹配，在同一范围内轮询广告。每条消息最多插入一个广告；不可用时直接发送原文。广告轮询进度按业务单位分别计数。"/>
   {(error||materials.error||placements.error||scopes.error)&&<Alert type="error" title={error||materials.error?.message||placements.error?.message||scopes.error?.message}/>}
-  <Space><Button type="primary" onClick={()=>setSelected(null)}>新增</Button><Button onClick={()=>setBinding(true)}>绑定投放范围</Button><Button onClick={()=>{void materials.refetch();void placements.refetch()}}>刷新</Button></Space>
-  <Table rowKey="id" loading={materials.isFetching} dataSource={materials.data?.items??[]} pagination={false} columns={[{title:'名称',render:(_,r)=>r.content.name},{title:'正文',render:(_,r)=>r.content.body},{title:'状态',render:(_,r)=>r.archived?'已归档':'可投放'},{title:'操作',render:(_,r)=><Button disabled={r.archived} onClick={()=>setSelected(r)}>编辑</Button>}]}/>
+  <Space wrap><Button type="primary" onClick={()=>setSelected(null)}>新增</Button><Button onClick={()=>setBinding(true)}>绑定投放范围</Button><Button onClick={()=>{void materials.refetch();void placements.refetch()}}>刷新</Button></Space>
+  <Table tableLayout="fixed" scroll={{x:620}} rowKey="id" loading={materials.isFetching} dataSource={materials.data?.items??[]} pagination={false} columns={[{title:'名称', width:200,render:(_,r)=><TableText value={r.content.name} limit={24}/>},{title:'正文',render:(_,r)=><TableText value={r.content.body} limit={60}/>},{title:'状态', width:100,render:(_,r)=>r.archived?'已归档':'可投放'},{title:'操作', width:88,render:(_,r)=><Button type="link" disabled={r.archived} onClick={()=>setSelected(r)}>编辑</Button>}]}/>
   <Space><Button disabled={page===1} onClick={()=>setPage(page-1)}>上一页</Button><Button disabled={!materials.data?.has_more} onClick={()=>setPage(page+1)}>下一页</Button></Space>
   <Typography.Title level={5}>投放绑定</Typography.Title>
-  <Table rowKey="id" loading={placements.isFetching} dataSource={placements.data?.items??[]} pagination={false} columns={[{title:'广告',render:(_,r)=>materials.data?.items.find(m=>m.id===r.material_id)?.content.name??r.material_id},{title:'投放范围',render:(_,r)=>scopeName(r.scope)},{title:'生效时间',dataIndex:'valid_from'},{title:'到期时间',render:(_,r)=>r.valid_until??'长期有效'},{title:'状态',render:(_,r)=>r.enabled?'已启用':'已停用'},{title:'操作',render:(_,r)=><Button loading={busy} onClick={()=>void toggle(r)}>{r.enabled?'停用':'启用'}</Button>}]}/>
+  <Table tableLayout="fixed" scroll={{x:960}} rowKey="id" loading={placements.isFetching} dataSource={placements.data?.items??[]} pagination={false} columns={[{title:'广告', width:200,render:(_,r)=><TableText value={materials.data?.items.find(m=>m.id===r.material_id)?.content.name??r.material_id}/>},{title:'投放范围',render:(_,r)=><TableText value={scopeName(r.scope)}/>},{title:'生效时间', width:180,dataIndex:'valid_from',render:value=>formatDate(value)},{title:'到期时间', width:180,render:(_,r)=>r.valid_until?formatDate(r.valid_until):'长期有效'},{title:'状态', width:100,render:(_,r)=>r.enabled?'已启用':'已停用'},{title:'操作', width:88,render:(_,r)=><Button type="link" loading={busy} onClick={()=>void toggle(r)}>{r.enabled?'停用':'启用'}</Button>}]}/>
   <Space><Button disabled={bindingPage===1} onClick={()=>setBindingPage(bindingPage-1)}>上一页</Button><Button disabled={!placements.data?.has_more} onClick={()=>setBindingPage(bindingPage+1)}>下一页</Button></Space>
   <Drawer open={selected!==undefined} title={selected?'编辑广告':'新增广告'} destroyOnHidden onClose={()=>setSelected(undefined)}>{selected!==undefined&&<MaterialEditor key={selected?.id??'new'} initial={selected} onSaved={async()=>{setSelected(undefined);await materials.refetch()}}/>}</Drawer>
   <Drawer open={binding} title="绑定投放范围" destroyOnHidden onClose={()=>setBinding(false)}>{binding&&<PlacementEditor onSaved={async()=>{setBinding(false);await placements.refetch()}}/>}</Drawer>

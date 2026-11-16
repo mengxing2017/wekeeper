@@ -1,3 +1,4 @@
+import { TableText, TableIdentifier } from '../../../shared/table-text'
 import { formatDate } from '../../../shared/format-date'
 import { PaginationControls } from '../../../shared/pagination-controls'
 import { useState } from 'react'
@@ -115,34 +116,33 @@ function DirectoryBrowser({
           action={<Button onClick={() => void members.refetch()}>重试</Button>}
         />
       )}
-      <Table<DirectoryMember>
+      <Table<DirectoryMember> tableLayout="fixed" scroll={{x:1080}}
         rowKey="id"
         loading={members.isFetching}
         dataSource={members.error ? [] : members.data?.items}
         pagination={false}
-        scroll={{ x: 700 }}
+
         locale={{ emptyText: '没有匹配的已同步成员，请检查筛选、同步状态和应用可见范围' }}
         columns={[
-          { title: '企业姓名', dataIndex: 'name' },
-          { title: 'UserID', dataIndex: 'userid' },
+          { title: '企业姓名 / UserID', render:(_,m)=><div className="table-record"><TableText value={m.name}/><TableIdentifier value={m.userid}/></div> },
           {
-            title: '部门',
+            title: '部门', width:220,
             render: (_, m) =>
-              m.departments
+              <TableText value={m.departments
                 .map((d) => departmentPath(d.id, departments.data ?? m.departments))
-                .join('；') || '部门不可见',
+                .join('；') || '部门不可见'} label="部门路径"/>,
           },
           {
-            title: '企业状态',
+            title: '企业状态', width:200,
             render: (_, m) =>
               `${memberStatus(m.status)} · ${verificationName(m.verification)}${m.visibility === 'not_seen' ? ' · 不在当前快照' : ''}`,
           },
-          { title: '本地账号', render: (_, m) => m.bound_account_name ?? '未绑定' },
-          { title: '核验时间', render: (_, m) => formatDate(m.checked_at, '尚未核验') },
+          { title: '本地账号', width:160, render: (_, m) => <TableText value={m.bound_account_name ?? '未绑定'}/> },
+          { title: '核验时间', width:180, render: (_, m) => formatDate(m.checked_at, '尚未核验') },
           ...(onSelect
             ? [
                 {
-                  title: '操作',
+                  title: '操作', width:88,
                   render: (_: unknown, m: DirectoryMember) => (
                     <Button
                       type="link"

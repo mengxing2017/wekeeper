@@ -1,3 +1,4 @@
+import { TableText } from '../../../shared/table-text'
 import {useState} from 'react'
 import {useMutation,useQuery,useQueryClient} from '@tanstack/react-query'
 import {Alert,Button,Card,Form,Input,Modal,Select,Space,Switch,Table,Tag} from 'antd'
@@ -21,7 +22,7 @@ export function ReceivingConfigurations({channel,scope,admin,platformAdmin}:{cha
  {!scope&&<Select aria-label="业务单位" placeholder="选择业务单位" style={{minWidth:280}} value={selected||undefined} onChange={v=>{setSelected(v);setPage(1)}} options={units.data?.map(u=>({value:u.id,label:u.name}))}/>}
  <Alert type="info" title="按业务单位维护接收群与发送资源" description="启用即授权系统自动处理该单位之后的新消息。同一个群可供多个配置使用；每条消息在同一通道只向该群投递一次。配置变更不追溯已有消息。"/>
  {(query.error||resources.error||units.error)&&<Alert type="error" title={query.error?.message||resources.error?.message||units.error?.message}/>}
- <Table<ReceivingConfiguration> rowKey="id" dataSource={query.data?.items??[]} loading={!!unit&&query.isFetching} pagination={false} columns={[{title:'名称',dataIndex:'name'},{title:'状态',render:(_,r)=><Tag>{r.enabled?'启用':'停用'}</Tag>},{title:'群数量',render:(_,r)=>r.target_ids.length},...(admin?[{title:'操作',render:(_:unknown,r:ReceivingConfiguration)=><Button onClick={()=>edit(r)}>编辑</Button>}]:[])]}/>
+ <Table<ReceivingConfiguration> tableLayout="fixed" scroll={{x:480}} rowKey="id" dataSource={query.data?.items??[]} loading={!!unit&&query.isFetching} pagination={false} columns={[{title:'名称',dataIndex:'name', render:value=><TableText value={value}/>},{title:'状态', width:80,render:(_,r)=><Tag>{r.enabled?'启用':'停用'}</Tag>},{title:'群数量', width:96,render:(_,r)=>r.target_ids.length},...(admin?[{title:'操作', width:88,render:(_:unknown,r:ReceivingConfiguration)=><Button type="link" onClick={()=>edit(r)}>编辑</Button>}]:[])]}/>
  <PaginationControls page={page} more={query.data?.page?.has_more} busy={query.isFetching} change={setPage} subject="接收配置"/>
  </Space>
  <Modal title="接收配置" open={!!editor} onCancel={()=>setEditor(undefined)} onOk={()=>void form.validateFields().then(v=>save.mutate(v))} okText="保存" cancelText="取消" confirmLoading={save.isPending}>

@@ -1,3 +1,5 @@
+import { TableText, TableIdentifier } from '../../../shared/table-text'
+import { TableRowActions } from '../../../shared/table-row-actions'
 import {RouteAdvertising} from '../advertising'
 import {useState} from 'react'
 import {useQuery} from '@tanstack/react-query'
@@ -49,12 +51,17 @@ export function CallerRoutes({caller,onChanged}:{caller:SourceRow;onChanged:()=>
    <Input.Search aria-label="搜索当前调用方路由" onSearch={value=>{setSearch(value);setPage(1)}}/>
    <Select aria-label="路由状态筛选" value={status} onChange={value=>{setStatus(value);setPage(1)}} options={[{value:'',label:'全部状态'},{value:'active',label:'启用'},{value:'disabled',label:'停用'}]}/>
   </Space>
-  <Table<SourceRow> rowKey="id" loading={q.isFetching||links.isFetching} dataSource={q.data?.items??[]} pagination={false} columns={[
-   {title:'单位名称',dataIndex:'business_unit_name'},{title:'消息路由 ID（route_id）',dataIndex:'id'},{title:'备注',dataIndex:'remark'},
-   {title:'状态',render:(_,r)=><Tag>{r.status==='active'?'启用':'停用'}</Tag>},
-   {title:'自动运行',render:(_,r)=>r.retired_at?'已退役':({draft:'配置草稿',running:'运行中',paused:'已暂停'}[r.execution_state??'draft'])},
-   {title:'当前凭据授权',render:(_,r)=>links.data?.some(a=>a.route_id===r.id&&a.status==='active')?'已授权':'未授权'},
-   {title:'操作',render:(_,r)=>{const active=links.data?.some(a=>a.route_id===r.id&&a.status==='active');return <Space><Button onClick={()=>setConfiguring(r.id)}>执行配置</Button><Button onClick={()=>setReceipts(r.id)}>收件与回执</Button><Button disabled={busy||!!r.retired_at} onClick={()=>open(r)}>编辑</Button><Button disabled={busy||!links.data} onClick={()=>toggle(r.id,active?'revoked':'active')}>{active?'撤销授权':'授权'}</Button></Space>}}
+  <Table<SourceRow> rowKey="id" loading={q.isFetching||links.isFetching} dataSource={q.data?.items??[]} pagination={false} tableLayout="fixed" scroll={{x:628}} columns={[
+   {title:'单位 / 路由',render:(_,r)=><div className="table-record"><TableText value={r.business_unit_name} limit={20} label="单位名称"/><TableIdentifier value={r.id}/>{r.remark&&<TableText value={r.remark} label="备注"/>}</div>},
+   {title:'状态',width:80,render:(_,r)=><Tag>{r.status==='active'?'启用':'停用'}</Tag>},
+   {title:'自动运行',width:96,render:(_,r)=>r.retired_at?'已退役':({draft:'配置草稿',running:'运行中',paused:'已暂停'}[r.execution_state??'draft'])},
+   {title:'当前凭据授权',width:128,render:(_,r)=>links.data?.some(a=>a.route_id===r.id&&a.status==='active')?'已授权':'未授权'},
+   {title:'操作',width:144,render:(_,r)=>{const active=links.data?.some(a=>a.route_id===r.id&&a.status==='active');return <TableRowActions rowLabel={r.business_unit_name??r.id} actions={[
+    {key:'configuration',label:'执行配置',onClick:()=>setConfiguring(r.id)},
+    {key:'receipts',label:'收件与回执',onClick:()=>setReceipts(r.id)},
+    {key:'edit',label:'编辑',disabled:busy||!!r.retired_at,onClick:()=>open(r)},
+    {key:'authorize',label:active?'撤销授权':'授权',disabled:busy||!links.data,onClick:()=>toggle(r.id,active?'revoked':'active')},
+   ]}/>}}
   ]}/>
   <Space><Button disabled={page===1} onClick={()=>setPage(page-1)}>上一页</Button><span>{page}</span><Button disabled={!q.data?.has_more} onClick={()=>setPage(page+1)}>下一页</Button></Space>
   <Modal open={editing!==undefined} title={editing?'编辑路由':'新增路由'} onCancel={()=>setEditing(undefined)} onOk={save} confirmLoading={busy} okText="保存" cancelText="取消">

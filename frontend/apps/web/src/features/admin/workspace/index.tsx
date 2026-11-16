@@ -270,7 +270,7 @@ function Panel({
               width: 150,
               fixed: 'right',
               render: (_, r) => (
-                <Space size={0}>
+                <Space size={8} wrap>
                   <Button type="link" onClick={() => setSelectedId(r.id)}>
                     详情
                   </Button>

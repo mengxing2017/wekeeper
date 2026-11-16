@@ -329,6 +329,21 @@ a:focus-visible {
   gap: 4px;
   min-width: 0;
 }
+/* A drawer is a narrow container even on a wide desktop. */
+.ant-table-wrapper,
+.ant-space-item:has(> .ant-table-wrapper) {
+  min-width: 0;
+  max-width: 100%;
+}
+.ant-table-thead > tr > th {
+  word-break: keep-all;
+  overflow-wrap: normal;
+}
+.ant-drawer-body,
+.ant-modal-body,
+.ant-card-body {
+  min-width: 0;
+}
 .record-title.ant-btn {
   max-width: 100%;
   overflow: hidden;
@@ -356,6 +371,7 @@ a:focus-visible {
 
 .management-stack {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
 }
 .management-stack > .ant-btn {

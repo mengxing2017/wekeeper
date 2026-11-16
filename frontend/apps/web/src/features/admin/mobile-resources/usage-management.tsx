@@ -1,3 +1,5 @@
+import { TableText } from '../../../shared/table-text'
+import { TableRowActions } from '../../../shared/table-row-actions'
 import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Card, Checkbox, Input, InputNumber, Modal, Select, Space, Table, Tag } from 'antd'
@@ -41,14 +43,19 @@ export function UsageManagement({admin=true}:{admin?:boolean}) {
   {options.data?.scheme&&<p>当前业务方案：时区 {options.data.scheme.timezone}；系统每日最多 {options.data.scheme.daily_max_calls} 次；每个目标群最小间隔 {options.data.scheme.interval_seconds} 秒。</p>}
   {admin&&<BusinessSchemeEditor scheme={options.data?.business_scheme} status={options.data?.sending_status}/>}
   {error&&<Alert type="error" title={error.message}/>}
-  <Table<UsageRow> rowKey="budget_root" dataSource={usageRows(list.data?.items??[])} loading={list.isFetching} pagination={{pageSize:10}} columns={[
-   {title:'使用范围',render:(_,u)=><><p>{u.body.targets.map(t=>t.name).join('、')||'指定目标群'} / {u.body.device_ids.length} 台手机</p><p>累计最多 {u.body.max_calls} 次；有效至 {new Date(u.expires_at).toLocaleString()}</p>{u.body.auto_targets&&<Tag>包含后续新增群</Tag>}</>},
-   {title:'审批',render:(_,u)=>({pending:'待平台审批',approved:'已批准',declined:'已退回'})[u.approval]},
-   {title:'使用状态',render:(_,u)=>new Date(u.expires_at)<=new Date()?'已到期':u.state==='paused'?'已暂停':u.state==='revoked'?'已撤销':u.approval==='declined'?'已退回':u.approval==='pending'?'等待审批':u.delivery==='available'?'已开通，现场条件自动检查':u.progress},
-   {title:'操作',render:(_,u)=><Space wrap>{admin&&<>
-    {u.approval==='pending'&&<><Button onClick={()=>operate(u,'approve')}>批准</Button><Button onClick={()=>operate(u,'decline')}>退回</Button></>}
-    {u.state!=='revoked'&&<>{u.approval==='approved'?<><Button disabled={Date.parse(u.expires_at)>Date.now()+365*86400000} title={Date.parse(u.expires_at)>Date.now()+365*86400000?'有效期已接近一年上限，暂无需提前续期':undefined} onClick={()=>begin(u,'renew')}>续期</Button><Button onClick={()=>begin(u,'adjust')}>调整范围</Button></>:<Button onClick={()=>begin(u,'reapply')}>重新申请</Button>}<Button onClick={()=>operate(u,u.state==='paused'?'resume':'pause')}>{u.state==='paused'?'恢复':'暂停'}</Button><Button danger onClick={()=>operate(u,'revoke')}>撤销</Button></>}
-    <Button onClick={()=>operate(u,'issue')}>报告问题</Button></>}</Space>},
+  <Table<UsageRow> rowKey="budget_root" dataSource={usageRows(list.data?.items??[])} loading={list.isFetching} pagination={{pageSize:10}} tableLayout="fixed" scroll={{x:680}} columns={[
+   {title:'使用范围',render:(_,u)=><><div><TableText value={u.body.targets.map(t=>t.name).join('、')||'指定目标群'} label="使用范围"/> / {u.body.device_ids.length} 台手机</div><p>累计最多 {u.body.max_calls} 次；有效至 {new Date(u.expires_at).toLocaleString()}</p>{u.body.auto_targets&&<Tag>包含后续新增群</Tag>}</>},
+   {title:'审批',width:104,render:(_,u)=>({pending:'待平台审批',approved:'已批准',declined:'已退回'})[u.approval]},
+   {title:'使用状态',width:170,render:(_,u)=>new Date(u.expires_at)<=new Date()?'已到期':u.state==='paused'?'已暂停':u.state==='revoked'?'已撤销':u.approval==='declined'?'已退回':u.approval==='pending'?'等待审批':u.delivery==='available'?'已开通，现场条件自动检查':u.progress},
+   {title:'操作',width:160,render:(_,u)=>admin?<TableRowActions rowLabel={u.body.targets.map(t=>t.name).join('、')||'使用范围'} primaryCount={1} actions={[
+    u.approval==='pending'&&{key:'approve',label:'批准',onClick:()=>operate(u,'approve')},
+    u.state!=='revoked'&&(u.approval==='approved'?{key:'renew',label:'续期',title:Date.parse(u.expires_at)>Date.now()+365*86400000?'有效期已接近一年上限，暂无需提前续期':undefined,disabled:Date.parse(u.expires_at)>Date.now()+365*86400000,onClick:()=>begin(u,'renew')}:{key:'reapply',label:'重新申请',onClick:()=>begin(u,'reapply')}),
+    u.approval==='pending'&&{key:'decline',label:'退回',onClick:()=>operate(u,'decline')},
+    u.state!=='revoked'&&u.approval==='approved'&&{key:'adjust',label:'调整范围',onClick:()=>begin(u,'adjust')},
+    u.state!=='revoked'&&{key:'pause',label:u.state==='paused'?'恢复':'暂停',onClick:()=>operate(u,u.state==='paused'?'resume':'pause')},
+    u.state!=='revoked'&&{key:'revoke',label:'撤销',danger:true,onClick:()=>operate(u,'revoke')},
+    {key:'issue',label:'报告问题',onClick:()=>operate(u,'issue')},
+   ]}/>:null},
   ]} expandable={{expandedRowRender:u=><><p>{u.progress}</p>{u.state==='paused'&&<p>续期保留暂停状态，恢复需单独操作。</p>}{u.approval==='pending'&&u.history.some(h=>h.approval==='approved'&&h.state==='active'&&Date.parse(h.expires_at)>Date.now())&&<p>新申请待审批，原批准范围仍按原期限生效。</p>}{!!u.history.length&&<details><summary>历史版本（{u.history.length}）</summary>{u.history.map(h=><div key={h.id}><p>{new Date(h.created_at).toLocaleString()} · {({pending:'待审批',approved:'已批准',declined:'已退回'})[h.approval]} · {({active:'使用中',paused:'已暂停',revoked:'已撤销'})[h.state]} · 有效至 {new Date(h.expires_at).toLocaleString()} · 累计额度 {h.body.max_calls} 次</p><p>范围：{h.body.targets.map(t=>t.name).join('、')} / {h.body.device_ids.length} 台手机</p>{h.events.map(e=><p key={e.id}>{new Date(e.created_at).toLocaleString()} · {({approved:'批准开通',pending:'提交申请',approve:'平台批准',decline:'平台退回',pause:'暂停',resume:'恢复',revoke:'撤销',reused:'使用原已批准范围'} as Record<string,string>)[e.action]??'使用记录'}</p>)}{h.issues.map(i=><p key={i.id}>历史问题：{i.description}{i.response&&`；答复：${i.response}`}</p>)}</div>)}</details>}{u.readiness?.map((r,i)=><p key={i}>{r.target_name} / {r.device_name}：{r.ready?'可执行':r.messages.join('；')}</p>)}{u.issues.map(i=><p key={i.id}>问题：{i.description}（{({submitted:'已提交',investigating:'处理中',resolved:'已答复',declined:'不受理'} as Record<string,string>)[i.state]??i.state}）{i.response&&<span>；平台答复：{i.response}</span>}{admin&&<Button onClick={()=>{setAction({row:u,operation:'handle_issue',issue:i});setReason(i.response);setIssueState('investigating');mutate.reset()}}>处理</Button>}</p>)}{u.events.map(e=><p key={e.id}>{new Date(e.created_at).toLocaleString()} · {({approved:'批准开通',pending:'提交申请',approve:'平台批准',decline:'平台退回',pause:'暂停',resume:'恢复',revoke:'撤销',reused:'使用原已批准范围',issue_response:'平台处理问题'} as Record<string,string>)[e.action]??'使用记录'}</p>)}</>}}/>
   <Modal title={preview?'核对开通摘要':({open:'选择手机和目标群',renew:'续期使用范围',adjust:'调整使用范围',reapply:'修改并重新申请'})[editKind]} open={open} onCancel={()=>setOpen(false)} footer={null} destroyOnHidden>
    <Space orientation="vertical" style={{width:'100%'}}>
