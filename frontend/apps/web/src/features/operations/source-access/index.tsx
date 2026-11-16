@@ -1,3 +1,4 @@
+import { PaginationControls } from '../../../shared/pagination-controls'
 import { formatDate } from '../../../shared/format-date'
 import { TableText, TableIdentifier } from '../../../shared/table-text'
 import { TableRowActions } from '../../../shared/table-row-actions'
@@ -42,7 +43,7 @@ function CallerCredentials() {
   {key:'delete',label:'删除',danger:true,confirm:{title:'删除调用方凭据？',description:'将永久删除凭据及其消息分发路由，历史收件和任务保留。',okText:'确认删除'},onClick:()=>act(()=>sourceAccess.remove(r.id))},
  ]}/>}
  ]}/>
- <Space><Button disabled={page===1} onClick={()=>setPage(page-1)}>上一页</Button><span>{page}</span><Button disabled={!q.data?.has_more} onClick={()=>setPage(page+1)}>下一页</Button></Space>
+ <PaginationControls page={page} more={q.data?.has_more} busy={q.isFetching} change={setPage} subject="调用方凭据"/>
  <Drawer open={editing!==undefined} title={editing?'详情 / 编辑':'新增'} onClose={()=>setEditing(undefined)} size="large">
  {editing&&<Descriptions title="下游连接配置" column={1} items={[
  {key:'id',label:'凭据 ID（key_id）',children:<Typography.Text copyable>{editing.id}</Typography.Text>},

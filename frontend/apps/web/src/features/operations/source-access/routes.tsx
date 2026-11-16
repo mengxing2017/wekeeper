@@ -1,3 +1,4 @@
+import { PaginationControls } from '../../../shared/pagination-controls'
 import { TableText, TableIdentifier } from '../../../shared/table-text'
 import { TableRowActions } from '../../../shared/table-row-actions'
 import {RouteAdvertising} from '../advertising'
@@ -63,7 +64,7 @@ export function CallerRoutes({caller,onChanged}:{caller:SourceRow;onChanged:()=>
     {key:'authorize',label:active?'撤销授权':'授权',disabled:busy||!links.data,onClick:()=>toggle(r.id,active?'revoked':'active')},
    ]}/>}}
   ]}/>
-  <Space><Button disabled={page===1} onClick={()=>setPage(page-1)}>上一页</Button><span>{page}</span><Button disabled={!q.data?.has_more} onClick={()=>setPage(page+1)}>下一页</Button></Space>
+  <PaginationControls page={page} more={q.data?.has_more} busy={q.isFetching} change={setPage} subject="调用方路由"/>
   <Modal open={editing!==undefined} title={editing?'编辑路由':'新增路由'} onCancel={()=>setEditing(undefined)} onOk={save} confirmLoading={busy} okText="保存" cancelText="取消">
    <Form form={form} layout="vertical">
     <Form.Item name="business_unit_name" label="单位名称" rules={[{validator:(_,value:string|undefined)=>{const name=value?.trim()??'';return name&&Array.from(name).length<=120?Promise.resolve():Promise.reject(new Error('请输入 1 至 120 个字符的单位名称'))}}]}><Input/></Form.Item>

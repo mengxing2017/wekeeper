@@ -1,3 +1,4 @@
+import { PaginationControls } from '../../../shared/pagination-controls'
 import { formatDate } from '../../../shared/format-date'
 import { TableText } from '../../../shared/table-text'
 import {businessMessages} from '../source-access/api'
@@ -20,10 +21,10 @@ export function Advertising(){
   {(error||materials.error||placements.error||scopes.error)&&<Alert type="error" title={error||materials.error?.message||placements.error?.message||scopes.error?.message}/>}
   <Space wrap><Button type="primary" onClick={()=>setSelected(null)}>新增</Button><Button onClick={()=>setBinding(true)}>绑定投放范围</Button><Button onClick={()=>{void materials.refetch();void placements.refetch()}}>刷新</Button></Space>
   <Table tableLayout="fixed" scroll={{x:620}} rowKey="id" loading={materials.isFetching} dataSource={materials.data?.items??[]} pagination={false} columns={[{title:'名称', width:200,render:(_,r)=><TableText value={r.content.name} limit={24}/>},{title:'正文',render:(_,r)=><TableText value={r.content.body} limit={60}/>},{title:'状态', width:100,render:(_,r)=>r.archived?'已归档':'可投放'},{title:'操作', width:88,render:(_,r)=><Button type="link" disabled={r.archived} onClick={()=>setSelected(r)}>编辑</Button>}]}/>
-  <Space><Button disabled={page===1} onClick={()=>setPage(page-1)}>上一页</Button><Button disabled={!materials.data?.has_more} onClick={()=>setPage(page+1)}>下一页</Button></Space>
+  <PaginationControls page={page} more={materials.data?.has_more} busy={materials.isFetching} change={setPage} subject="广告"/>
   <Typography.Title level={5}>投放绑定</Typography.Title>
   <Table tableLayout="fixed" scroll={{x:960}} rowKey="id" loading={placements.isFetching} dataSource={placements.data?.items??[]} pagination={false} columns={[{title:'广告', width:200,render:(_,r)=><TableText value={materials.data?.items.find(m=>m.id===r.material_id)?.content.name??r.material_id}/>},{title:'投放范围',render:(_,r)=><TableText value={scopeName(r.scope)}/>},{title:'生效时间', width:180,dataIndex:'valid_from',render:value=>formatDate(value)},{title:'到期时间', width:180,render:(_,r)=>r.valid_until?formatDate(r.valid_until):'长期有效'},{title:'状态', width:100,render:(_,r)=>r.enabled?'已启用':'已停用'},{title:'操作', width:88,render:(_,r)=><Button type="link" loading={busy} onClick={()=>void toggle(r)}>{r.enabled?'停用':'启用'}</Button>}]}/>
-  <Space><Button disabled={bindingPage===1} onClick={()=>setBindingPage(bindingPage-1)}>上一页</Button><Button disabled={!placements.data?.has_more} onClick={()=>setBindingPage(bindingPage+1)}>下一页</Button></Space>
+  <PaginationControls page={bindingPage} more={placements.data?.has_more} busy={placements.isFetching} change={setBindingPage} subject="投放绑定"/>
   <Drawer open={selected!==undefined} title={selected?'编辑广告':'新增广告'} destroyOnHidden onClose={()=>setSelected(undefined)}>{selected!==undefined&&<MaterialEditor key={selected?.id??'new'} initial={selected} onSaved={async()=>{setSelected(undefined);await materials.refetch()}}/>}</Drawer>
   <Drawer open={binding} title="绑定投放范围" destroyOnHidden onClose={()=>setBinding(false)}>{binding&&<PlacementEditor onSaved={async()=>{setBinding(false);await placements.refetch()}}/>}</Drawer>
  </Space>
@@ -41,7 +42,7 @@ function PlacementEditor({onSaved}:{onSaved:()=>Promise<void>}){
  const save=async()=>{setError('');if(!material||(kind!=='global'&&!platform)||(kind==='unit'&&!unit)){setError('请选择广告及投放范围');return}if(!Number.isFinite(Date.parse(from))||(until&&!Number.isFinite(Date.parse(until)))){setError('请填写有效的生效和到期时间');return}setBusy(true);try{const scope:PlacementScope=kind==='global'?{kind}:kind==='platform'?{kind,platform_id:platform!}:{kind,platform_id:platform!,unit_id:unit!};await adPlacements.create({material_id:material,scope,enabled:true,valid_from:new Date(from).toISOString(),valid_until:until?new Date(until).toISOString():null});await onSaved()}catch(e){setError((e as Error).message)}finally{setBusy(false)}}
  return <Space orientation="vertical" style={{width:'100%'}}>{(error||materials.error||scopes.error)&&<Alert type="error" title={error||materials.error?.message||scopes.error?.message}/>}
   <Select aria-label="选择广告" placeholder="选择广告" value={material} onChange={setMaterial} options={materials.data?.items.filter(m=>!m.archived).map(m=>({value:m.id,label:m.content.name}))}/>
-  <Space><Button disabled={page===1} onClick={()=>setPage(page-1)}>上一页</Button><Button disabled={!materials.data?.has_more} onClick={()=>setPage(page+1)}>下一页</Button></Space>
+  <PaginationControls page={page} more={materials.data?.has_more} busy={materials.isFetching} change={setPage} subject="可选广告"/>
   <Select aria-label="投放范围" value={kind} onChange={v=>{setKind(v);setPlatform(undefined);setUnit(undefined)}} options={[{value:'unit',label:'业务单位'},{value:'platform',label:'平台'},{value:'global',label:'全局'}]}/>
   {kind!=='global'&&<Select aria-label="选择平台" placeholder="选择平台" value={platform} onChange={v=>{setPlatform(v);setUnit(undefined)}} options={scopes.data?.platforms.map(p=>({value:p.id,label:p.name}))}/>}
   {kind==='unit'&&<Select aria-label="选择业务单位" placeholder="选择业务单位" value={unit} onChange={setUnit} options={scopes.data?.units.filter(u=>u.platform_id===platform).map(u=>({value:u.id,label:u.name}))}/>}
