@@ -43,6 +43,14 @@ async fn quota_policy(
         .ok_or(Error::Policy("shared_send_policy_invalid"))?;
     let permitted:bool=sqlx::query_scalar("WITH local AS (SELECT clock_timestamp() AT TIME ZONE $1 AS t), n AS (SELECT extract(isodow FROM t)::int AS day,(extract(hour FROM t)*60+extract(minute FROM t))::int AS minute FROM local) SELECT EXISTS(SELECT 1 FROM n,jsonb_array_elements($2::jsonb) w WHERE CASE WHEN (w->>'start_minute')::int<(w->>'end_minute')::int THEN (w->'weekdays') @> to_jsonb(ARRAY[n.day]) AND n.minute>=(w->>'start_minute')::int AND n.minute<(w->>'end_minute')::int ELSE ((w->'weekdays') @> to_jsonb(ARRAY[n.day]) AND n.minute>=(w->>'start_minute')::int) OR ((w->'weekdays') @> to_jsonb(ARRAY[((n.day+5)%7)+1]) AND n.minute<(w->>'end_minute')::int) END)").bind(timezone).bind(&p["allowed_windows"]).fetch_one(&mut **tx).await?;
     if !permitted {
+        records::check(
+            tx,
+            device,
+            "quota",
+            "outside_allowed_window",
+            json!({"timezone":timezone,"allowed_windows":p["allowed_windows"]}),
+        )
+        .await?;
         return Ok(false);
     }
 
@@ -58,6 +66,12 @@ async fn quota_policy(
             || row.get::<i64, _>("used") >= l.max_calls
             || row.get::<bool, _>("cooling")
         {
+            let reason = if row.get::<bool, _>("cooling") {
+                "quota_cooldown"
+            } else {
+                "quota_exhausted"
+            };
+            records::check(tx,device,"quota",reason,json!({"dimension":key,"used":row.get::<i64,_>("used"),"daily_used":daily,"max_calls":l.max_calls,"daily_max":l.daily_max_calls,"interval_seconds":l.interval_seconds,"window_seconds":l.window_seconds})).await?;
             return Ok(false);
         }
     }
@@ -74,6 +88,40 @@ pub(super) async fn write(
     c: &Credential,
     key: &str,
     command: DeviceCommand,
+) -> Result<Value> {
+    if matches!(
+        &command,
+        DeviceCommand::Deliver(_) | DeviceCommand::Grant(_)
+    ) {
+        return write_delivery(repo, c, key, command)
+            .await
+            .map(|(value, _)| value);
+    }
+    write_inner(repo, c, key, command, None).await
+}
+pub(super) async fn write_delivery(
+    repo: &Repository,
+    c: &Credential,
+    key: &str,
+    command: DeviceCommand,
+) -> Result<(Value, Uuid)> {
+    let id = records::exchange_start(repo, c, key).await?;
+    match write_inner(repo, c, key, command, Some(id)).await {
+        Ok(value) => Ok((value, id)),
+        Err(error) => {
+            if let Err(record_error) = repo.exchange_failed(id, &error).await {
+                tracing::error!(exchange_id=%id,%record_error,"delivery failure record unavailable");
+            }
+            Err(error)
+        }
+    }
+}
+async fn write_inner(
+    repo: &Repository,
+    c: &Credential,
+    key: &str,
+    command: DeviceCommand,
+    exchange: Option<Uuid>,
 ) -> Result<Value> {
     let mut tx = repo.0.begin().await?;
     if !matches!(&command, DeviceCommand::Consent(_)) {
@@ -94,6 +142,9 @@ pub(super) async fn write(
         ),
     )
     .await?;
+    if let Some(id) = exchange {
+        records::context(&mut tx, "wekeeper.mobile_exchange", id).await?;
+    }
     let (scope, body) = match &command {
         DeviceCommand::Deliver(v) => ("task-delivery", json!(v)),
         DeviceCommand::Grant(v) => ("execution-grant", json!(v)),
@@ -114,9 +165,18 @@ pub(super) async fn write(
         if matches!(scope, "execution-grant" | "task-delivery") && old["state"] == "granted" {
             let active = execution::can_redeliver(&mut tx, uid(&old, "id")?).await?;
             if !active {
-                return command_response(scope, json!({"id":old["id"],"state":"superseded"}));
+                let value = json!({"id":old["id"],"state":"superseded"});
+                if let Some(id) = exchange {
+                    records::exchange_result(&mut tx, id, &value).await?;
+                }
+                tx.commit().await?;
+                return command_response(scope, value);
             }
         }
+        if let Some(id) = exchange {
+            records::exchange_result(&mut tx, id, &old).await?;
+        }
+        tx.commit().await?;
         return command_response(scope, old);
     }
     let result = match command {
@@ -177,6 +237,9 @@ pub(super) async fn write(
         &stored,
     )
     .await?;
+    if let Some(id) = exchange {
+        records::exchange_result(&mut tx, id, &result).await?;
+    }
     tx.commit().await?;
     command_response(scope, result)
 }

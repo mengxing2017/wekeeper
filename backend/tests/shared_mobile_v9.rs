@@ -3488,3 +3488,190 @@ async fn candidate_retains_assignment_through_two_lost_cycles_and_transport_repa
     );
     f.close().await;
 }
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn dispatch_records_distinguish_idle_delivery_receipt_and_idempotent_replay() {
+    use wekeeper_api::distribution::domain::shared_mobile::{
+        dispatch_records::RecordQuery,
+        execution::{DeliveryRequest, ExecutionReceipt},
+    };
+    let f = Fixture::with_adapter(false).await;
+    let (c, epoch) = pool_ready(&f, f.device).await;
+    let repo = f.repo();
+    let (idle, idle_id) = repo
+        .delivery_transport(
+            &c,
+            "records-idle",
+            DeliveryRequest {
+                runtime_epoch: epoch,
+                inspection_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(idle["state"], "idle");
+    let ex = repo
+        .read_records(&f.actor, "exchange", Some(idle_id), RecordQuery::default())
+        .await
+        .unwrap();
+    assert_eq!(ex["reason_code"], "no_matching_assignment");
+    assert!(ex["intake_id"].is_null());
+    let task = pool_confirm(&f, vec![f.targets[0]]).await;
+    let (packet, request) = repo
+        .delivery_transport(
+            &c,
+            "records-deliver",
+            DeliveryRequest {
+                runtime_epoch: epoch,
+                inspection_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(packet["state"], "granted");
+    let intake: Uuid =
+        sqlx::query_scalar("SELECT id FROM mobile_dispatch_intakes WHERE task_id=$1")
+            .bind(serde_json::from_value::<Uuid>(task["id"].clone()).unwrap())
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    let detail = repo
+        .read_records(
+            &f.actor,
+            "detail",
+            Some(intake),
+            RecordQuery {
+                source_kind: Some("all".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(detail["generated_at"].is_string());
+    assert!(detail["received_at"].is_null());
+    repo.response_observed(request, "server_write_completed")
+        .await
+        .unwrap();
+    let (replayed, replay) = repo
+        .delivery_transport(
+            &c,
+            "records-deliver",
+            DeliveryRequest {
+                runtime_epoch: epoch,
+                inspection_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(replayed["execution"]["id"], packet["execution"]["id"]);
+    let ex = repo
+        .read_records(&f.actor, "exchange", Some(replay), RecordQuery::default())
+        .await
+        .unwrap();
+    assert_eq!(ex["replay_of"], request.to_string());
+    let execution_id = serde_json::from_value(packet["execution"]["id"].clone()).unwrap();
+    repo.device_write(
+        &c,
+        "records-receipt",
+        DeviceCommand::Receipt(ExecutionReceipt { execution_id }),
+    )
+    .await
+    .unwrap();
+    repo.device_write(
+        &c,
+        "records-receipt-again",
+        DeviceCommand::Receipt(ExecutionReceipt { execution_id }),
+    )
+    .await
+    .unwrap();
+    let n:i64=sqlx::query_scalar("SELECT count(*) FROM mobile_v9_dispatch_events WHERE intake_id=$1 AND kind='device_received'").bind(intake).fetch_one(&f.pool).await.unwrap();
+    assert_eq!(n, 1);
+    let n: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM mobile_execution_grants WHERE kind='send'")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(n, 1);
+    let events = repo
+        .read_records(
+            &f.actor,
+            "events",
+            Some(intake),
+            RecordQuery {
+                page_size: Some(1),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(events["items"].as_array().unwrap().len(), 1);
+    assert_eq!(events["has_more"], true);
+    let next = repo
+        .read_records(
+            &f.actor,
+            "events",
+            Some(intake),
+            RecordQuery {
+                page_size: Some(1),
+                cursor: events["next_cursor"].as_str().map(str::to_owned),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_ne!(events["items"][0]["id"], next["items"][0]["id"]);
+    let all = repo
+        .read_records(&f.actor, "exchanges", None, RecordQuery::default())
+        .await
+        .unwrap();
+    let serialized = serde_json::to_string(&all).unwrap();
+    assert!(!serialized.contains("result_credential"));
+    assert!(!serialized.contains("signature"));
+    let active = repo
+        .read_records(
+            &f.actor,
+            "detail",
+            Some(intake),
+            RecordQuery {
+                source_kind: Some("all".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(active["received_at"].is_string());
+    // Valid but insufficient remaining credential lifetime is a recorded delivery error.
+    sqlx::query("UPDATE device_credentials SET expires_at=clock_timestamp()+interval '100 seconds' WHERE device_id=$1").bind(f.device).execute(&f.pool).await.unwrap();
+    // Close the issued session so the next interaction reaches new-grant checks.
+    sqlx::query("UPDATE mobile_execution_grants SET state='superseded',session_closed=true")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    assert!(
+        repo.delivery_transport(
+            &c,
+            "records-short-token",
+            DeliveryRequest {
+                runtime_epoch: epoch,
+                inspection_id: None
+            }
+        )
+        .await
+        .is_err()
+    );
+    let errors = repo
+        .read_records(
+            &f.actor,
+            "exchanges",
+            None,
+            RecordQuery {
+                reason: Some("execution_credential_renewal_required".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(errors["items"].as_array().unwrap().len(), 1);
+    f.close().await;
+}

@@ -228,18 +228,16 @@ async fn task_delivery(
     State(a): State<Application>,
     h: HeaderMap,
     input: Input,
-) -> Result<ApiResponse> {
+) -> Result<axum::response::Response> {
     let c = credential(&a, &h).await?;
-    Ok(resource(
-        "task-deliveries",
-        service(&a)
-            .device_write(
-                &c,
-                key(&h),
-                DeviceCommand::Deliver(input.decode("task-deliveries")?),
-            )
-            .await?,
-    ))
+    let service = service(&a);
+    let (value, id) = service
+        .delivery_transport(&c, key(&h), input.decode("task-deliveries")?)
+        .await?;
+    Ok(
+        super::mobile_dispatch_records::observe(resource("task-deliveries", value), service, id)
+            .await,
+    )
 }
 async fn execution_grant(
     State(a): State<Application>,
@@ -286,6 +284,7 @@ async fn execution_completion(State(a): State<Application>, input: Input) -> Res
 pub fn router() -> Router<Application> {
     Router::new()
         .merge(usage_router())
+        .merge(super::mobile_dispatch_records::router())
         .route(
             "/api/v10/device-execution/task-deliveries",
             post(task_delivery),

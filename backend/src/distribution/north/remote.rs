@@ -28,3 +28,5 @@ pub mod workflows;
 
 pub mod groups;
 pub mod receiving;
+
+pub mod mobile_dispatch_records;

@@ -1,0 +1,1 @@
+{"id":1,"intake_id":"10000000-0000-0000-0000-000000000001","operation_id":null,"delivery_request_id":null,"item_id":null,"round_no":null,"kind":"creation_failed","reason":"mobile_candidates_missing","result":"rejected","device_id":null,"attempt_id":null,"execution_id":null,"evidence":{"step":"task_creation"},"created_at":"2026-11-16T06:00:00Z"}

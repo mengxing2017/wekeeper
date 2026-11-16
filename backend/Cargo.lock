@@ -3599,6 +3599,7 @@ dependencies = [
  "cairnkit-jsonapi",
  "chrono",
  "clap",
+ "http-body",
  "image",
  "postgresql_embedded",
  "reqwest",

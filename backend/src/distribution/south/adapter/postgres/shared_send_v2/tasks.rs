@@ -714,6 +714,7 @@ pub(super) async fn create_authorized_task(
             .bind(iid)
             .execute(&mut **tx)
             .await?;
+        records::ensure_task(tx, id, iid, uid(item, "target_id")?, snap, &frozen).await?;
         dispatch::reconcile(tx, iid).await?;
     }
     task(tx, id).await

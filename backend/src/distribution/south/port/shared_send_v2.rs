@@ -32,6 +32,29 @@ pub enum DeviceCommand {
     Receipt(crate::distribution::domain::shared_mobile::execution::ExecutionReceipt),
 }
 pub trait Store: Clone + Send + Sync {
+    fn delivery_transport(
+        &self,
+        c: &Credential,
+        key: &str,
+        v: crate::distribution::domain::shared_mobile::execution::DeliveryRequest,
+    ) -> impl Future<Output = Result<(Value, Uuid)>> + Send;
+    fn response_observed(&self, id: Uuid, state: &str) -> impl Future<Output = Result<()>> + Send;
+
+    fn submit_mobile(
+        &self,
+        message: Uuid,
+        receipt: Uuid,
+        plan: crate::distribution::domain::receiving::DeliveryPlan,
+        content: String,
+    ) -> impl Future<Output = Result<Uuid>> + Send;
+    fn records_read(
+        &self,
+        actor: &Actor,
+        kind: &str,
+        id: Option<Uuid>,
+        query: crate::distribution::domain::shared_mobile::dispatch_records::RecordQuery,
+    ) -> impl Future<Output = Result<Value>> + Send;
+
     fn complete_execution(
         &self,
         v: crate::distribution::domain::shared_mobile::execution::Completion,

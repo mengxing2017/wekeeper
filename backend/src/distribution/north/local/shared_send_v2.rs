@@ -10,6 +10,39 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct Service<R = Repository>(pub R);
 impl<R: Store> Service<R> {
+    pub async fn delivery_transport(
+        &self,
+        c: &Credential,
+        key: &str,
+        v: crate::distribution::domain::shared_mobile::execution::DeliveryRequest,
+    ) -> Result<(Value, Uuid)> {
+        self.0.delivery_transport(c, &text(key, 1, 128)?, v).await
+    }
+    pub async fn response_observed(&self, id: Uuid, state: &str) -> Result<()> {
+        self.0.response_observed(id, state).await
+    }
+
+    pub async fn submit_mobile(
+        &self,
+        message: Uuid,
+        receipt: Uuid,
+        plan: crate::distribution::domain::receiving::DeliveryPlan,
+        content: String,
+    ) -> Result<Uuid> {
+        self.0.submit_mobile(message, receipt, plan, content).await
+    }
+    pub async fn records_read(
+        &self,
+        actor: &Actor,
+        kind: &str,
+        id: Option<Uuid>,
+        query: crate::distribution::domain::shared_mobile::dispatch_records::RecordQuery,
+    ) -> Result<Value> {
+        actor.platform()?;
+        query.limit()?;
+        self.0.records_read(actor, kind, id, query).await
+    }
+
     pub async fn complete_execution(
         &self,
         v: crate::distribution::domain::shared_mobile::execution::Completion,

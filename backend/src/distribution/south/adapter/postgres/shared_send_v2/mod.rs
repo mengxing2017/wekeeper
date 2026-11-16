@@ -25,6 +25,7 @@ mod inbox;
 mod inspections;
 mod platform;
 mod readiness;
+pub mod records;
 mod screen;
 mod secrets;
 mod task_status;
@@ -130,6 +131,37 @@ async fn task(tx: &mut Tx<'_>, id: Uuid) -> Result<Value> {
     Ok(value)
 }
 impl Store for Repository {
+    async fn delivery_transport(
+        &self,
+        c: &Credential,
+        key: &str,
+        v: crate::distribution::domain::shared_mobile::execution::DeliveryRequest,
+    ) -> Result<(Value, Uuid)> {
+        device::write_delivery(self, c, key, DeviceCommand::Deliver(v)).await
+    }
+    async fn response_observed(&self, id: Uuid, state: &str) -> Result<()> {
+        Repository::response_observed(self, id, state).await
+    }
+
+    async fn submit_mobile(
+        &self,
+        message: Uuid,
+        receipt: Uuid,
+        plan: crate::distribution::domain::receiving::DeliveryPlan,
+        content: String,
+    ) -> Result<Uuid> {
+        Repository::submit_mobile(self, message, receipt, plan, content).await
+    }
+    async fn records_read(
+        &self,
+        actor: &Actor,
+        kind: &str,
+        id: Option<Uuid>,
+        query: crate::distribution::domain::shared_mobile::dispatch_records::RecordQuery,
+    ) -> Result<Value> {
+        self.read_records(actor, kind, id, query).await
+    }
+
     async fn complete_execution(
         &self,
         v: crate::distribution::domain::shared_mobile::execution::Completion,

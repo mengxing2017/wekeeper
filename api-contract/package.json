@@ -28,7 +28,8 @@
     "./source-access/receipts-client": "./src/modules/source-access/receipts-client.ts",
     "./advertising": "./src/modules/advertising/index.ts",
     "./advertising/client": "./src/modules/advertising/client.ts",
-    "./advertising/material-client": "./src/modules/advertising/material-client.ts"
+    "./advertising/material-client": "./src/modules/advertising/material-client.ts",
+    "./mobile-execution/dispatch-records": "./src/modules/mobile-execution/shared-send/dispatch-records.ts"
   },
   "scripts": {
     "build": "tsc --noEmit && tsc -p tsconfig.platform.json",

@@ -171,6 +171,11 @@ impl Observation {
             "confirmation_expired" => "任务业务授权已到期",
             _ => explanation,
         };
+        let next = if reason == "awaiting_round_deadline" {
+            "系统将在下次重评时间重新评估候选；查看手机分发记录中的逐候选原因"
+        } else {
+            next
+        };
         let (explanation, owner, next) =
             if self.severity == "attention" && self.outcome == "pending" {
                 if matches!(

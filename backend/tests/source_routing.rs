@@ -147,6 +147,13 @@ async fn failed_child_reuses_frozen_ad_and_candidate_plan() {
         .execute(&f.pool)
         .await
         .unwrap();
+    sqlx::query(
+        "UPDATE mobile_dispatch_intakes SET next_retry_at=clock_timestamp() WHERE message_id=$1",
+    )
+    .bind(id)
+    .execute(&f.pool)
+    .await
+    .unwrap();
     f.run().await;
     f.run().await;
     let count: i64 =
@@ -606,6 +613,10 @@ async fn admin_list_http_pagination_and_message_authorization() {
         format!("/api/v2/admin/source-routes/{}/configuration", f.route),
         format!("/api/v2/admin/source-routes/{}/receipts", f.route),
     ];
+    protected_paths.extend([
+        "/api/v2/admin/mobile-dispatch/intakes".to_string(),
+        "/api/v2/admin/mobile-dispatch/delivery-exchanges".to_string(),
+    ]);
     for protected in &protected_paths {
         read(&app, protected, Some(&token), 200).await;
         read(&app, protected, None, 401).await;
@@ -1278,5 +1289,207 @@ async fn two_groups_have_independent_progress_and_one_message_outcome() {
     assert_eq!(done["items"][0]["state"], "completed");
     assert_eq!(done["items"][0]["sending"]["sent"], 2);
     assert_eq!(done["items"][0]["sending"]["pending"], 0);
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn phone_intake_failure_survives_rollback_and_deduplicates_creation() {
+    use wekeeper_api::distribution::{
+        domain::{receiving::DeliveryPlan, shared_mobile::dispatch_records::RecordQuery},
+        south::adapter::postgres::shared_send_v2::Repository,
+    };
+    let f = Fixture::new().await;
+    f.configure(vec![f.target]).await;
+    let (message, receipt) = f.message().await;
+    f.run().await;
+    let repo = Repository(f.pool.clone());
+    let original: Value =
+        sqlx::query_scalar("SELECT plan FROM mobile_dispatch_intakes WHERE message_id=$1")
+            .bind(message)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    let plan: DeliveryPlan = serde_json::from_value(original).unwrap();
+    let id = repo
+        .submit_mobile(message, receipt, plan.clone(), "原消息".into())
+        .await
+        .unwrap();
+    let again = repo
+        .submit_mobile(message, receipt, plan.clone(), "原消息".into())
+        .await
+        .unwrap();
+    assert_eq!(id, again);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_v9_tasks")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        1
+    );
+    let list = repo
+        .read_records(&f.actor, "intakes", None, RecordQuery::default())
+        .await
+        .unwrap();
+    assert_eq!(list["items"].as_array().unwrap().len(), 1);
+    let ops = repo
+        .read_records(&f.actor, "operations", Some(id), RecordQuery::default())
+        .await
+        .unwrap();
+    assert!(
+        ops["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|o| o["kind"] == "evaluate")
+    );
+    let checks = sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM mobile_dispatch_checks WHERE intake_id=$1",
+    )
+    .bind(id)
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert!(checks > 0);
+    assert!(
+        repo.submit_mobile(message, receipt, plan.clone(), "不同正文".into())
+            .await
+            .is_err()
+    );
+    let (new_message, new_receipt) = f.message().await;
+    let mut bad = plan;
+    bad.targets[0].identity["candidates"] = serde_json::json!([]);
+    let rejected = repo
+        .submit_mobile(new_message, new_receipt, bad.clone(), "原消息".into())
+        .await
+        .unwrap();
+    let detail = repo
+        .read_records(&f.actor, "detail", Some(rejected), RecordQuery::default())
+        .await
+        .unwrap();
+    assert!(detail["task_id"].is_null());
+    assert_eq!(detail["creation_state"], "rejected");
+    assert_eq!(detail["reason_code"], "mobile_candidates_missing");
+    let events = repo
+        .read_records(&f.actor, "events", Some(rejected), RecordQuery::default())
+        .await
+        .unwrap();
+    assert!(
+        events["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["kind"] == "creation_failed")
+    );
+    let q = RecordQuery {
+        reason: Some("mobile_candidates_missing".into()),
+        reason_scope: Some("history".into()),
+        page_size: Some(1),
+        ..Default::default()
+    };
+    let filtered = repo
+        .read_records(&f.actor, "intakes", None, q)
+        .await
+        .unwrap();
+    assert_eq!(filtered["items"][0]["id"], rejected.to_string());
+    let mut ordinary = f.actor.clone();
+    ordinary.platform_admin = false;
+    assert!(
+        repo.read_records(&ordinary, "intakes", None, RecordQuery::default())
+            .await
+            .is_err()
+    );
+    assert!(
+        repo.read_records(
+            &f.actor,
+            "detail",
+            Some(Uuid::new_v4()),
+            RecordQuery::default()
+        )
+        .await
+        .is_err()
+    );
+    // Retryable creation failures preserve started identity and are recovered from the original frozen input.
+    let (retry_message, retry_receipt) = f.message().await;
+    let frozen: Value = sqlx::query_scalar("SELECT plan FROM mobile_dispatch_intakes WHERE id=$1")
+        .bind(id)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    let good: DeliveryPlan = serde_json::from_value(frozen).unwrap();
+    // Force an infrastructure failure after intake commit, inside task creation.
+    sqlx::query("CREATE FUNCTION test_fail_task() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test infrastructure failure'; END $$").execute(&f.pool).await.unwrap();
+    sqlx::query("CREATE TRIGGER test_fail_task BEFORE INSERT ON mobile_v9_tasks FOR EACH ROW EXECUTE FUNCTION test_fail_task()").execute(&f.pool).await.unwrap();
+    assert!(
+        repo.submit_mobile(retry_message, retry_receipt, good.clone(), "原消息".into())
+            .await
+            .is_err()
+    );
+    let retry_id: Uuid =
+        sqlx::query_scalar("SELECT id FROM mobile_dispatch_intakes WHERE message_id=$1")
+            .bind(retry_message)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    let detail = repo
+        .read_records(&f.actor, "detail", Some(retry_id), RecordQuery::default())
+        .await
+        .unwrap();
+    assert_eq!(detail["creation_state"], "retrying");
+    assert!(detail["task_id"].is_null());
+    sqlx::query("DROP TRIGGER test_fail_task ON mobile_v9_tasks")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE mobile_dispatch_intakes SET next_retry_at=clock_timestamp() WHERE id=$1")
+        .bind(retry_id)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    repo.recover_mobile_intakes().await.unwrap();
+    let detail = repo
+        .read_records(&f.actor, "detail", Some(retry_id), RecordQuery::default())
+        .await
+        .unwrap();
+    assert_eq!(detail["creation_state"], "created");
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM mobile_dispatch_intakes WHERE message_id=$1"
+        )
+        .bind(retry_message)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap(),
+        1
+    );
+    // Equal timestamps and more than 100 records must not truncate or repeat pages.
+    sqlx::query("INSERT INTO mobile_dispatch_intakes(id,source_kind,message_id,target_name,snapshot_id,plan,content,payload_hash,creation_state,reason_code,created_at) SELECT gen_random_uuid(),'source_route',gen_random_uuid(),'分页测试',gen_random_uuid(),'{}','分页正文','test','rejected','pagination_fixture',now() FROM generate_series(1,105)")
+        .execute(&f.pool).await.unwrap();
+    let mut seen = std::collections::HashSet::new();
+    let mut cursor = None;
+    loop {
+        let page = repo
+            .read_records(
+                &f.actor,
+                "intakes",
+                None,
+                RecordQuery {
+                    cursor,
+                    page_size: Some(30),
+                    reason: Some("pagination_fixture".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        for item in page["items"].as_array().unwrap() {
+            assert!(seen.insert(item["id"].as_str().unwrap().to_owned()));
+        }
+        if page["has_more"] == false {
+            break;
+        }
+        cursor = Some(page["next_cursor"].as_str().unwrap().to_owned());
+    }
+    assert_eq!(seen.len(), 105);
     f.close().await;
 }

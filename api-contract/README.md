@@ -48,3 +48,5 @@ pnpm --dir api-contract test
 论坛 community client、小程序登录和展示资源 client 已迁至 linjian；本包不再导出这些接口。发送素材使用学校范围的 `distribution-materials` 只读接口。
 
 分发范围使用 `/api/v1/wecom-distribution/workspaces/{workspace}` 与 `/api/v1/mobile-execution/workspaces/{workspace}`。学校客户端和普通账号 CRUD 已移除，系统管理员维护使用独立 `/api/v1/platform/administrators`（查询、新增），以及 `/{id}`（编辑、删除）和 `/{id}/password`（重设密码）。历史 `school_id` 为工作空间兼容字段，不代表学校主数据依赖。
+
+手机分发内部管理记录通过 `@wekeeper/api-contract/mobile-execution/dispatch-records` 查询。接入记录独立于 task_id，提供候选评估、事件和设备交付交互的稳定游标分页；当前原因与历史原因分开过滤。执行包生成、服务端写出与设备落盘确认分开表示。此 client 仅供系统管理员后台使用，不属于对外来源消息 SDK。

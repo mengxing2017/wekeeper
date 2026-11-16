@@ -25,6 +25,16 @@ impl Repository {
             sqlx::query("SET LOCAL statement_timeout='2s'")
                 .execute(&mut *tx)
                 .await?;
+            // The due set may have changed before this writer acquired the lock.
+            let due: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_dispatch_state WHERE item_id=$1 AND next_retry_at<=clock_timestamp() AND state NOT IN ('completed','stopped','confirmation_expired','dispatch_failed'))")
+                .bind(id).fetch_one(&mut *tx).await?;
+            if !due {
+                continue;
+            }
+            let operation = records::begin_evaluation(&self.0, id).await?;
+            if let Some(op) = operation {
+                records::context(&mut tx, "wekeeper.mobile_operation", op).await?;
+            }
             match reconcile(&mut tx, id).await {
                 Ok(()) => tx.commit().await?,
                 Err(error) => {
@@ -32,6 +42,10 @@ impl Repository {
                     let mut retry = self.0.begin().await?;
                     guard(&mut retry).await?;
                     sqlx::query("UPDATE mobile_v9_dispatch_state SET infrastructure_failures=least(infrastructure_failures+1,4),next_retry_at=clock_timestamp()+make_interval(secs=>least(60,5*power(2,infrastructure_failures+1))::double precision) WHERE item_id=$1 AND state NOT IN ('completed','stopped','confirmation_expired','dispatch_failed')").bind(id).execute(&mut *retry).await?;
+                    if let Some(op) = operation {
+                        sqlx::query("UPDATE mobile_dispatch_operations SET result='retrying',reason_code=$2,finished_at=clock_timestamp(),retry_at=(SELECT next_retry_at FROM mobile_v9_dispatch_state WHERE item_id=$3) WHERE id=$1 AND result='started'").bind(op).bind(records::failure(&error)).bind(id).execute(&mut *retry).await?;
+                        sqlx::query("INSERT INTO mobile_v9_dispatch_events(intake_id,item_id,operation_id,kind,reason,result,evidence) SELECT intake_id,$2,id,'evaluation_failed',$3,'retrying',jsonb_build_object('step','dispatch_reconcile') FROM mobile_dispatch_operations WHERE id=$1").bind(op).bind(id).bind(records::failure(&error)).execute(&mut *retry).await?;
+                    }
                     retry.commit().await?;
                     tracing::warn!(%error,item=%id,"execution dispatch infrastructure error; retry backed off");
                 }
@@ -56,12 +70,52 @@ async fn presence_offline(tx: &mut Tx<'_>, device: Uuid) -> Result<bool> {
     .await?)
 }
 async fn ready(tx: &mut Tx<'_>, candidate: &Value) -> Result<bool> {
-    if candidate["accepted"] != true || !candidate_available(tx, candidate).await? {
-        return Ok(false);
-    }
-    Ok(!sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM mobile_execution_grants WHERE device_id=$1 AND NOT session_closed)").bind(uid(candidate,"device_id")?).fetch_one(&mut **tx).await?)
+    let facts:Value=sqlx::query_scalar("SELECT jsonb_build_object('presence',(SELECT state FROM device_control_presence WHERE id=$1),'enabled',d.enabled,'generation',d.credential_generation,'expected_generation',$2::bigint,'accepted',$3::boolean,'consent_state',$4::text,'busy',(SELECT jsonb_build_object('execution_id',id,'attempt_id',attempt_id,'execute_before',execute_before) FROM mobile_execution_grants WHERE device_id=$1 AND NOT session_closed ORDER BY assigned_at LIMIT 1)) FROM execution_devices d WHERE id=$1")
+        .bind(uid(candidate,"device_id")?).bind(candidate["credential_generation"].as_i64()).bind(candidate["accepted"]==true).bind(candidate["consent_state"].as_str()).fetch_optional(&mut **tx).await?.unwrap_or(json!({}));
+    let reason =
+        crate::distribution::domain::shared_mobile::dispatch_records::candidate_reason(&facts);
+    records::check(
+        tx,
+        uid(candidate, "device_id")?,
+        "candidate_readiness",
+        reason,
+        facts,
+    )
+    .await?;
+    Ok(reason == "passed")
 }
 pub(super) async fn reconcile(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
+    let previous: Option<String> =
+        sqlx::query_scalar("SELECT nullif(current_setting('wekeeper.mobile_operation',true),'')")
+            .fetch_one(&mut **tx)
+            .await?;
+    let evaluation: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM mobile_dispatch_operations WHERE id=$1 AND kind='evaluate'",
+    )
+    .bind(previous.as_deref().and_then(|s| s.parse::<Uuid>().ok()))
+    .fetch_optional(&mut **tx)
+    .await?;
+    let op = if let Some(op) = evaluation {
+        Some(op)
+    } else {
+        let op = Uuid::now_v7();
+        let inserted=sqlx::query("INSERT INTO mobile_dispatch_operations(id,intake_id,kind,round_no,attempt_id) SELECT $1,i.id,'evaluate',least(d.completed_rounds+1,3),a.id FROM mobile_dispatch_intakes i JOIN mobile_v9_dispatch_state d ON d.item_id=i.item_id JOIN mobile_v9_attempts a ON a.item_id=i.item_id AND a.current WHERE i.item_id=$2").bind(op).bind(item).execute(&mut **tx).await?.rows_affected();
+        if inserted > 0 { Some(op) } else { None }
+    };
+    if let Some(op) = op {
+        records::context(tx, "wekeeper.mobile_operation", op).await?;
+    }
+    reconcile_inner(tx, item).await?;
+    if let Some(op) = op {
+        sqlx::query("UPDATE mobile_dispatch_operations o SET result=d.state,reason_code=d.reason,finished_at=clock_timestamp(),retry_at=d.next_retry_at FROM mobile_v9_dispatch_state d WHERE o.id=$1 AND d.item_id=$2").bind(op).bind(item).execute(&mut **tx).await?;
+    }
+    sqlx::query("SELECT set_config('wekeeper.mobile_operation',$1,true)")
+        .bind(previous.unwrap_or_default())
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+async fn reconcile_inner(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
     let row:Value=sqlx::query_scalar("SELECT to_jsonb(a)||jsonb_build_object('plan',p.plan,'snapshot_id',p.snapshot_id,'target_id',i.target_id,'task_id',t.id,'stopped',t.stopped,'authorization_kind',t.authorization_kind,'expired',t.confirmed_until<=clock_timestamp(),'candidates',sc.candidates,'candidate_cursor',ds.candidate_cursor,'dispatch_state',ds.state,'completed_rounds',ds.completed_rounds,'round_origin',ds.round_origin,'due',ds.next_retry_at<=clock_timestamp(),'eligible',a.not_before<=clock_timestamp() AND t.next_eligible_at<=clock_timestamp(),'delivery_expired',ds.assigned_at+interval '5 minutes'<=clock_timestamp()) FROM mobile_v9_task_items i JOIN mobile_v9_tasks t ON t.id=i.task_id JOIN mobile_v9_attempts a ON a.item_id=i.id AND a.current JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_v9_dispatch_scopes sc ON sc.item_id=i.id JOIN mobile_v9_dispatch_state ds ON ds.item_id=i.id WHERE i.id=$1 FOR UPDATE OF a,ds").bind(item).fetch_one(&mut **tx).await?;
     if dispatch_terminal(row["dispatch_state"].as_str().unwrap_or("")) || row["due"] != true {
         return Ok(());
@@ -101,6 +155,14 @@ pub(super) async fn reconcile(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
     }
     sqlx::query("UPDATE mobile_v9_dispatch_state SET assigned_at=coalesce(assigned_at,clock_timestamp()),round_started_at=coalesce(round_started_at,clock_timestamp()) WHERE item_id=$1").bind(item).execute(&mut **tx).await?;
     let grant:Option<Value>=sqlx::query_scalar("SELECT (to_jsonb(g)-'envelope')||jsonb_build_object('deadline_reached',result_deadline_at<=clock_timestamp()) FROM mobile_execution_grants g WHERE attempt_id=$1").bind(aid).fetch_optional(&mut **tx).await?;
+    // Record the current candidate too: an offline singleton never enters the successor loop.
+    if grant.is_none() {
+        let current_choices = tasks::raw_candidates(tx, uid(&row, "target_id")?).await?;
+        let current = current_choices
+            .iter()
+            .find(|c| tasks::dependencies(c) == tasks::dependencies(&row["plan"]));
+        ready(tx, current.unwrap_or(&row["plan"])).await?;
+    }
     let state = row["state"].as_str().ok_or(Error::Conflict)?;
     let outcome = grant
         .as_ref()
@@ -152,7 +214,15 @@ pub(super) async fn reconcile(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
             }
             match tasks::validate_plan(tx, &row["plan"]).await {
                 Ok(()) => {}
-                Err(Error::Policy(_) | Error::NotFound | Error::Forbidden) => {
+                Err(ref error @ (Error::Policy(_) | Error::NotFound | Error::Forbidden)) => {
+                    records::check(
+                        tx,
+                        uid(&row["plan"], "device_id")?,
+                        "plan_authorization",
+                        &records::failure(error),
+                        json!({}),
+                    )
+                    .await?;
                     reason = Some("plan_dependency_changed")
                 }
                 Err(e) => return Err(e),
@@ -224,6 +294,7 @@ pub(super) async fn reconcile(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
             .iter()
             .find(|c| tasks::dependencies(c) == tasks::dependencies(snapshot))
         else {
+            records::check(tx,uid(snapshot,"device_id")?,"frozen_dependencies","plan_dependency_changed",json!({"frozen_generation":snapshot["credential_generation"],"binding_id":snapshot["binding_id"]})).await?;
             event(
                 tx,
                 item,
@@ -249,7 +320,15 @@ pub(super) async fn reconcile(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
         }
         match tasks::validate_plan(tx, snapshot).await {
             Ok(()) => {}
-            Err(Error::Policy(_) | Error::NotFound | Error::Forbidden) => {
+            Err(ref error @ (Error::Policy(_) | Error::NotFound | Error::Forbidden)) => {
+                records::check(
+                    tx,
+                    uid(snapshot, "device_id")?,
+                    "plan_authorization",
+                    &records::failure(error),
+                    json!({}),
+                )
+                .await?;
                 event(
                     tx,
                     item,

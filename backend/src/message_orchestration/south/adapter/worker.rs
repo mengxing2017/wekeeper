@@ -17,6 +17,9 @@ use uuid::Uuid;
 
 impl Repository {
     pub async fn run_once(&self) -> Result<()> {
+        shared_send_v2::Repository(self.0.clone())
+            .recover_mobile_intakes()
+            .await?;
         let ids:Vec<Uuid>=sqlx::query_scalar("SELECT m.id FROM orchestration_messages m LEFT JOIN orchestration_dispatches d ON d.message_id=m.id WHERE (d.message_id IS NULL OR (d.state IN ('pending','preparing','ready') AND d.next_attempt_at<=clock_timestamp())) ORDER BY m.accepted_at,m.id LIMIT 50")
             .fetch_all(&self.0).await?;
         for id in ids {
@@ -174,6 +177,29 @@ impl Repository {
             .map_err(|_| Error::Unavailable)?;
             sqlx::query("UPDATE orchestration_dispatches SET content=$2,decision=$3,state='ready' WHERE message_id=$1 AND state='preparing'").bind(id).bind(&decision.content).bind(json!(decision)).execute(&self.0).await?;
         }
+        // Mobile intake commits independently, before creation checks. Never hold
+        // an orchestration row lock while calling the phone-owned service.
+        let frozen = sqlx::query(
+            "SELECT content,plans,state FROM orchestration_dispatches WHERE message_id=$1",
+        )
+        .bind(id)
+        .fetch_one(&self.0)
+        .await?;
+        if frozen.get::<String, _>("state") == "ready" {
+            let plans: Vec<DeliveryPlan> =
+                serde_json::from_value(frozen.get("plans")).map_err(|_| Error::Unavailable)?;
+            for plan in plans.into_iter().filter(|p| p.channel == Channel::Mobile) {
+                for target in plan.targets.clone() {
+                    let mut individual = plan.clone();
+                    individual.targets = vec![target];
+                    crate::distribution::north::local::shared_send_v2::Service(
+                        shared_send_v2::Repository(self.0.clone()),
+                    )
+                    .submit_mobile(id, receipt, individual, frozen.get("content"))
+                    .await?;
+                }
+            }
+        }
         tx = self.0.begin().await?;
         let dispatch=sqlx::query("SELECT content,plans,state FROM orchestration_dispatches WHERE message_id=$1 FOR UPDATE").bind(id).fetch_one(&mut *tx).await?;
         if dispatch.get::<String, _>("state") != "ready" {
@@ -183,7 +209,7 @@ impl Repository {
         let plans: Vec<DeliveryPlan> =
             serde_json::from_value(dispatch.get("plans")).map_err(|_| Error::Unavailable)?;
         let content: String = dispatch.get("content");
-        for mut plan in plans {
+        for mut plan in plans.into_iter().filter(|p| p.channel != Channel::Mobile) {
             if !crate::advertising::domain::measure(&content, plan.channel.as_str()).valid {
                 failed_delegate(&mut tx, id, &plan, "channel_content_invalid").await?;
                 continue;

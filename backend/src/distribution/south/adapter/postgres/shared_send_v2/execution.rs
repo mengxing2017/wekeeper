@@ -113,10 +113,11 @@ pub(super) async fn grant(tx: &mut Tx<'_>, c: &Credential, v: GrantRequest) -> R
         let secret = secrets::token();
         let timing:Value=sqlx::query_scalar("SELECT jsonb_build_object('server_time',statement_timestamp(),'not_before',statement_timestamp(),'execute_before',statement_timestamp()+interval '210 seconds')").fetch_one(&mut **tx).await?;
         let mut envelope = json!({"id":id,"execution_id":id,"capability_id":id,"schema":"durable_execution/1","protocol_version":10,"kind":"inspection","state":"granted","max_calls":0,"local_budget_ms":210000,"inspection_id":binding,"device_id":c.device_id,"credential_generation":c.generation,"plan":plan,"plan_digest":digest(&plan)?,"timing":timing,"result_credential":secret});
-        let (public_key, signature) = secrets::sign(&envelope)?;
+        let (public_key, signature) =
+            secrets::sign(&envelope).map_err(|_| Error::Policy("signature_failed"))?;
         envelope["signature"] = json!(signature);
         envelope["key_id"] = json!(hash(&public_key));
-        sqlx::query("INSERT INTO mobile_execution_grants(id,inspection_id,device_id,credential_generation,kind,result_credential_hash,envelope) VALUES($1,$2,$3,$4,'inspection',$5,$6)").bind(id).bind(binding).bind(c.device_id).bind(c.generation).bind(hash(&secret)).bind(secrets::seal(&envelope)?).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO mobile_execution_grants(id,inspection_id,device_id,credential_generation,kind,result_credential_hash,envelope) VALUES($1,$2,$3,$4,'inspection',$5,$6)").bind(id).bind(binding).bind(c.device_id).bind(c.generation).bind(hash(&secret)).bind(secrets::seal(&envelope).map_err(|_|Error::Policy("encryption_failed"))?).execute(&mut **tx).await?;
         return Ok(envelope);
     }
 
@@ -130,6 +131,7 @@ pub(super) async fn grant(tx: &mut Tx<'_>, c: &Credential, v: GrantRequest) -> R
             continue;
         }
         let aid = uid(&row, "id")?;
+        sqlx::query("UPDATE mobile_delivery_exchanges SET intake_id=(SELECT id FROM mobile_dispatch_intakes WHERE item_id=$1),attempt_id=$2 WHERE id=nullif(current_setting('wekeeper.mobile_exchange',true),'')::uuid").bind(uid(&row,"item_id")?).bind(aid).execute(&mut **tx).await?;
 
         let authorization = if row["authorization_kind"] == "source_route" {
             Ok(()) // Route guard above verified the business chain and frozen targets.
@@ -143,6 +145,14 @@ pub(super) async fn grant(tx: &mut Tx<'_>, c: &Credential, v: GrantRequest) -> R
         match validation {
             Ok(()) => {}
             Err(Error::Policy(reason)) => {
+                records::check(
+                    tx,
+                    c.device_id,
+                    "delivery_authorization",
+                    reason,
+                    json!({"attempt_id":aid}),
+                )
+                .await?;
                 reject_attempt(tx, aid, reason).await?;
                 rejected = true;
                 continue;
@@ -159,24 +169,45 @@ pub(super) async fn grant(tx: &mut Tx<'_>, c: &Credential, v: GrantRequest) -> R
         }
         let usages = match usage_budgets::check(tx, c.device_id, uid(&row, "target_id")?).await {
             Ok(usages) => usages,
-            Err(Error::Policy("quota_wait")) => continue,
+            Err(Error::Policy("quota_wait")) => {
+                records::check(
+                    tx,
+                    c.device_id,
+                    "usage_quota",
+                    "quota_exhausted",
+                    json!({"attempt_id":aid}),
+                )
+                .await?;
+                continue;
+            }
             Err(error) => return Err(error),
         };
         let id = Uuid::now_v7();
         let secret = secrets::token();
         let timing = match timing(tx, &row, c.device_id).await {
             Ok(timing) => timing,
-            Err(Error::Policy("execution_window_too_short")) => continue,
+            Err(Error::Policy("execution_window_too_short")) => {
+                records::check(
+                    tx,
+                    c.device_id,
+                    "execution_window",
+                    "execution_window_too_short",
+                    json!({"attempt_id":aid}),
+                )
+                .await?;
+                continue;
+            }
             Err(error) => return Err(error),
         };
         if !device::quota(tx, c.device_id, uid(&row, "target_id")?, aid, true).await? {
             continue;
         }
         let mut envelope = json!({"id":id,"execution_id":id,"capability_id":id,"schema":"durable_execution/1","protocol_version":10,"kind":"send","state":"granted","max_calls":1,"local_budget_ms":210000,"attempt_id":aid,"task_id":row["task_id"],"target_id":row["target_id"],"device_id":c.device_id,"credential_generation":c.generation,"assignment_revision":row["revision"],"runtime_epoch":v.runtime_epoch,"plan":row["plan"],"plan_digest":row["plan_digest"],"content_digest":row["content_digest"],"timing":timing,"result_credential":secret});
-        let (public_key, signature) = secrets::sign(&envelope)?;
+        let (public_key, signature) =
+            secrets::sign(&envelope).map_err(|_| Error::Policy("signature_failed"))?;
         envelope["signature"] = json!(signature);
         envelope["key_id"] = json!(hash(&public_key));
-        sqlx::query("INSERT INTO mobile_execution_grants(id,attempt_id,device_id,credential_generation,kind,execute_before,result_credential_hash,envelope) VALUES($1,$2,$3,$4,'send',$5::text::timestamptz,$6,$7)").bind(id).bind(aid).bind(c.device_id).bind(c.generation).bind(timing["execute_before"].as_str().ok_or(Error::Conflict)?).bind(hash(&secret)).bind(secrets::seal(&envelope)?).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO mobile_execution_grants(id,attempt_id,device_id,credential_generation,kind,execute_before,result_credential_hash,envelope) VALUES($1,$2,$3,$4,'send',$5::text::timestamptz,$6,$7)").bind(id).bind(aid).bind(c.device_id).bind(c.generation).bind(timing["execute_before"].as_str().ok_or(Error::Conflict)?).bind(hash(&secret)).bind(secrets::seal(&envelope).map_err(|_|Error::Policy("encryption_failed"))?).execute(&mut **tx).await?;
         usage_budgets::record(tx, id, &usages).await?;
         sqlx::query("UPDATE mobile_v9_attempts SET state='leased',revision=revision+1 WHERE id=$1")
             .bind(aid)
