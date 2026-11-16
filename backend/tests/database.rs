@@ -51,7 +51,7 @@ async fn migrations_handle_residual_objects_after_table_only_reset() {
     .unwrap();
     database::migrate(&pool).await.unwrap();
     database::migrate(&pool).await.unwrap();
-    let obsolete: i64 = sqlx::query_scalar("SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND (column_name IN ('school_id','workspace_id','storage_scope') OR table_name IN ('wecom_workspaces','wecom_workspace_members','mobile_workspaces','mobile_workspace_members','unit_receiving_storage','mobile_shared_school_access','mobile_shared_access_events'))").fetch_one(&pool).await.unwrap();
+    let obsolete: i64 = sqlx::query_scalar("SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND (column_name IN ('school_id','workspace_id','storage_scope') OR table_name IN ('media_access_tokens','distribution_forum_materials','distribution_materials','distribution_source_organizations','broadcast_task_posts','broadcast_content_references','templates','template_versions','wecom_workspaces','wecom_workspace_members','mobile_workspaces','mobile_workspace_members','unit_receiving_storage','mobile_shared_school_access','mobile_shared_access_events'))").fetch_one(&pool).await.unwrap();
     assert_eq!(
         obsolete, 0,
         "workspace tables and partition columns must be absent"

@@ -477,13 +477,11 @@ async fn broadcast_rust_serialization_matches_shared_fixtures() {
     use wekeeper_api::distribution::domain::broadcast::{Target, Task};
     let id = Uuid::from_u128(1);
     let task = Task {
-        source_namespace: "builtin.forum".into(),
-        materials: vec![],
+        source_namespace: "builtin.direct".into(),
         id,
 
         creator_id: id,
-        template_version_id: Some(id),
-        content_source: wekeeper_api::distribution::domain::broadcast::ContentSource::Posts,
+        content_source: wekeeper_api::distribution::domain::broadcast::ContentSource::Text,
         content: "校园通知".into(),
         revision: 1,
         state: "confirmed".into(),
@@ -495,10 +493,12 @@ async fn broadcast_rust_serialization_matches_shared_fixtures() {
         uncertain: 0,
         pending: 1,
         batch_count: 1,
-        post_ids: vec![id],
         source_task_id: None,
         resend_reason: String::new(),
-        draft_input: serde_json::from_value(serde_json::json!({"content_source":"posts","template_version_id":id,"post_ids":[id],"group_ids":[id]})).unwrap(),
+        draft_input: serde_json::from_value(
+            serde_json::json!({"content_source":"text","text_content":"校园通知","group_ids":[id]}),
+        )
+        .unwrap(),
     };
     let target = Target {
         execution_mode: "official_customer_group_broadcast".into(),
@@ -527,8 +527,6 @@ async fn broadcast_rust_serialization_matches_shared_fixtures() {
     let mut text_task = task.clone();
     text_task.content_source = wekeeper_api::distribution::domain::broadcast::ContentSource::Text;
     text_task.source_namespace = "builtin.direct".into();
-    text_task.template_version_id = None;
-    text_task.post_ids.clear();
     text_task.draft_input = serde_json::from_value(
         serde_json::json!({"content_source":"text","text_content":"校园通知","group_ids":[id]}),
     )
@@ -781,7 +779,6 @@ fn product_workflows_share_strict_typed_inputs_with_both_clients() {
             assert!(serde_json::from_value::<$t>(bad).is_err());
         }};
     }
-    roundtrip!("template", TemplateInput);
     roundtrip!("usage", UsageInput);
     roundtrip!("policy", MemberPolicyInput);
     roundtrip!("request", RequestInput);
@@ -796,7 +793,6 @@ fn product_workflows_share_strict_typed_inputs_with_both_clients() {
 async fn product_workflow_routes_require_identity_before_any_database_access() {
     for (method, path) in [
         ("POST", "/api/v1/wecom-distribution/broadcast-task-previews"),
-        ("POST", "/api/v1/wecom-distribution/template-previews"),
         ("POST", "/api/v1/platform/member-policy-previews"),
         ("GET", "/api/v1/platform/business-requests"),
         (
@@ -924,24 +920,18 @@ async fn task_delivery_is_a_device_authenticated_jsonapi_endpoint() {
 }
 
 #[tokio::test]
-async fn distribution_materials_require_authenticated_sessions() {
-    let _school = "00000000-0000-4000-8000-000000000001";
-    for path in [
-        "/api/v1/wecom-distribution/distribution-materials".to_string(),
-        "/api/v1/auth/session".into(),
-    ] {
-        let response = app()
-            .oneshot(
-                Request::builder()
-                    .uri(&path)
-                    .header("authorization", "Bearer invalid-token")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
-    }
+async fn session_requires_authenticated_credentials() {
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/session")
+                .header("authorization", "Bearer invalid-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -1005,4 +995,27 @@ fn remote_hosting_pause_commands_are_rejected_by_the_wire_contract() {
         serde_json::to_value(status).unwrap(),
         json!({"kind": "request_status"})
     );
+}
+
+#[tokio::test]
+async fn forum_material_and_template_routes_are_retired() {
+    for (method, path) in [
+        ("GET", "/api/v1/wecom-distribution/distribution-materials"),
+        ("GET", "/api/v1/wecom-distribution/templates"),
+        ("GET", "/api/legacy/media/token"),
+        ("POST", "/api/v1/wecom-distribution/template-previews"),
+        ("POST", "/api/v1/wecom-distribution/template-publications"),
+    ] {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method} {path}");
+    }
 }

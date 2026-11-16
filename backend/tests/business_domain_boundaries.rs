@@ -133,20 +133,13 @@ fn official_ui_does_not_import_mobile_account_components() {
 fn browser_materials_cannot_impersonate_builtin_source_or_confirm() {
     use wekeeper_api::distribution::domain::broadcast::DraftInput;
     let group = uuid::Uuid::new_v4();
-    let mut value = serde_json::json!({"content_source":"materials","group_ids":[group],"materials":[{"namespace":"builtin.forum","external_organization_id":"1","external_content_id":"1","version":"v1"}]});
-    assert!(
-        serde_json::from_value::<DraftInput>(value.clone())
-            .unwrap()
-            .validate()
-            .is_err()
-    );
-    value["materials"][0]["namespace"] = serde_json::json!("test.notice");
-    serde_json::from_value::<DraftInput>(value.clone())
-        .unwrap()
-        .validate()
-        .unwrap();
-    value["confirmed"] = serde_json::json!(true);
-    assert!(serde_json::from_value::<DraftInput>(value).is_err());
+    for value in [
+        serde_json::json!({"content_source":"posts","post_ids":[group],"group_ids":[group]}),
+        serde_json::json!({"content_source":"materials","materials":[],"group_ids":[group]}),
+        serde_json::json!({"content_source":"text","text_content":"notice","group_ids":[group],"confirmed":true}),
+    ] {
+        assert!(serde_json::from_value::<DraftInput>(value).is_err());
+    }
 }
 #[tokio::test]
 async fn new_domain_errors_do_not_suggest_phone_authorization_for_official_work() {
