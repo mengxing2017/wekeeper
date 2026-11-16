@@ -13,8 +13,12 @@ export default defineConfig({
       { text: "开发者手册", link: "/development/" },
       { text: "部署与运维", link: "/operations/" },
       { text: "参考资料", link: "/references/" },
+      { text: "SDK 接入", link: "/sdk/" },
     ],
     sidebar: {
+      "/sdk/": [{ text: "外部服务接入", items: [
+        { text: "来源消息接入 SDK", link: "/sdk/" },
+      ] }],
       "/guide/": [
         {
           text: "开始使用",
