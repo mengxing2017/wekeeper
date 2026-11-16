@@ -1,3 +1,5 @@
+pub mod progress;
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -44,8 +46,19 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// Public result projection, shared with the TypeScript client through a fixture.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
+pub struct Milestones {
+    pub received_at: chrono::DateTime<chrono::Utc>,
+    pub handoff_completed_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub delegated_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct MessageView {
     pub id: Uuid,
+    pub message_id: Option<Uuid>,
+    pub progress: progress::Progress,
+    pub milestones: Milestones,
     pub platform_id: Uuid,
     pub business_unit_id: Uuid,
     pub receipt_id: Uuid,
@@ -87,5 +100,12 @@ mod contract_tests {
         .unwrap();
         let typed: super::MessageView = serde_json::from_value(fixture.clone()).unwrap();
         assert_eq!(serde_json::to_value(typed).unwrap(), fixture);
+        let delivery: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../api-contract/fixtures/business-message-delivery.json"
+        ))
+        .unwrap();
+        let typed: super::progress::DeliveryView =
+            serde_json::from_value(delivery.clone()).unwrap();
+        assert_eq!(serde_json::to_value(typed).unwrap(), delivery);
     }
 }

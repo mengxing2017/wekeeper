@@ -1,14 +1,46 @@
 {
-  "id": "00000000-0000-4000-8000-000000000001",
+  "id": "00000000-0000-4000-8000-000000000004",
   "platform_id": "00000000-0000-4000-8000-000000000002",
   "business_unit_id": "00000000-0000-4000-8000-000000000003",
   "receipt_id": "00000000-0000-4000-8000-000000000004",
   "event_id": "00000000-0000-4000-8000-000000000005",
   "created_at": "2026-11-13T00:00:00Z",
-  "state": "failed",
+  "state": "not_dispatched",
   "reason_code": "route_no_targets",
   "content": "原消息",
   "decision": null,
   "sending": null,
-  "delegates": []
+  "delegates": [],
+  "message_id": "00000000-0000-4000-8000-000000000001",
+  "milestones": {
+    "received_at": "2026-11-13T00:00:00Z",
+    "handoff_completed_at": "2026-11-13T00:00:00Z",
+    "delegated_at": null
+  },
+  "progress": {
+    "version": "empty",
+    "stage": "not_dispatched",
+    "total": 0,
+    "diagnostics": [
+      {
+        "channel": null,
+        "stage": "not_dispatched",
+        "label": "未下发成功",
+        "reason_code": "route_no_targets",
+        "explanation": "没有目标群，本条消息未下发",
+        "severity": "terminal",
+        "affected_targets": 0,
+        "since": "2026-11-13T00:00:00Z",
+        "retry_at": null,
+        "deadline_at": null,
+        "owner": "admin",
+        "next_action": "核对原因；配置修改只影响之后的新消息",
+        "historical_risk": false
+      }
+    ],
+    "observed_at": "2026-11-13T00:00:00Z",
+    "results_as_of": null,
+    "projection_lag": false,
+    "counts_complete": true
+  }
 }

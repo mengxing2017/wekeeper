@@ -1,0 +1,28 @@
+{
+  "id": "mobile:00000000-0000-4000-8000-000000000006",
+  "channel": "mobile",
+  "target_id": "00000000-0000-4000-8000-000000000006",
+  "target_name": "通知群",
+  "task_id": "00000000-0000-4000-8000-000000000007",
+  "attempt_id": "00000000-0000-4000-8000-000000000008",
+  "attempt_no": 1,
+  "device_id": "00000000-0000-4000-8000-000000000009",
+  "device_name": "发送手机",
+  "sender": null,
+  "outcome": "pending",
+  "diagnostic": {
+    "channel": "mobile",
+    "stage": "device_receipt",
+    "label": "设备接收",
+    "reason_code": "device_receipt",
+    "explanation": "执行包已分配，尚无设备落盘接收记录",
+    "severity": "normal",
+    "affected_targets": 1,
+    "since": "2026-11-13T00:00:00Z",
+    "retry_at": null,
+    "deadline_at": null,
+    "owner": "device",
+    "next_action": "设备接收任务；平台按现行规则自动换机",
+    "historical_risk": false
+  }
+}

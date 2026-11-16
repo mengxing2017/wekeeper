@@ -410,6 +410,50 @@ async fn both_channels_share_one_ad_and_aggregate_official_results_without_membe
     .fetch_one(&f.pool)
     .await
     .unwrap();
+    let diagnostics =
+        wekeeper_api::message_orchestration::south::adapter::postgres::Repository(f.pool.clone());
+    sqlx::query("UPDATE broadcast_targets SET official_status=97 WHERE task_id=$1")
+        .bind(task)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let unknown = diagnostics
+        .deliveries(&f.actor, receipt, Default::default())
+        .await
+        .unwrap();
+    assert!(
+        unknown["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v["channel"] == "wecom" && v["outcome"] == "unknown")
+    );
+    sqlx::query("UPDATE broadcast_targets SET official_status=NULL WHERE task_id=$1")
+        .bind(task)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE broadcast_batches SET stop_state='stopped' WHERE task_id=$1")
+        .bind(task)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let stopped = diagnostics
+        .deliveries(&f.actor, receipt, Default::default())
+        .await
+        .unwrap();
+    assert!(
+        stopped["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v["channel"] == "wecom" && v["outcome"] == "failed")
+    );
+    sqlx::query("UPDATE broadcast_batches SET stop_state='none' WHERE task_id=$1")
+        .bind(task)
+        .execute(&f.pool)
+        .await
+        .unwrap();
     let mut tx = f.pool.begin().await.unwrap();
     wekeeper_api::distribution::south::adapter::postgres::content::validate_task(&mut tx, task)
         .await
@@ -557,7 +601,7 @@ async fn admin_list_http_pagination_and_message_authorization() {
         .unwrap();
     let app = http::app_router(bootstrap::build_application(f.pool.clone()));
     let path = "/api/v2/admin/messages?page%5Bnumber%5D=1&page%5Bsize%5D=30";
-    let protected_paths = [
+    let mut protected_paths = vec![
         "/api/v2/admin/source-route-assignments".to_string(),
         format!("/api/v2/admin/source-routes/{}/configuration", f.route),
         format!("/api/v2/admin/source-routes/{}/receipts", f.route),
@@ -612,6 +656,10 @@ async fn admin_list_http_pagination_and_message_authorization() {
             assert_eq!(page["data"]["attributes"]["has_more"], n > 30);
         }
     }
+    let delivery_path = format!("/api/v2/admin/messages/{receipt}/deliveries");
+    read(&app, &delivery_path, Some(&token), 200).await;
+    read(&app, &delivery_path, None, 401).await;
+    protected_paths.push(delivery_path);
     let first = read(&app, path, Some(&token), 200).await;
     let second = read(
         &app,
@@ -928,5 +976,307 @@ async fn complete_text_is_preserved_and_internal_pause_only_blocks_dispatch() {
         .await
         .unwrap()
     );
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn message_progress_tracks_delivery_receipt_successor_and_live_results() {
+    use wekeeper_api::message_orchestration::south::adapter::postgres::{
+        Repository, progress::ProgressFilter,
+    };
+    let f = Fixture::new().await;
+    f.configure(vec![f.target]).await;
+    let (mid, receipt) = f.message().await;
+    f.run().await;
+    let repo = Repository(f.pool.clone());
+    let detail = repo
+        .deliveries(&f.actor, receipt, Default::default())
+        .await
+        .unwrap();
+    assert_eq!(detail["items"].as_array().unwrap().len(), 1);
+    assert_eq!(detail["items"][0]["target_name"], "群名");
+    assert_eq!(detail["items"][0]["diagnostic"]["stage"], "scheduling");
+    let attempt: Uuid = serde_json::from_value(detail["items"][0]["attempt_id"].clone()).unwrap();
+    let item: Uuid = sqlx::query_scalar("SELECT item_id FROM mobile_v9_attempts WHERE id=$1")
+        .bind(attempt)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    // The message projection must agree with the phone task domain's terminal precedence.
+    use wekeeper_api::distribution::domain::shared_mobile::shared_send_v2::{
+        TaskStatus, TaskTargetProgress,
+    };
+    for (dispatch, expected) in [
+        ("assigned", "pending"),
+        ("needs_review", "unknown"),
+        ("dispatch_failed", "failed"),
+        ("stopped", "failed"),
+        ("completed", "sent"),
+    ] {
+        sqlx::query("UPDATE mobile_v9_dispatch_state SET state=$2 WHERE item_id=$1")
+            .bind(item)
+            .bind(dispatch)
+            .execute(&f.pool)
+            .await
+            .unwrap();
+        let status = TaskStatus::project(
+            false,
+            &[TaskTargetProgress {
+                dispatch_state: Some(dispatch.into()),
+                attempt_state: "queued".into(),
+                sent: false,
+            }],
+        );
+        let outcome = match status {
+            TaskStatus::Completed => "sent",
+            TaskStatus::NeedsReview => "unknown",
+            TaskStatus::DispatchFailed | TaskStatus::Stopped | TaskStatus::ConfirmationExpired => {
+                "failed"
+            }
+            _ => "pending",
+        };
+        assert_eq!(outcome, expected);
+        let projected = repo
+            .deliveries(&f.actor, receipt, Default::default())
+            .await
+            .unwrap();
+        assert_eq!(projected["items"][0]["outcome"], outcome);
+    }
+    sqlx::query("UPDATE mobile_v9_dispatch_state SET state='assigned' WHERE item_id=$1")
+        .bind(item)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO mobile_execution_grants(id,attempt_id,device_id,credential_generation,kind,result_credential_hash,envelope) VALUES($1,$2,$3,1,'send','public-test-hash',$4)").bind(Uuid::new_v4()).bind(attempt).bind(f.device).bind(Vec::<u8>::new()).execute(&f.pool).await.unwrap();
+    let detail = repo
+        .deliveries(&f.actor, receipt, Default::default())
+        .await
+        .unwrap();
+    assert_eq!(detail["items"][0]["diagnostic"]["stage"], "device_receipt");
+    let list = repo
+        .list(&f.actor, None, Some(receipt), Default::default())
+        .await
+        .unwrap();
+    assert_eq!(list["items"][0]["state"], "dispatching");
+    assert_eq!(list["items"][0]["progress"]["version"], detail["version"]);
+    // A newer message in a different phase must not hide this older match.
+    f.message().await;
+    // Filter before pagination, not just on the displayed page.
+    let filtered = repo
+        .list_progress(
+            &f.actor,
+            None,
+            None,
+            wekeeper_api::business::Page {
+                page_size: Some(1),
+                ..Default::default()
+            },
+            ProgressFilter {
+                channel: Some("mobile".into()),
+                stage: Some("device_receipt".into()),
+                attention: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(filtered["items"][0]["receipt_id"], receipt.to_string());
+    sqlx::query("UPDATE mobile_execution_grants SET accepted_at=clock_timestamp(),result_deadline_at=clock_timestamp()+interval '5 minutes' WHERE attempt_id=$1").bind(attempt).execute(&f.pool).await.unwrap();
+    let accepted = repo
+        .deliveries(&f.actor, receipt, Default::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        accepted["items"][0]["diagnostic"]["stage"],
+        "device_execution"
+    );
+    assert_ne!(accepted["version"], detail["version"]);
+    sqlx::query("UPDATE mobile_execution_grants SET result_deadline_at=clock_timestamp()-interval '2 days' WHERE attempt_id=$1").bind(attempt).execute(&f.pool).await.unwrap();
+    let overdue = repo
+        .deliveries(&f.actor, receipt, Default::default())
+        .await
+        .unwrap();
+    assert_eq!(overdue["items"][0]["diagnostic"]["severity"], "attention");
+    assert!(
+        overdue["items"][0]["diagnostic"]["next_action"]
+            .as_str()
+            .unwrap()
+            .contains("无需等待原手机恢复")
+    );
+    // A historical unknown cannot hide an active authorized successor.
+    sqlx::query("UPDATE mobile_execution_grants SET state='superseded' WHERE attempt_id=$1")
+        .bind(attempt)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE mobile_v9_attempts SET state='unknown',current=false WHERE id=$1")
+        .bind(attempt)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let successor = Uuid::new_v4();
+    sqlx::query("INSERT INTO mobile_v9_attempts(id,item_id,plan_id,confirmed_by,attempt_no,state,current) SELECT $2,item_id,plan_id,confirmed_by,attempt_no+1,'queued',true FROM mobile_v9_attempts WHERE id=$1").bind(attempt).bind(successor).execute(&f.pool).await.unwrap();
+    sqlx::query("UPDATE mobile_v9_dispatch_state SET state='assigned',reason='candidate_ready',next_retry_at=clock_timestamp()+interval '5 seconds' WHERE item_id=$1").bind(item).execute(&f.pool).await.unwrap();
+    let list = repo
+        .list(&f.actor, None, Some(receipt), Default::default())
+        .await
+        .unwrap();
+    assert_eq!(list["items"][0]["sending"]["pending"], 1);
+    assert_eq!(list["items"][0]["sending"]["unknown"], 0);
+    assert_eq!(list["items"][0]["progress"]["total"], 1);
+    assert_eq!(
+        list["items"][0]["progress"]["diagnostics"][0]["historical_risk"],
+        true
+    );
+    sqlx::query("UPDATE mobile_v9_attempts SET state='observed_sent' WHERE id=$1")
+        .bind(successor)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let completed = repo
+        .list(&f.actor, None, Some(receipt), Default::default())
+        .await
+        .unwrap();
+    assert_eq!(completed["items"][0]["state"], "completed");
+    assert_eq!(completed["items"][0]["sending"]["sent"], 1);
+    assert_eq!(completed["items"][0]["progress"]["projection_lag"], true);
+    let dispatch: String =
+        sqlx::query_scalar("SELECT state FROM orchestration_dispatches WHERE message_id=$1")
+            .bind(mid)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(dispatch, "delegated");
+    // Lose the notification deliberately: bounded reconciliation must repair it.
+    sqlx::query("DELETE FROM orchestration_result_queue")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE source_receipts SET summary_updated_at=clock_timestamp()-interval '61 seconds' WHERE receipt_id=$1").bind(receipt).execute(&f.pool).await.unwrap();
+    repo.aggregate().await.unwrap();
+    let completed = repo
+        .list(&f.actor, None, Some(receipt), Default::default())
+        .await
+        .unwrap();
+    assert_eq!(completed["items"][0]["progress"]["projection_lag"], false);
+    let mut unauthorized = f.actor.clone();
+    unauthorized.platform_admin = false;
+    assert!(matches!(
+        repo.deliveries(&unauthorized, receipt, Default::default())
+            .await,
+        Err(wekeeper_api::business::Error::Forbidden)
+    ));
+    assert!(matches!(
+        repo.deliveries(&f.actor, Uuid::new_v4(), Default::default())
+            .await,
+        Err(wekeeper_api::business::Error::NotFound)
+    ));
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn received_messages_are_visible_before_internal_handoff() {
+    use wekeeper_api::message_orchestration::south::adapter::postgres::{
+        Repository, progress::ProgressFilter,
+    };
+    let f = Fixture::new().await;
+    let receipt = Uuid::new_v4();
+    let event = Uuid::new_v4();
+    let body =
+        serde_json::to_vec(&serde_json::json!({"data":{"attributes":{"content":"尚待交接"}}}))
+            .unwrap();
+    sqlx::query("INSERT INTO source_receipts(receipt_id,source_id,business_unit_id,event_id,route_id,body_sha256,schema_version) VALUES($1,$2,$3,$4,$5,$6,2)").bind(receipt).bind(f.platform).bind(f.unit).bind(event).bind(&f.route).bind(wekeeper_api::source_access::domain::digest(&body)).execute(&f.pool).await.unwrap();
+    sqlx::query("INSERT INTO source_inbox(receipt_id,request_body) VALUES($1,$2)")
+        .bind(receipt)
+        .bind(body)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE source_message_handoffs SET last_error='internal_processing_unavailable',next_attempt_at=clock_timestamp()+interval '30 seconds' WHERE receipt_id=$1").bind(receipt).execute(&f.pool).await.unwrap();
+    let repo = Repository(f.pool.clone());
+    let result = repo
+        .list_progress(
+            &f.actor,
+            None,
+            Some(receipt),
+            Default::default(),
+            ProgressFilter {
+                channel: None,
+                stage: Some("handoff".into()),
+                attention: Some("retrying".into()),
+            },
+        )
+        .await
+        .unwrap();
+    let row = &result["items"][0];
+    assert_eq!(row["id"], receipt.to_string());
+    assert!(row["message_id"].is_null());
+    assert_eq!(row["state"], "handoff");
+    assert!(row["progress"]["total"].is_null());
+    assert_eq!(row["progress"]["diagnostics"][0]["severity"], "retrying");
+    assert_eq!(
+        repo.deliveries(&f.actor, receipt, Default::default())
+            .await
+            .unwrap()["items"],
+        serde_json::json!([])
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn two_groups_have_independent_progress_and_one_message_outcome() {
+    use wekeeper_api::message_orchestration::south::adapter::postgres::Repository;
+    let f = Fixture::new().await;
+    let second = Uuid::new_v4();
+    sqlx::query("INSERT INTO mobile_targets(id,search_text,created_by,updated_by) VALUES($1,'第二个群',$2,$2)").bind(second).bind(f.actor.id).execute(&f.pool).await.unwrap();
+    f.configure(vec![f.target, second]).await;
+    let (_, receipt) = f.message().await;
+    f.run().await;
+    let repo = Repository(f.pool.clone());
+    let list = repo
+        .list(&f.actor, None, Some(receipt), Default::default())
+        .await
+        .unwrap();
+    assert_eq!(list["items"][0]["sending"]["pending"], 2);
+    assert_eq!(list["items"][0]["progress"]["total"], 2);
+    let details = repo
+        .deliveries(
+            &f.actor,
+            receipt,
+            wekeeper_api::business::Page {
+                page_size: Some(1),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(details["items"].as_array().unwrap().len(), 1);
+    assert_eq!(details["has_more"], true);
+    let attempt: Uuid = serde_json::from_value(details["items"][0]["attempt_id"].clone()).unwrap();
+    sqlx::query("UPDATE mobile_v9_attempts SET state='observed_sent' WHERE id=$1")
+        .bind(attempt)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let partial = repo
+        .list(&f.actor, None, Some(receipt), Default::default())
+        .await
+        .unwrap();
+    assert_eq!(partial["items"][0]["state"], "partial");
+    assert_eq!(partial["items"][0]["sending"]["sent"], 1);
+    assert_eq!(partial["items"][0]["sending"]["pending"], 1);
+    sqlx::query("UPDATE mobile_v9_attempts SET state='observed_sent' WHERE current")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let done = repo
+        .list(&f.actor, None, Some(receipt), Default::default())
+        .await
+        .unwrap();
+    assert_eq!(done["items"][0]["state"], "completed");
+    assert_eq!(done["items"][0]["sending"]["sent"], 2);
+    assert_eq!(done["items"][0]["sending"]["pending"], 0);
     f.close().await;
 }

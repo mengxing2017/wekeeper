@@ -21,7 +21,7 @@ client 统一编码/解码协议，向 feature 提供 `{id,...attributes}` 领�
 
 分页列表采用 `page[number]`、`page[size]`，默认 1/30，size 为 1–100，number 为 1–100000。旧 `page/page_size`、未知字段、重复分页字段与非整数返回 400；整数越界返回 422。数据库多取一条，响应只保留请求页大小，不伪造 total。普通 collection 使用 `meta.page = {number,size,has_more}`；v2 管理列表保留 singleton 的 `{items,has_more}`，包括广告、广告版本、投放、业务目录、来源凭据、来源路由、凭据关联路由、来源回执和即时消息。前端据 `has_more` 控制翻页。完整选择列表不分页、不暗中截断，故没有 `meta.page`。
 
-`GET /api/v2/admin/messages` 仅允许已登录、账号启用的系统管理员查询，支持 `route_id`、UUID `receipt_id` 与上述分页参数，不接受 `search/status/mine/kind`。响应仍为 JSON:API `messages/result`，attributes 为 `{items: BusinessMessage[], has_more: boolean}`。
+`GET /api/v2/admin/messages` 仅允许已登录、账号启用的系统管理员查询，支持 `route_id`、UUID `receipt_id` 与上述分页参数，支持 `channel`、目标 `stage` 与 `attention` 筛选，在分页前生效；不接受 `search/status/mine/kind`。响应仍为 JSON:API `messages/result`，attributes 为 `{items: BusinessMessage[], has_more: boolean}`。行 `id` 为 receipt_id，message_id 在内部交接前为 null；主状态由实时目标结果推导。progress 包含按通道和群统计的总数、诊断、观察时间、版本与汇总滞后标识，milestones 记录接收、交接、通道任务创建事实。`GET /api/v2/admin/messages/{receipt_id}/deliveries` 按相同分页参数返回目标群、当前阶段和原因、设备/发送身份、任务和尝试引用，以及快照版本；仅系统管理员可读。这些管理协议不属于对外来源消息 SDK。
 
 
 ## 验证
