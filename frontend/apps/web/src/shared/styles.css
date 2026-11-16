@@ -287,8 +287,47 @@ a:focus-visible {
   font-size: 14px;
   line-height: 22px;
 }
-.workspace-content .ant-table .ant-space {
-  column-gap: 16px !important;
+.table-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.table-row-actions .ant-btn-link {
+  height: auto;
+  padding: 0;
+}
+.table-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.table-text-disclosure {
+  margin: 0;
+}
+.table-text-disclosure summary {
+  cursor: pointer;
+  color: var(--color-accent);
+}
+.table-text-disclosure[open] > div {
+  margin-top: 8px;
+}
+.table-identifier {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+.table-identifier > :first-child {
+  min-width: 0;
+}
+.table-identifier > .ant-typography {
+  flex: 0 0 auto;
+}
+.table-record {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
 }
 .record-title.ant-btn {
   max-width: 100%;
