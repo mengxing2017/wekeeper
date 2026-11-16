@@ -2,7 +2,6 @@
 export const pageHelp: Record<string, string> = {
   'source-credentials': 'operator/source-access',
   advertisements: 'operator/source-access',
-  'advertisement-rotations': 'operator/source-access',
   'keyword-rules': 'operator/source-access',
   'source-automation-tasks': 'operator/source-access',
   'source-receipts': 'operator/source-access',

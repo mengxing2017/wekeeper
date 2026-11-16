@@ -9,3 +9,8 @@ it('an account without the global administrator role has no business access',()=
  expect(visibleNavigationKeys(false)).toEqual([])
  for(const item of navigation) expect(canNavigate(item,false)).toBe(false)
 })
+
+it('every visible entry identifies a distinct page or meaningful business mode',()=>{
+ const pages=navigation.map(item=>JSON.stringify(item.page))
+ expect(new Set(pages).size).toBe(pages.length)
+})

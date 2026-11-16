@@ -8,11 +8,12 @@ import { OfficialSenders } from '../../operations/wecom-senders'
 import { MobileExecutionTasks } from '../../operations/mobile-execution/tasks'
 import { SharedMobileResources } from '../mobile-resources'
 import { MobileTargets } from '../../operations/mobile-execution/targets'
-import { navigation, visibleNavigationKeys } from '../../../app/navigation'
+import { navigation, visibleNavigationKeys, type NavigationPage } from '../../../app/navigation'
 import { ListPanel } from '../../../shared/list-panel'
 import { formatDate } from '../../../shared/format-date'
 import { Disclosure } from '../../../shared/disclosure'
-import { useSearchParams } from 'react-router-dom'
+import { Navigate, useLocation, useSearchParams } from 'react-router-dom'
+import { canonicalNavigation } from '../../../app/navigation-location'
 import { AppShell } from '../../../app/shell'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -53,6 +54,10 @@ const states: Record<string, string> = {
 }
 export const stateLabel = (v: Json | undefined) => states[label(v)] ?? label(v)
 export function Workspace() {
+  const [params] = useSearchParams()
+  const location = useLocation()
+  const canonical = canonicalNavigation(params)
+  if (canonical) return <Navigate replace to={{pathname: location.pathname, search: `?${canonical}`, hash: location.hash}} />
   return (
     <SessionGate showSessionBar={false}>
       {(user, logout) => <Admin user={user} logout={logout} />}
@@ -67,30 +72,33 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
   const knownPage = navigation.find(n => n.key === tab)
   const navigate = (view: string) => setParams(previous => { const next = new URLSearchParams(previous); next.set('view',view); next.delete('subview'); return next })
   const refresh = async () => { await cache.invalidateQueries({queryKey:['business']}) }
-  const setSubview = (view: string) => setParams(previous => { const next = new URLSearchParams(previous); next.set('subview',view); return next })
-  let page
-  if (!user.platform_admin) page = <Alert type="warning" title="当前账号没有此功能的访问权限" />
-  else if (!knownPage) page = <Alert type="warning" title="页面不存在" />
-  else if (tab === 'source-credentials') page = <SourceAccess />
-  else if (tab === 'advertisements') page = <Advertising />
-  else if (tab === 'advertisement-rotations') page = <Advertising />
-  else if (tab === 'keyword-rules') page = <KeywordRules />
-  else if (tab === 'source-automation-tasks') page = <SourceAutomationTasks />
-  else if (tab === 'source-receipts') page = <AssignedRoutes key="source-receipts" receiptsOnly />
-  else if (tab === 'source-route-configurations') page = <AssignedRoutes />
-  else if (tab === 'audit') page = <AuditEvents />
-  else if (tab === 'mobile-receiving-configurations') page = <ReceivingConfigurations channel="mobile" admin={user.platform_admin} platformAdmin={user.platform_admin}/>
-  else if (tab === 'wecom-receiving-configurations') page = <ReceivingConfigurations channel="wecom" admin={user.platform_admin} platformAdmin={user.platform_admin}/>
-  else if (tab === 'mobile-execution-tasks') page = <MobileExecutionTasks admin onNavigate={navigate} />
-  else if (tab === 'mobile-targets') page = <MobileTargets admin />
-  else if (tab === 'wecom-senders') page = <OfficialSenders />
-  else if (tab === 'broadcast-tasks') page = <BroadcastTasks admin platformAdmin />
-  else if (tab === 'groups') page = <Panel administrator platformAdmin resource={tab} refresh={refresh} />
-  else if (tab === 'execution-devices') page = <ExecutionDevices view={params.get('subview')==='usage'?'usage':'devices'} onViewChange={setSubview} />
-  else if (tab === 'shared-mobile-resources') page = <SharedMobileResources />
-  else if (tab === 'wecom-assets') page = <Assets />
-  else if (tab === 'wecom-directory') page = <Directory />
-  else if (tab === 'administrators') page = <Administrators user={user} />
+  function renderPage(page: NavigationPage) {
+    switch (page.kind) {
+      case 'source-credentials': return <SourceAccess />
+      case 'advertisements': return <Advertising />
+      case 'keyword-rules': return <KeywordRules />
+      case 'source-automation-tasks': return <SourceAutomationTasks />
+      case 'source-routes': return <AssignedRoutes key={page.mode} receiptsOnly={page.mode === 'receipts'} />
+      case 'audit': return <AuditEvents />
+      case 'receiving-configurations': return <ReceivingConfigurations key={page.channel} channel={page.channel} admin={user.platform_admin} platformAdmin={user.platform_admin}/>
+      case 'mobile-execution-tasks': return <MobileExecutionTasks admin onNavigate={navigate} />
+      case 'mobile-targets': return <MobileTargets admin />
+      case 'wecom-senders': return <OfficialSenders />
+      case 'broadcast-tasks': return <BroadcastTasks admin platformAdmin />
+      case 'groups': return <Panel administrator platformAdmin resource="groups" refresh={refresh} />
+      case 'execution-devices': return <ExecutionDevices />
+      case 'shared-mobile-resources': return <SharedMobileResources />
+      case 'wecom-assets': return <Assets />
+      case 'wecom-directory': return <Directory />
+      case 'administrators': return <Administrators user={user} />
+      default: {
+        const unsupported: never = page
+        throw new Error(`Unknown page: ${JSON.stringify(unsupported)}`)
+      }
+    }
+  }
+  const page = !user.platform_admin ? <Alert type="warning" title="当前账号没有此功能的访问权限" />
+    : !knownPage ? <Alert type="warning" title="页面不存在" /> : renderPage(knownPage.page)
   return <AppShell active={tab} onNavigate={navigate} username={user.display_name} platformAdmin={user.platform_admin} allowedKeys={allowedKeys} onLogout={logout}>{page}</AppShell>
 }
 function Panel({

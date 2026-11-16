@@ -63,10 +63,11 @@ it('provides platform management and logout for an administrator', async () => {
   expect(screen.queryByRole('menuitem', { name: '学校管理' })).toBeNull()
   expect(screen.getByRole('menuitem', { name: '手机设备' })).toBeTruthy()
   expect(screen.queryByRole('menuitem', { name: '业务单位与分组' })).toBeNull()
+  expect(screen.queryByRole('menuitem', { name: '广告序列轮询' })).toBeNull()
   const callers = screen.getByRole('menuitem', { name: '调用方凭据' })
   expect(callers.closest('.ant-menu-item-group')?.textContent).toContain('消息接收管理')
   expect(callers.closest('.ant-menu-item-group')?.textContent).not.toContain('系统管理')
-  for (const [name, key] of [['路由执行配置', 'source-route-configurations'], ['广告序列轮询', 'advertisement-rotations'], ['收件与回执', 'source-receipts'], ['敏感词拦截', 'keyword-rules']]) {
+  for (const [name, key] of [['路由执行配置', 'source-route-configurations'], ['广告素材与投放', 'advertisements'], ['收件与回执', 'source-receipts'], ['敏感词拦截', 'keyword-rules']]) {
     const entry = screen.getByRole('menuitem', { name })
     expect(entry.closest('.ant-menu-item-group')?.textContent).toContain('消息接收管理')
     fireEvent.click(entry)
