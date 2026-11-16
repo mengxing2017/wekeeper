@@ -13,10 +13,11 @@ pub(crate) async fn context_for_scope(
     source: Uuid,
     route: String,
     unit: Option<Uuid>,
-) -> Result<(k::Context, Vec<k::Rule>)> {
+) -> Result<(k::Context, bool, Vec<k::Rule>)> {
     let ids = vec!["global".to_owned()];
-    let rows=sqlx::query("SELECT h.id,h.revision,h.version_id,v.entries FROM keyword_scope_heads h JOIN keyword_rule_versions v ON v.id=h.version_id WHERE h.id=ANY($1) ORDER BY h.id FOR SHARE OF h").bind(&ids).fetch_all(&mut **tx).await?;
+    let rows=sqlx::query("SELECT h.id,h.revision,h.version_id,v.entries,v.filter_enabled FROM keyword_scope_heads h JOIN keyword_rule_versions v ON v.id=h.version_id WHERE h.id=ANY($1) ORDER BY h.id FOR SHARE OF h").bind(&ids).fetch_all(&mut **tx).await?;
     ensure(rows.len() == ids.len(), "keyword_rules_unavailable")?;
+    let mut filter_enabled = false;
     let mut versions = vec![];
     let mut rules = vec![];
     for row in rows {
@@ -27,6 +28,10 @@ pub(crate) async fn context_for_scope(
             revision: row.get("revision"),
             version_id: version,
         });
+        filter_enabled = row.get("filter_enabled");
+        if !filter_enabled {
+            continue;
+        }
         let entries: Vec<k::Entry> = serde_json::from_value(row.get("entries"))?;
         // Legacy imports retain every nonempty restriction, with deterministic normalized deduplication.
         let mut seen = std::collections::BTreeSet::new();
@@ -54,6 +59,7 @@ pub(crate) async fn context_for_scope(
             channel: None,
             versions,
         },
+        filter_enabled,
         rules,
     ))
 }
@@ -73,7 +79,7 @@ impl KeywordStore for KeywordRepository {
             guard(&mut tx).await?;
         }
         super::routing::administrator(&mut tx, actor.id).await?;
-        let audit_context = match &command {
+        let mut audit_context = match &command {
             k::Command::Scopes => json!({"action":"list_scopes"}),
             k::Command::Versions { scope, .. } => json!({"action":"versions","scope_id":scope}),
             k::Command::Publish { scope, .. } => json!({"action":"publish","scope_id":scope}),
@@ -114,15 +120,16 @@ impl KeywordStore for KeywordRepository {
             k::Command::Publish { scope, input } => {
                 scope_access(&mut tx, &scope).await?;
                 k::validate(&input.entries)?;
-                let revision: i64 = sqlx::query_scalar(
-                    "SELECT revision FROM keyword_scope_heads WHERE id=$1 FOR UPDATE",
+                let previous = sqlx::query(
+                    "SELECT h.revision,v.filter_enabled FROM keyword_scope_heads h JOIN keyword_rule_versions v ON v.id=h.version_id WHERE h.id=$1 FOR UPDATE OF h",
                 )
                 .bind(&scope)
                 .fetch_one(&mut *tx)
                 .await?;
+                let revision: i64 = previous.get("revision");
                 ensure(revision == input.expected_revision, "revision_conflict")?;
                 let version = Uuid::now_v7();
-                sqlx::query("INSERT INTO keyword_rule_versions(id,scope_id,revision,entries,actor_id,reason) VALUES($1,$2,$3,$4,$5,$6)").bind(version).bind(&scope).bind(revision+1).bind(json!(input.entries)).bind(actor.id).bind(input.reason.trim()).execute(&mut *tx).await?;
+                sqlx::query("INSERT INTO keyword_rule_versions(id,scope_id,revision,entries,actor_id,reason,filter_enabled) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(version).bind(&scope).bind(revision+1).bind(json!(input.entries)).bind(actor.id).bind(input.reason.trim()).bind(input.filter_enabled).execute(&mut *tx).await?;
                 sqlx::query(
                     "UPDATE keyword_scope_heads SET revision=revision+1,version_id=$2 WHERE id=$1",
                 )
@@ -131,6 +138,11 @@ impl KeywordStore for KeywordRepository {
                 .execute(&mut *tx)
                 .await?;
 
+                audit_context["previous_filter_enabled"] =
+                    json!(previous.get::<bool, _>("filter_enabled"));
+                audit_context["filter_enabled"] = json!(input.filter_enabled);
+                audit_context["previous_revision"] = json!(revision);
+                audit_context["revision"] = json!(revision + 1);
                 json!({"id":scope,"revision":revision+1,"version_id":version})
             }
         };

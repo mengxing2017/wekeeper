@@ -262,9 +262,41 @@ pub fn check_candidate(
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Publication {
+    pub filter_enabled: bool,
     pub expected_revision: i64,
     pub reason: String,
     pub entries: Vec<Entry>,
+}
+/// Frozen at the pending -> preparing/failed transition, including explicit bypass.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CheckDecision {
+    pub filter_enabled: bool,
+    pub versions: Vec<ScopeVersion>,
+    pub outcome: String,
+    pub evaluation: Option<Evaluation>,
+}
+pub fn decide(
+    filter_enabled: bool,
+    versions: Vec<ScopeVersion>,
+    rules: &[Rule],
+    fields: &[(&str, &str)],
+) -> Result<CheckDecision> {
+    let evaluation = if filter_enabled {
+        Some(evaluate(rules, fields)?)
+    } else {
+        None
+    };
+    let outcome = match &evaluation {
+        None => "skipped",
+        Some(result) if result.passed() => "passed",
+        Some(_) => "blocked",
+    };
+    Ok(CheckDecision {
+        filter_enabled,
+        versions,
+        outcome: outcome.into(),
+        evaluation,
+    })
 }
 pub enum Command {
     Scopes,
@@ -281,6 +313,25 @@ mod tests {
             version_id: Uuid::nil(),
             word: word.into(),
         }
+    }
+    #[test]
+    fn global_switch_bypasses_engine_and_restores_matching() {
+        let fields = [("content", "诈骗")];
+        let rules = [rule("诈骗")];
+        let skipped = decide(false, vec![], &rules, &fields).unwrap();
+        assert_eq!(skipped.outcome, "skipped");
+        assert!(skipped.evaluation.is_none());
+        assert_eq!(
+            decide(true, vec![], &rules, &fields).unwrap().outcome,
+            "blocked"
+        );
+        assert_eq!(
+            decide(true, vec![], &[], &fields).unwrap().outcome,
+            "passed"
+        );
+        // Invalid runtime rules would fail matcher initialization if evaluated.
+        assert!(decide(false, vec![], &[rule("")], &fields).is_ok());
+        assert!(decide(true, vec![], &[rule("")], &fields).is_err());
     }
     #[test]
     fn unicode_version_and_full_folding() {

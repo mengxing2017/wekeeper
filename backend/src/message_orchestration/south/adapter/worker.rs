@@ -80,7 +80,7 @@ impl Repository {
             let plans = receiving::plans(&mut tx, row.get("unit_id")).await?;
             // Evaluate current global keyword restrictions once. Configuration changes
             // never reinterpret an already frozen message or a delivered attempt.
-            let (_, rules) =
+            let (context, filter_enabled, rules) =
                 crate::source_access::south::adapter::postgres::keyword_filter::context_for_scope(
                     &mut tx,
                     row.get("platform_id"),
@@ -89,7 +89,9 @@ impl Repository {
                 )
                 .await
                 .map_err(|_| Error::Unavailable)?;
-            let checked = crate::source_access::domain::keyword_filter::evaluate(
+            let checked = crate::source_access::domain::keyword_filter::decide(
+                filter_enabled,
+                context.versions,
                 &rules,
                 &[
                     ("title", original["title"].as_str().unwrap_or("")),
@@ -97,7 +99,14 @@ impl Repository {
                 ],
             )
             .map_err(|_| Error::Unavailable)?;
-            let reason = if !checked.passed() {
+            sqlx::query(
+                "UPDATE orchestration_dispatches SET keyword_decision=$2 WHERE message_id=$1",
+            )
+            .bind(id)
+            .bind(json!(checked))
+            .execute(&mut *tx)
+            .await?;
+            let reason = if checked.outcome == "blocked" {
                 Some("keyword_blocked")
             } else if plans.is_empty() {
                 Some("route_no_targets")

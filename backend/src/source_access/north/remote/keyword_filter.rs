@@ -20,7 +20,14 @@ async fn execute(
 #[serde(deny_unknown_fields)]
 struct KeywordUpdate {
     expected_revision: i64,
+    filter_enabled: bool,
     entries: Vec<crate::source_access::domain::keyword_filter::Entry>,
+}
+#[derive(serde::Deserialize, serde::Serialize)]
+struct KeywordCurrent {
+    revision: i64,
+    filter_enabled: bool,
+    entries: serde_json::Value,
 }
 async fn words(
     State(a): State<Application>,
@@ -40,12 +47,9 @@ async fn words(
         .as_array()
         .and_then(|items| items.first())
         .ok_or_else(|| Fault("keyword_rules_unavailable").response(&actor.request_id))?;
-    Ok(crate::http::jsonapi::singleton(
-        "sensitive-words",
-        "current",
-        serde_json::json!({"revision":current["revision"],"entries":current["entries"]}),
-    )
-    .into_response())
+    let current: KeywordCurrent = serde_json::from_value(current.clone())
+        .map_err(|_| Fault("keyword_rules_unavailable").response(&actor.request_id))?;
+    Ok(crate::http::jsonapi::singleton("sensitive-words", "current", current).into_response())
 }
 async fn update_words(
     State(a): State<Application>,
@@ -62,6 +66,7 @@ async fn update_words(
             scope: "global".into(),
             input: Publication {
                 expected_revision: input.expected_revision,
+                filter_enabled: input.filter_enabled,
                 reason: "维护敏感词".into(),
                 entries: input.entries,
             },
@@ -88,6 +93,28 @@ mod tests {
         .unwrap();
         let update: KeywordUpdate = serde_json::from_value(fixture["update"].clone()).unwrap();
         assert_eq!(serde_json::to_value(update).unwrap(), fixture["update"]);
+        for enabled in [true, false] {
+            let mut current = fixture["current"].clone();
+            current["filter_enabled"] = serde_json::json!(enabled);
+            let response: KeywordCurrent = serde_json::from_value(current.clone()).unwrap();
+            assert_eq!(serde_json::to_value(response).unwrap(), current);
+            let mut input = fixture["update"].clone();
+            input["filter_enabled"] = serde_json::json!(enabled);
+            let update: KeywordUpdate = serde_json::from_value(input.clone()).unwrap();
+            assert_eq!(serde_json::to_value(update).unwrap(), input);
+        }
+        for value in [
+            serde_json::Value::Null,
+            serde_json::json!("false"),
+            serde_json::json!(0),
+        ] {
+            let mut invalid = fixture["update"].clone();
+            invalid["filter_enabled"] = value;
+            assert!(serde_json::from_value::<KeywordUpdate>(invalid).is_err());
+        }
+        let mut missing = fixture["update"].clone();
+        missing.as_object_mut().unwrap().remove("filter_enabled");
+        assert!(serde_json::from_value::<KeywordUpdate>(missing).is_err());
         let mut invalid = fixture["update"].clone();
         invalid["reason"] = serde_json::json!("unexpected");
         assert!(serde_json::from_value::<KeywordUpdate>(invalid).is_err());
