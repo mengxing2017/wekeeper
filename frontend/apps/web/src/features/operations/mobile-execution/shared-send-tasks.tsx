@@ -70,6 +70,7 @@ function TaskList({  admin }: { admin: boolean }) {
   return <Card title="手机任务">
     {errorContext}
     <Space orientation="vertical" style={{ width: '100%' }}>
+      <Button href={`/admin?view=mobile-dispatch-records${selected?`&task_id=${encodeURIComponent(selected.id)}`:''}`}>自动任务下发记录</Button>
       <Button href={'/admin?view=source-automation-tasks'}>即时消息与发送结果</Button>
       <Alert type="info" showIcon title="按目标群创建，逐群选择共享手机" description="填写文字和目标群后直接预览，系统自动保存草稿。核对预览后确认发送。确认时同时授权预览中的有效候选，所选手机为首选；离线或调用前失败时自动选择下一候选。结果不确定时保留原尝试风险，接收后五分钟无最终结果按原授权候选换机；跨手机可能重复。企业微信官方群发独立使用。" />
       {overview.data?.sending_status&&<Alert type={overview.data.sending_status.can_confirm?'info':'warning'} title={overview.data.sending_status.message}/>}
@@ -131,7 +132,7 @@ function TaskList({  admin }: { admin: boolean }) {
     </Modal>
     <Modal title={action?.kind==='stop'?'停止新领取':action?.kind==='review'?'人工核对原发送结果':'重新安排原目标群'} open={!!action} confirmLoading={mutate.isPending} onCancel={()=>setAction(undefined)} okButtonProps={{disabled:!reason.trim() || (action?.kind==='reassign'&&!device)}} onOk={()=>mutate.mutate()}>
       <p>此操作保留原计划和全部尝试记录。停止不会撤回已发出的调用许可；确定未发送时可在授权候选内改派，无需等待旧设备恢复；新设备实际调用仍检查自身状态与授权。</p>
-      {action?.kind==='review' && <Select value={decision} onChange={setDecision} style={{width:'100%'}} options={[{value:'still_unknown',label:'仍然无法确定，继续阻断'},{value:'verified_not_sent',label:'已有充分依据确认未发送'},{value:'manually_confirmed_sent',label:'人工核对确认已发送'}]} />}
+      {action?.kind==='review' && <Select value={decision} onChange={setDecision} style={{width:'100%'}} options={[{value:'still_unknown',label:'仍然无法确定，保留原尝试风险'},{value:'verified_not_sent',label:'已有充分依据确认未发送'},{value:'manually_confirmed_sent',label:'人工核对确认已发送'}]} />}
       {action?.kind==='reassign' && <Select aria-label="重新安排共享手机" value={device} onChange={setDevice} style={{width:'100%'}} options={(bindings.data?.items??[]).filter(b=>b.enabled && b.target_id===action.attempt?.plan.target_id).map(b=>({value:b.device_id,label:b.device_name||b.device_id}))} />}
       <Input.TextArea aria-label="核对依据与操作理由" value={reason} onChange={e=>setReason(e.target.value)} maxLength={2000} placeholder="记录实际核对依据，不能仅因等待超时判断未发送" />
       {mutate.error && <Alert type="error" title={taskError(mutate.error)} />}

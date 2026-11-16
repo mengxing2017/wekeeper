@@ -15,7 +15,7 @@ import {
 export type NavigationDomain = 'source' | 'wecom' | 'mobile' | 'support'
 export const navigationDomains = [{ key: 'source', label: '消息接收管理' }, { key: 'wecom', label: '企业微信分发管理' }, { key: 'mobile', label: '移动端分发管理' }, { key: 'support', label: '系统管理' }] as const
 export type NavigationPage =
-  | {kind: 'groups' | 'broadcast-tasks' | 'execution-devices' | 'shared-mobile-resources' | 'mobile-execution-tasks' | 'mobile-targets' | 'wecom-senders' | 'audit' | 'wecom-assets' | 'wecom-directory' | 'administrators' | 'source-credentials' | 'advertisements' | 'keyword-rules' | 'source-automation-tasks'}
+  | {kind: 'mobile-dispatch-records' | 'groups' | 'broadcast-tasks' | 'execution-devices' | 'shared-mobile-resources' | 'mobile-execution-tasks' | 'mobile-targets' | 'wecom-senders' | 'audit' | 'wecom-assets' | 'wecom-directory' | 'administrators' | 'source-credentials' | 'advertisements' | 'keyword-rules' | 'source-automation-tasks'}
   | {kind: 'receiving-configurations'; channel: 'mobile' | 'wecom'}
   | {kind: 'source-routes'; mode: 'receipts' | 'configuration'}
 
@@ -29,6 +29,7 @@ export interface NavigationItem {
   hidden?: boolean
 }
 export const navigation: NavigationItem[] = [
+  {key:'mobile-dispatch-records',page:{kind:'mobile-dispatch-records'},label:'自动任务下发记录',description:'查询手机分发接入、候选评估、交付及具体失败原因。',domain:'mobile',icon:<SendOutlined/>},
   {
     key: 'groups', page: {kind: 'groups'},
     icon: <TeamOutlined />,

@@ -1,3 +1,4 @@
+import {MobileDispatchRecords} from '../../operations/mobile-execution/dispatch-records'
 import {SourceAutomationTasks} from '../../operations/source-access/automation'
 import {ReceivingConfigurations} from '../../operations/receiving-configurations'
 import {Advertising} from '../../operations/advertising'
@@ -74,6 +75,7 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
   const refresh = async () => { await cache.invalidateQueries({queryKey:['business']}) }
   function renderPage(page: NavigationPage) {
     switch (page.kind) {
+      case 'mobile-dispatch-records': return <MobileDispatchRecords />
       case 'source-credentials': return <SourceAccess />
       case 'advertisements': return <Advertising />
       case 'keyword-rules': return <KeywordRules />

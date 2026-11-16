@@ -10,3 +10,6 @@ export type { UsageInput, UsagePreview, UsageOptions, MobileUsage, UsageOperatio
 
 
 export { executionEvidenceLabels } from '@wekeeper/api-contract/mobile-execution/shared-send/v2'
+
+export {dispatchRecords} from '@wekeeper/api-contract/mobile-execution/dispatch-records'
+export type {DispatchQuery, DispatchPage, DispatchIntake, DispatchOperation, DispatchCheck, DispatchEvent, DeliveryExchange} from '@wekeeper/api-contract/mobile-execution/dispatch-records'
