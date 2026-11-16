@@ -16,7 +16,7 @@ export const identity = {
     deleteAdministrator: (id: string) => requestResource<null>(`/api/v1/platform/administrators/${part(id)}`, 'DELETE'),
     resetAdministrator: (id: string, password: string) => requestResource(`/api/v1/platform/administrators/${part(id)}/password`, 'POST', { password }),
 };
-export interface WecomStatus { server_configured: boolean; client_configured: boolean; oauth_available: boolean; share_available: boolean }
+export interface WecomStatus { server_configured: boolean; oauth_available: boolean; share_available: boolean }
 export const workspace = {
     wecomStatus: () => requestResource<WecomStatus>('/api/v1/wecom/status'),
     list: <T extends Row = Row>(resource: Resource, query = '', signal?: AbortSignal) => requestCollection<T>(scope(resource) + query, signal),

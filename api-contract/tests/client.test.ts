@@ -47,7 +47,7 @@ it('reads the public WeCom status using the backend fixture', async () => {
   const { workspace } = await import('../src/modules/business')
   const fixture = (await import('../fixtures/wecom-status.json')).default
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(fixture)))
-  expect(await workspace.wecomStatus()).toEqual({id:'current',server_configured:false,client_configured:false,oauth_available:false,share_available:false})
+  expect(await workspace.wecomStatus()).toEqual({id:'current',server_configured:false,oauth_available:false,share_available:false})
 })
 
 it('consumes the Cairnkit error fixture serialized by Rust', async () => {

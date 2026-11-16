@@ -7,7 +7,6 @@ pub struct Service {
     pub repository: Repository,
     pub(crate) client: reqwest::Client,
     pub corp: String,
-    pub agent: String,
     secret: String,
     #[cfg(test)]
     api_origin: Option<String>,
@@ -22,7 +21,6 @@ impl Service {
                 .build()
                 .expect("TLS client"),
             corp: env("WEKEEPER_WECOM_CORP_ID"),
-            agent: env("WEKEEPER_WECOM_AGENT_ID"),
             secret: env("WEKEEPER_WECOM_SECRET"),
             #[cfg(test)]
             api_origin: None,
@@ -31,18 +29,12 @@ impl Service {
     pub fn server_configured(&self) -> bool {
         !self.corp.trim().is_empty() && !self.secret.trim().is_empty()
     }
-    pub fn client_configured(&self) -> bool {
-        self.server_configured()
-            && self.agent.bytes().all(|b| b.is_ascii_digit())
-            && self.agent.parse::<u32>().is_ok_and(|id| id > 0)
-    }
     pub fn capabilities(&self, origin: &str, insecure: bool) -> WecomStatus {
         let deployment = !insecure
             && reqwest::Url::parse(origin)
                 .is_ok_and(|url| url.scheme() == "https" && url.host_str().is_some());
         WecomStatus {
             server_configured: self.server_configured(),
-            client_configured: self.client_configured(),
             oauth_available: self.server_configured() && deployment,
             share_available: false,
         }
@@ -199,7 +191,6 @@ impl Service {
 #[derive(serde::Serialize)]
 pub struct WecomStatus {
     pub server_configured: bool,
-    pub client_configured: bool,
     pub oauth_available: bool,
     pub share_available: bool,
 }

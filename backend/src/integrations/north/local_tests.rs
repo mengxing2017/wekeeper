@@ -16,11 +16,10 @@ fn service(pool: sqlx::PgPool) -> Service {
     let mut service = Service::new(pool);
     service.corp = "test-corp".into();
     service.secret = "test-secret".into();
-    service.agent.clear();
     service
 }
 #[tokio::test]
-async fn capabilities_and_cache_identity_are_independent_of_agent_id() {
+async fn capabilities_and_cache_identity_use_server_credentials() {
     let pool = sqlx::postgres::PgPoolOptions::new()
         .connect_lazy("postgres://unused@127.0.0.1:1/unused")
         .unwrap();
@@ -41,20 +40,9 @@ async fn capabilities_and_cache_identity_are_independent_of_agent_id() {
     assert!(app.broadcast_unavailable_reason().is_some());
     let mut s = service(pool);
     let key = s.cache_key("token");
-    for agent in ["", " ", "0", "-1", "+1", "abc", "4294967296"] {
-        s.agent = agent.into();
-        assert!(s.server_configured());
-        assert!(!s.client_configured());
-        let status = s.capabilities("https://example.test", false);
-        assert!(status.oauth_available);
-        assert!(!status.share_available);
-        assert_eq!(s.cache_key("token"), key);
-    }
-    s.agent = "1000002".into();
-    assert!(
-        !s.capabilities("https://example.test", false)
-            .share_available
-    );
+    let status = s.capabilities("https://example.test", false);
+    assert!(status.server_configured && status.oauth_available);
+    assert!(!status.share_available);
     assert_eq!(s.cache_key("token"), key);
     for (origin, insecure) in [
         ("http://example.test", false),
@@ -62,7 +50,7 @@ async fn capabilities_and_cache_identity_are_independent_of_agent_id() {
         ("invalid", false),
     ] {
         let status = s.capabilities(origin, insecure);
-        assert!(status.server_configured && status.client_configured);
+        assert!(status.server_configured);
         assert!(!status.oauth_available && !status.share_available);
     }
     assert_ne!(
@@ -81,7 +69,7 @@ async fn capabilities_and_cache_identity_are_independent_of_agent_id() {
     for (corp, secret) in [(" ", "secret"), ("corp", " ")] {
         s.corp = corp.into();
         s.secret = secret.into();
-        assert!(!s.server_configured() && !s.client_configured());
+        assert!(!s.server_configured());
         assert!(
             !s.capabilities("https://example.test", false)
                 .oauth_available
@@ -169,11 +157,10 @@ async fn server_only_oauth_directory_cache_and_share_http_gates() {
         )
         .await
         .unwrap();
-    // AgentID changes neither the cache nor directory generation.
-    let mut with_agent = app.integrations.clone();
-    with_agent.agent = "1000002".into();
-    assert_eq!(with_agent.directory().ensure_config().await.unwrap(), 1);
-    assert_eq!(with_agent.token().await.unwrap(), "fake-token");
+    // Reusing the server credentials preserves the cache and directory generation.
+    let reused = app.integrations.clone();
+    assert_eq!(reused.directory().ensure_config().await.unwrap(), 1);
+    assert_eq!(reused.token().await.unwrap(), "fake-token");
     assert_eq!(requests.lock().unwrap().len(), 1);
     assert_eq!(
         requests.lock().unwrap()[0],
@@ -195,7 +182,7 @@ async fn server_only_oauth_directory_cache_and_share_http_gates() {
     rotated.token().await.unwrap();
     assert_eq!(requests.lock().unwrap().len(), 3);
     assert!(rotated.directory().ensure_config().await.is_err());
-    // Real callback route establishes a bound enterprise session without AgentID.
+    // Real callback route establishes a bound enterprise session with server credentials.
     let state = repo.oauth_state("/wecom").await.unwrap();
     let router = crate::http::app_router(app.clone());
     let response = router
@@ -299,7 +286,7 @@ async fn server_only_oauth_directory_cache_and_share_http_gates() {
 
 #[tokio::test]
 #[ignore = "requires isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn asset_http_reads_preserve_errors_and_do_not_need_agent_id() {
+async fn asset_http_reads_preserve_errors_with_server_credentials() {
     use crate::integrations::{
         domain::directory::ReadError,
         south::{adapter::directory_http::Client, port::assets::AssetClient},
@@ -376,7 +363,6 @@ async fn asset_http_reads_preserve_errors_and_do_not_need_agent_id() {
     let _server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     integration.directory().ensure_config().await.unwrap();
     let client = Client(integration.clone());
-    assert!(integration.agent.is_empty());
     assert!(
         client
             .groups(&["Alice".into()], "")
