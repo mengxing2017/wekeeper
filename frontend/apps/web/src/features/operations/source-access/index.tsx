@@ -6,9 +6,8 @@ import {useQuery} from '@tanstack/react-query'
 import {Alert,Button,Card,Checkbox,Descriptions,Drawer,Form,Input,Select,Space,Table,Tag,Typography} from 'antd'
 import {sourceAccess,type SourceRow,type SourceInput,type Association} from './api'
 import {CallerRoutes} from './routes'
-import {AssignedRoutes} from './assigned'
 import {CallerSecret} from './secret'
-export function SourceAccess({platformAdmin=true}:{platformAdmin?:boolean}) {return platformAdmin?<CallerCredentials/>:<AssignedRoutes/>}
+export function SourceAccess() {return <CallerCredentials/>}
 function CallerCredentials() {
  const kind='source-credentials' as const
  const [routeCaller,setRouteCaller]=useState<SourceRow|null>(null)

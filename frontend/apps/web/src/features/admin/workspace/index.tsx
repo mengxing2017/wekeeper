@@ -71,13 +71,13 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
   let page
   if (!user.platform_admin) page = <Alert type="warning" title="当前账号没有此功能的访问权限" />
   else if (!knownPage) page = <Alert type="warning" title="页面不存在" />
-  else if (tab === 'source-credentials') page = <SourceAccess platformAdmin={user.platform_admin} />
+  else if (tab === 'source-credentials') page = <SourceAccess />
   else if (tab === 'advertisements') page = <Advertising />
   else if (tab === 'advertisement-rotations') page = <Advertising />
   else if (tab === 'keyword-rules') page = <KeywordRules />
   else if (tab === 'source-automation-tasks') page = <SourceAutomationTasks />
-  else if (tab === 'source-receipts') page = <AssignedRoutes key="source-receipts" receiptsOnly platformAdmin={user.platform_admin} />
-  else if (tab === 'source-route-configurations') page = <AssignedRoutes platformAdmin={user.platform_admin} />
+  else if (tab === 'source-receipts') page = <AssignedRoutes key="source-receipts" receiptsOnly />
+  else if (tab === 'source-route-configurations') page = <AssignedRoutes />
   else if (tab === 'audit') page = <AuditEvents />
   else if (tab === 'mobile-receiving-configurations') page = <ReceivingConfigurations channel="mobile" admin={user.platform_admin} platformAdmin={user.platform_admin}/>
   else if (tab === 'wecom-receiving-configurations') page = <ReceivingConfigurations channel="wecom" admin={user.platform_admin} platformAdmin={user.platform_admin}/>

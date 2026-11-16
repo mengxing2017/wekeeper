@@ -7,12 +7,12 @@ import {Alert,Card,Drawer,Space,Table} from 'antd'
 import {sourceRouting} from './api'
 import {SourceReceipts} from './receipts'
 import {RouteConfigurationEditor} from './configuration'
-export function AssignedRoutes({platformAdmin=false,receiptsOnly=false}:{platformAdmin?:boolean;receiptsOnly?:boolean}){
+export function AssignedRoutes({receiptsOnly=false}:{receiptsOnly?:boolean}){
  const [receipts,setReceipts]=useState<string|null>(receiptsOnly?new URLSearchParams(window.location.search).get('route'):null)
  const [route,setRoute]=useState<string|null>(null)
  const q=useQuery({queryKey:['assigned-source-routes'],queryFn:()=>sourceRouting.assigned()})
  return <Card title={receiptsOnly?'收件与回执':'业务单位接收配置'}>
-  {receiptsOnly&&<Alert type="info" title="选择路由查看收件、处理和发送结果。仅显示当前账号有权访问的路由。"/>}
+  {receiptsOnly&&<Alert type="info" title="选择路由查看收件、处理和发送结果。系统管理员可查看全部路由。"/>}
   {q.error&&<Alert type="error" title={q.error.message}/>}
   <Table rowKey="id" loading={q.isFetching} dataSource={q.data?.items??[]} pagination={{pageSize:20}} tableLayout="fixed" scroll={{x:600}} columns={[
    {title:'调用方',width:160,dataIndex:'caller_name',render:value=><TableText value={value} limit={24}/>},{title:'路由名称 / ID',render:(_,r)=><div className="table-record"><TableText value={r.route_name} limit={24}/><TableIdentifier value={r.id}/></div>},
@@ -23,7 +23,7 @@ export function AssignedRoutes({platformAdmin=false,receiptsOnly=false}:{platfor
     !receiptsOnly&&{key:'receipts',label:'收件与回执',onClick:()=>setReceipts(r.id)},
    ]}/>}
   ]}/>
-  <Drawer open={!!route} title="业务单位接收配置" onClose={()=>setRoute(null)} size="large">{route&&<Space orientation="vertical" style={{width:'100%'}}><RouteConfigurationEditor key={route} route={route} manageAuthorizations={platformAdmin} onChanged={async()=>{await q.refetch()}}/><RouteAdvertising key={route} route={route}/></Space>}</Drawer>
+  <Drawer open={!!route} title="业务单位接收配置" onClose={()=>setRoute(null)} size="large">{route&&<Space orientation="vertical" style={{width:'100%'}}><RouteConfigurationEditor key={route} route={route}/><RouteAdvertising key={route} route={route}/></Space>}</Drawer>
   <Drawer open={!!receipts} title="收件与回执" onClose={()=>setReceipts(null)} size="large">{receipts&&<SourceReceipts key={receipts} route={receipts}/>}</Drawer>
  </Card>
 }

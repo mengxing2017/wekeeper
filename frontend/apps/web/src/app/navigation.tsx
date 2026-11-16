@@ -97,8 +97,8 @@ export const navigation: NavigationItem[] = [
   {key:'advertisement-rotations',label:'广告序列轮询',description:'绑定全局、平台或业务单位的广告；按业务单位分别记录广告轮询进度。',domain:'source',icon:<SnippetsOutlined/>},
   {key:'keyword-rules',label:'敏感词拦截',description:'维护来源消息的敏感词拦截规则。',domain:'source',icon:<SafetyCertificateOutlined/>},
   {key:'source-automation-tasks',label:'即时消息与发送结果',description:'查看即时消息、通道委托及实际发送结果。',domain:'source',icon:<SendOutlined/>},
-  {key:'source-receipts',label:'收件与回执',description:'按获授权路由查看消息收件与实际发送结果。',domain:'source',icon:<MessageOutlined/>},
-  {key:'source-route-configurations',label:'路由执行配置',description:'按业务单位维护通道接收配置和消息查看授权。',domain:'source',icon:<SendOutlined/>},
+  {key:'source-receipts',label:'收件与回执',description:'按路由查看消息收件与实际发送结果。',domain:'source',icon:<MessageOutlined/>},
+  {key:'source-route-configurations',label:'路由执行配置',description:'按业务单位维护通道接收配置。',domain:'source',icon:<SendOutlined/>},
 ]
 
 export function canNavigate(_item: NavigationItem, platformAdmin: boolean): boolean { return platformAdmin }
