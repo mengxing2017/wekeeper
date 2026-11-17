@@ -20,6 +20,114 @@ fn embedded_migration_versions_are_unique_and_ordered() {
 }
 
 #[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn direct_delivery_upgrade_retires_obsolete_control_rows_before_constraints() {
+    let url = std::env::var("WEKEEPER_TEST_DATABASE_URL")
+        .expect("explicit isolated test database required");
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&url)
+        .await
+        .unwrap();
+    let schema = format!("direct_delivery_upgrade_{}", uuid::Uuid::new_v4().simple());
+    sqlx::raw_sql(&format!(
+        "CREATE SCHEMA {schema}; SET search_path TO {schema};"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let before = sqlx::migrate::Migrator {
+        migrations: database::MIGRATOR
+            .iter()
+            .filter(|m| m.version < 202611170192)
+            .cloned()
+            .collect::<Vec<_>>()
+            .into(),
+        ..sqlx::migrate::Migrator::DEFAULT
+    };
+    before.run(&pool).await.unwrap();
+    // Recreate terminal pause/resume history retained by migration 143, plus
+    // task wake commands in every state (expiring them alone is insufficient).
+    sqlx::raw_sql(
+        "INSERT INTO execution_devices(id,name) VALUES(gen_random_uuid(),'WSS phone'),(gen_random_uuid(),'HTTPS phone');
+         ALTER TABLE device_control_commands DROP CONSTRAINT remote_hosting_commands_retired;
+         INSERT INTO device_control_commands(id,device_id,kind,state)
+         SELECT gen_random_uuid(),d.id,k.kind,s.state FROM execution_devices d
+         CROSS JOIN unnest(ARRAY['task_available','pause_execution','resume_execution','cancel_execution','configuration_changed','request_status']) k(kind)
+         CROSS JOIN unnest(ARRAY['queued','delivered','accepted','completed','rejected','expired']) s(state)
+         WHERE d.name='WSS phone';
+         ALTER TABLE device_control_commands ADD CONSTRAINT remote_hosting_commands_retired
+         CHECK(kind NOT IN ('pause_execution','resume_execution')) NOT VALID;
+         INSERT INTO device_control_sessions(device_id,connection_id,transport)
+         SELECT id,gen_random_uuid(),'wss' FROM execution_devices WHERE name='WSS phone';",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let direct = database::MIGRATOR
+        .iter()
+        .find(|m| m.version == 202611170193)
+        .unwrap();
+    let mut transaction = pool.begin().await.unwrap();
+    let error = sqlx::raw_sql(&direct.sql)
+        .execute(&mut *transaction)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.as_database_error().unwrap().code().as_deref(),
+        Some("23514")
+    );
+    assert_eq!(
+        error.as_database_error().unwrap().constraint(),
+        Some("device_control_commands_kind_check")
+    );
+    transaction.rollback().await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO device_control_sessions(device_id,connection_id,transport)
+         SELECT id,gen_random_uuid(),'https' FROM execution_devices WHERE name='HTTPS phone';",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let retained: serde_json::Value = sqlx::query_scalar(
+        "SELECT jsonb_agg(to_jsonb(c) ORDER BY sequence) FROM device_control_commands c
+         WHERE kind IN ('cancel_execution','configuration_changed','request_status')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(retained.as_array().unwrap().len(), 18);
+    database::migrate(&pool).await.unwrap();
+    database::migrate(&pool).await.unwrap();
+    let commands: serde_json::Value = sqlx::query_scalar(
+        "SELECT jsonb_agg(to_jsonb(c) ORDER BY sequence) FROM device_control_commands c",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(commands, retained);
+    let presence: Vec<String> = sqlx::query_scalar(
+        "SELECT d.name FROM device_control_sessions s JOIN execution_devices d ON d.id=s.device_id WHERE s.transport='wss'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(presence, vec!["WSS phone"]);
+    let devices: i64 = sqlx::query_scalar("SELECT count(*) FROM execution_devices")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(devices, 2);
+    sqlx::raw_sql(&format!(
+        "SET search_path TO public; DROP SCHEMA {schema} CASCADE;"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+}
+
+#[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL; run make test-integration"]
 async fn migrations_handle_residual_objects_after_table_only_reset() {
     let url = std::env::var("WEKEEPER_TEST_DATABASE_URL")
