@@ -352,3 +352,5 @@ devbox run -- make dev-embedded
 手机为系统共享资源，系统管理员统一维护目标群。管理员核对群、实际搜索名、手机和正文后确认任务；执行遵守手机现场条件、业务额度、单次许可及 unknown 核对，不办理研发验收或发行放行。操作见[手机任务](docs/guide/operator/mobile-execution-tasks.md)和[使用管理](docs/guide/platform-admin/shared-mobile-resources.md)。协议以 `api-contract/src/modules/mobile-execution/shared-send/` 和 Rust 契约测试为准。
 
 企业微信和手机分发资源全局管理，不保留成员关系或旧接口兼容。空库基线不创建旧分区表或字段。见[全局分发权限](docs/guide/workspaces.md)。
+
+[设备环境与控制协议](docs/development/device-environment-protocol.md)说明跨端字段。手机本机托管意愿由手机独立管理，平台不查询、保存、展示或改变。平台通过版本 2 认证 WSS 控制连接交付执行包；可选环境观测不影响业务受理或签发，`not_called/device_unavailable` 按本次尝试结算并继续授权候选调度。

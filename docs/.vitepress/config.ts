@@ -85,6 +85,7 @@ export default defineConfig({
             { text: "Web 前端", link: "/development/frontend" },
             { text: "Rust 后端", link: "/development/backend" },
             { text: "协议与授权", link: "/development/contracts-and-auth" },
+            { text: "设备环境与控制协议", link: "/development/device-environment-protocol" },
             { text: "测试与验收", link: "/development/testing" },
             { text: "文档构建与发布", link: "/development/docs-publishing" },
           ],
