@@ -11,7 +11,6 @@ pub struct Credential {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CommandKind {
-    TaskAvailable,
     CancelExecution,
     ConfigurationChanged,
     RequestStatus,
@@ -40,6 +39,8 @@ pub enum ReceiptState {
 pub struct Pulse {
     pub connection_id: Uuid,
     pub epoch: i64,
+    pub runtime_epoch: Uuid,
+    pub execution_receipts: Vec<Uuid>,
     pub readiness: String,
     #[serde(default)]
     pub heartbeat_id: Option<Uuid>,
@@ -79,6 +80,8 @@ pub struct Frame {
     pub desired_paused: bool,
     pub desired_revision: i64,
     pub commands: Vec<Command>,
+    pub executions: Vec<super::shared_mobile::execution::ExecutionDelivery>,
+    pub execution_receipts: Vec<Uuid>,
     pub credential_expires_at: chrono::DateTime<chrono::Utc>,
 }
 pub enum Operation {

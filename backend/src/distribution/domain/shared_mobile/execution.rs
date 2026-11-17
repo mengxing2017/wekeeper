@@ -5,10 +5,26 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct GrantRequest {
+pub struct InspectionRequest {
+    pub runtime_epoch: Uuid,
+    pub inspection_id: Uuid,
+}
+// Internal signing context, never accepted from device HTTP input.
+pub(crate) struct GrantRequest {
     pub runtime_epoch: Uuid,
     pub eligible_attempt_ids: Vec<Uuid>,
     pub inspection_id: Option<Uuid>,
+}
+pub const DELIVERY_MAX_BYTES: usize = 1_048_576;
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionDelivery {
+    pub schema: String,
+    pub delivery_id: Uuid,
+    pub transmission_id: Uuid,
+    pub connection_id: Uuid,
+    pub epoch: i64,
+    pub delivery: TaskDelivery,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -19,13 +35,6 @@ pub struct TaskDelivery {
     pub reason: Option<String>,
     pub verification_key: String,
     pub execution: Option<serde_json::Value>,
-}
-/// Task delivery carries the executable authorization; clients never select send attempts.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DeliveryRequest {
-    pub runtime_epoch: Uuid,
-    pub inspection_id: Option<Uuid>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -121,16 +130,6 @@ mod tests {
         assert!(!dispatch_terminal("waiting_resources"));
     }
     #[test]
-    fn delivery_request_does_not_accept_downstream_candidate_selection() {
-        let runtime = Uuid::new_v4();
-        let request = serde_json::json!({"runtime_epoch":runtime,"inspection_id":null});
-        let parsed: DeliveryRequest = serde_json::from_value(request.clone()).unwrap();
-        assert_eq!(serde_json::to_value(parsed).unwrap(), request);
-        let mut legacy = request;
-        legacy["eligible_attempt_ids"] = serde_json::json!([]);
-        assert!(serde_json::from_value::<DeliveryRequest>(legacy).is_err());
-    }
-    #[test]
     fn dispatch_does_not_wait_for_old_device_or_unknown_review() {
         assert_eq!(
             replacement_reason(false, None, false),
@@ -168,6 +167,24 @@ mod wire_tests {
     use super::*;
     use ring::signature::{ECDSA_P256_SHA256_ASN1, UnparsedPublicKey};
     use serde_json::Value;
+    #[test]
+    fn direct_control_frame_preserves_complete_signed_delivery() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../api-contract/fixtures/direct-execution-delivery.json"
+        )))
+        .unwrap();
+        let frame: crate::distribution::domain::device_control::Frame =
+            serde_json::from_value(fixture.clone()).unwrap();
+        assert_eq!(frame.executions.len(), 1);
+        assert_eq!(frame.executions[0].schema, "mobile_execution_delivery/1");
+        assert_eq!(
+            frame.executions[0].delivery.execution.as_ref().unwrap()["max_calls"],
+            1
+        );
+        assert_eq!(serde_json::to_value(frame).unwrap(), fixture);
+        assert!(serde_json::to_vec(&fixture).unwrap().len() < DELIVERY_MAX_BYTES);
+    }
     #[test]
     fn optional_device_times_preserve_legacy_payload_and_validate_order() {
         let fixture: Value = serde_json::from_str(include_str!(concat!(

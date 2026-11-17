@@ -80,7 +80,7 @@ pub fn reason_label(code: &str) -> &str {
         "credential_generation_changed" => "手机凭据代次已变化",
         "device_busy" => "手机仍有未关闭的执行占用",
         "awaiting_round_deadline" => "本轮候选已耗尽，等待轮次截止后重评",
-        "candidate_ready" => "候选已选中，等待手机拉取",
+        "candidate_ready" => "候选已选中，等待平台直接交付",
         "business_interval" => "业务发送间隔未到",
         "mobile_targets_missing" => "未提供手机目标群",
         "mobile_candidates_missing" => "冻结授权候选为空",

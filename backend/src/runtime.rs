@@ -150,6 +150,17 @@ async fn serve_inner(
     let usages = crate::distribution::south::adapter::postgres::shared_send_v2::Repository(
         application.pool.clone(),
     );
+    let notifications = usages.clone();
+    let delivery_notify_worker = tokio::spawn(async move {
+        loop {
+            if notifications.listen_delivery_notifications().await.is_err() {
+                tracing::warn!(
+                    "mobile delivery notifications reconnecting; durable scanner remains active"
+                );
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
+    });
     let dispatcher = usages.clone();
     let dispatch_worker = tokio::spawn(async move {
         let mut delay_seconds = 5;
@@ -175,9 +186,6 @@ async fn serve_inner(
     });
     let usage_worker = tokio::spawn(async move {
         loop {
-            if usages.dispatch_task_wakes().await.is_err() {
-                tracing::warn!("shared task wake dispatch will retry");
-            }
             if usages.reconcile_usages().await.is_err() {
                 tracing::warn!("mobile usage reconciliation failed; persisted intents will retry");
             }
@@ -233,6 +241,8 @@ async fn serve_inner(
     let _ = wait_worker.await;
     dispatch_worker.abort();
     let _ = dispatch_worker.await;
+    delivery_notify_worker.abort();
+    let _ = delivery_notify_worker.await;
     usage_worker.abort();
     let _ = usage_worker.await;
     broadcast_read_worker.abort();

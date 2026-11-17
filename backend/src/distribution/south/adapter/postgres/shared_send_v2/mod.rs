@@ -19,11 +19,12 @@ pub mod delivery;
 mod device;
 mod diagnostics;
 mod dispatch;
-mod execution;
+pub(crate) mod execution;
 mod execution_status;
 mod inbox;
 mod inspections;
 mod platform;
+mod push;
 mod readiness;
 pub mod records;
 mod screen;
@@ -131,16 +132,24 @@ async fn task(tx: &mut Tx<'_>, id: Uuid) -> Result<Value> {
     Ok(value)
 }
 impl Store for Repository {
-    async fn delivery_transport(
+    async fn pending_deliveries(
+        &self,
+        c: &Credential,
+        connection: Uuid,
+        epoch: i64,
+    ) -> Result<Vec<crate::distribution::domain::shared_mobile::execution::ExecutionDelivery>> {
+        Repository::pending_deliveries(self, c, connection, epoch).await
+    }
+    async fn delivery_written(&self, id: Uuid, completed: bool) -> Result<()> {
+        Repository::delivery_written(self, id, completed).await
+    }
+    async fn inspection_execution(
         &self,
         c: &Credential,
         key: &str,
-        v: crate::distribution::domain::shared_mobile::execution::DeliveryRequest,
-    ) -> Result<(Value, Uuid)> {
-        device::write_delivery(self, c, key, DeviceCommand::Deliver(v)).await
-    }
-    async fn response_observed(&self, id: Uuid, state: &str) -> Result<()> {
-        Repository::response_observed(self, id, state).await
+        v: crate::distribution::domain::shared_mobile::execution::InspectionRequest,
+    ) -> Result<Value> {
+        device::write(self, c, key, DeviceCommand::Inspection(v)).await
     }
 
     async fn submit_mobile(
@@ -167,7 +176,6 @@ impl Store for Repository {
         v: crate::distribution::domain::shared_mobile::execution::Completion,
     ) -> Result<Value> {
         let mut tx = self.0.begin().await?;
-        guard(&mut tx).await?;
         let value = execution::complete(&mut tx, v).await?;
         tx.commit().await?;
         Ok(value)

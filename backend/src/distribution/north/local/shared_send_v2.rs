@@ -10,16 +10,27 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct Service<R = Repository>(pub R);
 impl<R: Store> Service<R> {
-    pub async fn delivery_transport(
+    pub fn delivery_notifications(&self) -> tokio::sync::broadcast::Receiver<Uuid> {
+        Repository::subscribe_delivery_notifications()
+    }
+    pub async fn pending_deliveries(
+        &self,
+        c: &Credential,
+        connection: Uuid,
+        epoch: i64,
+    ) -> Result<Vec<crate::distribution::domain::shared_mobile::execution::ExecutionDelivery>> {
+        self.0.pending_deliveries(c, connection, epoch).await
+    }
+    pub async fn delivery_written(&self, id: Uuid, completed: bool) -> Result<()> {
+        self.0.delivery_written(id, completed).await
+    }
+    pub async fn inspection_execution(
         &self,
         c: &Credential,
         key: &str,
-        v: crate::distribution::domain::shared_mobile::execution::DeliveryRequest,
-    ) -> Result<(Value, Uuid)> {
-        self.0.delivery_transport(c, &text(key, 1, 128)?, v).await
-    }
-    pub async fn response_observed(&self, id: Uuid, state: &str) -> Result<()> {
-        self.0.response_observed(id, state).await
+        v: crate::distribution::domain::shared_mobile::execution::InspectionRequest,
+    ) -> Result<Value> {
+        self.0.inspection_execution(c, &text(key, 1, 128)?, v).await
     }
 
     pub async fn submit_mobile(

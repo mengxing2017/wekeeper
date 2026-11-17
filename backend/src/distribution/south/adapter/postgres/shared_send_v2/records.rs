@@ -271,48 +271,6 @@ pub(super) async fn begin_evaluation(pool: &PgPool, item: Uuid) -> Result<Option
     tx.commit().await?;
     Ok(Some(id))
 }
-pub(super) async fn exchange_start(repo: &Repository, c: &Credential, key: &str) -> Result<Uuid> {
-    let mut tx = repo.0.begin().await?;
-    authenticate(&mut tx, c, false).await?;
-    let id = Uuid::now_v7();
-    sqlx::query("INSERT INTO mobile_delivery_exchanges(id,device_id,generation,key_digest,replay_of) VALUES($1,$2,$3,$4,(SELECT id FROM mobile_delivery_exchanges WHERE device_id=$2 AND generation=$3 AND key_digest=$4 ORDER BY created_at,id LIMIT 1))").bind(id).bind(c.device_id).bind(c.generation).bind(hash(key)).execute(&mut *tx).await?;
-    tx.commit().await?;
-    Ok(id)
-}
-pub(super) async fn exchange_result(tx: &mut Tx<'_>, id: Uuid, value: &Value) -> Result<()> {
-    let execution = value
-        .get("execution")
-        .filter(|v| v.is_object())
-        .unwrap_or(value);
-    let exec = execution["id"]
-        .as_str()
-        .and_then(|v| v.parse::<Uuid>().ok());
-    sqlx::query("UPDATE mobile_delivery_exchanges x SET result=$2,reason_code=$3,finished_at=clock_timestamp(),execution_id=g.id,attempt_id=coalesce(g.attempt_id,x.attempt_id),intake_id=coalesce(i.id,x.intake_id) FROM (SELECT 1)dummy LEFT JOIN mobile_execution_grants g ON g.id=$4 LEFT JOIN mobile_v9_attempts a ON a.id=g.attempt_id LEFT JOIN mobile_dispatch_intakes i ON i.item_id=a.item_id WHERE x.id=$1")
- .bind(id).bind(value["state"].as_str().unwrap_or("unknown")).bind(value["reason"].as_str().unwrap_or(if execution["state"]=="granted"{"execution_generated"}else{"no_matching_assignment"})).bind(exec).execute(&mut **tx).await?;
-    sqlx::query("UPDATE mobile_dispatch_checks c SET intake_id=i.id FROM mobile_delivery_exchanges i WHERE c.delivery_request_id=i.id AND i.id=$1 AND c.intake_id IS NULL").bind(id).execute(&mut **tx).await?;
-    sqlx::query("INSERT INTO mobile_v9_dispatch_events(intake_id,item_id,delivery_request_id,attempt_id,device_id,execution_id,kind,reason,result,evidence) SELECT x.intake_id,i.item_id,x.id,x.attempt_id,x.device_id,x.execution_id,'delivery_decision',x.reason_code,x.result,jsonb_build_object('replay_of',x.replay_of) FROM mobile_delivery_exchanges x LEFT JOIN mobile_dispatch_intakes i ON i.id=x.intake_id WHERE x.id=$1 AND x.intake_id IS NOT NULL").bind(id).execute(&mut **tx).await?;
-    Ok(())
-}
-impl Repository {
-    pub async fn exchange_failed(&self, id: Uuid, error: &Error) -> Result<()> {
-        sqlx::query("UPDATE mobile_delivery_exchanges SET result='failed',reason_code=$2,finished_at=clock_timestamp() WHERE id=$1 AND result='started'").bind(id).bind(failure(error)).execute(&self.0).await?;
-        Ok(())
-    }
-    pub async fn response_observed(&self, id: Uuid, state: &str) -> Result<()> {
-        crate::business::require(
-            matches!(
-                state,
-                "response_started"
-                    | "server_write_completed"
-                    | "server_write_interrupted"
-                    | "response_observation_unknown"
-            ),
-            "response_state_invalid",
-        )?;
-        sqlx::query("UPDATE mobile_delivery_exchanges SET response_state=$2,response_at=clock_timestamp() WHERE id=$1 AND response_state NOT IN ('server_write_completed','server_write_interrupted')").bind(id).bind(state).execute(&self.0).await?;
-        Ok(())
-    }
-}
 impl Repository {
     pub async fn read_records(
         &self,
@@ -351,7 +309,7 @@ impl Repository {
             }
             "events" => "SELECT to_jsonb(v) AS value FROM mobile_v9_dispatch_events v WHERE true",
             "exchanges" | "exchange" => {
-                "SELECT to_jsonb(v) AS value FROM mobile_delivery_exchanges v WHERE true"
+                "SELECT to_jsonb(v) AS value FROM mobile_delivery_exchange_view v WHERE true"
             }
             _ => return Err(Error::NotFound),
         });
@@ -535,8 +493,8 @@ impl Repository {
                 });
                 item["next_action"] = json!(if wait {
                     "系统将在指定时间重新评估候选；查看本轮逐候选原因"
-                } else if item["stage"] == "awaiting_pull" {
-                    "等待手机拉取；系统按既有规则扫描并改派"
+                } else if item["stage"] == "awaiting_dispatch" {
+                    "等待平台签发并直接推送；系统按授权候选扫描并改派"
                 } else if item["stage"] == "executing" {
                     "等待设备最终回报；超时按既有授权候选换机"
                 } else if item["creation_state"] == "rejected" {

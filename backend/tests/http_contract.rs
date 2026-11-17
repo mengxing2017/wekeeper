@@ -622,7 +622,7 @@ async fn device_control_does_not_accept_browser_identity_as_a_device() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/v1/device-control/session")
+                .uri("/api/v1/device-control/credential-activations")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -902,15 +902,15 @@ fn definitive_dependency_rejection_uses_conflict_status() {
 }
 
 #[tokio::test]
-async fn task_delivery_is_a_device_authenticated_jsonapi_endpoint() {
+async fn inspection_is_a_device_authenticated_jsonapi_endpoint() {
     let response = app()
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/v10/device-execution/task-deliveries")
+                .uri("/api/v10/device-execution/inspection-executions")
                 .header("content-type", "application/vnd.api+json")
                 .body(Body::from(
-                    json!({"data":{"type":"task-deliveries","attributes":{"runtime_epoch":"00000000-0000-4000-8000-000000000001","inspection_id":null}}}).to_string(),
+                    json!({"data":{"type":"inspection-executions","attributes":{"runtime_epoch":"00000000-0000-4000-8000-000000000001","inspection_id":"00000000-0000-4000-8000-000000000002"}}}).to_string(),
                 ))
                 .unwrap(),
         )
@@ -1017,5 +1017,28 @@ async fn forum_material_and_template_routes_are_retired() {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method} {path}");
+    }
+}
+
+#[tokio::test]
+async fn removed_pull_and_http_control_routes_are_absent() {
+    for path in [
+        "/api/v10/device-execution/task-deliveries",
+        "/api/v10/device-execution/execution-grants",
+        "/api/v10/device-execution/execution-receipts",
+        "/api/v1/device-control/session",
+        "/api/v1/device-control/pulses",
+    ] {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
     }
 }

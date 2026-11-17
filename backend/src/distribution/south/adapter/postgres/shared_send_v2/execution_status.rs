@@ -11,7 +11,7 @@ fn add(
     rows.push(ExecutionCondition {
         code: code.into(),
         category: "execution".into(),
-        affected_action: "claim".into(),
+        affected_action: "delivery".into(),
         scope_type: "device".into(),
         scope_id: device,
         owner: match owner {
@@ -64,7 +64,7 @@ pub(super) async fn assess(
             .bind(uid(attempt, "item_id")?)
             .fetch_optional(&mut **tx)
             .await?;
-    let grant:Option<Value>=sqlx::query_scalar("SELECT jsonb_build_object('state',state,'accepted_at',accepted_at,'result_deadline_at',result_deadline_at,'outcome',result_body->>'outcome') FROM mobile_execution_grants WHERE attempt_id=$1").bind(uid(attempt,"id")?).fetch_optional(&mut **tx).await?;
+    let grant:Option<Value>=sqlx::query_scalar("SELECT jsonb_build_object('state',state,'accepted_at',accepted_at,'receipt_deadline_at',receipt_deadline_at,'outcome',result_body->>'outcome','result_deadline_at',result_deadline_at) FROM mobile_execution_grants WHERE attempt_id=$1").bind(uid(attempt,"id")?).fetch_optional(&mut **tx).await?;
     let mut conditions = Vec::new();
     if current && !matches!(state, "observed_sent" | "manually_confirmed_sent") {
         let expired = task["confirmed_until"]
@@ -106,8 +106,14 @@ pub(super) async fn assess(
         {
             add(
                 &mut conditions,
-                "awaiting_execution_result",
-                if state == "unknown" {
+                if g["accepted_at"].is_null() && g["outcome"].is_null() {
+                    "awaiting_execution_receipt"
+                } else {
+                    "awaiting_execution_result"
+                },
+                if g["accepted_at"].is_null() && g["outcome"].is_null() {
+                    "等待手机落盘接收确认，超时自动换机"
+                } else if state == "unknown" {
                     "原尝试结果不确定，平台将在截止时间自动切机"
                 } else {
                     "等待手机最终结果；离线或明确失败直接切机"
@@ -117,7 +123,12 @@ pub(super) async fn assess(
                 device,
             );
             conditions.last_mut().ok_or(Error::Conflict)?.retry_at =
-                serde_json::from_value(g["result_deadline_at"].clone()).ok();
+                serde_json::from_value(if g["accepted_at"].is_null() && g["outcome"].is_null() {
+                    g["receipt_deadline_at"].clone()
+                } else {
+                    g["result_deadline_at"].clone()
+                })
+                .ok();
         }
         if conditions.is_empty()
             && let Some(d) = &dispatch

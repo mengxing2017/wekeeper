@@ -15,7 +15,9 @@ impl<R: Store> Service<R> {
                 return Err(Error::Invalid("缺少心跳标识".into()));
             }
             if p.heartbeat_sequence < 0
-                || (p.heartbeat_sequence == 0 && p.receipts.is_empty())
+                || (p.heartbeat_sequence == 0
+                    && p.receipts.is_empty()
+                    && p.execution_receipts.is_empty())
                 || (p.heartbeat_sequence == 0 && p.probe_id.is_some())
             {
                 return Err(Error::Invalid(
@@ -26,7 +28,7 @@ impl<R: Store> Service<R> {
             if let Some(reason) = &p.block_reason {
                 text(reason, 0, 120)?;
             }
-            if p.receipts.len() > 100 {
+            if p.receipts.len() > 100 || p.execution_receipts.len() > 100 {
                 return Err(Error::Invalid("回执数量超限".into()));
             }
             for r in &p.receipts {

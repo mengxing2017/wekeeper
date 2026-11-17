@@ -89,40 +89,6 @@ pub(super) async fn write(
     key: &str,
     command: DeviceCommand,
 ) -> Result<Value> {
-    if matches!(
-        &command,
-        DeviceCommand::Deliver(_) | DeviceCommand::Grant(_)
-    ) {
-        return write_delivery(repo, c, key, command)
-            .await
-            .map(|(value, _)| value);
-    }
-    write_inner(repo, c, key, command, None).await
-}
-pub(super) async fn write_delivery(
-    repo: &Repository,
-    c: &Credential,
-    key: &str,
-    command: DeviceCommand,
-) -> Result<(Value, Uuid)> {
-    let id = records::exchange_start(repo, c, key).await?;
-    match write_inner(repo, c, key, command, Some(id)).await {
-        Ok(value) => Ok((value, id)),
-        Err(error) => {
-            if let Err(record_error) = repo.exchange_failed(id, &error).await {
-                tracing::error!(exchange_id=%id,%record_error,"delivery failure record unavailable");
-            }
-            Err(error)
-        }
-    }
-}
-async fn write_inner(
-    repo: &Repository,
-    c: &Credential,
-    key: &str,
-    command: DeviceCommand,
-    exchange: Option<Uuid>,
-) -> Result<Value> {
     let mut tx = repo.0.begin().await?;
     if !matches!(&command, DeviceCommand::Consent(_)) {
         guard(&mut tx).await?;
@@ -142,13 +108,8 @@ async fn write_inner(
         ),
     )
     .await?;
-    if let Some(id) = exchange {
-        records::context(&mut tx, "wekeeper.mobile_exchange", id).await?;
-    }
     let (scope, body) = match &command {
-        DeviceCommand::Deliver(v) => ("task-delivery", json!(v)),
-        DeviceCommand::Grant(v) => ("execution-grant", json!(v)),
-        DeviceCommand::Receipt(v) => ("execution-receipt", json!(v)),
+        DeviceCommand::Inspection(v) => ("inspection-execution", json!(v)),
         DeviceCommand::Runtime(v) => ("runtime", json!(v)),
         DeviceCommand::Consent(v) => ("delegation-decision", json!(v)),
         DeviceCommand::Diagnostic(v) => ("diagnostic", json!(v)),
@@ -160,29 +121,13 @@ async fn write_inner(
                     .bind(id.parse::<Uuid>().map_err(|_| Error::Conflict)?)
                     .fetch_one(&mut *tx)
                     .await?;
-            old = secrets::open(&encrypted)?;
-        }
-        if matches!(scope, "execution-grant" | "task-delivery") && old["state"] == "granted" {
-            let active = execution::can_redeliver(&mut tx, uid(&old, "id")?).await?;
-            if !active {
-                let value = json!({"id":old["id"],"state":"superseded"});
-                if let Some(id) = exchange {
-                    records::exchange_result(&mut tx, id, &value).await?;
-                }
-                tx.commit().await?;
-                return command_response(scope, value);
-            }
-        }
-        if let Some(id) = exchange {
-            records::exchange_result(&mut tx, id, &old).await?;
+            old = execution::delivery_response(secrets::open(&encrypted)?)?;
         }
         tx.commit().await?;
-        return command_response(scope, old);
+        return Ok(old);
     }
     let result = match command {
-        DeviceCommand::Deliver(v) => execution::deliver(&mut tx, c, v).await?,
-        DeviceCommand::Grant(v) => execution::grant(&mut tx, c, v).await?,
-        DeviceCommand::Receipt(v) => execution::receipt(&mut tx, c, v).await?,
+        DeviceCommand::Inspection(v) => execution::inspection(&mut tx, c, v).await?,
         DeviceCommand::Consent(v) => delegation::decide(&mut tx, c, v).await?,
         DeviceCommand::Diagnostic(v) => diagnostics::diagnostic(&mut tx, c, v).await?,
         DeviceCommand::Runtime(v) => {
@@ -215,18 +160,11 @@ async fn write_inner(
             json!({"id":c.device_id,"runtime_epoch":v.runtime_epoch,"recorded":true})
         }
     };
-    if matches!(scope, "execution-grant" | "task-delivery") {
-        tracing::info!(device=%c.device_id, idempotency_key_digest=%hash(key),
-            state=%result["state"], stage="grant_decision", protocol=10,
-            "execution grant decision");
-    }
-    // Grant responses contain secrets and must not enter the plaintext idempotency table.
-    let stored =
-        if matches!(scope, "execution-grant" | "task-delivery") && result["state"] == "granted" {
-            json!({"grant_ref":result["id"]})
-        } else {
-            result.clone()
-        };
+    let stored = if scope == "inspection-execution" && result["state"] == "granted" {
+        json!({"grant_ref":result["id"]})
+    } else {
+        result.clone()
+    };
     remember(
         &mut tx,
         c.device_id,
@@ -237,26 +175,6 @@ async fn write_inner(
         &stored,
     )
     .await?;
-    if let Some(id) = exchange {
-        records::exchange_result(&mut tx, id, &result).await?;
-    }
     tx.commit().await?;
-    command_response(scope, result)
-}
-
-fn command_response(scope: &str, value: Value) -> Result<Value> {
-    if scope == "task-delivery" {
-        execution::delivery_response(value)
-    } else {
-        grant_response(value)
-    }
-}
-
-// Rejections are committed together with attempt state and idempotency before returning 409.
-fn grant_response(value: Value) -> Result<Value> {
-    if value["state"] == "rejected" && value["reason"] == "plan_dependency_changed" {
-        Err(Error::Policy("plan_dependency_changed"))
-    } else {
-        Ok(value)
-    }
+    Ok(result)
 }

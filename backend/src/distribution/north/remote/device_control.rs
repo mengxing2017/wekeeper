@@ -25,33 +25,6 @@ fn token(h: &HeaderMap) -> Result<&str> {
 async fn credential(a: &Application, h: &HeaderMap) -> Result<Credential> {
     a.control_credential(token(h)?).await
 }
-async fn open(State(a): State<Application>, h: HeaderMap) -> Result<Response> {
-    let c = credential(&a, &h).await?;
-    Ok(resource(
-        "device-control-frames",
-        a.device_control()
-            .device(
-                &c,
-                Operation::Open {
-                    transport: "https".into(),
-                },
-            )
-            .await?,
-    )
-    .into_response())
-}
-async fn pulse(State(a): State<Application>, h: HeaderMap, input: Input) -> Result<Response> {
-    let c = credential(&a, &h).await?;
-    let p = input.decode::<Pulse>("device-control-pulses")?;
-    if p.probe_id.is_some() {
-        return Err(Error::Invalid("主动探测响应必须来自原控制连接".into()));
-    }
-    Ok(resource(
-        "device-control-frames",
-        a.device_control().device(&c, Operation::Pulse(p)).await?,
-    )
-    .into_response())
-}
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Renewal {
@@ -123,12 +96,15 @@ async fn channel(
 ) -> Result<Response> {
     let c = credential(&a, &h).await?;
     Ok(ws
-        .max_message_size(65536)
-        .max_frame_size(65536)
+        .max_message_size(1048576)
+        .max_frame_size(1048576)
         .on_upgrade(move |socket| run(a, c, socket)))
 }
 async fn run(a: Application, c: Credential, mut socket: WebSocket) {
     let service = a.device_control();
+    let executions = crate::distribution::north::local::shared_send_v2::Service(
+        crate::distribution::south::adapter::postgres::shared_send_v2::Repository(a.pool.clone()),
+    );
     let Ok(frame) = service
         .device(
             &c,
@@ -158,6 +134,7 @@ async fn run(a: Application, c: Credential, mut socket: WebSocket) {
         return;
     }
     // Command latency remains bounded by five seconds; this is not a heartbeat.
+    let mut notifications = executions.delivery_notifications();
     let mut tick = tokio::time::interval(std::time::Duration::from_secs(5));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut probes = ProbeSchedule::new(tokio::time::Instant::now());
@@ -168,6 +145,7 @@ async fn run(a: Application, c: Credential, mut socket: WebSocket) {
     loop {
         let (result, reply, probe_response) = tokio::select! {
          _=tokio::time::sleep_until(probes.next_due(heartbeat_interval))=>(service.device(&c,Operation::Poll{connection_id:id,epoch}).await,false,false),
+         _=notifications.recv()=> (service.device(&c,Operation::Poll{connection_id:id,epoch}).await,false,false),
          _=tick.tick()=>(service.device(&c,Operation::Poll{connection_id:id,epoch}).await,false,false),
          incoming=socket.recv()=>{
           match incoming {
@@ -191,6 +169,10 @@ async fn run(a: Application, c: Credential, mut socket: WebSocket) {
         };
         match result {
             Ok(mut f) => {
+                match executions.pending_deliveries(&c, id, epoch).await {
+                    Ok(deliveries) => f.executions = deliveries,
+                    Err(_) => break,
+                }
                 heartbeat_interval = f.heartbeat_interval_seconds;
                 let now = tokio::time::Instant::now();
                 if reply && f.heartbeat_fresh && probe_response {
@@ -204,16 +186,26 @@ async fn run(a: Application, c: Credential, mut socket: WebSocket) {
                     f.desired_revision,
                     serde_json::to_string(&f.commands).unwrap_or_default()
                 );
-                if reply || f.probe_id.is_some() || signature != last {
+                if reply || f.probe_id.is_some() || signature != last || !f.executions.is_empty() {
                     last = signature;
-                    if !matches!(
-                        tokio::time::timeout(
-                            std::time::Duration::from_secs(5),
-                            send(&mut socket, &f)
-                        )
-                        .await,
-                        Ok(Ok(()))
-                    ) {
+                    let completed = serde_json::to_vec(&f).is_ok_and(|v| v.len() <= 1048576)
+                        && matches!(
+                            tokio::time::timeout(
+                                std::time::Duration::from_secs(5),
+                                send(&mut socket, &f)
+                            )
+                            .await,
+                            Ok(Ok(()))
+                        );
+                    for delivery in &f.executions {
+                        {
+                            let id = delivery.transmission_id;
+                            if executions.delivery_written(id, completed).await.is_err() {
+                                tracing::warn!(transmission_id=%id,"execution transmission observation unavailable");
+                            }
+                        }
+                    }
+                    if !completed {
                         break;
                     }
                     if reply && f.heartbeat_fresh && !probe_response {
@@ -267,8 +259,6 @@ async fn send(socket: &mut WebSocket, frame: &Frame) -> std::result::Result<(), 
 pub fn router() -> Router<Application> {
     Router::new()
         .route("/api/v1/device-control/channel", get(channel))
-        .route("/api/v1/device-control/session", post(open))
-        .route("/api/v1/device-control/pulses", post(pulse))
         .route("/api/v1/device-control/credential-renewals", post(renew))
         .route(
             "/api/v1/device-control/credential-activations",

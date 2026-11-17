@@ -224,52 +224,16 @@ async fn diagnostic(
             .await?,
     ))
 }
-async fn task_delivery(
-    State(a): State<Application>,
-    h: HeaderMap,
-    input: Input,
-) -> Result<axum::response::Response> {
-    let c = credential(&a, &h).await?;
-    let service = service(&a);
-    let (value, id) = service
-        .delivery_transport(&c, key(&h), input.decode("task-deliveries")?)
-        .await?;
-    Ok(
-        super::mobile_dispatch_records::observe(resource("task-deliveries", value), service, id)
-            .await,
-    )
-}
-async fn execution_grant(
+async fn inspection_execution(
     State(a): State<Application>,
     h: HeaderMap,
     input: Input,
 ) -> Result<ApiResponse> {
     let c = credential(&a, &h).await?;
     Ok(resource(
-        "execution-grants",
+        "inspection-executions",
         service(&a)
-            .device_write(
-                &c,
-                key(&h),
-                DeviceCommand::Grant(input.decode("execution-grants")?),
-            )
-            .await?,
-    ))
-}
-async fn execution_receipt(
-    State(a): State<Application>,
-    h: HeaderMap,
-    input: Input,
-) -> Result<ApiResponse> {
-    let c = credential(&a, &h).await?;
-    Ok(resource(
-        "execution-receipts",
-        service(&a)
-            .device_write(
-                &c,
-                key(&h),
-                DeviceCommand::Receipt(input.decode("execution-receipts")?),
-            )
+            .inspection_execution(&c, key(&h), input.decode("inspection-executions")?)
             .await?,
     ))
 }
@@ -286,16 +250,8 @@ pub fn router() -> Router<Application> {
         .merge(usage_router())
         .merge(super::mobile_dispatch_records::router())
         .route(
-            "/api/v10/device-execution/task-deliveries",
-            post(task_delivery),
-        )
-        .route(
-            "/api/v10/device-execution/execution-grants",
-            post(execution_grant),
-        )
-        .route(
-            "/api/v10/device-execution/execution-receipts",
-            post(execution_receipt),
+            "/api/v10/device-execution/inspection-executions",
+            post(inspection_execution),
         )
         .route(
             "/api/v10/device-execution/execution-completions",

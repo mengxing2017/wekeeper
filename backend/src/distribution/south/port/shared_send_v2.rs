@@ -27,18 +27,30 @@ pub enum DeviceCommand {
     Runtime(RuntimeReport),
     Diagnostic(Diagnostic),
     Consent(ConsentInput),
-    Deliver(crate::distribution::domain::shared_mobile::execution::DeliveryRequest),
-    Grant(crate::distribution::domain::shared_mobile::execution::GrantRequest),
-    Receipt(crate::distribution::domain::shared_mobile::execution::ExecutionReceipt),
+    Inspection(crate::distribution::domain::shared_mobile::execution::InspectionRequest),
 }
 pub trait Store: Clone + Send + Sync {
-    fn delivery_transport(
+    fn pending_deliveries(
+        &self,
+        c: &Credential,
+        connection: Uuid,
+        epoch: i64,
+    ) -> impl Future<
+        Output = Result<
+            Vec<crate::distribution::domain::shared_mobile::execution::ExecutionDelivery>,
+        >,
+    > + Send;
+    fn delivery_written(
+        &self,
+        id: Uuid,
+        completed: bool,
+    ) -> impl Future<Output = Result<()>> + Send;
+    fn inspection_execution(
         &self,
         c: &Credential,
         key: &str,
-        v: crate::distribution::domain::shared_mobile::execution::DeliveryRequest,
-    ) -> impl Future<Output = Result<(Value, Uuid)>> + Send;
-    fn response_observed(&self, id: Uuid, state: &str) -> impl Future<Output = Result<()>> + Send;
+        v: crate::distribution::domain::shared_mobile::execution::InspectionRequest,
+    ) -> impl Future<Output = Result<Value>> + Send;
 
     fn submit_mobile(
         &self,

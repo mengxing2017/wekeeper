@@ -47,11 +47,13 @@ async fn age(pool: &PgPool, device: Uuid, seconds: f64) {
 }
 fn pulse(frame: &Frame, id: Uuid, sequence: i64) -> Operation {
     Operation::Pulse(Pulse {
+        runtime_epoch: Uuid::new_v4(),
+        execution_receipts: vec![],
         connection_id: frame.connection_id,
         epoch: frame.epoch,
         heartbeat_id: Some(id),
         heartbeat_sequence: sequence,
-        probe_id: None,
+        probe_id: Some(Uuid::new_v4()),
         readiness: "blocked".into(),
         block_reason: Some("device_locked".into()),
         receipts: vec![],
@@ -98,7 +100,7 @@ async fn heartbeat_window_survives_close_reopen_replay_and_generation_changes() 
         .device(
             &credential,
             Operation::Open {
-                transport: "https".into(),
+                transport: "wss".into(),
             },
         )
         .await
@@ -162,7 +164,7 @@ async fn heartbeat_window_survives_close_reopen_replay_and_generation_changes() 
         .device(
             &credential,
             Operation::Open {
-                transport: "https".into(),
+                transport: "wss".into(),
             },
         )
         .await
@@ -231,7 +233,7 @@ async fn heartbeat_window_survives_close_reopen_replay_and_generation_changes() 
         .device(
             &credential,
             Operation::Open {
-                transport: "https".into(),
+                transport: "wss".into(),
             },
         )
         .await
@@ -251,7 +253,7 @@ async fn heartbeat_window_survives_close_reopen_replay_and_generation_changes() 
         .device(
             &credential,
             Operation::Open {
-                transport: "https".into(),
+                transport: "wss".into(),
             },
         )
         .await
@@ -280,7 +282,7 @@ async fn heartbeat_window_survives_close_reopen_replay_and_generation_changes() 
         .device(
             &next,
             Operation::Open {
-                transport: "https".into(),
+                transport: "wss".into(),
             },
         )
         .await

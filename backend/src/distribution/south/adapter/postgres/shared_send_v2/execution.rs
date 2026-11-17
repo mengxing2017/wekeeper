@@ -15,36 +15,26 @@ pub(super) async fn context(repo: &Repository, c: &Credential) -> Result<Value> 
         json!({"id":c.device_id,"protocol_version":10,"delegation":delegation,"turns":turns,"inspections":inspections,"verification_key":public_key}),
     )
 }
-/// Select work upstream, before delivery. No device candidate list or follow-up claim.
-pub(super) async fn deliver(
+pub(super) async fn inspection(
     tx: &mut Tx<'_>,
     c: &Credential,
-    v: crate::distribution::domain::shared_mobile::execution::DeliveryRequest,
+    v: crate::distribution::domain::shared_mobile::execution::InspectionRequest,
 ) -> Result<Value> {
-    require(!v.runtime_epoch.is_nil(), "execution_request_invalid")?;
-    // A lost delivery (including a legacy grant response) is redelivered as the same task.
-    // Never make the device request another permission or wait for its own issued session.
-    let issued: Option<Vec<u8>> = sqlx::query_scalar("SELECT g.envelope FROM mobile_execution_grants g LEFT JOIN mobile_v9_attempts a ON a.id=g.attempt_id LEFT JOIN mobile_v9_task_items i ON i.id=a.item_id LEFT JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE g.device_id=$1 AND g.credential_generation=$2 AND g.state='active' AND NOT g.session_closed AND g.result_id IS NULL AND g.execute_before>clock_timestamp() AND (($3::uuid IS NULL AND g.kind='send' AND a.current AND NOT t.stopped AND NOT EXISTS(SELECT 1 FROM mobile_v9_dispatch_state ds WHERE ds.item_id=a.item_id AND ds.state IN ('waiting_resources','completed','stopped','confirmation_expired','dispatch_failed')) AND NOT EXISTS(SELECT 1 FROM mobile_v9_attempts sent LEFT JOIN mobile_execution_grants result ON result.attempt_id=sent.id WHERE sent.item_id=a.item_id AND (sent.state IN ('observed_sent','manually_confirmed_sent') OR result.result_body->>'outcome'='observed_sent'))) OR (g.kind='inspection' AND g.inspection_id=$3))")
-        .bind(c.device_id).bind(c.generation).bind(v.inspection_id).fetch_optional(&mut **tx).await?;
-    if let Some(envelope) = issued {
-        return secrets::open(&envelope);
-    }
-    let eligible_attempt_ids: Vec<Uuid> = sqlx::query_scalar("SELECT a.id FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE NOT EXISTS(SELECT 1 FROM mobile_v9_dispatch_state ds WHERE ds.item_id=a.item_id AND ds.state IN ('waiting_resources','completed','stopped','confirmation_expired','dispatch_failed')) AND p.device_id=$1 AND a.current AND a.state='queued' AND a.not_before<=clock_timestamp() AND NOT t.stopped AND t.confirmed_until>clock_timestamp() AND t.next_eligible_at<=clock_timestamp() ORDER BY t.created_at,i.position LIMIT 100")
-        .bind(c.device_id).fetch_all(&mut **tx).await?;
-    grant(
+    let value = grant(
         tx,
         c,
         GrantRequest {
             runtime_epoch: v.runtime_epoch,
-            eligible_attempt_ids,
-            inspection_id: v.inspection_id,
+            eligible_attempt_ids: vec![],
+            inspection_id: Some(v.inspection_id),
         },
     )
-    .await
+    .await?;
+    delivery_response(value)
 }
 /// Closed results and success on any attempt fence replay before projection reconciliation.
 pub(super) async fn can_redeliver(tx: &mut Tx<'_>, id: Uuid) -> Result<bool> {
-    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_execution_grants g LEFT JOIN mobile_v9_attempts a ON a.id=g.attempt_id LEFT JOIN mobile_v9_task_items i ON i.id=a.item_id LEFT JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE g.id=$1 AND g.state='active' AND NOT g.session_closed AND g.result_id IS NULL AND g.execute_before>clock_timestamp() AND (g.kind='inspection' OR (a.current AND NOT t.stopped AND NOT EXISTS(SELECT 1 FROM mobile_v9_dispatch_state ds WHERE ds.item_id=a.item_id AND ds.state IN ('waiting_resources','completed','stopped','confirmation_expired','dispatch_failed')) AND NOT EXISTS(SELECT 1 FROM mobile_v9_attempts sent LEFT JOIN mobile_execution_grants result ON result.attempt_id=sent.id WHERE sent.item_id=a.item_id AND (sent.state IN ('observed_sent','manually_confirmed_sent') OR result.result_body->>'outcome'='observed_sent')))))")
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_execution_grants g LEFT JOIN mobile_v9_attempts a ON a.id=g.attempt_id LEFT JOIN mobile_v9_task_items i ON i.id=a.item_id LEFT JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE g.id=$1 AND g.state='active' AND NOT g.session_closed AND g.result_id IS NULL AND g.execute_before>clock_timestamp() AND g.accepted_at IS NULL AND g.receipt_deadline_at>clock_timestamp() AND (g.kind='inspection' OR (a.current AND NOT t.stopped AND NOT EXISTS(SELECT 1 FROM mobile_v9_dispatch_state ds WHERE ds.item_id=a.item_id AND ds.state IN ('waiting_resources','completed','stopped','confirmation_expired','dispatch_failed')) AND NOT EXISTS(SELECT 1 FROM mobile_v9_attempts sent LEFT JOIN mobile_execution_grants result ON result.attempt_id=sent.id WHERE sent.item_id=a.item_id AND (sent.state IN ('observed_sent','manually_confirmed_sent') OR result.result_body->>'outcome'='observed_sent')))))")
         .bind(id).fetch_one(&mut **tx).await?)
 }
 /// Delivery metadata is outside the signed executable envelope and contains no new permission.
@@ -207,6 +197,14 @@ pub(super) async fn grant(tx: &mut Tx<'_>, c: &Credential, v: GrantRequest) -> R
             secrets::sign(&envelope).map_err(|_| Error::Policy("signature_failed"))?;
         envelope["signature"] = json!(signature);
         envelope["key_id"] = json!(hash(&public_key));
+        require(
+            serde_json::to_vec(&envelope)
+                .map_err(|_| Error::Conflict)?
+                .len()
+                <= crate::distribution::domain::shared_mobile::execution::DELIVERY_MAX_BYTES
+                    - 262144,
+            "execution_delivery_too_large",
+        )?;
         sqlx::query("INSERT INTO mobile_execution_grants(id,attempt_id,device_id,credential_generation,kind,execute_before,result_credential_hash,envelope) VALUES($1,$2,$3,$4,'send',$5::text::timestamptz,$6,$7)").bind(id).bind(aid).bind(c.device_id).bind(c.generation).bind(timing["execute_before"].as_str().ok_or(Error::Conflict)?).bind(hash(&secret)).bind(secrets::seal(&envelope).map_err(|_|Error::Policy("encryption_failed"))?).execute(&mut **tx).await?;
         usage_budgets::record(tx, id, &usages).await?;
         sqlx::query("UPDATE mobile_v9_attempts SET state='leased',revision=revision+1 WHERE id=$1")
@@ -233,8 +231,9 @@ async fn reject_attempt(tx: &mut Tx<'_>, attempt: Uuid, reason: &str) -> Result<
         "unissued execution attempt invalidated; continuing eligible tasks");
     Ok(())
 }
-pub(super) async fn receipt(tx: &mut Tx<'_>, c: &Credential, v: ExecutionReceipt) -> Result<Value> {
-    let count=sqlx::query("UPDATE mobile_execution_grants SET accepted_at=clock_timestamp(),result_deadline_at=clock_timestamp()+interval '5 minutes' WHERE id=$1 AND device_id=$2 AND credential_generation=$3 AND accepted_at IS NULL AND state='active' AND result_deadline_at>clock_timestamp()").bind(v.execution_id).bind(c.device_id).bind(c.generation).execute(&mut **tx).await?.rows_affected();
+pub(crate) async fn receipt(tx: &mut Tx<'_>, c: &Credential, v: ExecutionReceipt) -> Result<Value> {
+    let count=sqlx::query("UPDATE mobile_execution_grants SET accepted_at=clock_timestamp(),state=CASE WHEN state='active' AND receipt_deadline_at<=clock_timestamp() AND result_id IS NULL THEN 'superseded' ELSE state END,superseded_reason=CASE WHEN state='active' AND receipt_deadline_at<=clock_timestamp() AND result_id IS NULL THEN 'receipt_timeout' ELSE superseded_reason END,result_deadline_at=CASE WHEN state='active' AND receipt_deadline_at>clock_timestamp() AND result_id IS NULL THEN clock_timestamp()+interval '5 minutes' ELSE result_deadline_at END WHERE id=$1 AND device_id=$2 AND credential_generation=$3 AND accepted_at IS NULL").bind(v.execution_id).bind(c.device_id).bind(c.generation).execute(&mut **tx).await?.rows_affected();
+    sqlx::query("UPDATE mobile_v9_dispatch_state ds SET next_retry_at=clock_timestamp() FROM mobile_v9_attempts a JOIN mobile_execution_grants g ON g.attempt_id=a.id WHERE g.id=$1 AND ds.item_id=a.item_id AND ds.state NOT IN ('completed','stopped','confirmation_expired','dispatch_failed')").bind(v.execution_id).execute(&mut **tx).await?;
     let exists:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_execution_grants WHERE id=$1 AND device_id=$2 AND credential_generation=$3)").bind(v.execution_id).bind(c.device_id).bind(c.generation).fetch_one(&mut **tx).await?;
     require(exists, "execution_identity_mismatch")?;
     Ok(json!({"id":v.execution_id,"accepted":count==1,"recorded":true}))

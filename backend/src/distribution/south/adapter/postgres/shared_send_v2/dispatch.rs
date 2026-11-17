@@ -70,10 +70,15 @@ async fn presence_offline(tx: &mut Tx<'_>, device: Uuid) -> Result<bool> {
     .await?)
 }
 async fn ready(tx: &mut Tx<'_>, candidate: &Value) -> Result<bool> {
-    let facts:Value=sqlx::query_scalar("SELECT jsonb_build_object('presence',(SELECT state FROM device_control_presence WHERE id=$1),'enabled',d.enabled,'generation',d.credential_generation,'expected_generation',$2::bigint,'accepted',$3::boolean,'consent_state',$4::text,'busy',(SELECT jsonb_build_object('execution_id',id,'attempt_id',attempt_id,'execute_before',execute_before) FROM mobile_execution_grants WHERE device_id=$1 AND NOT session_closed ORDER BY assigned_at LIMIT 1)) FROM execution_devices d WHERE id=$1")
+    let facts:Value=sqlx::query_scalar("SELECT jsonb_build_object('presence',(SELECT state FROM device_control_presence WHERE id=$1),'enabled',d.enabled,'generation',d.credential_generation,'expected_generation',$2::bigint,'accepted',$3::boolean,'consent_state',$4::text,'connection_available',EXISTS(SELECT 1 FROM device_control_sessions s JOIN device_credentials c ON c.device_id=s.device_id AND c.generation=s.credential_generation WHERE s.device_id=d.id AND s.connected AND s.transport='wss' AND s.runtime_epoch IS NOT NULL AND c.revoked_at IS NULL AND c.expires_at>clock_timestamp()+interval '210 seconds'),'busy',(SELECT jsonb_build_object('execution_id',id,'attempt_id',attempt_id,'execute_before',execute_before) FROM mobile_execution_grants WHERE device_id=$1 AND NOT session_closed ORDER BY assigned_at LIMIT 1)) FROM execution_devices d WHERE id=$1")
         .bind(uid(candidate,"device_id")?).bind(candidate["credential_generation"].as_i64()).bind(candidate["accepted"]==true).bind(candidate["consent_state"].as_str()).fetch_optional(&mut **tx).await?.unwrap_or(json!({}));
     let reason =
         crate::distribution::domain::shared_mobile::dispatch_records::candidate_reason(&facts);
+    let reason = if reason == "passed" && facts["connection_available"] != true {
+        "delivery_connection_unavailable"
+    } else {
+        reason
+    };
     records::check(
         tx,
         uid(candidate, "device_id")?,
@@ -154,7 +159,7 @@ async fn reconcile_inner(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
         return status(tx, item, "scheduling", "business_interval").await;
     }
     sqlx::query("UPDATE mobile_v9_dispatch_state SET assigned_at=coalesce(assigned_at,clock_timestamp()),round_started_at=coalesce(round_started_at,clock_timestamp()) WHERE item_id=$1").bind(item).execute(&mut **tx).await?;
-    let grant:Option<Value>=sqlx::query_scalar("SELECT (to_jsonb(g)-'envelope')||jsonb_build_object('deadline_reached',result_deadline_at<=clock_timestamp()) FROM mobile_execution_grants g WHERE attempt_id=$1").bind(aid).fetch_optional(&mut **tx).await?;
+    let grant:Option<Value>=sqlx::query_scalar("SELECT (to_jsonb(g)-'envelope')||jsonb_build_object('deadline_reached',CASE WHEN accepted_at IS NULL AND result_id IS NULL THEN receipt_deadline_at ELSE result_deadline_at END<=clock_timestamp()) FROM mobile_execution_grants g WHERE attempt_id=$1").bind(aid).fetch_optional(&mut **tx).await?;
     // Record the current candidate too: an offline singleton never enters the successor loop.
     if grant.is_none() {
         let current_choices = tasks::raw_candidates(tx, uid(&row, "target_id")?).await?;
@@ -195,6 +200,26 @@ async fn reconcile_inner(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
             .as_ref()
             .is_some_and(|g| g["deadline_reached"] == true),
     );
+    if reason == Some("result_timeout")
+        && grant
+            .as_ref()
+            .is_some_and(|g| g["accepted_at"].is_null() && g["result_id"].is_null())
+    {
+        reason = Some("receipt_timeout");
+    }
+    if let Some(issued) = &grant
+        && issued["state"] == "superseded"
+        && matches!(
+            issued["superseded_reason"].as_str(),
+            Some("receipt_timeout" | "delivery_write_failed")
+        )
+    {
+        reason = Some(if issued["superseded_reason"] == "receipt_timeout" {
+            "receipt_timeout"
+        } else {
+            "delivery_write_failed"
+        });
+    }
     // Pause, stale authorization and other candidate constraints do not mean
     // that authenticated device presence has timed out.
     if grant.is_none()
@@ -240,10 +265,26 @@ async fn reconcile_inner(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
         reason = Some("delivery_not_received_timeout");
     }
     if reason.is_none() && grant.is_some() {
-        return status(tx, item, "executing", "awaiting_result").await;
+        return status(
+            tx,
+            item,
+            "executing",
+            if grant
+                .as_ref()
+                .is_some_and(|g| g["accepted_at"].is_null() && g["result_id"].is_null())
+            {
+                "awaiting_receipt"
+            } else {
+                "awaiting_result"
+            },
+        )
+        .await;
     }
     if reason.is_none() && state == "queued" {
-        return status(tx, item, "assigned", "candidate_ready").await;
+        match push::prepare(tx, aid).await? {
+            None => return status(tx, item, "executing", "awaiting_receipt").await,
+            Some(why) => reason = Some(why),
+        }
     }
     let reason = reason.unwrap_or("execution_failed");
     sqlx::query("UPDATE mobile_execution_grants SET state='superseded',superseded_reason=$2 WHERE attempt_id=$1 AND state='active'").bind(aid).bind(reason).execute(&mut **tx).await?;
@@ -372,7 +413,16 @@ async fn reconcile_inner(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
             .bind((offset + 1) as i32)
             .execute(&mut **tx)
             .await?;
-        return status(tx, item, "assigned", reason).await;
+        status(tx, item, "assigned", reason).await?;
+        let next_attempt: Uuid =
+            sqlx::query_scalar("SELECT id FROM mobile_v9_attempts WHERE item_id=$1 AND current")
+                .bind(item)
+                .fetch_one(&mut **tx)
+                .await?;
+        return match push::prepare(tx, next_attempt).await? {
+            None => status(tx, item, "executing", "awaiting_receipt").await,
+            Some(why) => status(tx, item, "assigned", why).await,
+        };
     }
     // An obsolete frozen scope cannot regain authority by waiting for a phone.
     // Keep its original plans and results, and never silently replace its target.

@@ -131,21 +131,3 @@ pub(super) async fn receipt(
     tx.commit().await?;
     Ok(response)
 }
-impl Repository {
-    pub async fn dispatch_task_wakes(&self) -> Result<()> {
-        let mut tx = self.0.begin().await?;
-        let rows:Vec<(Uuid,Uuid,Uuid)>=sqlx::query_as("SELECT id,device_id,actor_id FROM mobile_v9_task_wake_outbox ORDER BY created_at LIMIT 100 FOR UPDATE SKIP LOCKED").fetch_all(&mut *tx).await?;
-        let mut notified = std::collections::HashSet::new();
-        for (id, device, actor) in rows {
-            if notified.insert(device) {
-                sqlx::query("INSERT INTO device_control_commands(id,device_id,kind,request_key,request_digest,actor_id) VALUES($1,$2,'task_available',$3,$4,$5) ON CONFLICT(device_id,request_key) DO NOTHING").bind(id).bind(device).bind(format!("shared-inbox:{id}")).bind(hash(&id.to_string())).bind(actor).execute(&mut *tx).await?;
-            }
-            sqlx::query("DELETE FROM mobile_v9_task_wake_outbox WHERE id=$1")
-                .bind(id)
-                .execute(&mut *tx)
-                .await?;
-        }
-        tx.commit().await?;
-        Ok(())
-    }
-}
