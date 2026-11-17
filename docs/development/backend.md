@@ -20,7 +20,7 @@
 
 ## 数据库与锁文件
 
-SQLx migration 放在 `backend/migrations/`，版本递增且 forward-only，普通启动自动迁移。不要修改已部署 migration 来修复线上库。生产使用独立 PostgreSQL；嵌入式入口仅用于隔离开发，退出删除数据。
+SQLx migration 放在 `backend/migrations/`，版本递增且 forward-only，普通启动自动迁移。项目尚未上线且没有历史业务数据，现有迁移已合并为空库领域基线，不提供旧迁移账本或残留对象兼容；旧开发库需要完整重建 schema。基线说明见仓库 `backend/migrations/README.md`。后续变更新增递增迁移，不要修改已部署 migration 来修复线上库。生产使用独立 PostgreSQL；嵌入式入口仅用于隔离开发，退出删除数据。
 
 修改 Cargo 依赖或特性后同步生成并提交 `backend/Cargo.lock`，再验证 `--locked` 构建。Docker 使用 `cargo fetch --locked` 和 `cargo build --frozen --release`；不要移除锁定参数掩盖漏更新的依赖。
 

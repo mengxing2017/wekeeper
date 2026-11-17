@@ -1,8 +1,8 @@
 # WeKeeper
 
-企业微信与手机群消息转发服务，采用 Rust API 与 React Web。论坛管理和完整微信小程序已迁至独立的 linjian 项目。
+企业微信与手机群消息转发服务，采用 Rust API 与 React Web。
 
-当前保留分发登录与全局系统管理员权限、企业微信统一群发任务、手机共享发送。论坛的内容审核、评论、举报反馈、展示资源与小程序登录接口已移除。
+提供分发登录与全局系统管理员权限、企业微信统一群发任务和手机共享发送。
 运行与数据切换见 [业务运行手册](docs/runbooks/business.md)。真实平台权限、真机及生产数据切换仍需验收。
 旧 PHP、根目录 Vue 2 `uniapp/`、Java 和附带资源保留用于迁移核对，新容器不会运行它们。
 
@@ -28,7 +28,7 @@ tools/           冒烟检查与后续迁移工具
 ```
 
 后端以 `system` 模块展示完整的 domain、north/local、north/remote、south/port、south/adapter/postgres 分层。
-业务模块按用例、领域与 PostgreSQL 端口实现。本项目不提供论坛和历史素材；相关投影、模板及旧业务表通过前向迁移下线。
+业务模块按用例、领域与 PostgreSQL 端口实现。当前初始化基线按分发领域建模，只创建当前业务使用的数据结构。
 前端接口调用通过 feature/api 与 `@wekeeper/api-contract/*`。当前构建见 [前端工作区说明](frontend/README.md)。数据库调整使用新的前向 migration。
 
 ## Docker 文档导航
@@ -316,7 +316,7 @@ docker compose --env-file .env -f compose.yaml logs --tail 100 api web
 完整备份、隔离恢复、更新回滚和排障命令见 [Docker 部署手册](docs/runbooks/docker.md)。
 
 工程决策见 [基础骨架 ADR](docs/adr/0001-foundation.md)。
-业务边界与授权设计见 [社区业务、学校边界与人工分享 ADR](docs/adr/0002-business-migration.md)。
+当前业务边界与授权见[全局分发权限](docs/guide/workspaces.md)。
 首次管理员、平台配置与旧数据迁移详见 [业务运行手册](docs/runbooks/business.md)。
 
 ### JSON:API 协议切换
@@ -335,7 +335,7 @@ devbox run -- make dev-embedded
 
 系统管理员从已核实目录选择客户群；发送时仍校验真实群主、绑定账号与发送资格。重复关联不会创建新的分发目标。
 
-通讯录、目录核验与基础业务已合并到 `202610310101_core_business.sql`。当前数据库采用 4 份初始化基线，见 [迁移目录说明](backend/migrations/README.md)。旧分段迁移库需完整重建 schema；启动器不会自动清库或改写 SQLx 账本。允许清空的 Compose 开发库可执行 `make reset-dev-database`，嵌入式临时库退出即清理。
+数据库采用按领域拆分的 18 份空库初始化迁移，见 [迁移目录说明](backend/migrations/README.md)。项目尚未上线，没有历史业务数据；旧开发库需完整重建 schema，启动器不会自动清库或改写 SQLx 账本。允许清空的 Compose 开发库可执行 `make reset-dev-database`，嵌入式临时库退出即清理。
 
 ### 企业统一群发（FE-03）
 
@@ -343,7 +343,7 @@ devbox run -- make dev-embedded
 
 配置有效 CorpID/Secret 后，群发自动可用，无需额外部署启用开关。实际执行仍校验客户联系权限、群主分发授权和官方接口状态；客户端需支持指定群发送。平台明确暂停新发送时，仍可查询和停止既有任务。详见 [企业微信接入与验收](docs/runbooks/wecom.md)。
 
-官方群发与直接文本结构已合并到 `backend/migrations/202610310102_broadcast.sql`，按当前初始化基线建库。重复启动依据 SQLx 账本跳过已应用迁移；旧分段迁移库不自动转换。真实企业权限及终端行为仍需部署验收。
+企业微信资源和群发任务分别在 `wecom_resources`、`broadcast` 领域基线中初始化。重复启动依据 SQLx 账本跳过已应用迁移。真实企业权限及终端行为仍需部署验证。
 
 直接正文群发由全局系统管理员保存、预览并确认。数据库只接受文本来源，重复启动不改写任务与正文哈希。升级须停止旧 API/worker 并配套部署新版前后端，不能在文本任务出现后混跑旧 worker。
 
@@ -351,4 +351,4 @@ devbox run -- make dev-embedded
 
 手机为系统共享资源，系统管理员统一维护目标群。管理员核对群、实际搜索名、手机和正文后确认任务；执行遵守手机现场条件、业务额度、单次许可及 unknown 核对，不办理研发验收或发行放行。操作见[手机任务](docs/guide/operator/mobile-execution-tasks.md)和[使用管理](docs/guide/platform-admin/shared-mobile-resources.md)。协议以 `api-contract/src/modules/mobile-execution/shared-send/` 和 Rust 契约测试为准。
 
-企业微信和手机分发资源全局管理，不保留成员关系或旧接口兼容。新增前向迁移删除旧分区数据与字段，前后端同步发布。见[全局分发权限](docs/guide/workspaces.md)。
+企业微信和手机分发资源全局管理，不保留成员关系或旧接口兼容。空库基线不创建旧分区表或字段。见[全局分发权限](docs/guide/workspaces.md)。

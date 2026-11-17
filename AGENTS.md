@@ -55,6 +55,6 @@ devbox run -- make check-backend
 本地无 Docker 调试使用 `devbox run -- make dev-embedded`，自动创建临时 PostgreSQL 17。
 嵌入式入口忽略外部数据库配置，退出删除数据；`devbox run -- make test-embedded` 验证生命周期。
 部署入口为 `compose.yaml`、`compose.dev.yaml` 与 `env.example`，仅包含 web、api、postgres。
-论坛管理、论坛 Web、小程序、学校成员与权限、学校设置、学校管理及登录账号管理均已退场。保留分发登录和系统管理员维护。手机任务、手机目标群及手机使用管理保留在 wekeeper；两类工作空间、成员表及协议中的工作空间字段已经退出，不保留兼容分支，不得恢复学校依赖。本项目没有论坛或历史素材，不保留帖子、论坛素材投影及论坛模板的接口、配置或运行代码；已确认废弃的论坛、学校及旧工作流表通过新增前向 migration 正式下线；不得修改既有 migration，不得恢复废弃表或依赖它们的运行代码。当前分发快照、执行授权、结果和审计表继续保留。
+论坛管理、论坛 Web、小程序、学校成员与权限、学校设置、学校管理及登录账号管理均已退场。保留分发登录和系统管理员维护。手机任务、手机目标群及手机使用管理保留在 wekeeper；两类工作空间、成员表及协议中的工作空间字段已经退出，不保留兼容分支，不得恢复学校依赖。本项目没有论坛或历史素材，不保留帖子、论坛素材投影及论坛模板的接口、配置或运行代码；未上线且没有历史业务数据，migration 已按当前领域模型重建为空库初始化基线，不创建废弃的论坛、学校及旧工作流表；此后结构变更新增递增的前向 migration，不得恢复废弃表或依赖它们的运行代码。当前分发快照、执行授权、结果和审计表继续保留。
 
-当前业务边界与授权见 [全局分发权限](docs/guide/workspaces.md)；历史设计见 [社区业务、学校边界与人工分享 ADR](docs/adr/0002-business-migration.md)，运行方法见根 [README.md](README.md) 与 [业务运行手册](docs/runbooks/business.md)。
+当前业务边界与授权见 [全局分发权限](docs/guide/workspaces.md)；运行方法见根 [README.md](README.md) 与 [业务运行手册](docs/runbooks/business.md)。

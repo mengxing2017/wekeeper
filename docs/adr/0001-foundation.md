@@ -2,7 +2,7 @@
 
 日期：2026-10-20。状态：基础阶段已采用，部分设计已被后续业务实现替代。
 
-> 本文保留初始骨架决策，不作为当前接口和认证说明。当前业务协议已统一 JSON:API，身份、学校及发送边界见 [协议参考](../references/index.md)、[ADR 0002](0002-business-migration.md) 和 [ADR 0005](0005-mobile-delivery.md)。
+> 本文保留初始骨架决策，不作为当前接口和认证说明。当前业务协议已统一 JSON:API，当前身份、授权及发送边界见[接口与身份约束](../development/contracts-and-auth.md)、[全局分发权限](../guide/workspaces.md)和[手机候选调度 ADR](0008-mobile-candidate-dispatch.md)。
 
 ## 应用边界
 
@@ -23,7 +23,7 @@ request_id 用于请求关联；当前无认证 Cookie、CORS、OAuth 或业务�
 ## 身份与发送边界
 
 骨架不伪造登录，不提供默认管理员，也不以开发假用户绕过学校授权。
-identity 与 schools 实现前不开放业务接口；新增浏览器写入必须同时加入会话、CSRF 和 Origin 校验。
+业务接口须经过 identity 身份认证和系统管理员授权；新增浏览器写入必须同时加入会话、CSRF 和 Origin 校验。
 H5 不初始化 SDK、不发送消息；后续以人工确认、客户端结果与 unknown 状态实现。
 
 ## 数据与迁移
@@ -50,5 +50,4 @@ Docker 构建上下文白名单不包含旧项目资源。
 
 ## 后果
 
-该交付验证工程运行、部署和测试链路，不是可投入真实校园运营的完整业务版本。
-后续身份、学校数据隔离、内容审核与人工分享的业务决策见 [ADR 0002](0002-business-migration.md)。
+该初始骨架用于验证工程运行、部署和测试链路。当前业务边界见[全局分发权限](../guide/workspaces.md)，执行调度见 [ADR 0008](0008-mobile-candidate-dispatch.md)。

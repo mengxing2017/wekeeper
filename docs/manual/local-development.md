@@ -18,7 +18,7 @@ devbox run -- make dev-embedded
 pnpm --dir frontend dev
 ```
 
-前端 `http://localhost:5173`，代理 API 至 `127.0.0.1:8080`；后台 `/admin`、社区 `/community`、企业微信页面 `/wecom`。Vite 端口固定，占用直接报错，代理目标通过 `WEKEEPER_API_ORIGIN` 设置。
+前端 `http://localhost:5173`，代理 API 至 `127.0.0.1:8080`；后台 `/admin`、企业微信页面 `/wecom`。Vite 端口固定，占用直接报错，代理目标通过 `WEKEEPER_API_ORIGIN` 设置。
 
 嵌入式入口准备临时 PostgreSQL 17，忽略外部数据库连接配置，退出删除临时数据。每次重启数据重置，自动生成 admin 密码并在终端显示；可通过 `WEKEEPER_DEV_ADMIN_PASSWORD` 安全注入 12–128 字节密码，自定义密码不输出。不把此机制用于生产。
 

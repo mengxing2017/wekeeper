@@ -650,7 +650,7 @@ WEKEEPER_SMOKE_ORIGIN=https://keeper.example.com make smoke
 
 不使用 `curl -k` 跳过正式证书验证。
 `make smoke` 验证 API/readiness 和 SPA HTML 入口，不能替代页面 JavaScript 执行验证。
-浏览器验收应覆盖登录、创建/切换学校、审核内容、上传与读取图片、生成草稿和 `/wecom` 预览。
+浏览器验证应覆盖登录、系统管理、操作审计、上传与读取图片、生成分发草稿和 `/wecom` 预览。
 企业微信真实发送另按真机矩阵验证，普通浏览器预览不证明腾讯权限可用。
 重建 API 后再检查图片和历史内容，确认持久化有效。
 
@@ -684,33 +684,19 @@ docker compose --env-file .env -f compose.yaml exec -T web \
 | API 启动失败/readyz 503 | 数据库连接、migration 错误；不要绕过迁移启动 |
 | 页面 200 但 API 失败 | Caddy 上游、容器 DNS 与 API readiness |
 | HTTP 登录失败/没有 Cookie | 本地才启用 insecure；Origin 要匹配实际浏览器地址 |
-| HTTPS 登录返回 forbidden | PUBLIC_ORIGIN、代理是否保留 Origin、账号学校授权 |
+| HTTPS 登录返回 forbidden | PUBLIC_ORIGIN、代理是否保留 Origin、账号启用状态及系统管理员权限 |
 | `/wecom` 显示未配置 | 企业凭据、HTTPS origin、应用成员映射；不是默认发送功能 |
 | 页面加载失败 | 浏览器控制台、静态资源版本、Caddy HTML/assets 缓存；重新加载 |
-| `/api/v1/posts` 返回 404 | 该无学校作用域路径不存在，使用 `/api/v1/schools/{school}/posts` |
 
 ### 当前数据库初始化基线
 
-2026-10-31 按不保留旧数据库的方式将 14 份增量迁移合并为 4 份基线，依次执行：
+当前 `backend/migrations/` 按领域模型组织 18 份空库初始化迁移：身份、企业微信资源、群发、设备控制、手机资源、适配记录、使用授权、手机任务、执行交付、来源访问、来源路由、敏感词、广告、消息编排、业务请求、手机调度记录，以及跨领域关联/投影和默认配置。完整映射见仓库 `backend/migrations/README.md`。
 
-| 文件 | 内容 |
-| --- | --- |
-| `202610310101_core_business.sql` | 元数据、身份、学校、社区、企业微信目录、公共别名、历史业务记录 |
-| `202610310102_broadcast.sql` | 官方群发、帖子/纯文本来源、批次、目标和操作账本 |
-| `202610310103_mobile_execution.sql` | 手机凭据、可见身份、原发送账本、规则发布、多群顺序、配对与查询索引 |
-| `202610310104_automation.sql` | 多应用流程、集中维护、业务授权、v5 批次、投递与共享正文归属触发器 |
-
-协议范围和相关约束直接按最终定义创建，删除旧回填与反复重建步骤；`maintain_delivery_content_scope` 仅在 v5 依赖表就绪后定义一次。合并前后在隔离 PostgreSQL 17 比较了 1,643 条目录记录，包含列顺序、默认值、约束、索引、视图、函数、触发器、序列归属及初始数据，结果完全一致。
-
-新基线只用于空白 schema；不能在已有旧分段迁移账本上直接升级，不自动删除旧表、接受旧 checksum 或跳过缺失迁移。正常重启仍由 SQLx 账本校验并跳过已成功迁移；后续变更新增更大编号的前向迁移。
+项目尚未上线且没有历史业务数据。基线直接创建当前结构，只创建当前业务结构，不回填历史版本或执行旧数据转换。后续结构变更新增递增迁移，正常重启由 SQLx 账本校验并跳过已完成迁移。
 
 ### 开发数据库重建与残留对象错误
 
-`ExecuteMigration(... "check_wecom_directory_group" already exists ..., 202610200002)` 表示迁移创建函数时，当前 schema 已有同签名函数。只删除业务表不会删除独立函数或未绑定表列的序列；仅清空 `_sqlx_migrations` 也不等于重建数据库。当前迁移使用 `CREATE OR REPLACE FUNCTION` 写入本版本的函数定义，避免函数残留阻止建表。相关函数和序列的修复已包含在当前基线中，迁移编号由测试检查唯一性与顺序。
-
-`202610200003` 中的 `relation "legacy_public_id" already exists` 同属残留对象问题：它是未归属表列的独立序列。迁移现在复用已有序列并保留计数，再用 `OWNED BY legacy_aliases.public_id` 绑定所属列；以后删除该表会一并删除序列。
-
-本轮不提供旧分段迁移、旧 checksum 或重复编号账本的自动转换。若当前开发库已手工删表、清迁移账本，或更新后出现 checksum 不一致，应重建整个业务 schema，再由新 API 初始化。不要继续逐个删除报错对象，也不要只删迁移记录。
+新基线只支持空白 schema，不转换旧迁移账本、旧 checksum 或手工删表后的残留对象。只删除业务表会留下函数和独立序列；只清空 `_sqlx_migrations` 也不等于重建数据库。若开发库来自旧基线，或出现对象已存在、缺失迁移、checksum 不一致，应完整重建专用数据库/schema，再启动 API 初始化。
 
 以下命令**会删除 Compose 专用 PostgreSQL 中 `public` schema 的全部数据、表、函数、迁移记录和相关依赖**，仅用于允许丢弃全部数据的开发环境。外部数据库、共享 schema 或需要保留数据的环境不使用这些命令。先重新构建/拉取修复后的 API 镜像，再执行：
 

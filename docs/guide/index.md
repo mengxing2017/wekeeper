@@ -11,4 +11,4 @@ WeKeeper 接收下游消息，并提供企业微信分发和移动端分发；�
 | 手机发送 | [手机任务](operator/mobile-execution-tasks.md)、[手机目标群](operator/mobile-targets.md) |
 | 系统维护 | [系统上线清单](platform-admin/index.md) |
 
-论坛及学校、论坛成员与账号管理由独立 linjian 提供。两类分发的账号授权、目标群和发送确认由 wekeeper 自行维护。完整范围见[业务域](business-domains.md)。
+两类分发的账号授权、目标群和发送确认由 wekeeper 自行维护。完整范围见[业务域](business-domains.md)。

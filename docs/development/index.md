@@ -50,7 +50,7 @@ devbox run -- make check-backend
 ## 按开发任务查阅
 
 - [Rust 后端与设备 WebSocket](backend.md)
-- [协议、身份与学校授权](contracts-and-auth.md)
+- [协议、身份与全局管理员权限](contracts-and-auth.md)
 - [测试与验收](testing.md)
 - [文档写作与发布](docs-publishing.md)
 
