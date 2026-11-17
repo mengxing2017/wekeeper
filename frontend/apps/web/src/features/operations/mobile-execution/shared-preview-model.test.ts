@@ -10,7 +10,7 @@ it('业务资源变化要求重新预览，手机状态和配置不影响平台�
  const snapshot={binding_id:'binding',search_text:'群名',plan_selectable:true}
  const preview={plan:{items:[{readiness:[snapshot]}]}} as unknown as SharedPreview
  const overview=(row:unknown)=>({readiness:[row]}) as Parameters<typeof previewResourcesChanged>[1]
- expect(previewResourcesChanged(preview,overview({...snapshot,runtime_state:'screen_off',configuration_id:'new'}))).toBe(false)
+ expect(previewResourcesChanged(preview,overview({...snapshot,configuration_id:'new'}))).toBe(false)
  expect(previewResourcesChanged(preview,overview({...snapshot,search_text:'新群名'}))).toBe(true)
  expect(previewResourcesChanged(preview,overview({...snapshot,plan_selectable:false}))).toBe(true)
  expect(isUsageBlocker('business_scope_paused')).toBe(true)
