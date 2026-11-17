@@ -327,7 +327,6 @@ async fn directory_sync_binding_and_identity_boundaries() {
         .session(bound, "browser", true)
         .await
         .unwrap();
-    let _school = Uuid::now_v7();
     svc.enqueue(&admin).await.unwrap();
     let old_job = svc.store.claim(1).await.unwrap().unwrap();
     let mut rotated = svc.clone();

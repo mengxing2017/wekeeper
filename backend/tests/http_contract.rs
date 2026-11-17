@@ -312,7 +312,7 @@ async fn private_database_details_are_not_serialized() {
 async fn writes_reject_legacy_payloads_wrong_types_and_reserved_attributes() {
     for body in [
         serde_json::json!({"username":"admin","password":"secret"}),
-        serde_json::json!({"data":{"type":"schools","attributes":{"username":"admin","password":"secret"}}}),
+        serde_json::json!({"data":{"type":"groups","attributes":{"username":"admin","password":"secret"}}}),
         serde_json::json!({"data":{"type":"sessions","attributes":{"id":"forbidden","username":"admin","password":"secret"}}}),
         serde_json::json!({"data":[]}),
         serde_json::json!({"data":null}),
@@ -365,7 +365,7 @@ async fn collections_commands_and_pagination_have_one_wire_shape() {
         json!({"data":null})
     );
     assert_eq!(
-        document(http::jsonapi::resource("posts", Vec::<Value>::new())).await,
+        document(http::jsonapi::resource("groups", Vec::<Value>::new())).await,
         json!({"data":[]})
     );
     let page = Page {
@@ -374,25 +374,25 @@ async fn collections_commands_and_pagination_have_one_wire_shape() {
         ..Default::default()
     };
     let value = document(http::jsonapi::collection(
-        "posts",
-        vec![json!({"id":"a","title":"A"}), json!({"id":"b"})],
+        "groups",
+        vec![json!({"id":"a","name":"A"}), json!({"id":"b"})],
         &page,
     ))
     .await;
     assert_eq!(
         value,
-        json!({"data":[{"type":"posts","id":"a","attributes":{"title":"A"}}],"meta":{"page":{"number":2,"size":1,"has_more":true}}})
+        json!({"data":[{"type":"groups","id":"a","attributes":{"name":"A"}}],"meta":{"page":{"number":2,"size":1,"has_more":true}}})
     );
     let value = document(http::jsonapi::collection(
-        "posts",
+        "groups",
         vec![json!({"id":"a"})],
         &page,
     ))
     .await;
     assert_eq!(value["meta"]["page"]["has_more"], false);
-    let value = document(http::jsonapi::collection("posts", vec![], &page)).await;
+    let value = document(http::jsonapi::collection("groups", vec![], &page)).await;
     assert_eq!(value["meta"]["page"]["has_more"], false);
-    let response = http::jsonapi::resource("posts", json!({"title":"missing id"})).into_response();
+    let response = http::jsonapi::resource("groups", json!({"name":"missing id"})).into_response();
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }
 
@@ -402,7 +402,7 @@ async fn pagination_rejects_old_names_and_invalid_bounds() {
     use wekeeper_api::business::{Page, Result};
     async fn page(Query(page): Query<Page>) -> Result<http::jsonapi::ApiResponse> {
         page.bounds()?;
-        Ok(http::jsonapi::collection("posts", vec![], &page))
+        Ok(http::jsonapi::collection("groups", vec![], &page))
     }
     let router = axum::Router::new()
         .route("/api/page", get(page))
@@ -570,37 +570,35 @@ async fn revision_conflicts_explain_refresh_without_task_review_instructions() {
 }
 
 #[tokio::test]
-async fn binding_errors_identify_the_actual_missing_requirement() {
+async fn global_resource_errors_explain_current_authorization_and_binding_requirements() {
     use axum::response::IntoResponse;
     use wekeeper_api::business::Error;
-    for (code, status, message) in [
+    for (error, code, status, message) in [
         (
-            "binding_platform_permission_required",
+            Error::Forbidden,
+            "forbidden",
             StatusCode::FORBIDDEN,
-            "平台管理员权限",
+            "没有执行此操作的权限",
         ),
         (
-            "binding_school_authorization_required",
+            Error::Policy("shared_binding_missing"),
+            "shared_binding_missing",
             StatusCode::CONFLICT,
-            "目标群与账号授权",
+            "目标群没有有效手机绑定，请系统管理员配置或恢复绑定",
         ),
         (
-            "binding_account_disabled",
+            Error::Policy("shared_delegation_changed"),
+            "shared_delegation_changed",
             StatusCode::CONFLICT,
-            "发送账号已停用",
+            "托管范围或设备配对身份已变化，请在手机重新核对并明确同意",
         ),
     ] {
-        let response = Error::Policy(code).into_response();
+        let response = error.into_response();
         assert_eq!(response.status(), status);
         let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let body: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["errors"][0]["code"], code);
-        assert!(
-            body["errors"][0]["detail"]
-                .as_str()
-                .unwrap()
-                .contains(message)
-        );
+        assert_eq!(body["errors"][0]["detail"], message);
     }
 }
 
@@ -995,29 +993,6 @@ fn remote_hosting_pause_commands_are_rejected_by_the_wire_contract() {
         serde_json::to_value(status).unwrap(),
         json!({"kind": "request_status"})
     );
-}
-
-#[tokio::test]
-async fn forum_material_and_template_routes_are_retired() {
-    for (method, path) in [
-        ("GET", "/api/v1/wecom-distribution/distribution-materials"),
-        ("GET", "/api/v1/wecom-distribution/templates"),
-        ("GET", "/api/legacy/media/token"),
-        ("POST", "/api/v1/wecom-distribution/template-previews"),
-        ("POST", "/api/v1/wecom-distribution/template-publications"),
-    ] {
-        let response = app()
-            .oneshot(
-                Request::builder()
-                    .method(method)
-                    .uri(path)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method} {path}");
-    }
 }
 
 #[tokio::test]

@@ -1,4 +1,4 @@
-//! Transactional directory projection for routing. Never uses forum or school data.
+//! Transactional projection of global directory resources for routing.
 use crate::business::{Error, Result};
 use serde_json::{Value, json};
 use sqlx::{Postgres, Row, Transaction};

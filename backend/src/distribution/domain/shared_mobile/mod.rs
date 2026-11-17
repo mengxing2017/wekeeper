@@ -126,7 +126,7 @@ pub use flow::*;
 mod shared_binding_tests {
     use super::*;
     #[test]
-    fn binding_wire_rejects_retired_names_and_inferred_school_authority() {
+    fn binding_wire_rejects_retired_authorization_and_search_fields() {
         let value =
             serde_json::json!({"target_id":Uuid::from_u128(1),"device_ids":[Uuid::from_u128(2)]});
         let input: SharedBindingInput = serde_json::from_value(value.clone()).unwrap();

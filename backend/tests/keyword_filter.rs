@@ -109,13 +109,14 @@ async fn global_switch_preserves_words_versions_authorization_and_frozen_decisio
     };
     let service = Service(KeywordRepository(pool.clone()));
     let initial = current(&service, &actor).await;
-    // Migration creates a new disabled version without rewriting old immutable versions.
-    let migrated: bool = sqlx::query_scalar("SELECT filter_enabled FROM keyword_rule_versions WHERE reason='引入敏感词拦截总开关，默认关闭' AND scope_id='global'")
-        .fetch_one(&pool).await.unwrap();
-    assert!(!migrated);
-    let old_enabled: bool = sqlx::query_scalar("SELECT bool_and(filter_enabled) FROM keyword_rule_versions WHERE scope_id='global' AND revision < (SELECT revision FROM keyword_rule_versions WHERE scope_id='global' AND reason='引入敏感词拦截总开关，默认关闭')")
-        .fetch_one(&pool).await.unwrap();
-    assert!(old_enabled);
+    // Empty installations start with one disabled version, without fabricated upgrade history.
+    let initial_enabled: bool = sqlx::query_scalar(
+        "SELECT filter_enabled FROM keyword_rule_versions WHERE scope_id='global' AND revision=0",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(!initial_enabled);
     let revision = initial["revision"].as_i64().unwrap();
     service
         .execute(&actor, publication(revision, false))
@@ -233,62 +234,4 @@ async fn global_switch_preserves_words_versions_authorization_and_frozen_decisio
                 .is_err()
         );
     }
-}
-
-#[tokio::test]
-#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn switch_migration_preserves_existing_word_states_and_historical_dispatches() {
-    let pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(
-            &std::env::var("WEKEEPER_TEST_DATABASE_URL")
-                .expect("explicit isolated test database required"),
-        )
-        .await
-        .unwrap();
-    let mut tx = pool.begin().await.unwrap();
-    // Transaction-local pre-switch tables isolate the upgrade fixture from other tests.
-    sqlx::raw_sql("CREATE TEMP TABLE keyword_rule_versions(id uuid PRIMARY KEY,scope_id text NOT NULL,revision bigint NOT NULL,entries jsonb NOT NULL,reason text NOT NULL) ON COMMIT DROP;
-        CREATE TEMP TABLE keyword_scope_heads(id text PRIMARY KEY,revision bigint NOT NULL,version_id uuid NOT NULL) ON COMMIT DROP;
-        CREATE TEMP TABLE orchestration_dispatches(message_id uuid PRIMARY KEY,state text NOT NULL) ON COMMIT DROP;
-        INSERT INTO keyword_rule_versions VALUES('00000000-0000-0000-0000-000000000001','global',7,'[{\"word\":\"诈骗\",\"enabled\":true},{\"word\":\"欺诈\",\"enabled\":false}]','old');
-        INSERT INTO keyword_scope_heads VALUES('global',7,'00000000-0000-0000-0000-000000000001');
-        INSERT INTO orchestration_dispatches VALUES('00000000-0000-0000-0000-000000000002','ready');")
-        .execute(&mut *tx).await.unwrap();
-    sqlx::raw_sql(include_str!(
-        "../migrations/202611160189_keyword_filter_global_switch.sql"
-    ))
-    .execute(&mut *tx)
-    .await
-    .unwrap();
-    let row = sqlx::query("SELECT h.revision,v.filter_enabled,v.entries FROM keyword_scope_heads h JOIN keyword_rule_versions v ON v.id=h.version_id")
-        .fetch_one(&mut *tx).await.unwrap();
-    assert_eq!(row.get::<i64, _>("revision"), 8);
-    assert!(!row.get::<bool, _>("filter_enabled"));
-    let old =
-        sqlx::query("SELECT entries,filter_enabled FROM keyword_rule_versions WHERE revision=7")
-            .fetch_one(&mut *tx)
-            .await
-            .unwrap();
-    assert!(old.get::<bool, _>("filter_enabled"));
-    assert_eq!(
-        row.get::<Value, _>("entries"),
-        old.get::<Value, _>("entries")
-    );
-    let historical: Value =
-        sqlx::query_scalar("SELECT to_jsonb(d) FROM orchestration_dispatches d")
-            .fetch_one(&mut *tx)
-            .await
-            .unwrap();
-    assert_eq!(historical["state"], "ready");
-    assert!(historical["keyword_decision"].is_null());
-    sqlx::query("INSERT INTO keyword_rule_versions(id,scope_id,revision,entries,reason) VALUES($1,'global',9,'[]','future')")
-        .bind(Uuid::new_v4()).execute(&mut *tx).await.unwrap();
-    let default_enabled: bool =
-        sqlx::query_scalar("SELECT filter_enabled FROM keyword_rule_versions WHERE revision=9")
-            .fetch_one(&mut *tx)
-            .await
-            .unwrap();
-    assert!(!default_enabled);
-    tx.rollback().await.unwrap();
 }

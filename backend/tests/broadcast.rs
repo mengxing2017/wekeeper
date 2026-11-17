@@ -57,7 +57,7 @@ impl Client for Fake {
         Ok(vec![])
     }
 }
-async fn setup() -> (PgPool, Actor, Uuid, DraftInput, Fake) {
+async fn setup() -> (PgPool, Actor, DraftInput, Fake) {
     let url = std::env::var("WEKEEPER_TEST_DATABASE_URL")
         .expect("explicit isolated test database required");
     let base = PgPool::connect(&url).await.unwrap();
@@ -80,9 +80,8 @@ async fn setup() -> (PgPool, Actor, Uuid, DraftInput, Fake) {
         .unwrap();
     database::migrate(&pool).await.unwrap();
     let actor = Uuid::new_v4();
-    let s = Uuid::new_v4();
     let member = Uuid::new_v4();
-    let corp = format!("corp-{s}");
+    let corp = format!("corp-{}", Uuid::new_v4());
     sqlx::query("INSERT INTO wecom_directory_state(singleton,corp_id,credential_scope) VALUES(true,$1,'scope')").bind(&corp).execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO wecom_members(id,userid,name,status,verification,checked_at) VALUES($1,'owner','Owner',1,'verified',now())").bind(member).execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO accounts(id,username,display_name,wecom_member_id,platform_admin) VALUES($1,'admin','Admin',$2,true)").bind(actor).bind(member).execute(&pool).await.unwrap();
@@ -109,7 +108,6 @@ async fn setup() -> (PgPool, Actor, Uuid, DraftInput, Fake) {
     (
         pool,
         a,
-        s,
         input,
         Fake {
             calls: Arc::new(AtomicUsize::new(0)),
@@ -131,8 +129,8 @@ fn action(revision: Option<i64>) -> Action {
 }
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn broadcast_once_partial_results_and_school_boundaries() {
-    let (pool, a, s, input, fake) = setup().await;
+async fn broadcast_once_partial_results_and_administrator_boundaries() {
+    let (pool, a, input, fake) = setup().await;
     let service = Service {
         store: Repository(pool.clone()),
         client: fake.clone(),
@@ -160,7 +158,7 @@ async fn broadcast_once_partial_results_and_school_boundaries() {
                 t.id,
                 "confirm",
                 "key",
-                with_preview(&service, &a, s, t.id, action(Some(999))).await
+                with_preview(&service, &a, t.id, action(Some(999))).await
             )
             .await
             .is_err()
@@ -186,7 +184,7 @@ async fn broadcast_once_partial_results_and_school_boundaries() {
                 duplicate.id,
                 "confirm",
                 "duplicate",
-                with_preview(&service, &a, s, duplicate.id, action(Some(1))).await
+                with_preview(&service, &a, duplicate.id, action(Some(1))).await
             )
             .await
             .is_err()
@@ -223,7 +221,7 @@ async fn broadcast_once_partial_results_and_school_boundaries() {
             retry.id,
             "confirm",
             "retry",
-            with_preview(&service, &a, s, retry.id, action(Some(1))).await,
+            with_preview(&service, &a, retry.id, action(Some(1))).await,
         )
         .await
         .unwrap();
@@ -235,7 +233,7 @@ async fn broadcast_once_partial_results_and_school_boundaries() {
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn lost_response_and_crash_never_requeue_a_create() {
-    let (pool, a, s, input, mut fake) = setup().await;
+    let (pool, a, input, mut fake) = setup().await;
     fake.unknown = true;
     let service = Service {
         store: Repository(pool.clone()),
@@ -249,7 +247,7 @@ async fn lost_response_and_crash_never_requeue_a_create() {
             t.id,
             "confirm",
             "confirm",
-            with_preview(&service, &a, s, t.id, action(Some(1))).await,
+            with_preview(&service, &a, t.id, action(Some(1))).await,
         )
         .await
         .unwrap();
@@ -265,7 +263,7 @@ async fn lost_response_and_crash_never_requeue_a_create() {
                 duplicate.id,
                 "confirm",
                 "dup",
-                with_preview(&service, &a, s, duplicate.id, action(Some(1))).await
+                with_preview(&service, &a, duplicate.id, action(Some(1))).await
             )
             .await
             .is_err()
@@ -292,7 +290,7 @@ async fn lost_response_and_crash_never_requeue_a_create() {
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn drafts_are_revisioned_and_preflight_rechecks_content() {
-    let (pool, a, s, input, fake) = setup().await;
+    let (pool, a, input, fake) = setup().await;
     let service = Service {
         store: Repository(pool.clone()),
         client: fake.clone(),
@@ -311,7 +309,7 @@ async fn drafts_are_revisioned_and_preflight_rechecks_content() {
                 t.id,
                 "confirm",
                 "c",
-                with_preview(&service, &a, s, t.id, action(Some(1))).await
+                with_preview(&service, &a, t.id, action(Some(1))).await
             )
             .await
             .is_err()
@@ -330,7 +328,7 @@ async fn drafts_are_revisioned_and_preflight_rechecks_content() {
                 fresh.id,
                 "confirm",
                 "c",
-                with_preview(&service, &a, s, fresh.id, action(Some(1))).await
+                with_preview(&service, &a, fresh.id, action(Some(1))).await
             )
             .await
             .is_err()
@@ -355,7 +353,7 @@ async fn drafts_are_revisioned_and_preflight_rechecks_content() {
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn stopping_during_creation_covers_late_created_task() {
-    let (pool, a, s, input, fake) = setup().await;
+    let (pool, a, input, fake) = setup().await;
     let service = Service {
         store: Repository(pool),
         client: fake.clone(),
@@ -368,7 +366,7 @@ async fn stopping_during_creation_covers_late_created_task() {
             t.id,
             "confirm",
             "confirm",
-            with_preview(&service, &a, s, t.id, action(Some(1))).await,
+            with_preview(&service, &a, t.id, action(Some(1))).await,
         )
         .await
         .unwrap();
@@ -405,7 +403,7 @@ async fn stopping_during_creation_covers_late_created_task() {
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn repeat_startup_preserves_current_draft_and_input() {
-    let (pool, a, _s, input, fake) = setup().await;
+    let (pool, a, input, fake) = setup().await;
     let service = Service {
         store: Repository(pool.clone()),
         client: fake.clone(),
@@ -429,7 +427,7 @@ async fn http_scope_csrf_retirement_and_real_task_contract() {
         http::Request,
     };
     use tower::ServiceExt;
-    let (pool, a, s, input, fake) = setup().await;
+    let (pool, a, input, fake) = setup().await;
     let service = Service {
         store: Repository(pool.clone()),
         client: fake,
@@ -437,7 +435,7 @@ async fn http_scope_csrf_retirement_and_real_task_contract() {
     };
     let t = service.save(&a, None, input).await.unwrap();
     let mut application = wekeeper_api::bootstrap::build_application(pool.clone());
-    application.options.public_origin = "https://school.test".into();
+    application.options.public_origin = "https://distribution.test".into();
     application.options.insecure_local_auth = true;
     let (token, actor) = application
         .identity
@@ -452,7 +450,7 @@ async fn http_scope_csrf_retirement_and_real_task_contract() {
             .method(method)
             .uri(path)
             .header("cookie", format!("wekeeper_session={token}"))
-            .header("origin", "https://school.test")
+            .header("origin", "https://distribution.test")
             .header("content-type", "application/vnd.api+json")
             .header("idempotency-key", "http-confirm");
         if csrf {
@@ -520,19 +518,6 @@ async fn http_scope_csrf_retirement_and_real_task_contract() {
     );
     assert_eq!(
         app.clone()
-            .oneshot(request(
-                "POST",
-                &format!("/api/v1/schools/{s}/delivery-drafts"),
-                true,
-                json!({"data":{"type":"delivery-drafts","attributes":{}}})
-            ))
-            .await
-            .unwrap()
-            .status(),
-        404
-    );
-    assert_eq!(
-        app.clone()
             .oneshot(request("GET", &path, false, Value::Null))
             .await
             .unwrap()
@@ -545,7 +530,7 @@ async fn http_scope_csrf_retirement_and_real_task_contract() {
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn reminders_are_limited_and_stop_unknown_requires_evidence() {
-    let (pool, a, s, input, fake) = setup().await;
+    let (pool, a, input, fake) = setup().await;
     let service = Service {
         store: Repository(pool),
         client: fake,
@@ -558,7 +543,7 @@ async fn reminders_are_limited_and_stop_unknown_requires_evidence() {
             t.id,
             "confirm",
             "confirm",
-            with_preview(&service, &a, s, t.id, action(Some(1))).await,
+            with_preview(&service, &a, t.id, action(Some(1))).await,
         )
         .await
         .unwrap();
@@ -643,8 +628,8 @@ async fn reminders_are_limited_and_stop_unknown_requires_evidence() {
 
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn direct_text_without_posts_admin_confirmation_and_revocation() {
-    let (pool, mut a, s, mut input, fake) = setup().await;
+async fn direct_text_requires_current_administrator_confirmation() {
+    let (pool, mut a, mut input, fake) = setup().await;
     let service = Service {
         store: Repository(pool.clone()),
         client: fake.clone(),
@@ -654,7 +639,7 @@ async fn direct_text_without_posts_admin_confirmation_and_revocation() {
     input.text_content = Some("直接通知\r\n第二行😀".into());
     let task = service.save(&a, None, input.clone()).await.unwrap();
     assert_eq!(task.content, "直接通知\n第二行😀");
-    let confirmation = with_preview(&service, &a, s, task.id, action(Some(task.revision))).await;
+    let confirmation = with_preview(&service, &a, task.id, action(Some(task.revision))).await;
     sqlx::query("UPDATE accounts SET platform_admin=false WHERE id=$1")
         .bind(a.id)
         .execute(&pool)
@@ -701,14 +686,14 @@ async fn direct_text_without_posts_admin_confirmation_and_revocation() {
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn direct_text_duplicate_guard() {
-    let (pool, a, s, posts, fake) = setup().await;
+    let (pool, a, input, fake) = setup().await;
     let service = Service {
         store: Repository(pool.clone()),
         client: fake,
         management_available: true,
     };
-    let first = service.save(&a, None, posts.clone()).await.unwrap();
-    let mut text = posts.clone();
+    let first = service.save(&a, None, input.clone()).await.unwrap();
+    let mut text = input.clone();
     text.content_source = ContentSource::Text;
     text.text_content = Some(first.content.clone());
     text.revision = Some(first.revision);
@@ -724,12 +709,12 @@ async fn direct_text_duplicate_guard() {
                 changed.id,
                 "confirm",
                 "stale",
-                with_preview(&service, &a, s, changed.id, action(Some(first.revision))).await
+                with_preview(&service, &a, changed.id, action(Some(first.revision))).await
             )
             .await
             .is_err()
     );
-    let mut back = posts.clone();
+    let mut back = input.clone();
     back.revision = Some(changed.revision);
     let restored = service.save(&a, Some(first.id), back).await.unwrap();
     assert_eq!(restored.content_source, ContentSource::Text);
@@ -738,15 +723,8 @@ async fn direct_text_duplicate_guard() {
             &a,
             restored.id,
             "confirm",
-            "posts",
-            with_preview(
-                &service,
-                &a,
-                s,
-                restored.id,
-                action(Some(restored.revision)),
-            )
-            .await,
+            "original",
+            with_preview(&service, &a, restored.id, action(Some(restored.revision))).await,
         )
         .await
         .unwrap();
@@ -759,14 +737,7 @@ async fn direct_text_duplicate_guard() {
                 duplicate.id,
                 "confirm",
                 "text",
-                with_preview(
-                    &service,
-                    &a,
-                    s,
-                    duplicate.id,
-                    action(Some(duplicate.revision))
-                )
-                .await
+                with_preview(&service, &a, duplicate.id, action(Some(duplicate.revision))).await
             )
             .await
             .is_err()
@@ -776,7 +747,7 @@ async fn direct_text_duplicate_guard() {
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn official_broadcast_ignores_mobile_switch_and_mobile_transaction_lock() {
-    let (pool, a, s, input, fake) = setup().await;
+    let (pool, a, input, fake) = setup().await;
     let service = Service {
         store: Repository(pool.clone()),
         client: fake.clone(),
@@ -801,7 +772,7 @@ async fn official_broadcast_ignores_mobile_switch_and_mobile_transaction_lock() 
             task.id,
             "confirm",
             "isolated",
-            with_preview(&service, &a, s, task.id, action(Some(task.revision))).await,
+            with_preview(&service, &a, task.id, action(Some(task.revision))).await,
         )
         .await
         .unwrap();
@@ -827,7 +798,6 @@ async fn official_broadcast_ignores_mobile_switch_and_mobile_transaction_lock() 
 async fn with_preview(
     service: &Service<Repository, Fake>,
     actor: &Actor,
-    _school: Uuid,
     id: Uuid,
     mut input: Action,
 ) -> Action {
@@ -840,14 +810,14 @@ async fn with_preview(
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn confirmed_text_messages_keep_immutable_snapshots() {
-    let (pool, a, s, input, fake) = setup().await;
+    let (pool, a, input, fake) = setup().await;
     let service = Service {
         store: Repository(pool.clone()),
         client: fake.clone(),
         management_available: true,
     };
     let task = service.save(&a, None, input.clone()).await.unwrap();
-    let body = with_preview(&service, &a, s, task.id, action(Some(1))).await;
+    let body = with_preview(&service, &a, task.id, action(Some(1))).await;
     service
         .action(&a, task.id, "confirm", "confirm", body)
         .await
@@ -877,7 +847,7 @@ async fn confirmed_text_messages_keep_immutable_snapshots() {
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn sender_qualification_is_platform_only_and_blocks_final_call() {
-    let (pool, mut a, s, input, fake) = setup().await;
+    let (pool, mut a, input, fake) = setup().await;
     let senders =
         wekeeper_api::distribution::south::adapter::postgres::senders::Repository(pool.clone());
     let sender = senders.list(&a, Page::default()).await.unwrap().remove(0);
@@ -887,7 +857,7 @@ async fn sender_qualification_is_platform_only_and_blocks_final_call() {
         management_available: true,
     };
     let task = service.save(&a, None, input).await.unwrap();
-    let body = with_preview(&service, &a, s, task.id, action(Some(1))).await;
+    let body = with_preview(&service, &a, task.id, action(Some(1))).await;
     service
         .action(&a, task.id, "confirm", "confirm", body)
         .await
@@ -926,7 +896,7 @@ async fn sender_qualification_is_platform_only_and_blocks_final_call() {
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn product_unavailable_draft_replays_without_sender_or_external_work() {
-    let (pool, a, _s, mut input, fake) = setup().await;
+    let (pool, a, mut input, fake) = setup().await;
     input.content_source = ContentSource::Text;
     input.text_content = Some("待开通通知".into());
     input.group_ids.clear();
@@ -978,7 +948,7 @@ async fn product_member_policy_reuses_existing_key_and_usage_ledger() {
         north::local::workflows::Service as W,
         south::adapter::postgres::workflows::Repository as R,
     };
-    let (pool, a, _s, input, fake) = setup().await;
+    let (pool, a, input, fake) = setup().await;
     let service = W(R(pool.clone()));
     let member: Uuid = sqlx::query_scalar("SELECT wecom_member_id FROM accounts WHERE id=$1")
         .bind(a.id)
@@ -1079,7 +1049,7 @@ async fn automatic_health_never_unpauses_explicit_business_control() {
         domain::workflows::{ChannelControl, ChannelHealth},
         south::{adapter::postgres::workflows::Repository, port::workflows::Store},
     };
-    let (pool, actor, _school, _, _) = setup().await;
+    let (pool, actor, _, _) = setup().await;
     let repo = Repository(pool.clone());
     let corp: String =
         sqlx::query_scalar("SELECT corp_id FROM wecom_directory_state WHERE singleton")
@@ -1143,7 +1113,7 @@ async fn automatic_health_never_unpauses_explicit_business_control() {
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn execution_evidence_preserves_creation_pending_success_and_read_backoff() {
-    let (pool, a, s, input, fake) = setup().await;
+    let (pool, a, input, fake) = setup().await;
     let service = Service {
         store: Repository(pool.clone()),
         client: fake.clone(),
@@ -1156,7 +1126,7 @@ async fn execution_evidence_preserves_creation_pending_success_and_read_backoff(
             task.id,
             "confirm",
             "confirm",
-            with_preview(&service, &a, s, task.id, action(Some(1))).await,
+            with_preview(&service, &a, task.id, action(Some(1))).await,
         )
         .await
         .unwrap();
@@ -1292,7 +1262,7 @@ async fn global_official_usage_revalidates_identity_and_confirmation_is_idempote
         north::local::workflows::Service as W,
         south::adapter::postgres::workflows::Repository as R,
     };
-    let (pool, actor, _, _, _) = setup().await;
+    let (pool, actor, _, _) = setup().await;
     let member = sqlx::query_scalar("SELECT wecom_member_id FROM accounts WHERE id=$1")
         .bind(actor.id)
         .fetch_one(&pool)
@@ -1369,7 +1339,7 @@ async fn global_official_usage_revalidates_identity_and_confirmation_is_idempote
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn sender_options_include_member_groups_without_unused_association_fields() {
     use wekeeper_api::distribution::south::port::workflows::Store as _;
-    let (pool, a, _, _, fake) = setup().await;
+    let (pool, a, _, fake) = setup().await;
     let id = Uuid::new_v4();
     sqlx::query("INSERT INTO wecom_asset_objects(id,kind,corp_id,key,data,checked_at,credential_generation,visibility,verification) VALUES($1,'groups',$2,'unbound',jsonb_build_object('owner','owner','name','未关联群'),now(),1,'visible','verified')")
         .bind(id).bind(fake.corp).execute(&pool).await.unwrap();
@@ -1414,7 +1384,7 @@ impl Client for SlowRead {
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn blocked_official_read_does_not_delay_newly_confirmed_create() {
-    let (pool, a, _s, mut input, fake) = setup().await;
+    let (pool, a, mut input, fake) = setup().await;
     let client = SlowRead {
         inner: fake.clone(),
         started: Arc::new(tokio::sync::Notify::new()),

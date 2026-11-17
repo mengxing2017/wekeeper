@@ -262,15 +262,14 @@ pub fn action_hash(task: Uuid, input: &Action) -> String {
 mod tests {
     use super::*;
     #[test]
-    fn retired_draft_reference_and_implicit_source_are_rejected() {
+    fn implicit_source_is_rejected() {
         let id = Uuid::new_v4();
         assert!(
             serde_json::from_value::<DraftInput>(
-                serde_json::json!({"template_version_id":id,"post_ids":[id],"group_ids":[id]})
+                serde_json::json!({"text_content":"notice","group_ids":[id]})
             )
             .is_err()
         );
-        assert!(serde_json::from_value::<DraftInput>(serde_json::json!({"content_source":"text","text_content":"notice","group_ids":[id],"source_draft_id":id})).is_err());
     }
     #[test]
     fn direct_text_validation_and_explicit_source() {

@@ -113,7 +113,7 @@ async fn count(pool: &sqlx::PgPool, kind: &str, verified: bool) -> i64 {
 }
 #[tokio::test]
 #[ignore = "requires isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn asset_snapshots_leases_scope_and_school_boundaries() {
+async fn asset_snapshots_leases_and_global_administrator_boundaries() {
     let url = std::env::var("WEKEEPER_TEST_DATABASE_URL").expect("isolated test database required");
     let admin_pool = sqlx::PgPool::connect(&url).await.unwrap();
     let schema = format!("assets_{}", Uuid::new_v4().simple());
@@ -302,7 +302,7 @@ async fn asset_snapshots_leases_scope_and_school_boundaries() {
         directory_group_id: gid,
         expected_generation: 1,
         expected_checked_at: at,
-        name: Some("学校显示名".into()),
+        name: Some("目标群显示名".into()),
     };
     assert!(
         svc.store
@@ -310,7 +310,7 @@ async fn asset_snapshots_leases_scope_and_school_boundaries() {
             .await
             .is_err()
     );
-    // One group, one school: concurrent administrators cannot overwrite another mapping.
+    // Concurrent administrators cannot overwrite an existing group mapping.
     let official = group("CHAT");
     let (left, right) = tokio::join!(
         svc.store.bind_group(&admin, &binding, &official),
@@ -346,7 +346,7 @@ async fn asset_snapshots_leases_scope_and_school_boundaries() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(name, "学校显示名");
+    assert_eq!(name, "目标群显示名");
     assert!(
         svc.store
             .bind_group(&admin, &binding, &newer)
@@ -461,7 +461,7 @@ async fn asset_snapshots_leases_scope_and_school_boundaries() {
         .await
         .unwrap();
     assert_eq!(current[0]["owned_group_count"], 0);
-    // Rotation cancels the group job in the same transaction and retains school mapping.
+    // Rotation cancels the group job in the same transaction and retains the group mapping.
     svc.store
         .enqueue(Some(admin.id), 1, "groups", 0)
         .await

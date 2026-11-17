@@ -228,18 +228,18 @@ async fn business_usage_is_atomic_scoped_idempotent_and_survives_delivery_change
         1
     );
     let id: Uuid = serde_json::from_value(approved["items"][0]["id"].clone()).unwrap();
-    let school_actor_id = Uuid::new_v4();
+    let non_admin_id = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO accounts(id,username,display_name) VALUES($1,'school-only','School admin')",
+        "INSERT INTO accounts(id,username,display_name) VALUES($1,'non-admin','Ordinary account')",
     )
-    .bind(school_actor_id)
+    .bind(non_admin_id)
     .execute(&f.pool)
     .await
     .unwrap();
-    let school_actor:Actor=serde_json::from_value(json!({"id":school_actor_id,"username":"school-only","display_name":"School admin","platform_admin":false,"wecom_authenticated":false})).unwrap();
-    assert!(r.usage_read(&school_actor, None, false).await.is_err());
+    let non_admin:Actor=serde_json::from_value(json!({"id":non_admin_id,"username":"non-admin","display_name":"Ordinary account","platform_admin":false,"wecom_authenticated":false})).unwrap();
+    assert!(r.usage_read(&non_admin, None, false).await.is_err());
     assert!(
-        r.usage_read(&school_actor, Some(Uuid::new_v4()), false)
+        r.usage_read(&non_admin, Some(Uuid::new_v4()), false)
             .await
             .is_err()
     );
@@ -247,7 +247,7 @@ async fn business_usage_is_atomic_scoped_idempotent_and_survives_delivery_change
     let p = r
         .usage_write(
             &f.actor,
-            "school-preview",
+            "repeat-preview",
             UsageCommand::Preview(input.clone()),
         )
         .await
@@ -255,7 +255,7 @@ async fn business_usage_is_atomic_scoped_idempotent_and_survives_delivery_change
     let reused = r
         .usage_write(
             &f.actor,
-            "school-confirm",
+            "repeat-confirm",
             UsageCommand::Confirm(UsageConfirm {
                 preview_id: serde_json::from_value(p["id"].clone()).unwrap(),
                 digest: p["digest"].as_str().unwrap().into(),

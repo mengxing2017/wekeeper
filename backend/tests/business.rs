@@ -20,11 +20,6 @@ fn write_document(path: &str, mut body: Value) -> Value {
         "accounts" | "profile" => "accounts",
         "platform" => segments[3],
         "wecom-distribution" => segments[3],
-        "schools" => match segments.get(4).copied().unwrap_or("schools") {
-            "members" => "accounts",
-            "posts" if segments.get(6) == Some(&"comments") => "comments",
-            kind => kind,
-        },
         _ => panic!("unmapped write route: {path}"),
     };
     let id = body.as_object_mut().unwrap().remove("id");
@@ -108,7 +103,7 @@ async fn complete_business_flow_and_security_boundaries() {
     database::migrate(&pool).await.unwrap();
     let mut a = bootstrap::build_application(pool.clone());
     a.integrations.corp = "corp-test".into();
-    let return_path = format!("/wecom?school={}", Uuid::new_v4());
+    let return_path = "/wecom".to_owned();
     let oauth_state = a
         .integrations
         .repository
@@ -170,12 +165,6 @@ async fn complete_business_flow_and_security_boundaries() {
         .await
         .unwrap();
     let app = http::app_router(a.clone());
-    assert_eq!(
-        call(&app, "GET", "/api/v1/schools", "", "", Value::Null)
-            .await
-            .0,
-        404
-    );
     let memberid = a
         .identity
         .bootstrap(
@@ -255,10 +244,23 @@ async fn complete_business_flow_and_security_boundaries() {
     )
     .await;
     let events = audit.as_array().unwrap();
-    assert!(events.iter().all(|event| event.get("school_id").is_none()));
+    let audit_fields = [
+        "id",
+        "actor_id",
+        "action",
+        "object_id",
+        "detail",
+        "created_at",
+        "request_id",
+    ];
+    assert!(events.iter().all(|event| {
+        let object = event.as_object().unwrap();
+        object.len() == audit_fields.len()
+            && audit_fields.iter().all(|field| object.contains_key(*field))
+    }));
     assert!(events.iter().any(|event| event["action"] == "group.save"));
 
-    // A revoked member cannot restore access by rebinding the same school.
+    // An unauthorized account cannot gain access through an unsupported binding endpoint.
     assert_eq!(
         call(
             &app,

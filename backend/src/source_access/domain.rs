@@ -438,15 +438,13 @@ mod boundary_tests {
         }
     }
     #[test]
-    fn strict_envelope_forbids_execution_and_school_fields() {
+    fn strict_envelope_rejects_untrusted_routing_and_execution_fields() {
         let id = Uuid::nil();
         let attributes = json!({"event_id":id,"schema_version":2,"route_id":"route-1","event_type":"content.upsert","occurred_at":"2026-11-08T00:00:00Z","content":"正文"});
         let doc = json!({"data":{"type":"source-events","id":id,"attributes":attributes}});
         let valid: Document<Event> = serde_json::from_value(doc.clone()).unwrap();
         valid.data.attributes.validate().unwrap();
         for field in [
-            "school_id",
-            "school_name",
             "external_organization_id",
             "channel",
             "group_ids",

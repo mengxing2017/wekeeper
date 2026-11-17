@@ -845,3 +845,28 @@ mod task_status_contract_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod delegation_contract_tests {
+    use super::*;
+
+    #[test]
+    fn published_delegation_matches_current_scope_and_digest() {
+        let fixture: Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../api-contract/fixtures/shared-runtime-negotiation.json"
+        )))
+        .unwrap();
+        let scope = &fixture["delegation"]["scope"];
+        let expected = delegation_scope(
+            serde_json::from_value(scope["platform_id"].clone()).unwrap(),
+            serde_json::from_value(scope["device_id"].clone()).unwrap(),
+            scope["credential_generation"].as_i64().unwrap(),
+        );
+        assert_eq!(*scope, expected);
+        assert_eq!(
+            fixture["delegation"]["scope_digest"],
+            digest(scope).unwrap()
+        );
+    }
+}

@@ -221,22 +221,6 @@ async fn server_only_oauth_directory_cache_and_share_http_gates() {
             "/api/v1/wecom/js-sdk-config?url=https%3A%2F%2Fexample.test%2Fwecom&agent=true"
                 .to_owned(),
         ),
-        (
-            "POST",
-            format!(
-                "/api/v1/schools/{}/delivery-drafts/{}/attempts",
-                uuid::Uuid::nil(),
-                uuid::Uuid::nil()
-            ),
-        ),
-        (
-            "POST",
-            format!(
-                "/api/v1/schools/{}/delivery-attempts/{}/invocation",
-                uuid::Uuid::nil(),
-                uuid::Uuid::nil()
-            ),
-        ),
     ] {
         let response = router
             .clone()
@@ -255,16 +239,10 @@ async fn server_only_oauth_directory_cache_and_share_http_gates() {
             )
             .await
             .unwrap();
-        assert_eq!(
-            response.status(),
-            if path.contains("/wecom/") { 422 } else { 404 },
-            "{path}"
-        );
+        assert_eq!(response.status(), 422, "{path}");
         let body = String::from_utf8(to_bytes(response.into_body(), 8192).await.unwrap().to_vec())
             .unwrap();
-        if path.contains("/wecom/") {
-            assert!(body.contains("逐群分享已停用"), "{path}: {body}");
-        }
+        assert!(body.contains("逐群分享已停用"), "{path}: {body}");
     }
     // The new scope never silently adopts the old directory.
     assert_eq!(

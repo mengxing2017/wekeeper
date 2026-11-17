@@ -83,37 +83,6 @@ fn orchestration_message_intake_is_independent_of_source_routing_and_delivery() 
 }
 
 #[test]
-fn distribution_has_no_dependency_on_removed_forum() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/distribution");
-    let mut files = Vec::new();
-    visit(&root, &mut files);
-    for file in files {
-        let source = fs::read_to_string(&file).unwrap();
-        assert!(
-            !source.contains("crate::community"),
-            "forum type dependency: {}",
-            file.display()
-        );
-        let normalized = source.to_lowercase();
-        for table in [
-            "posts",
-            "comments",
-            "cases",
-            "school_resources",
-            "schools",
-            "school_memberships",
-        ] {
-            for keyword in ["from", "join", "update", "into"] {
-                assert!(
-                    !normalized.contains(&format!("{keyword} {table} ")),
-                    "forum SQL in distribution: {}",
-                    file.display()
-                );
-            }
-        }
-    }
-}
-#[test]
 fn official_ui_does_not_import_mobile_account_components() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../frontend/apps/web/src/features/operations/wecom-senders");
@@ -121,7 +90,6 @@ fn official_ui_does_not_import_mobile_account_components() {
         let source = fs::read_to_string(root.join(file)).unwrap();
         for forbidden in [
             "mobile-delivery",
-            "SchoolExecutionResources",
             "DeviceAccountBinding",
             "sending_accounts",
         ] {
@@ -130,12 +98,11 @@ fn official_ui_does_not_import_mobile_account_components() {
     }
 }
 #[test]
-fn browser_materials_cannot_impersonate_builtin_source_or_confirm() {
+fn browser_drafts_cannot_supply_execution_or_authorization_fields() {
     use wekeeper_api::distribution::domain::broadcast::DraftInput;
     let group = uuid::Uuid::new_v4();
     for value in [
-        serde_json::json!({"content_source":"posts","post_ids":[group],"group_ids":[group]}),
-        serde_json::json!({"content_source":"materials","materials":[],"group_ids":[group]}),
+        serde_json::json!({"content_source":"text","text_content":"notice","group_ids":[group],"source_namespace":"builtin.source-route"}),
         serde_json::json!({"content_source":"text","text_content":"notice","group_ids":[group],"confirmed":true}),
     ] {
         assert!(serde_json::from_value::<DraftInput>(value).is_err());
