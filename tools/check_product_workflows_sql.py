@@ -108,7 +108,7 @@ END $$;
 """
 # Execute the real control-session mutations, as well as checking the projection.
 control_open=next(q for q in queries if q.startswith("INSERT INTO device_control_sessions(device_id,connection_id,transport,credential_generation)"))
-control_pulse=next(q for q in queries if q.startswith("UPDATE device_control_sessions SET last_heartbeat_at=CASE WHEN $6"))
+control_pulse=next(q for q in queries if q.startswith("UPDATE device_control_sessions SET last_heartbeat_at=CASE WHEN $4"))
 control_device="'00000000-0000-4000-8000-000000000201'"
 control_connection="'00000000-0000-4000-8000-000000000202'"
 control_epoch=f"(SELECT epoch FROM device_control_sessions WHERE device_id={control_device})"
@@ -123,9 +123,9 @@ control_confirm=next(q for q in queries if q.startswith("UPDATE device_control_s
 control_checks=control_checks.replace('__CONTROL_CONFIRM__',bound_sql(control_confirm,control_device,control_connection,control_epoch,"'00000000-0000-4000-8000-000000000204'"))
 control_checks=control_checks.replace('__CONTROL_CONFIRM_OLD__',bound_sql(control_confirm,control_device,control_connection,control_epoch,"'00000000-0000-4000-8000-000000000203'"))
 control_checks=control_checks.replace('__CONTROL_OPEN__',bound_sql(control_open,control_device,control_connection,"'wss'",'1'))
-control_checks=control_checks.replace('__CONTROL_OPEN_GENERATION__',bound_sql(control_open,control_device,control_connection,"'https'",'2'))
-control_checks=control_checks.replace('__CONTROL_PULSE__',bound_sql(control_pulse,control_device,control_connection,control_epoch,"'blocked'","'device_locked'",'true'))
-control_checks=control_checks.replace('__CONTROL_DUPLICATE_PULSE__',bound_sql(control_pulse,control_device,control_connection,control_epoch,"'blocked'","'device_locked'",'false'))
+control_checks=control_checks.replace('__CONTROL_OPEN_GENERATION__',bound_sql(control_open,control_device,control_connection,"'wss'",'2'))
+control_checks=control_checks.replace('__CONTROL_PULSE__',bound_sql(control_pulse,control_device,control_connection,control_epoch,'true'))
+control_checks=control_checks.replace('__CONTROL_DUPLICATE_PULSE__',bound_sql(control_pulse,control_device,control_connection,control_epoch,'false'))
 checks += control_checks
 checks += """
 DO $$ BEGIN
