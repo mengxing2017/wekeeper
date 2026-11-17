@@ -23,7 +23,7 @@ it('shows control presence independently of execution readiness and requests dev
 })
 
 it('invalidates a cached online badge when refreshing presence fails', async () => {
-  vi.mocked(api.controlPresence).mockResolvedValueOnce({ id: 'phone', state: 'online', transport: 'https', last_control_heartbeat_at: '2026-11-01T00:00:00Z', readiness: 'waiting', block_reason: null, desired_paused: false, desired_revision: 0, credential_expires_at: null, commands: [] })
+  vi.mocked(api.controlPresence).mockResolvedValueOnce({ id: 'phone', state: 'online', transport: 'wss', last_control_heartbeat_at: '2026-11-01T00:00:00Z', readiness: 'waiting', block_reason: null, desired_paused: false, desired_revision: 0, credential_expires_at: null, commands: [] })
     .mockRejectedValue(new Error('平台暂不可达'))
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(<QueryClientProvider client={client}><DeviceControlPanel deviceId="phone" /></QueryClientProvider>)

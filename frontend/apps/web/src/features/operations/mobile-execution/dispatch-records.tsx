@@ -19,7 +19,7 @@ const stageLabels: Record<string, string> = {
   retrying: '创建异常，等待重试',
   rejected: '任务创建失败',
   round_wait: '候选耗尽，等待轮次重评',
-  awaiting_pull: '等待手机拉取',
+  awaiting_dispatch: '等待平台选择并直接交付',
   awaiting_receipt: '包已生成，尚无落盘接收确认',
   executing: '手机已接收，等待最终结果',
   sent: '已发送',
@@ -316,14 +316,20 @@ function RecordDetail({ id }: { id: string }) {
               ]}
             />
           </Card>
-          <Card title="手机交付交互">
+          <Card title="执行包传输与接收">
             <Paged<DeliveryExchange>
               identity={`exchanges-${id}`}
               load={(q) => dispatchRecords.exchanges({ ...q, intake_id: id })}
               columns={[
-                { title: '手机请求时间', dataIndex: 'created_at', render: (v) => formatDate(v) },
+                { title: '平台推送时间', dataIndex: 'created_at', render: (v) => formatDate(v) },
                 { title: '处理结果', dataIndex: 'result', render: (v) => resultLabels[v] ?? v },
                 { title: '原因', dataIndex: 'reason_label' },
+                { title: '执行包', dataIndex: 'execution_id' },
+                { title: '接收与结果', dataIndex: 'reception_state', render:(v)=>({awaiting_receipt:'等待接收确认',awaiting_result:'等待执行结果',receipt_timeout:'接收确认超时，是否收到未知',result_timeout:'执行结果超时',result_recorded:'已回报结果',delivery_failed:'交付失败'}[v as string]??v) },
+                { title: '接收确认', dataIndex: 'accepted_at', render:(v)=>formatDate(v) },
+                { title: '接收截止', dataIndex: 'receipt_deadline_at', render:(v)=>formatDate(v) },
+                { title: '结果截止', dataIndex: 'result_deadline_at', render:(v)=>formatDate(v) },
+                { title: '原改派原因', dataIndex: 'superseded_reason' },
                 {
                   title: '服务端响应观测',
                   dataIndex: 'response_state',
@@ -331,7 +337,7 @@ function RecordDetail({ id }: { id: string }) {
                 },
                 {
                   title: '是否重放',
-                  render: (_, r) => (r.replay_of ? '同一授权重返' : '首次请求'),
+                  render: (_, r) => r.execution_id,
                 },
                 {
                   title: '操作',
@@ -593,7 +599,7 @@ export function MobileDispatchRecords() {
           next={() => cursor.next(query.data?.next_cursor ?? null)}
           previous={cursor.previous}
         />
-        <Card title="设备级交付请求（包含无匹配任务的拉取）">
+        <Card title="设备执行包推送记录">
           <Paged<DeliveryExchange>
             key={q.device_id ?? 'all'}
             identity={`device-exchanges-${q.device_id ?? 'all'}`}
@@ -606,7 +612,7 @@ export function MobileDispatchRecords() {
               })
             }
             columns={[
-              { title: '请求时间', dataIndex: 'created_at', render: (v) => formatDate(v) },
+              { title: '推送时间', dataIndex: 'created_at', render: (v) => formatDate(v) },
               {
                 title: '手机',
                 dataIndex: 'device_id',
