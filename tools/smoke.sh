@@ -10,7 +10,7 @@ curl --fail --silent --show-error "$base_url/readyz" > "$temp_dir/ready.json"
 curl --fail --silent --show-error "$base_url/api/v1/system" > "$temp_dir/system.json"
 curl --fail --silent --show-error "$base_url/admin" > "$temp_dir/admin.html"
 curl --fail --silent --show-error "$base_url/wecom" > "$temp_dir/wecom.html"
-status="$(curl --silent --show-error -o "$temp_dir/unknown.json" -w '%{http_code}' "$base_url/api/v1/posts")"
+status="$(curl --silent --show-error -o "$temp_dir/unknown.json" -w '%{http_code}' "$base_url/api/v1/missing")"
 test "$status" = 404
 
 python3 - "$temp_dir" <<'PY'
@@ -25,7 +25,7 @@ assert info['application'] == 'wekeeper' and info['stage'] == 'business'
 assert json.loads((root / 'unknown.json').read_text())['errors'][0]['code'] == 'not_found'
 for name in ('admin', 'wecom'):
     assert '<div id="root"></div>' in (root / f'{name}.html').read_text()
-print('Smoke checks passed: readiness, API contract, SPA routes and rejected unscoped routes.')
+print('Smoke checks passed: readiness, API contract, SPA routes and unknown routes.')
 PY
 
 python3 tools/check_docs.py

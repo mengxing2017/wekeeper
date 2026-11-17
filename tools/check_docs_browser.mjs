@@ -229,8 +229,6 @@ try {
                     username: "example-admin",
                     display_name: "示例管理员",
                     platform_admin: true,
-                    bound_school_id: null,
-                    grants: [{ school_id: "example-school", role: "admin" }],
                     wecom_authenticated: false,
                   },
                 },
@@ -241,21 +239,6 @@ try {
                 { status: "401", code: "unauthorized", title: "请登录" },
               ],
             };
-      } else if (path === "/api/v1/schools") {
-        body = {
-          data: [
-            {
-              type: "schools",
-              id: "example-school",
-              attributes: {
-                name: "示例学校（教学数据）",
-                active: true,
-                revision: 1,
-                config: {},
-              },
-            },
-          ],
-        };
       }
       await command("Fetch.fulfillRequest", {
         requestId,
@@ -269,20 +252,20 @@ try {
     await command("Fetch.enable", { patterns: [{ urlPattern: "*/api/*" }] });
     await navigate("/admin");
     await until(
-      () => evaluate(`document.body.innerText.includes('登录工作空间')`),
+      () => evaluate(`document.body.innerText.includes('登录管理后台')`),
       "Login did not render",
     );
     await screenshot("login.png");
     authenticated = true;
     await command("Page.navigate", {
-      url: origin + "/admin?school=example-school&view=posts",
+      url: origin + "/admin?view=audit",
     });
     await until(
       () =>
         evaluate(
-          `document.body.innerText.includes('示例管理员') && document.body.innerText.includes('示例学校（教学数据）')`,
+          `document.body.innerText.includes('示例管理员') && document.body.innerText.includes('操作审计')`,
         ),
-      "Example school did not render",
+      "System administration did not render",
     );
     await until(
       () => evaluate(`!!document.querySelector('.ant-table-empty')`),

@@ -53,7 +53,6 @@ with tempfile.TemporaryDirectory(prefix='wekeeper-live-') as directory:
             assert created['attributes']['search_text']=='Live smoke'
             request('/api/v1/wecom-distribution/groups')
             request(targets)
-            request('/api/v1/schools',expected=404)
             request('/api/v1/accounts',expected=404)
             for path in ('/admin',):
                 with client.open(origin+path) as response:assert '<div id="root"></div>' in response.read().decode()

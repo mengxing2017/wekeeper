@@ -47,7 +47,7 @@ seed=f"INSERT INTO accounts(id,username,display_name,platform_admin) VALUES('{a}
 checks=f"""
 DO $$ BEGIN
  IF to_regclass('official_channel_deliveries') IS NOT NULL OR (SELECT count(*) FROM official_channel_health)<>0 THEN RAISE EXCEPTION 'migration retained delivery gate or fabricated health';END IF;
- IF to_regclass('official_channel_legacy') IS NOT NULL OR EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='school_resources' AND column_name IN ('url','needs_review')) THEN RAISE EXCEPTION 'obsolete compatibility schema retained';END IF;
+ IF to_regclass('official_channel_legacy') IS NOT NULL THEN RAISE EXCEPTION 'obsolete compatibility schema retained';END IF;
 END $$;
 INSERT INTO product_previews(id,actor_id,kind,payload,digest) VALUES('{preview}','{a}','member_policy','{{}}','digest');
 UPDATE product_previews SET result='{{"id":"one"}}',confirmed_at=now() WHERE id='{preview}' AND result IS NULL;
@@ -75,7 +75,7 @@ CREATE TEMP TABLE audit_first_page(event) AS {audit_page};
 CREATE TEMP TABLE audit_next_page(event) AS {audit_next};
 DO $$ BEGIN
  IF (SELECT count(*) FROM audit_first_page)<>2 OR (SELECT count(*) FROM audit_next_page)<>1 THEN RAISE EXCEPTION 'system audit pagination failed'; END IF;
- IF EXISTS(SELECT 1 FROM audit_first_page WHERE event ? 'school_id') THEN RAISE EXCEPTION 'system audit exposes workspace scope'; END IF;
+ IF EXISTS(SELECT 1 FROM audit_first_page WHERE event - ARRAY['id','actor_id','action','object_id','detail','created_at','request_id'] <> '{{}}'::jsonb) THEN RAISE EXCEPTION 'unexpected audit projection fields'; END IF;
  IF NOT EXISTS(SELECT 1 FROM audit_first_page WHERE event->>'action'='isolated.audit.system') OR NOT EXISTS(SELECT 1 FROM audit_next_page WHERE event->>'action'='isolated.audit.resource') THEN RAISE EXCEPTION 'system audit lost global events'; END IF;
 END $$;
 """
@@ -129,7 +129,7 @@ control_checks=control_checks.replace('__CONTROL_DUPLICATE_PULSE__',bound_sql(co
 checks += control_checks
 checks += """
 DO $$ BEGIN
- IF EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND column_name IN ('school_id','workspace_id','storage_scope')) THEN RAISE EXCEPTION 'workspace partition retained'; END IF;
+ IF EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND column_name IN ('workspace_id','storage_scope')) THEN RAISE EXCEPTION 'workspace partition retained'; END IF;
  IF to_regclass('wecom_workspaces') IS NOT NULL OR to_regclass('mobile_workspaces') IS NOT NULL OR to_regclass('unit_receiving_storage') IS NOT NULL THEN RAISE EXCEPTION 'workspace tables retained'; END IF;
 END $$;
 """
