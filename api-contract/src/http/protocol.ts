@@ -129,7 +129,7 @@ export function resourceType(path: string): string {
   if (parts[2] === 'platform' && parts[3] === 'wecom-distribution' && parts[4] === 'operators') return 'wecom-bindings';
   if (parts[2] === 'platform' && parts[3] === 'administrators') return 'administrators';
   if(parts[0]==='api' && parts[1]==='v10' && parts[2]==='device-execution') {
-    const types:Record<string,string>={'task-inbox':'mobile-shared-task-inboxes','display-receipts':'mobile-shared-task-receipts','authority-context':'mobile-shared-delegation-contexts','task-context':'mobile-shared-contexts','idle-telemetry':'mobile-shared-runtime','authorization-decisions':'mobile-shared-delegation-decisions'};
+    const types:Record<string,string>={'task-inbox':'mobile-shared-task-inboxes','display-receipts':'mobile-shared-task-receipts','task-context':'mobile-shared-contexts','environment-observations':'mobile-device-environments'};
     return types[parts[3]] ?? parts[3];
   }
   const productKind=parts[2]==='platform'?parts[3]:undefined;

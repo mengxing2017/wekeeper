@@ -5,7 +5,7 @@ afterEach(()=>{vi.unstubAllGlobals();setCsrf('')});
 const response=(v:unknown,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/vnd.api+json'}});
 test("device control presence and commands use the authenticated platform client", async () => {
   const fixture = (await import("../fixtures/device-control-frame.json")).default;
-  const frame: import("../src/modules/device-registry").DeviceControlFrame = { ...fixture, protocol_version: 1 };
+  const frame: import("../src/modules/device-registry").DeviceControlFrame = { ...fixture, protocol_version: 2 };
   expect(frame.heartbeat_interval_seconds).toBe(60);
   const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => response({ data: { type: "device-control-commands", id: "command", attributes: { kind: "request_status", state: "queued" } } }));
   vi.stubGlobal("fetch", fetcher);
@@ -36,8 +36,8 @@ test("batched device list preserves the shared control presence projection", asy
 
 test("platform heartbeat probes and responses preserve correlation and session identity", async () => {
   const fixture = (await import("../fixtures/device-control-probe.json")).default;
-  const frame: import("../src/modules/device-registry").DeviceControlFrame = { ...fixture.frame, protocol_version: 1 };
-  const pulse: import("../src/modules/device-registry").DeviceControlPulse = fixture.response;
+  const frame: import("../src/modules/device-registry").DeviceControlFrame = { ...fixture.frame, protocol_version: 2 };
+  const pulse: import("../src/modules/device-registry").DeviceControlPulse = {...fixture.response,protocol_version:2};
   expect(pulse.probe_id).toBe(frame.probe_id);
   expect(pulse.connection_id).toBe(frame.connection_id);
   expect(pulse.epoch).toBe(frame.epoch);

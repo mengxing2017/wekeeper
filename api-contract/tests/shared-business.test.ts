@@ -1,7 +1,7 @@
 import {expect,it} from 'vitest'
 import {createHash} from 'node:crypto'
 import f from '../fixtures/local-group-text-flow.json'
-import {createSharedSendV2Client,SHARED_SEND_SCHEMA} from '../src/modules/mobile-execution/shared-send/v2'
+import {createSharedSendV2Client} from '../src/modules/mobile-execution/shared-send/v2'
 import {createClient} from '../src/http/client'
 function canonicalJson(v:unknown):string {if(v===null||typeof v!=='object')return JSON.stringify(v);if(Array.isArray(v))return '['+v.map(canonicalJson).join(',')+']';const r=v as Record<string,unknown>;return '{'+Object.keys(r).sort().map(k=>JSON.stringify(k)+':'+canonicalJson(r[k])).join(',')+'}'}
 it('local UI fixtures preserve immutable digests while business requests contain no technical delivery fields',async()=>{
@@ -49,15 +49,11 @@ it('opening summary uses the business group name for every phone',async()=>{
 })
 
 
-it('Rust and TS share the execution observation contract and lightweight delegation endpoint',async()=>{
+it('Rust and TS share observations without native hosting fields',async()=>{
  const {default:fixture}=await import('../fixtures/shared-execution-status.json')
  const wire:import('../src/modules/mobile-execution/shared-send/v2').SharedExecutionStatus={...fixture,phase:'waiting'}
- expect(wire.conditions[0].code).toBe('runtime_stale')
- expect(wire.device_state_observed_at).toBeNull();expect(wire.consent_observed_at).not.toBeNull()
- const calls:unknown[]=[]
- const client=createSharedSendV2Client({requestResource:async(...args)=>{calls.push(args);return {} as never}})
- await client.delegationContext()
- expect(calls).toEqual([['/api/v10/device-execution/authority-context']])
+ expect(wire).not.toHaveProperty('consent_observed_at')
+ expect(createSharedSendV2Client({requestResource:async()=>({}) as never})).not.toHaveProperty('delegationContext')
 })
 
 it('device inbox encodes cursors and receipt resources without creating send claims',async()=>{
@@ -77,15 +73,15 @@ it('device inbox encodes cursors and receipt resources without creating send cla
  expect(fixture.items[0]).not.toHaveProperty('message')
 })
 
-it('screen runtime separates sleep from secure lock and includes bounded preparation diagnostics',async()=>{
- const {default:fixture}=await import('../fixtures/shared-screen-runtime.json')
- const report:import('../src/modules/mobile-execution/shared-send/v2').SharedRuntimeReport={...fixture,schema:SHARED_SEND_SCHEMA,preparation:{...fixture.preparation,wake_diagnostics:{...fixture.preparation.wake_diagnostics,source:'accessibility_service'}}}
- expect(report.conditions.interactive).toBe(false)
- expect(report.conditions.device_locked).toBe(false)
- expect(report.preparation?.automatic_wake_enabled).toBe(true)
- expect(report.preparation?.retry_after_ms).toBe(0)
- expect(report.ready_reason).toBe('wake_timeout')
- expect(report.preparation?.wake_diagnostics?.events.map(e=>e.stage)).toEqual(['request_created','start_requested','closed'])
+it('optional environment observations use a separate closed protocol',async()=>{
+ const {default:fixture}=await import('../fixtures/device-environment.json')
+ const {durableExecutionApi}=await import('../src/modules/mobile-execution/shared-send/v2')
+ const report:import('../src/modules/mobile-execution/shared-send/v2').DeviceEnvironmentObservation={...fixture,schema:'device_environment/1',interactive:'no',keyguard_locked:'no',device_locked:'no',keyguard_secure:'unknown',accessibility:'yes',notification:'unknown',wecom_login:'logged_in'}
+ const calls:unknown[]=[]
+ const client=createClient(async r=>{calls.push({path:r.path,body:JSON.parse(r.body as string)});return {status:200,headers:{'content-type':'application/vnd.api+json'},body:{data:{type:'mobile-device-environments',id:report.observation_id,attributes:{recorded:true}}}}})
+ await durableExecutionApi(client).observeEnvironment(report,'observation')
+ expect(calls).toEqual([{path:'/api/v10/device-execution/environment-observations',body:{data:{type:'mobile-device-environments',attributes:report}}}])
+ expect(report).not.toHaveProperty('preparation');expect(report).not.toHaveProperty('paused')
 })
 
 it('configuration status includes platform source and observation separately from phone runtime',async()=>{
@@ -113,4 +109,12 @@ it('task lists expose canonical outcomes without loading individual task details
  const statuses:Array<import('../src/modules/mobile-execution/shared-send/v2').SharedTaskStatus>=['completed','completed','stopped','dispatch_failed','dispatching','confirmation_expired','needs_review','completed']
  expect(overview.tasks.map(t=>t.status)).toEqual(statuses)
  expect(overview.tasks.every(t=>!t.items)).toBe(true)
+})
+
+it('unavailable is an uncalled attempt result without native state',async()=>{
+ const {default:fixture}=await import('../fixtures/device-unavailable-completion.json')
+ const result:import('../src/modules/mobile-execution/shared-send/v2').ExecutionCompletion={...fixture,outcome:'not_called'}
+ expect(result.reason).toBe('device_unavailable')
+ expect(result.consumed).toBe(false);expect(result.calling_marked).toBe(false)
+ expect(result).not.toHaveProperty('paused')
 })

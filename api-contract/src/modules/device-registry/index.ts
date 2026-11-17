@@ -13,8 +13,7 @@ export interface DeviceControlCommand {
 export interface DeviceControlSnapshot {
   id: UUID; state: "connecting" | "online" | "suspect" | "offline" | "disabled" | "unauthorized";
   last_control_heartbeat_at: string | null; transport: "wss" | null;
-  readiness: string | null; block_reason: string | null;
-  desired_paused: boolean; desired_revision: number; credential_expires_at: string | null;
+  credential_expires_at: string | null;
   transport_connected?: boolean;
   server_time?: string;
   heartbeat_interval_seconds?: number; suspect_after_seconds?: number; offline_after_seconds?: number;
@@ -23,11 +22,12 @@ export interface DeviceControlSnapshot {
 export interface DeviceControlPresence extends DeviceControlSnapshot {
   commands: DeviceControlCommand[];
 }
+export type DeviceControlResultCode='applied'|'status_reported'|'execution_cancelled'|'execution_not_found'|'already_finished'|'unsupported'|'protocol_error';
 export interface DeviceControlPulse {
   connection_id: UUID; epoch: number; heartbeat_id: UUID; heartbeat_sequence: number; probe_id?: UUID | null;
   runtime_epoch: UUID; execution_receipts: UUID[];
-  readiness: string; block_reason: string | null;
-  receipts: Array<{ id: UUID; state: "accepted" | "completed" | "rejected"; result_code: string | null }>;
+  protocol_version: 2;
+  receipts: Array<{ id: UUID; state: "accepted" | "completed" | "rejected"; result_code: DeviceControlResultCode | null }>;
 }
 export interface ExecutionDelivery {
  schema:'mobile_execution_delivery/1';delivery_id:UUID;transmission_id:UUID;connection_id:UUID;epoch:number;
@@ -35,10 +35,10 @@ export interface ExecutionDelivery {
 }
 export interface DeviceControlFrame {
   executions:ExecutionDelivery[];execution_receipts:UUID[];
-  id: UUID; connection_id: UUID; epoch: number; protocol_version: 1;
+  id: UUID; connection_id: UUID; epoch: number; protocol_version: 2;
   probe_id?: UUID; heartbeat_id: UUID | null; heartbeat_interval_seconds: number; offline_after_seconds: number;
-  server_time: string; desired_paused: boolean; desired_revision: number;
-  credential_expires_at: string; commands: Array<Omit<DeviceControlCommand, "result_code"> & { resource_id: UUID | null; desired_revision: number | null }>;
+  server_time: string;
+  credential_expires_at: string; commands: Array<Omit<DeviceControlCommand, "result_code"> & { resource_id: UUID | null; }>;
 }
 export interface Device extends Row {
   control?: DeviceControlSnapshot;

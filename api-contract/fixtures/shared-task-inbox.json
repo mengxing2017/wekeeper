@@ -44,7 +44,6 @@
             "retry_at": null
           }
         ],
-        "consent_observed_at": null,
         "device_state_observed_at": null
       }
     }
