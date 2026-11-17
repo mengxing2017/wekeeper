@@ -24,7 +24,7 @@ it('saves a recoverable no-target draft and preview in one request without impli
  expect(fetch.mock.calls[0][1].headers['Idempotency-Key']).toBe('same-intent')
  expect(JSON.parse(fetch.mock.calls[0][1].body).data.attributes).toEqual({content_source:'text',text_content:'通知',group_ids:[]})
 })
-it('candidate queries stay within school/task/batch and contain no company time range',async()=>{
+it('candidate queries stay within task/batch and contain no company time range',async()=>{
  const fetch=mock();await broadcast.evidenceCandidates('task','batch')
  expect(fetch.mock.calls[0][0]).toBe('/api/v1/wecom-distribution/broadcast-tasks/task/evidence-candidates?batch_id=batch')
 })

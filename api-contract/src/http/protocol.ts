@@ -123,7 +123,7 @@ export function resourceType(path: string): string {
     if (kind === 'groups' && parts[4] === 'from-directory') return 'wecom-group-bindings';
     if (kind === 'broadcast-tasks' && parts[5] === 'preview') return 'broadcast-previews';
     if (kind === 'wecom-senders') return 'wecom-senders';
-    if (['groups','broadcast-tasks','template-previews','template-publications','official-usage-previews','official-usages','broadcast-task-previews','broadcast-access-requests','broadcast-issues','member-policy-previews','member-policies','official-channel-controls'].includes(kind)) return kind;
+    if (['groups','broadcast-tasks','official-usage-previews','official-usages','broadcast-task-previews','broadcast-access-requests','broadcast-issues','member-policy-previews','member-policies','official-channel-controls'].includes(kind)) return kind;
     throw new Error('Unknown wecom distribution write resource path');
   }
   if (parts[2] === 'platform' && parts[3] === 'wecom-distribution' && parts[4] === 'operators') return 'wecom-bindings';
@@ -133,7 +133,7 @@ export function resourceType(path: string): string {
     return types[parts[3]] ?? parts[3];
   }
   const productKind=parts[2]==='platform'?parts[3]:undefined;
-  if(productKind && ['template-previews','template-publications','official-usage-previews','official-usages','broadcast-task-previews','broadcast-access-requests','broadcast-issues','member-policy-previews','member-policies','official-channel-controls'].includes(productKind)) return productKind;
+  if(productKind && ['official-usage-previews','official-usages','broadcast-task-previews','broadcast-access-requests','broadcast-issues','member-policy-previews','member-policies','official-channel-controls'].includes(productKind)) return productKind;
   if (parts[2] === "mobile-execution" || parts[3] === "mobile-execution" || parts[4] === "mobile-execution") {
     const rawKind = parts[2] === "platform" ? parts[4] : parts[3];
     const kind=rawKind?.replace(/^shared-v2-/,"shared-");

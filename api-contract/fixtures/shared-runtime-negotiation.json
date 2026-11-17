@@ -5,7 +5,7 @@
   "authorization_schema": "shared_mobile_device_delegation/1",
   "delegation": {
     "id": "00000000-0000-4000-8000-000000000003",
-    "scope_digest": "e29005972825f0dd7b87fd45bc8c5cbcb190b57af98dd7ef45c87858e5f71f0b",
+    "scope_digest": "6c1df31df0714e88b60752f74a330c77510713eccf38bc54916fb9b7939ccb25",
     "scope": {
       "schema": "shared_mobile_device_delegation/1",
       "platform_id": "00000000-0000-0000-0000-000000000001",

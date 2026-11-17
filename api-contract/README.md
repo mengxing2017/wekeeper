@@ -35,18 +35,18 @@ pnpm --dir api-contract test
 
 ## 企业通讯录
 
-`directory` client 提供平台目录状态、部门与成员分页筛选、同步任务、账号绑定与解绑。全目录仅平台管理员可访问；学校内绑定摘要遵循学校权限。绑定资源为 `wecom-bindings`，PUT 提交 member_id/revision，DELETE 用带引号的 If-Match 传递绑定版本。
+`directory` client 提供平台目录状态、部门与成员分页筛选、同步任务、账号绑定与解绑。目录和账号绑定仅系统管理员可操作，不依赖学校或工作空间。绑定资源为 `wecom-bindings`，PUT 提交 member_id/revision，DELETE 用带引号的 If-Match 传递绑定版本。
 账号更新只接受 display_name/active，不能提交 wecom_userid。该字段在账号读取中仅是目录关联得到的只读显示值。
 `fixtures/wecom-directory-member.json` 由 Rust 序列化契约和 TypeScript client 共同验证。
 
 ## 企业群发
 
-`broadcast` client 提供任务草稿创建/修改、确认、目标与事件分页、刷新、提醒、停止和核对。所有操作绑定学校，写操作使用 JSON:API `broadcast-tasks`，确认与管理动作带 Idempotency-Key。Task 汇总、成员状态和群级 official_status 分别建模；人工分享及旧历史读取 client 已移除。Rust 序列化测试与 TypeScript 共用 broadcast-task / broadcast-target fixture。
+`broadcast` client 提供任务草稿创建/修改、确认、目标与事件分页、刷新、提醒、停止和核对。资源全局管理，所有操作校验身份、账号启用状态及系统管理员权限，写操作使用 JSON:API `broadcast-tasks`，确认与管理动作带 Idempotency-Key。Task 汇总、成员状态和群级 official_status 分别建模；人工分享及旧历史读取 client 已移除。Rust 序列化测试与 TypeScript 共用 broadcast-task / broadcast-target fixture。
 
-手动群发仅接受显式 `content_source: text` 与 `text_content`，输出使用冻结 `content`；草稿 PATCH 仍需 revision。论坛帖子、历史素材及模板字段和接口已移除。群发 fixture 均经过 Rust 实际序列化与 TS client 验证。
+手动群发仅接受显式 `content_source: text` 与 `text_content`，输出使用冻结 `content`；草稿 PATCH 仍需 revision。群发 fixture 均经过 Rust 实际序列化与 TS client 验证。
 
-论坛 community client、小程序登录和展示资源 client 已迁至 linjian；本包不再导出这些接口。发送素材使用学校范围的 `distribution-materials` 只读接口。
+本包仅导出当前分发业务的协议与 client。分发使用直接文本和冻结快照；linjian 的协议由其独立项目维护。
 
-分发范围使用 `/api/v1/wecom-distribution/workspaces/{workspace}` 与 `/api/v1/mobile-execution/workspaces/{workspace}`。学校客户端和普通账号 CRUD 已移除，系统管理员维护使用独立 `/api/v1/platform/administrators`（查询、新增），以及 `/{id}`（编辑、删除）和 `/{id}/password`（重设密码）。历史 `school_id` 为工作空间兼容字段，不代表学校主数据依赖。
+企业微信和手机分发分别使用 `/api/v1/wecom-distribution` 与 `/api/v1/mobile-execution` 下的全局资源接口，不提供工作空间、成员或学校授权字段及兼容分支。系统管理员维护使用独立 `/api/v1/platform/administrators`（查询、新增），以及 `/{id}`（编辑、删除）和 `/{id}/password`（重设密码）。
 
 手机分发内部管理记录通过 `@wekeeper/api-contract/mobile-execution/dispatch-records` 查询。接入记录独立于 task_id，提供候选评估、事件和设备交付交互的稳定游标分页；当前原因与历史原因分开过滤。执行包生成、服务端写出与设备落盘确认分开表示。此 client 仅供系统管理员后台使用，不属于对外来源消息 SDK。

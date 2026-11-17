@@ -66,16 +66,15 @@ it('uses JSON:API title when no detail is available', async () => {
   await expect(getSystemInfo()).rejects.toMatchObject({status:503,message:'Unavailable'})
 })
 
-it('sends only JSON:API resources, and rejects retired forum writes', async () => {
+it('sends only JSON:API resources, and rejects unsupported resource writes', async () => {
   const mock = vi.fn().mockImplementation(async () => json({data:null}))
   vi.stubGlobal('fetch', mock)
   await workspace.mutate('groups',{id:'g',name:'Group'})
   expect(mock.mock.calls[0][1]).toMatchObject({headers:{'Content-Type':'application/vnd.api+json'},body:JSON.stringify({data:{type:'groups',id:'g',attributes:{name:'Group'}}})})
-  await expect(workspace.mutate('posts/p/comments',{content:'Reply'})).rejects.toThrow()
-  await expect(workspace.mutate('templates/t/versions',{body:'Template'})).rejects.toThrow()
+  await expect(workspace.mutate('unsupported-resource',{name:'Unsupported'})).rejects.toThrow()
   expect(mock).toHaveBeenCalledTimes(1)
 })
-it.each([{data:{id:'old',title:'Legacy'}},{data:{type:'posts',id:'p',attributes:{id:'conflict'}}},{data:[],meta:{page:{number:1,size:30,has_more:'false'}}},{data:null,errors:[]}])('rejects incompatible success documents rather than supporting two formats: %j',async fixture=>{
+it.each([{data:{id:'old',title:'Legacy'}},{data:{type:'groups',id:'g',attributes:{id:'conflict'}}},{data:[],meta:{page:{number:1,size:30,has_more:'false'}}},{data:null,errors:[]}])('rejects incompatible success documents rather than supporting two formats: %j',async fixture=>{
   vi.stubGlobal('fetch',vi.fn().mockResolvedValue(json(fixture)))
   await expect(workspace.list('groups')).rejects.toMatchObject({code:'invalid_document'})
 })
