@@ -181,11 +181,7 @@ async fn run(a: Application, c: Credential, mut socket: WebSocket) {
                 if !(reply && f.heartbeat_fresh) {
                     f.probe_id = probes.due(now, f.heartbeat_interval_seconds);
                 }
-                let signature = format!(
-                    "{}:{}",
-                    f.desired_revision,
-                    serde_json::to_string(&f.commands).unwrap_or_default()
-                );
+                let signature = serde_json::to_string(&f.commands).unwrap_or_default();
                 if reply || f.probe_id.is_some() || signature != last || !f.executions.is_empty() {
                     last = signature;
                     let completed = serde_json::to_vec(&f).is_ok_and(|v| v.len() <= 1048576)

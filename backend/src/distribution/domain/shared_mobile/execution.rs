@@ -249,3 +249,25 @@ mod wire_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod unavailable_contract_tests {
+    use super::*;
+    #[test]
+    fn unavailable_is_a_fixed_uncalled_attempt_result() {
+        let wire: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../../api-contract/fixtures/device-unavailable-completion.json"
+        ))
+        .unwrap();
+        let result: Completion = serde_json::from_value(wire.clone()).unwrap();
+        result.validate().unwrap();
+        assert_eq!(serde_json::to_value(&result).unwrap(), wire);
+        assert_eq!(
+            replacement_reason(true, Some(&result.outcome), false),
+            Some("execution_failed")
+        );
+        let mut invalid = result;
+        invalid.calling_marked = true;
+        assert!(invalid.validate().is_err());
+    }
+}

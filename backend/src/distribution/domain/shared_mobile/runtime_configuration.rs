@@ -147,18 +147,7 @@ mod tests {
         assert!(!broken.matches(&package));
         assert_eq!(broken.issue.unwrap().code, "configuration_digest_mismatch");
     }
-    #[test]
-    fn screen_runtime_wire_is_shared_with_typescript() {
-        let fixture: Value = serde_json::from_str(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../api-contract/fixtures/shared-screen-runtime.json"
-        )))
-        .unwrap();
-        let report: super::super::shared_send_v2::RuntimeReport =
-            serde_json::from_value(fixture.clone()).unwrap();
-        report.preparation.as_ref().unwrap().validate().unwrap();
-        assert_eq!(serde_json::to_value(report).unwrap(), fixture);
-    }
+
     #[test]
     fn configuration_diagnoses_real_failure_without_acceptance_or_artifacts() {
         let fixture: Value = serde_json::from_str(include_str!(concat!(

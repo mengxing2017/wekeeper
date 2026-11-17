@@ -556,26 +556,8 @@ async fn business_configuration_does_not_require_technical_delivery() {
     let token = "wk_device_device-owned-regression";
     sqlx::query("INSERT INTO device_credentials(token_hash,device_id,generation,expires_at) VALUES($1,$2,1,clock_timestamp()+interval '1 hour')").bind(wekeeper_api::business::hash(token)).bind(f.device).execute(&f.pool).await.unwrap();
     let c = r.credential(token).await.unwrap();
-    let context = r.delegation_read(&c).await.unwrap();
-    r.device_write(
-        &c,
-        "device-owned-consent",
-        DeviceCommand::Consent(ConsentInput {
-            delegation_id: serde_json::from_value(context["delegation"]["id"].clone()).unwrap(),
-            scope_digest: context["delegation"]["scope_digest"]
-                .as_str()
-                .unwrap()
-                .into(),
-            expected_revision: 0,
-            accepted: true,
-        }),
-    )
-    .await
-    .unwrap();
     let epoch = Uuid::new_v4();
     sqlx::query("INSERT INTO device_control_sessions(device_id,connection_id,transport,credential_generation,last_heartbeat_at,runtime_epoch) VALUES($1,$2,'wss',1,clock_timestamp(),$3)").bind(f.device).bind(Uuid::new_v4()).bind(epoch).execute(&f.pool).await.unwrap();
-    sqlx::query("INSERT INTO mobile_shared_runtime(device_id,credential_generation,runtime_epoch,ui_ready,paused,quiescent,observed_at) VALUES($1,1,$2,true,false,true,clock_timestamp())").bind(f.device).bind(epoch).execute(&f.pool).await.unwrap();
-    sqlx::query("INSERT INTO mobile_v9_runtime_details(device_id,credential_generation,ui_context_epoch,conditions,apk_sha256) VALUES($1,1,'local','{}',repeat('a',64))").bind(f.device).execute(&f.pool).await.unwrap();
     pool_expire_round(&f).await;
     pool_tick(&f).await;
     let current_task = pool_detail(&f, &task).await;
@@ -868,70 +850,49 @@ async fn usage_group_name_reuse_and_renewal_keep_one_business_family() {
 
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn delegation_discovery_and_consent_ignore_the_global_housekeeping_lock() {
-    use wekeeper_api::distribution::domain::device_control::Credential;
+async fn optional_environment_observation_ignores_global_housekeeping_and_is_idempotent() {
     let f = Fixture::with_adapter(false).await;
-    let token = "wk_device_synthetic-discovery-test";
-    let hash = wekeeper_api::business::hash(token);
-    sqlx::query("INSERT INTO device_credentials(token_hash,device_id,generation,expires_at) VALUES($1,$2,1,clock_timestamp()+interval '1 hour')").bind(&hash).bind(f.device).execute(&f.pool).await.unwrap();
+    let token = "wk_device_environment-observation-test";
+    sqlx::query("INSERT INTO device_credentials(token_hash,device_id,generation,expires_at) VALUES($1,$2,1,clock_timestamp()+interval '1 hour')")
+        .bind(wekeeper_api::business::hash(token)).bind(f.device).execute(&f.pool).await.unwrap();
     let r = f.repo();
-    let c = Credential {
-        device_id: f.device,
-        generation: 1,
-        token_hash: hash,
-    };
+    let c = r.credential(token).await.unwrap();
+    let report: EnvironmentObservation = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/device-environment.json"
+    ))
+    .unwrap();
     let mut held = f.pool.begin().await.unwrap();
     sqlx::query("SELECT pg_advisory_xact_lock(78234610243)")
         .execute(&mut *held)
         .await
         .unwrap();
-    let one = tokio::time::timeout(std::time::Duration::from_secs(2), r.delegation_read(&c))
-        .await
-        .expect("discovery must not wait for unrelated housekeeping")
-        .unwrap();
-    let two = r.delegation_read(&c).await.unwrap();
-    assert_eq!(one["delegation"]["id"], two["delegation"]["id"]);
-    let input = ConsentInput {
-        delegation_id: serde_json::from_value(one["delegation"]["id"].clone()).unwrap(),
-        scope_digest: one["delegation"]["scope_digest"].as_str().unwrap().into(),
-        expected_revision: 0,
-        accepted: true,
-    };
-    let decision = tokio::time::timeout(
+    let first = tokio::time::timeout(
         std::time::Duration::from_secs(2),
-        r.device_write(&c, "stable-consent", DeviceCommand::Consent(input.clone())),
+        r.device_write(
+            &c,
+            "environment",
+            DeviceCommand::Environment(report.clone()),
+        ),
     )
     .await
-    .expect("consent must not wait for global housekeeping")
+    .unwrap()
     .unwrap();
-    assert_eq!(decision["accepted"], true);
     assert_eq!(
-        decision,
-        r.device_write(&c, "stable-consent", DeviceCommand::Consent(input))
+        first,
+        r.device_write(&c, "environment", DeviceCommand::Environment(report))
             .await
             .unwrap()
     );
     held.rollback().await.unwrap();
-    sqlx::query("UPDATE execution_devices SET enabled=false WHERE id=$1")
-        .bind(f.device)
-        .execute(&f.pool)
-        .await
-        .unwrap();
-    assert!(
-        r.credential(token).await.is_ok(),
-        "valid credential must remain usable for read/legitimate finalization"
-    );
-    assert_eq!(
-        r.delegation_read(&c).await.unwrap()["delegation"]["decision"]["accepted"],
-        true
-    );
+    let context = r.device_read(&c).await.unwrap();
+    assert!(context.get("delegation").is_none());
     sqlx::query("UPDATE device_credentials SET revoked_at=clock_timestamp() WHERE device_id=$1")
         .bind(f.device)
         .execute(&f.pool)
         .await
         .unwrap();
     assert!(r.credential(token).await.is_err());
-    assert!(r.delegation_read(&c).await.is_err());
+    assert!(r.device_read(&c).await.is_err());
     f.close().await;
 }
 
@@ -942,23 +903,7 @@ async fn reconciliation_never_schedules_downstream_ui_checks() {
     let r = f.repo();
     let token = "wk_device_synthetic-check-isolation";
     sqlx::query("INSERT INTO device_credentials(token_hash,device_id,generation,expires_at) VALUES($1,$2,1,clock_timestamp()+interval '1 hour')").bind(wekeeper_api::business::hash(token)).bind(f.device).execute(&f.pool).await.unwrap();
-    let c = r.credential(token).await.unwrap();
-    let context = r.delegation_read(&c).await.unwrap();
-    r.device_write(
-        &c,
-        "consent",
-        DeviceCommand::Consent(ConsentInput {
-            delegation_id: serde_json::from_value(context["delegation"]["id"].clone()).unwrap(),
-            scope_digest: context["delegation"]["scope_digest"]
-                .as_str()
-                .unwrap()
-                .into(),
-            expected_revision: 0,
-            accepted: true,
-        }),
-    )
-    .await
-    .unwrap();
+    assert!(r.credential(token).await.is_ok());
     sqlx::query(&format!("CREATE FUNCTION reject_one_check() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.target_id='{}'::uuid THEN RAISE EXCEPTION 'synthetic check insert failure'; END IF; RETURN NEW; END $$",f.targets[0])).execute(&f.pool).await.unwrap();
     sqlx::query("CREATE TRIGGER reject_one_check BEFORE INSERT ON mobile_v9_send_inspections FOR EACH ROW EXECUTE FUNCTION reject_one_check()").execute(&f.pool).await.unwrap();
     let mut global = f.pool.begin().await.unwrap();
@@ -1540,26 +1485,8 @@ async fn pool_ready(
     sqlx::query("INSERT INTO device_credentials(token_hash,device_id,generation,expires_at) VALUES($1,$2,1,clock_timestamp()+interval '1 hour')").bind(wekeeper_api::business::hash(&token)).bind(device).execute(&f.pool).await.unwrap();
     let r = f.repo();
     let c = r.credential(&token).await.unwrap();
-    let context = r.delegation_read(&c).await.unwrap();
-    r.device_write(
-        &c,
-        "pool-consent",
-        DeviceCommand::Consent(ConsentInput {
-            delegation_id: serde_json::from_value(context["delegation"]["id"].clone()).unwrap(),
-            scope_digest: context["delegation"]["scope_digest"]
-                .as_str()
-                .unwrap()
-                .into(),
-            expected_revision: 0,
-            accepted: true,
-        }),
-    )
-    .await
-    .unwrap();
     let epoch = Uuid::new_v4();
     sqlx::query("INSERT INTO device_control_sessions(device_id,connection_id,transport,credential_generation,last_heartbeat_at,runtime_epoch) VALUES($1,$2,'wss',1,clock_timestamp(),$3) ON CONFLICT(device_id) DO UPDATE SET connected=true,last_heartbeat_at=clock_timestamp(),runtime_epoch=$3").bind(device).bind(Uuid::new_v4()).bind(epoch).execute(&f.pool).await.unwrap();
-    sqlx::query("INSERT INTO mobile_shared_runtime(device_id,credential_generation,runtime_epoch,ui_ready,paused,quiescent,observed_at) VALUES($1,1,$2,true,false,true,clock_timestamp()) ON CONFLICT(device_id) DO UPDATE SET observed_at=clock_timestamp(),ui_ready=true,paused=false,quiescent=true").bind(device).bind(epoch).execute(&f.pool).await.unwrap();
-    sqlx::query("INSERT INTO mobile_v9_runtime_details(device_id,credential_generation,ui_context_epoch,conditions,apk_sha256) VALUES($1,1,'local','{\"interactive\":true,\"keyguard_locked\":false,\"device_locked\":false,\"keyguard_secure\":false,\"accessibility\":true,\"notification\":true}',repeat('a',64)) ON CONFLICT(device_id) DO UPDATE SET observed_at=clock_timestamp()").bind(device).execute(&f.pool).await.unwrap();
     (c, epoch)
 }
 async fn pool_confirm(f: &Fixture, targets: Vec<Uuid>) -> Value {
@@ -1614,7 +1541,17 @@ async fn pool_tick(f: &Fixture) {
 async fn pool_expire_round(f: &Fixture) {
     sqlx::query("UPDATE mobile_v9_dispatch_state SET round_started_at=clock_timestamp()-interval '5 minutes 1 second' WHERE state NOT IN ('completed','stopped','confirmation_expired','dispatch_failed')")
         .execute(&f.pool).await.unwrap();
+    // Advancing five minutes also advances the task's business interval.
+    pool_business_due(f).await;
     pool_tick(f).await;
+}
+async fn pool_business_due(f: &Fixture) {
+    sqlx::query(
+        "UPDATE mobile_v9_tasks SET next_eligible_at=clock_timestamp()-interval '1 second'",
+    )
+    .execute(&f.pool)
+    .await
+    .unwrap();
 }
 async fn pool_detail(f: &Fixture, t: &Value) -> Value {
     f.repo()
@@ -1784,7 +1721,8 @@ async fn explicit_failure_switches_on_next_scan_without_five_minute_wait() {
     let grant = pool_delivery(&f, &ca, ea, aid).await;
     assert_eq!(grant["state"], "granted", "{grant}");
 
-    let failed = completion(&grant, "not_called");
+    let mut failed = completion(&grant, "not_called");
+    failed.reason = "device_unavailable".into();
     let first = f.repo().complete_execution(failed.clone()).await.unwrap();
     assert_eq!(first, f.repo().complete_execution(failed).await.unwrap());
     pool_tick(&f).await;
@@ -1873,7 +1811,12 @@ fn completion(
         execution_id: serde_json::from_value(grant["execution_id"].clone()).unwrap(),
         result_credential: grant["result_credential"].as_str().unwrap().into(),
         outcome: outcome.into(),
-        reason: "synthetic".into(),
+        reason: if outcome == "not_called" {
+            "device_unavailable"
+        } else {
+            "synthetic"
+        }
+        .into(),
         evidence: "synthetic evidence".into(),
         consumed: matches!(outcome, "observed_sent" | "unknown"),
         calling_marked: matches!(outcome, "observed_sent" | "unknown"),
@@ -1915,6 +1858,7 @@ async fn dispatch_visits_every_candidate_exactly_three_times() {
             .complete_execution(completion(&grant, "not_called"))
             .await
             .unwrap();
+        pool_business_due(&f).await;
         pool_tick(&f).await;
         let detail = pool_detail(&f, &task).await;
         if detail["items"][0]["dispatch"]["state"] == "waiting_resources" {
@@ -1965,7 +1909,10 @@ async fn dispatch_receipt_timeout_and_business_interval_do_not_refresh_budget() 
             .fetch_one(&f.pool)
             .await
             .unwrap();
-    assert!(timer.is_none());
+    assert!(
+        timer.is_some(),
+        "an issued execution retains its delivery timer across the business interval"
+    );
     sqlx::query(
         "UPDATE mobile_v9_tasks SET next_eligible_at=clock_timestamp()-interval '1 second'",
     )
@@ -2028,7 +1975,7 @@ async fn dispatch_third_round_success_completes_without_failure() {
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn dispatch_exhausted_target_does_not_block_other_targets() {
     let f = Fixture::with_adapter(false).await;
-    pool_ready(&f, f.device).await;
+    let (credential, epoch) = pool_ready(&f, f.device).await;
     let task = pool_confirm(&f, f.targets.clone()).await;
     let first = serde_json::from_value::<Uuid>(task["items"][0]["id"].clone()).unwrap();
     sqlx::query("UPDATE mobile_v9_dispatch_state SET completed_rounds=2,round_started_at=clock_timestamp()-interval '5 minutes 1 second' WHERE item_id=$1")
@@ -2036,13 +1983,13 @@ async fn dispatch_exhausted_target_does_not_block_other_targets() {
         .execute(&f.pool)
         .await
         .unwrap();
-    sqlx::query(
-        "UPDATE mobile_v9_attempts SET state='failed_before_call' WHERE item_id=$1 AND current",
-    )
-    .bind(first)
-    .execute(&f.pool)
-    .await
-    .unwrap();
+    let attempt = serde_json::from_value(pool_current(&task["items"][0])["id"].clone()).unwrap();
+    let grant = pool_delivery(&f, &credential, epoch, attempt).await;
+    f.repo()
+        .complete_execution(completion(&grant, "not_called"))
+        .await
+        .unwrap();
+    pool_business_due(&f).await;
     pool_tick(&f).await;
     let detail = pool_detail(&f, &task).await;
     assert_eq!(detail["items"][0]["dispatch"]["state"], "dispatch_failed");
@@ -2501,6 +2448,7 @@ async fn acknowledge_execution(
     .device(
         c,
         Operation::Pulse(Pulse {
+            protocol_version: 2,
             connection_id: connection,
             epoch,
             runtime_epoch,
@@ -2508,8 +2456,6 @@ async fn acknowledge_execution(
             heartbeat_id: Some(Uuid::new_v4()),
             heartbeat_sequence: 0,
             probe_id: None,
-            readiness: "ready".into(),
-            block_reason: None,
             receipts: vec![],
         }),
     )
@@ -2591,6 +2537,11 @@ async fn direct_timeouts_and_late_receipt_preserve_original_attempt_facts() {
     let grant = pool_delivery(&f, &c, e, aid).await;
     let id: Uuid = serde_json::from_value(grant["id"].clone()).unwrap();
     sqlx::query("UPDATE mobile_execution_grants SET receipt_deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1").bind(id).execute(&f.pool).await.unwrap();
+    // Advance both frozen business interval and quota cooldown while forcing
+    // the receipt deadline; an outstanding reservation still counts daily.
+    pool_business_due(&f).await;
+    sqlx::query("UPDATE mobile_v9_quota_reservations SET recorded_at=clock_timestamp()-interval '31 seconds'")
+        .execute(&f.pool).await.unwrap();
     pool_tick(&f).await;
     let old: Value = sqlx::query_scalar(
         "SELECT to_jsonb(g)-'envelope' FROM mobile_execution_grants g WHERE id=$1",
@@ -2696,7 +2647,7 @@ async fn real_websocket_directly_delivers_signed_execution_and_old_routes_are_ab
     let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
     let frame: Value =
         serde_json::from_str(socket.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
-    let mut pulse = json!({"connection_id":frame["connection_id"],"epoch":frame["epoch"],"runtime_epoch":runtime,"execution_receipts":[],"heartbeat_id":Uuid::new_v4(),"heartbeat_sequence":1,"probe_id":null,"readiness":"ready","block_reason":null,"receipts":[]});
+    let mut pulse = json!({"connection_id":frame["connection_id"],"epoch":frame["epoch"],"runtime_epoch":runtime,"execution_receipts":[],"heartbeat_id":Uuid::new_v4(),"heartbeat_sequence":1,"probe_id":null,"protocol_version":2,"receipts":[]});
     socket
         .send(Message::Text(pulse.to_string().into()))
         .await

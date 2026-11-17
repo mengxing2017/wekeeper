@@ -47,6 +47,7 @@ async fn age(pool: &PgPool, device: Uuid, seconds: f64) {
 }
 fn pulse(frame: &Frame, id: Uuid, sequence: i64) -> Operation {
     Operation::Pulse(Pulse {
+        protocol_version: 2,
         runtime_epoch: Uuid::new_v4(),
         execution_receipts: vec![],
         connection_id: frame.connection_id,
@@ -54,8 +55,6 @@ fn pulse(frame: &Frame, id: Uuid, sequence: i64) -> Operation {
         heartbeat_id: Some(id),
         heartbeat_sequence: sequence,
         probe_id: Some(Uuid::new_v4()),
-        readiness: "blocked".into(),
-        block_reason: Some("device_locked".into()),
         receipts: vec![],
     })
 }
@@ -121,7 +120,7 @@ async fn heartbeat_window_survives_close_reopen_replay_and_generation_changes() 
     assert_eq!(ack.heartbeat_id, Some(heartbeat));
     let online = snapshot(&pool, device).await;
     assert_eq!(online["state"], "online");
-    assert_eq!(online["block_reason"], "device_locked"); // execution readiness is separate
+    assert!(online.get("block_reason").is_none());
 
     for (seconds, state) in [
         (35., "online"),
@@ -304,4 +303,49 @@ async fn heartbeat_window_survives_close_reopen_replay_and_generation_changes() 
         .await
         .unwrap();
     base.close().await;
+}
+
+#[test]
+fn version_two_control_contract_rejects_native_state_and_old_status_payloads() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/device-control-probe.json"
+    ))
+    .unwrap();
+    let frame: Frame = serde_json::from_value(fixture["frame"].clone()).unwrap();
+    assert_eq!(frame.protocol_version, 2);
+    let wire = serde_json::to_value(frame).unwrap();
+    assert!(wire.get("desired_paused").is_none());
+    assert!(wire.get("desired_revision").is_none());
+    let pulse: Pulse = serde_json::from_value(fixture["response"].clone()).unwrap();
+    assert_eq!(pulse.protocol_version, 2);
+    for key in ["readiness", "block_reason", "desired_paused"] {
+        let mut bad = fixture["response"].clone();
+        bad[key] = json!("paused");
+        assert!(serde_json::from_value::<Pulse>(bad).is_err());
+    }
+}
+
+#[tokio::test]
+async fn old_control_version_is_rejected_before_any_database_operation() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/device-control-probe.json"
+    ))
+    .unwrap();
+    let mut pulse: Pulse = serde_json::from_value(fixture["response"].clone()).unwrap();
+    pulse.protocol_version = 1;
+    let pool = PgPoolOptions::new()
+        .connect_lazy("postgres://unused@127.0.0.1:1/unused")
+        .unwrap();
+    let service = Service(Repository(pool));
+    let credential = Credential {
+        device_id: Uuid::new_v4(),
+        generation: 1,
+        token_hash: "unused".into(),
+    };
+    assert!(matches!(
+        service.device(&credential, Operation::Pulse(pulse)).await,
+        Err(wekeeper_api::business::Error::Policy(
+            "control_protocol_unsupported"
+        ))
+    ));
 }

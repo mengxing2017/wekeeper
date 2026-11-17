@@ -24,9 +24,8 @@ pub enum PlatformCommand {
 }
 #[derive(Clone, Debug)]
 pub enum DeviceCommand {
-    Runtime(RuntimeReport),
+    Environment(EnvironmentObservation),
     Diagnostic(Diagnostic),
-    Consent(ConsentInput),
     Inspection(crate::distribution::domain::shared_mobile::execution::InspectionRequest),
 }
 pub trait Store: Clone + Send + Sync {
@@ -118,6 +117,5 @@ pub trait Store: Clone + Send + Sync {
         key: &str,
         command: DeviceCommand,
     ) -> impl Future<Output = Result<Value>> + Send;
-    fn delegation_read(&self, c: &Credential) -> impl Future<Output = Result<Value>> + Send;
     fn device_read(&self, c: &Credential) -> impl Future<Output = Result<Value>> + Send;
 }

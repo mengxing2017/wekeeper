@@ -5,7 +5,7 @@ use crate::distribution::domain::shared_mobile::execution::GrantRequest;
 pub(super) async fn prepare(tx: &mut Tx<'_>, attempt: Uuid) -> Result<Option<&'static str>> {
     let device: Uuid = sqlx::query_scalar("SELECT p.device_id FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id WHERE a.id=$1")
         .bind(attempt).fetch_one(&mut **tx).await?;
-    // Same phone lock as consent changes; credentials and runtime belong to this connection.
+    // Serialize delivery on this phone; credentials and runtime belong to this connection.
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,78234610244))")
         .bind(device.to_string())
         .execute(&mut **tx)
@@ -40,9 +40,9 @@ pub(super) async fn prepare(tx: &mut Tx<'_>, attempt: Uuid) -> Result<Option<&'s
     .await
     {
         Ok(value) => value,
-        Err(Error::Policy(
-            reason @ ("execution_credential_renewal_required" | "shared_send_consent_required"),
-        )) => return Ok(Some(reason)),
+        Err(Error::Policy(reason @ "execution_credential_renewal_required")) => {
+            return Ok(Some(reason));
+        }
         Err(error) => return Err(error),
     };
     if value["state"] != "granted" {

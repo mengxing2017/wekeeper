@@ -160,7 +160,6 @@ pub(super) async fn assess(
         phase,
         observed_at: chrono::Utc::now(),
         device_state_observed_at: None,
-        consent_observed_at: None,
         conditions,
     })
     .map_err(|_| Error::Conflict)

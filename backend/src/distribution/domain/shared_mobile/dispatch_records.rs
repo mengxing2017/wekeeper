@@ -72,11 +72,10 @@ impl RecordQuery {
 }
 pub fn reason_label(code: &str) -> &str {
     match code {
+        "device_unavailable" => "本次设备未执行",
         "device_offline" => "手机离线",
         "device_presence_unknown" => "尚无有效在线状态",
         "device_disabled" => "手机已停用",
-        "delegation_not_accepted" => "手机尚未同意托管",
-        "delegation_revoked" => "手机已撤销托管",
         "credential_generation_changed" => "手机凭据代次已变化",
         "device_busy" => "手机仍有未关闭的执行占用",
         "awaiting_round_deadline" => "本轮候选已耗尽，等待轮次截止后重评",
@@ -96,7 +95,6 @@ pub fn reason_label(code: &str) -> &str {
         "shared_send_usage_paused" => "生效的使用范围已暂停",
         "shared_send_usage_revoked" => "生效的使用范围已撤销",
         "shared_send_usage_expired" => "生效的使用范围已到期",
-        "shared_send_consent_required" => "手机未同意托管",
         "processing_interrupted" => "处理未完成，等待系统恢复",
         "internal_processing_unavailable" => "系统处理异常，等待退避重试",
         "no_matching_assignment" => "没有符合交付条件的任务",
@@ -126,13 +124,6 @@ pub fn candidate_reason(f: &Value) -> &'static str {
     }
     if f["generation"] != f["expected_generation"] {
         return "credential_generation_changed";
-    }
-    if f["accepted"] != true {
-        return if f["consent_state"] == "revoked" {
-            "delegation_revoked"
-        } else {
-            "delegation_not_accepted"
-        };
     }
     if f["presence"] == "offline" {
         return "device_offline";

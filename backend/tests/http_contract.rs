@@ -586,12 +586,6 @@ async fn global_resource_errors_explain_current_authorization_and_binding_requir
             StatusCode::CONFLICT,
             "目标群没有有效手机绑定，请系统管理员配置或恢复绑定",
         ),
-        (
-            Error::Policy("shared_delegation_changed"),
-            "shared_delegation_changed",
-            StatusCode::CONFLICT,
-            "托管范围或设备配对身份已变化，请在手机重新核对并明确同意",
-        ),
     ] {
         let response = error.into_response();
         assert_eq!(response.status(), status);
@@ -1016,4 +1010,40 @@ async fn removed_pull_and_http_control_routes_are_absent() {
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
     }
+}
+
+#[tokio::test]
+async fn native_hosting_routes_are_removed_and_environment_requires_device_identity() {
+    for (method, path) in [
+        ("GET", "authority-context"),
+        ("POST", "authorization-decisions"),
+        ("POST", "idle-telemetry"),
+    ] {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(format!("/api/v10/device-execution/{path}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+    }
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v10/device-execution/environment-observations")
+                .header("Content-Type", "application/vnd.api+json")
+                .body(Body::from(
+                    json!({"data":{"type":"mobile-device-environments","attributes":{}}})
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }

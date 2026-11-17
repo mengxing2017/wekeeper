@@ -107,13 +107,6 @@ async fn review(
     ))
 }
 
-async fn delegation_context(State(a): State<Application>, h: HeaderMap) -> Result<ApiResponse> {
-    let c = credential(&a, &h).await?;
-    Ok(resource(
-        "mobile-shared-delegation-contexts",
-        service(&a).delegation_read(&c).await?,
-    ))
-}
 async fn inbox(
     State(a): State<Application>,
     h: HeaderMap,
@@ -145,28 +138,19 @@ async fn context(State(a): State<Application>, h: HeaderMap) -> Result<ApiRespon
         service(&a).device_read(&c).await?,
     ))
 }
-async fn runtime(State(a): State<Application>, h: HeaderMap, input: Input) -> Result<ApiResponse> {
+async fn environment(
+    State(a): State<Application>,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
     let c = credential(&a, &h).await?;
     Ok(resource(
-        "mobile-shared-runtime",
+        "mobile-device-environments",
         service(&a)
             .device_write(
                 &c,
                 key(&h),
-                DeviceCommand::Runtime(input.decode("mobile-shared-runtime")?),
-            )
-            .await?,
-    ))
-}
-async fn consent(State(a): State<Application>, h: HeaderMap, input: Input) -> Result<ApiResponse> {
-    let c = credential(&a, &h).await?;
-    Ok(resource(
-        "mobile-shared-delegation-decisions",
-        service(&a)
-            .device_write(
-                &c,
-                key(&h),
-                DeviceCommand::Consent(input.decode("mobile-shared-delegation-decisions")?),
+                DeviceCommand::Environment(input.decode("mobile-device-environments")?),
             )
             .await?,
     ))
@@ -257,20 +241,15 @@ pub fn router() -> Router<Application> {
             "/api/v10/device-execution/execution-completions",
             post(execution_completion),
         )
-        .route(
-            "/api/v10/device-execution/authority-context",
-            get(delegation_context),
-        )
         .route("/api/v10/device-execution/task-context", get(context))
         .route("/api/v10/device-execution/task-inbox", get(inbox))
         .route(
             "/api/v10/device-execution/display-receipts",
             post(inbox_receipt),
         )
-        .route("/api/v10/device-execution/idle-telemetry", post(runtime))
         .route(
-            "/api/v10/device-execution/authorization-decisions",
-            post(consent),
+            "/api/v10/device-execution/environment-observations",
+            post(environment),
         )
         .route("/api/v10/device-execution/diagnostics", post(diagnostic))
         .route(

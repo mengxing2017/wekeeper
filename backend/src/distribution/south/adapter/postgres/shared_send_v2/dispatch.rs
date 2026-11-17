@@ -70,8 +70,8 @@ async fn presence_offline(tx: &mut Tx<'_>, device: Uuid) -> Result<bool> {
     .await?)
 }
 async fn ready(tx: &mut Tx<'_>, candidate: &Value) -> Result<bool> {
-    let facts:Value=sqlx::query_scalar("SELECT jsonb_build_object('presence',(SELECT state FROM device_control_presence WHERE id=$1),'enabled',d.enabled,'generation',d.credential_generation,'expected_generation',$2::bigint,'accepted',$3::boolean,'consent_state',$4::text,'connection_available',EXISTS(SELECT 1 FROM device_control_sessions s JOIN device_credentials c ON c.device_id=s.device_id AND c.generation=s.credential_generation WHERE s.device_id=d.id AND s.connected AND s.transport='wss' AND s.runtime_epoch IS NOT NULL AND c.revoked_at IS NULL AND c.expires_at>clock_timestamp()+interval '210 seconds'),'busy',(SELECT jsonb_build_object('execution_id',id,'attempt_id',attempt_id,'execute_before',execute_before) FROM mobile_execution_grants WHERE device_id=$1 AND NOT session_closed ORDER BY assigned_at LIMIT 1)) FROM execution_devices d WHERE id=$1")
-        .bind(uid(candidate,"device_id")?).bind(candidate["credential_generation"].as_i64()).bind(candidate["accepted"]==true).bind(candidate["consent_state"].as_str()).fetch_optional(&mut **tx).await?.unwrap_or(json!({}));
+    let facts:Value=sqlx::query_scalar("SELECT jsonb_build_object('presence',(SELECT state FROM device_control_presence WHERE id=$1),'enabled',d.enabled,'generation',d.credential_generation,'expected_generation',$2::bigint,'connection_available',EXISTS(SELECT 1 FROM device_control_sessions s JOIN device_credentials c ON c.device_id=s.device_id AND c.generation=s.credential_generation WHERE s.device_id=d.id AND s.connected AND s.transport='wss' AND s.runtime_epoch IS NOT NULL AND c.revoked_at IS NULL AND c.expires_at>clock_timestamp()+interval '210 seconds'),'busy',(SELECT jsonb_build_object('execution_id',id,'attempt_id',attempt_id,'execute_before',execute_before) FROM mobile_execution_grants WHERE device_id=$1 AND NOT session_closed ORDER BY assigned_at LIMIT 1)) FROM execution_devices d WHERE id=$1")
+        .bind(uid(candidate,"device_id")?).bind(candidate["credential_generation"].as_i64()).fetch_optional(&mut **tx).await?.unwrap_or(json!({}));
     let reason =
         crate::distribution::domain::shared_mobile::dispatch_records::candidate_reason(&facts);
     let reason = if reason == "passed" && facts["connection_available"] != true {
@@ -121,7 +121,7 @@ pub(super) async fn reconcile(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
     Ok(())
 }
 async fn reconcile_inner(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
-    let row:Value=sqlx::query_scalar("SELECT to_jsonb(a)||jsonb_build_object('plan',p.plan,'snapshot_id',p.snapshot_id,'target_id',i.target_id,'task_id',t.id,'stopped',t.stopped,'authorization_kind',t.authorization_kind,'expired',t.confirmed_until<=clock_timestamp(),'candidates',sc.candidates,'candidate_cursor',ds.candidate_cursor,'dispatch_state',ds.state,'completed_rounds',ds.completed_rounds,'round_origin',ds.round_origin,'due',ds.next_retry_at<=clock_timestamp(),'eligible',a.not_before<=clock_timestamp() AND t.next_eligible_at<=clock_timestamp(),'delivery_expired',ds.assigned_at+interval '5 minutes'<=clock_timestamp()) FROM mobile_v9_task_items i JOIN mobile_v9_tasks t ON t.id=i.task_id JOIN mobile_v9_attempts a ON a.item_id=i.id AND a.current JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_v9_dispatch_scopes sc ON sc.item_id=i.id JOIN mobile_v9_dispatch_state ds ON ds.item_id=i.id WHERE i.id=$1 FOR UPDATE OF a,ds").bind(item).fetch_one(&mut **tx).await?;
+    let row:Value=sqlx::query_scalar("SELECT to_jsonb(a)||jsonb_build_object('plan',mobile_business_snapshot(p.plan),'snapshot_id',p.snapshot_id,'target_id',i.target_id,'task_id',t.id,'stopped',t.stopped,'authorization_kind',t.authorization_kind,'expired',t.confirmed_until<=clock_timestamp(),'candidates',mobile_business_snapshot(sc.candidates),'candidate_cursor',ds.candidate_cursor,'dispatch_state',ds.state,'completed_rounds',ds.completed_rounds,'round_origin',ds.round_origin,'due',ds.next_retry_at<=clock_timestamp(),'eligible',a.not_before<=clock_timestamp() AND t.next_eligible_at<=clock_timestamp(),'delivery_expired',ds.assigned_at+interval '5 minutes'<=clock_timestamp()) FROM mobile_v9_task_items i JOIN mobile_v9_tasks t ON t.id=i.task_id JOIN mobile_v9_attempts a ON a.item_id=i.id AND a.current JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_v9_dispatch_scopes sc ON sc.item_id=i.id JOIN mobile_v9_dispatch_state ds ON ds.item_id=i.id WHERE i.id=$1 FOR UPDATE OF a,ds").bind(item).fetch_one(&mut **tx).await?;
     if dispatch_terminal(row["dispatch_state"].as_str().unwrap_or("")) || row["due"] != true {
         return Ok(());
     }
@@ -182,7 +182,7 @@ async fn reconcile_inner(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
                 None
             },
         );
-    // Delivery is a durable execution fact. New-assignment readiness (pause,
+    // Delivery is a durable execution fact. New-assignment checks (business policy,
     // heartbeat freshness, etc.) cannot cancel an already delivered packet.
     // A disconnected phone can still hand off to an unvisited authorized
     // candidate, but a singleton must retain its full result-wait deadline.

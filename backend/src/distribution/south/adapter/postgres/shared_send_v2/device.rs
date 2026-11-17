@@ -90,11 +90,9 @@ pub(super) async fn write(
     command: DeviceCommand,
 ) -> Result<Value> {
     let mut tx = repo.0.begin().await?;
-    if !matches!(&command, DeviceCommand::Consent(_)) {
+    if matches!(&command, DeviceCommand::Inspection(_)) {
         guard(&mut tx).await?;
     }
-    // Consent and grants serialize on this phone. Consent does not wait for
-    // unrelated global task housekeeping, including work for other phones.
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 78234610244))")
         .bind(c.device_id.to_string())
         .execute(&mut *tx)
@@ -104,14 +102,13 @@ pub(super) async fn write(
         c,
         !matches!(
             &command,
-            DeviceCommand::Runtime(_) | DeviceCommand::Consent(_) | DeviceCommand::Diagnostic(_)
+            DeviceCommand::Environment(_) | DeviceCommand::Diagnostic(_)
         ),
     )
     .await?;
     let (scope, body) = match &command {
         DeviceCommand::Inspection(v) => ("inspection-execution", json!(v)),
-        DeviceCommand::Runtime(v) => ("runtime", json!(v)),
-        DeviceCommand::Consent(v) => ("delegation-decision", json!(v)),
+        DeviceCommand::Environment(v) => ("environment-observation", json!(v)),
         DeviceCommand::Diagnostic(v) => ("diagnostic", json!(v)),
     };
     if let Some(mut old) = replay(&mut tx, c.device_id, c.generation, scope, key, &body).await? {
@@ -128,36 +125,13 @@ pub(super) async fn write(
     }
     let result = match command {
         DeviceCommand::Inspection(v) => execution::inspection(&mut tx, c, v).await?,
-        DeviceCommand::Consent(v) => delegation::decide(&mut tx, c, v).await?,
         DeviceCommand::Diagnostic(v) => diagnostics::diagnostic(&mut tx, c, v).await?,
-        DeviceCommand::Runtime(v) => {
-            if let Some(reason) = &v.ready_reason {
-                require(
-                    !v.ui_ready
-                        && !reason.is_empty()
-                        && reason.len() <= 100
-                        && reason
-                            .bytes()
-                            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'),
-                    "send_protocol_unsupported",
-                )?;
-            }
-            if let Some(preparation) = &v.preparation {
-                preparation.validate()?;
-            }
-            require(
-                v.schema == SCHEMA && !v.runtime_epoch.is_nil(),
-                "send_protocol_unsupported",
-            )?;
-            sqlx::query("INSERT INTO mobile_shared_runtime(device_id,credential_generation,runtime_epoch,ui_ready,paused,quiescent) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(device_id) DO UPDATE SET credential_generation=$2,runtime_epoch=$3,ui_ready=$4,paused=$5,quiescent=$6,observed_at=clock_timestamp()").bind(c.device_id).bind(c.generation).bind(v.runtime_epoch).bind(v.ui_ready).bind(v.paused).bind(v.quiescent).execute(&mut *tx).await?;
-            require(
-                is_digest(&v.apk_sha256)
-                    && !v.ui_context_epoch.is_empty()
-                    && v.ui_context_epoch.len() <= 256,
-                "send_protocol_unsupported",
-            )?;
-            sqlx::query("INSERT INTO mobile_v9_runtime_details(device_id,credential_generation,ui_context_epoch,conditions,apk_sha256,preparation,ready_reason) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(device_id) DO UPDATE SET credential_generation=$2,ui_context_epoch=$3,conditions=$4,apk_sha256=$5,preparation=$6,ready_reason=$7,observed_at=clock_timestamp()").bind(c.device_id).bind(c.generation).bind(&v.ui_context_epoch).bind(json!(v.conditions)).bind(&v.apk_sha256).bind(json!(v.preparation)).bind(&v.ready_reason).execute(&mut *tx).await?;
-            json!({"id":c.device_id,"runtime_epoch":v.runtime_epoch,"recorded":true})
+        DeviceCommand::Environment(v) => {
+            v.validate()?;
+            // Observation order is independent of delivery and cannot change eligibility.
+            sqlx::query("INSERT INTO mobile_device_environments(device_id,credential_generation,observation_id,observed_at,observation) VALUES($1,$2,$3,$4,$5) ON CONFLICT(device_id) DO UPDATE SET credential_generation=$2,observation_id=$3,observed_at=$4,observation=$5,recorded_at=clock_timestamp() WHERE mobile_device_environments.credential_generation<>$2 OR mobile_device_environments.observed_at<$4")
+                .bind(c.device_id).bind(c.generation).bind(v.observation_id).bind(v.observed_at).bind(json!(v)).execute(&mut *tx).await?;
+            json!({"id":v.observation_id,"recorded":true})
         }
     };
     let stored = if scope == "inspection-execution" && result["state"] == "granted" {

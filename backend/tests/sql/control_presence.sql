@@ -32,10 +32,7 @@ DO $$ BEGIN
  IF EXISTS(SELECT 1 FROM device_control_sessions s CROSS JOIN control_last_evidence e WHERE s.device_id='00000000-0000-4000-8000-000000000201' AND (s.last_heartbeat_at IS DISTINCT FROM e.last_heartbeat_at OR s.presence_started_at IS DISTINCT FROM e.presence_started_at)) THEN RAISE EXCEPTION 'reopen erased or renewed heartbeat evidence'; END IF;
 END $$;
 DO $$ BEGIN
- BEGIN
-  UPDATE device_control_sessions SET desired_paused=true WHERE device_id='00000000-0000-4000-8000-000000000201';
-  RAISE EXCEPTION 'retired remote pause accepted';
- EXCEPTION WHEN check_violation THEN NULL; END;
+ IF EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='device_control_sessions' AND column_name IN ('desired_paused','desired_revision','readiness','block_reason')) THEN RAISE EXCEPTION 'native status columns remain'; END IF;
 END $$;
 UPDATE device_control_sessions SET last_heartbeat_at=NULL,presence_started_at=clock_timestamp()-interval '191 seconds' WHERE device_id='00000000-0000-4000-8000-000000000201';
 __CONTROL_OPEN__;

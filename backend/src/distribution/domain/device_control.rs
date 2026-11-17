@@ -37,11 +37,11 @@ pub enum ReceiptState {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Pulse {
+    pub protocol_version: u8,
     pub connection_id: Uuid,
     pub epoch: i64,
     pub runtime_epoch: Uuid,
     pub execution_receipts: Vec<Uuid>,
-    pub readiness: String,
     #[serde(default)]
     pub heartbeat_id: Option<Uuid>,
     /// Increasing within a connection; zero denotes a command receipt, not a heartbeat.
@@ -49,7 +49,6 @@ pub struct Pulse {
     pub heartbeat_sequence: i64,
     #[serde(default)]
     pub probe_id: Option<Uuid>,
-    pub block_reason: Option<String>,
     #[serde(default)]
     pub receipts: Vec<Receipt>,
 }
@@ -60,7 +59,6 @@ pub struct Command {
     pub kind: CommandKind,
     pub state: String,
     pub resource_id: Option<Uuid>,
-    pub desired_revision: Option<i64>,
     pub expires_at: chrono::DateTime<chrono::Utc>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -77,8 +75,6 @@ pub struct Frame {
     pub heartbeat_interval_seconds: u16,
     pub offline_after_seconds: u16,
     pub server_time: chrono::DateTime<chrono::Utc>,
-    pub desired_paused: bool,
-    pub desired_revision: i64,
     pub commands: Vec<Command>,
     pub executions: Vec<super::shared_mobile::execution::ExecutionDelivery>,
     pub execution_receipts: Vec<Uuid>,
@@ -140,10 +136,6 @@ pub struct Presence {
     pub state: PresenceState,
     pub last_control_heartbeat_at: Option<chrono::DateTime<chrono::Utc>>,
     pub transport: Option<String>,
-    pub readiness: Option<String>,
-    pub block_reason: Option<String>,
-    pub desired_paused: bool,
-    pub desired_revision: i64,
     pub credential_expires_at: Option<chrono::DateTime<chrono::Utc>>,
     pub connected_at: Option<chrono::DateTime<chrono::Utc>>,
     pub last_disconnected_at: Option<chrono::DateTime<chrono::Utc>>,

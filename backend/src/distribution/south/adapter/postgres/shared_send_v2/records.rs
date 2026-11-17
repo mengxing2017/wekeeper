@@ -296,20 +296,22 @@ impl Repository {
         }
         let mut qb = sqlx::QueryBuilder::<Postgres>::new(match kind {
             "intakes" => {
-                "SELECT to_jsonb(v) AS value FROM mobile_dispatch_record_view v WHERE true"
+                "SELECT mobile_business_snapshot(to_jsonb(v)) AS value FROM mobile_dispatch_record_view v WHERE true"
             }
             "detail" => {
-                "SELECT to_jsonb(v)||jsonb_build_object('content',i.content) AS value FROM mobile_dispatch_record_view v JOIN mobile_dispatch_intakes i ON i.id=v.id WHERE true"
+                "SELECT mobile_business_snapshot(to_jsonb(v))||jsonb_build_object('content',i.content) AS value FROM mobile_dispatch_record_view v JOIN mobile_dispatch_intakes i ON i.id=v.id WHERE true"
             }
             "operations" => {
-                "SELECT to_jsonb(v) AS value FROM mobile_dispatch_operations v WHERE true"
+                "SELECT mobile_business_snapshot(to_jsonb(v)) AS value FROM mobile_dispatch_operations v WHERE true"
             }
             "checks" | "exchange-checks" => {
-                "SELECT to_jsonb(v) AS value FROM mobile_dispatch_checks v WHERE true"
+                "SELECT mobile_business_snapshot(to_jsonb(v)) AS value FROM mobile_dispatch_checks v WHERE true"
             }
-            "events" => "SELECT to_jsonb(v) AS value FROM mobile_v9_dispatch_events v WHERE true",
+            "events" => {
+                "SELECT mobile_business_snapshot(to_jsonb(v)) AS value FROM mobile_v9_dispatch_events v WHERE true"
+            }
             "exchanges" | "exchange" => {
-                "SELECT to_jsonb(v) AS value FROM mobile_delivery_exchange_view v WHERE true"
+                "SELECT mobile_business_snapshot(to_jsonb(v)) AS value FROM mobile_delivery_exchange_view v WHERE true"
             }
             _ => return Err(Error::NotFound),
         });

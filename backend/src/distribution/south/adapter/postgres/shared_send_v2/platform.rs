@@ -177,17 +177,8 @@ pub(super) async fn write(tx: &mut Tx<'_>, a: &Actor, command: ManagementCommand
                 .fetch_optional(&mut **tx)
                 .await?
                 .ok_or(Error::NotFound)?;
-            let d = delegation::context(
-                tx,
-                &Credential {
-                    device_id: uid(&b, "device_id")?,
-                    generation: b["credential_generation"].as_i64().ok_or(Error::Conflict)?,
-                    token_hash: String::new(),
-                },
-            )
-            .await?;
-            let deps = json!({"flow_id":v.flow_id,"flow_digest":digest(&flow)?,"binding_id":b["id"],"binding_locator_revision":b["locator_revision"],"credential_generation":b["credential_generation"],"delegation_id":d["id"]});
-            sqlx::query("INSERT INTO mobile_v9_send_inspections(id,device_id,target_id,binding_id,flow_id,delegation_id,dependencies,requested_by,purpose,launch_path,challenge,automatic,expires_at,apk_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'maintenance',$9,$10,false,clock_timestamp()+interval '1 day',$11)").bind(id).bind(uid(&b,"device_id")?).bind(uid(&b,"target_id")?).bind(v.binding_id).bind(v.flow_id).bind(uid(&d,"id")?).bind(deps).bind(a.id).bind(v.launch_path).bind(secrets::token()).bind(v.apk_id).execute(&mut **tx).await?;
+            let deps = json!({"flow_id":v.flow_id,"flow_digest":digest(&flow)?,"binding_id":b["id"],"binding_locator_revision":b["locator_revision"],"credential_generation":b["credential_generation"]});
+            sqlx::query("INSERT INTO mobile_v9_send_inspections(id,device_id,target_id,binding_id,flow_id,dependencies,requested_by,purpose,launch_path,challenge,automatic,expires_at,apk_id) VALUES($1,$2,$3,$4,$5,$6,$7,'maintenance',$8,$9,false,clock_timestamp()+interval '1 day',$10)").bind(id).bind(uid(&b,"device_id")?).bind(uid(&b,"target_id")?).bind(v.binding_id).bind(v.flow_id).bind(deps).bind(a.id).bind(v.launch_path).bind(secrets::token()).bind(v.apk_id).execute(&mut **tx).await?;
             Ok(json!({"id":id}))
         }
         ManagementCommand::Acceptances(v) => {
@@ -300,7 +291,7 @@ pub(super) async fn read(tx: &mut Tx<'_>, page: u32) -> Result<Value> {
         ("diagnostics", "mobile_v9_diagnostics"),
     ] {
         let mut values: Vec<Value> = sqlx::query_scalar(&format!(
-            "SELECT to_jsonb(t)-'challenge' FROM {table} t ORDER BY created_at DESC LIMIT 101 OFFSET $1"
+            "SELECT mobile_business_snapshot(to_jsonb(t)-'challenge') FROM {table} t ORDER BY created_at DESC LIMIT 101 OFFSET $1"
         ))
         .bind(offset).fetch_all(&mut **tx)
         .await?;

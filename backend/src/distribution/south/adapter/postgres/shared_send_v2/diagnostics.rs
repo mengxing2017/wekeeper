@@ -1,9 +1,15 @@
 use super::*;
 pub(super) async fn diagnostic(tx: &mut Tx<'_>, c: &Credential, v: Diagnostic) -> Result<Value> {
     require(
-        !v.code.is_empty()
-            && v.code.len() <= 128
-            && v.stage.len() <= 128
+        matches!(
+            v.code.as_str(),
+            "device_unavailable"
+                | "execution_failed"
+                | "target_not_found"
+                | "target_ambiguous"
+                | "execution_timeout"
+                | "protocol_error"
+        ) && matches!(v.stage.as_str(), "receive" | "execute" | "report")
             && v.details.len() <= 12
             && v.details.iter().all(|(k, s)| {
                 [
@@ -11,7 +17,6 @@ pub(super) async fn diagnostic(tx: &mut Tx<'_>, c: &Credential, v: Diagnostic) -
                     "launcher_version",
                     "android_version",
                     "launcher_package",
-                    "failure_page",
                     "engine_version",
                 ]
                 .contains(&k.as_str())

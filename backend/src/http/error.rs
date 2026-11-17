@@ -127,11 +127,6 @@ impl IntoResponse for Error {
                 "shared_binding_missing",
                 "目标群没有有效手机绑定，请系统管理员配置或恢复绑定".into(),
             ),
-            Self::Policy("shared_delegation_changed") => (
-                StatusCode::CONFLICT,
-                "shared_delegation_changed",
-                "托管范围或设备配对身份已变化，请在手机重新核对并明确同意".into(),
-            ),
             Self::Policy(code) if code.starts_with("shared_send_") => (
                 StatusCode::CONFLICT,code,match code {
                     "shared_send_key_required" => "平台尚未配置共享发送密钥，请联系部署维护人员配置后再开放发送",
@@ -146,12 +141,10 @@ impl IntoResponse for Error {
                     "shared_send_usage_revoked" => "此手机与目标群的使用范围已撤销，请在使用管理核对",
                     "shared_send_usage_expired" => "此手机与目标群的使用范围已到期，请在使用管理办理续期",
                     "shared_send_usage_unavailable" => "手机与目标群的使用范围当前不可用，请在使用管理查看具体状态",
-                    "shared_send_runtime_required" => "等待手机上线、解锁并报告可执行状态；请检查长期托管、通知和无障碍权限",
                     "shared_send_review_required" => "原尝试必须先完成未发送核对并确认设备已停止，不能直接改派或重发",
                     "shared_send_environment_required" | "shared_send_environment_unsupported" => "等待手机刷新实际环境或由产品研发完成该环境适配",
                     "shared_send_flow_invalid" => "发送流程不符合对应协议契约，请平台维护人员核对流程、控件规则和执行预算",
                     "shared_send_policy_invalid" => "发送政策的额度、时区或允许时段不完整，请系统管理员核对后保存",
-                    "shared_send_consent_required" => "等待手机使用者在本机查看范围并启用托管授权；无需重新填写发送计划",
                     "shared_send_inspection_required" => "当前群的无发送检查尚未有效完成，系统将在授权、连接和运行条件满足后按预算检查",
                     "shared_send_baseline_required" => "缺少有效的原生人工操作计时基准，请完成真实采样后选择相应基准",
                     "shared_send_apk_invalid" => "上传文件不是可识别的 Android APK，请选择实际构建产物",

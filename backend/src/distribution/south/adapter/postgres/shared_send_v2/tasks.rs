@@ -5,12 +5,10 @@ pub(super) async fn raw_candidates(tx: &mut Tx<'_>, target: Uuid) -> Result<Vec<
  'target_id',t.id,'target_name',t.search_text,'device_name',d.name,'device_id',d.id,'binding_id',b.id,'binding_locator_revision',b.locator_revision,
  'target_locator_revision',t.locator_revision,
  'target',jsonb_build_object('kind','group','search_query',t.search_text,'match_policy','exact_unique','identity_constraints','[]'::jsonb),
- 'credential_generation',d.credential_generation,'delegation_id',m.id,'accepted',coalesce(c.accepted,false),'consent_state',CASE WHEN c.accepted IS NULL THEN 'unknown' WHEN c.accepted THEN 'accepted' ELSE 'revoked' END,
+ 'credential_generation',d.credential_generation,
  'execution',jsonb_build_object('contract','device_owned/1','capability','wecom.group_text'))
  FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id
  JOIN execution_devices d ON d.id=b.device_id
- LEFT JOIN mobile_shared_delegations m ON m.device_id=d.id AND m.credential_generation=d.credential_generation
- LEFT JOIN LATERAL(SELECT * FROM mobile_shared_delegation_decisions c WHERE c.delegation_id=m.id ORDER BY revision DESC LIMIT 1)c ON true
  WHERE t.id=$1 AND t.enabled AND t.archived_at IS NULL AND b.enabled AND d.enabled
  ORDER BY d.name,d.id"#).bind(target).fetch_all(&mut **tx).await.map_err(Into::into)
 }
@@ -348,7 +346,7 @@ pub(super) async fn write(tx: &mut Tx<'_>, a: &Actor, command: TaskCommand) -> R
                 !input.reason.trim().is_empty() && input.reason.len() <= 2000,
                 "shared_send_reason_required",
             )?;
-            let old:Value=sqlx::query_scalar("SELECT to_jsonb(a)||jsonb_build_object('plan',p.plan,'snapshot_id',p.snapshot_id,'target_id',i.target_id,'task_id',i.task_id) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE a.id=$1  AND a.current AND NOT t.stopped").bind(id).fetch_optional(&mut **tx).await?.ok_or(Error::NotFound)?;
+            let old:Value=sqlx::query_scalar("SELECT to_jsonb(a)||jsonb_build_object('plan',mobile_business_snapshot(p.plan),'snapshot_id',p.snapshot_id,'target_id',i.target_id,'task_id',i.task_id) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE a.id=$1  AND a.current AND NOT t.stopped").bind(id).fetch_optional(&mut **tx).await?.ok_or(Error::NotFound)?;
             require(
                 old["revision"] == input.expected_revision
                     && matches!(
@@ -524,7 +522,7 @@ pub(super) async fn write(tx: &mut Tx<'_>, a: &Actor, command: TaskCommand) -> R
     }
 }
 
-// Runtime readiness only breaks ties between candidates with valid business scope.
+// Connection availability only breaks ties between candidates with valid business scope.
 fn choose_candidate<'a>(
     choices: &'a [Value],
     status: &[Value],

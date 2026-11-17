@@ -24,16 +24,26 @@ impl<R: Store> Service<R> {
                     "心跳序号必须递增；零序号仅用于命令回执".into(),
                 ));
             }
-            text(&p.readiness, 1, 80)?;
-            if let Some(reason) = &p.block_reason {
-                text(reason, 0, 120)?;
+            if p.protocol_version != 2 {
+                return Err(Error::Policy("control_protocol_unsupported"));
             }
             if p.receipts.len() > 100 || p.execution_receipts.len() > 100 {
                 return Err(Error::Invalid("回执数量超限".into()));
             }
             for r in &p.receipts {
-                if let Some(code) = &r.result_code {
-                    text(code, 0, 80)?;
+                if let Some(code) = &r.result_code
+                    && !matches!(
+                        code.as_str(),
+                        "applied"
+                            | "status_reported"
+                            | "execution_cancelled"
+                            | "execution_not_found"
+                            | "already_finished"
+                            | "unsupported"
+                            | "protocol_error"
+                    )
+                {
+                    return Err(Error::Invalid("控制回执原因不合法".into()));
                 }
             }
         }

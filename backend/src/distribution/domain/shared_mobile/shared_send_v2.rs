@@ -5,12 +5,6 @@ use serde_json::Value;
 use std::collections::BTreeSet;
 use uuid::Uuid;
 pub const SCHEMA: &str = "shared_mobile_send/2";
-pub const SCOPE: &str = "shared_mobile_device_delegation/1";
-pub fn delegation_scope(platform: Uuid, device: Uuid, generation: i64) -> Value {
-    serde_json::json!({"schema":SCOPE,"platform_id":platform,"device_id":device,"credential_generation":generation,
-        "package_name":"com.tencent.wework","capability":"group_text","resource_policy":"platform_managed_targets",
-        "background_collection":true,"automatic_inspection":true,"text_input":true,"single_use_send":true})
-}
 /// A read observation; it never grants a lease, consent or a send permission.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -18,7 +12,6 @@ pub struct ExecutionStatus {
     pub phase: ExecutionPhase,
     pub observed_at: chrono::DateTime<chrono::Utc>,
     pub device_state_observed_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub consent_observed_at: Option<chrono::DateTime<chrono::Utc>>,
     pub conditions: Vec<ExecutionCondition>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -201,77 +194,44 @@ pub struct Review {
     pub decision: String,
     pub evidence: String,
 }
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct WakeMilestone {
-    pub stage: String,
-    pub elapsed_ms: u32,
+/// Optional observations, never an authorization or a delivery prerequisite.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ObservedFact {
+    Yes,
+    No,
+    Unknown,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ApplicationLogin {
+    LoggedIn,
+    LoginRequired,
+    Unknown,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct WakeDiagnostics {
-    pub request_id: Uuid,
-    pub source: String,
-    pub events: Vec<WakeMilestone>,
+pub struct EnvironmentObservation {
+    pub schema: String,
+    pub observation_id: Uuid,
+    pub observed_at: chrono::DateTime<chrono::Utc>,
+    pub interactive: ObservedFact,
+    pub keyguard_locked: ObservedFact,
+    pub device_locked: ObservedFact,
+    pub keyguard_secure: ObservedFact,
+    pub accessibility: ObservedFact,
+    pub notification: ObservedFact,
+    pub wecom_login: ApplicationLogin,
 }
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct DevicePreparationReport {
-    pub automatic_wake_enabled: bool,
-    pub screen_awake_active: bool,
-    pub screen_awake_reason: Option<String>,
-    pub stage: String,
-    pub last_error: Option<String>,
-    pub retry_after_ms: u32,
-    pub observed_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub wake_diagnostics: Option<WakeDiagnostics>,
-}
-impl DevicePreparationReport {
+impl EnvironmentObservation {
     pub fn validate(&self) -> Result<()> {
-        let code = |s: &str| {
-            !s.is_empty()
-                && s.len() <= 100
-                && s.bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
-        };
-        if let Some(trace) = &self.wake_diagnostics {
-            require(
-                !trace.request_id.is_nil()
-                    && trace.source == "accessibility_service"
-                    && trace.events.len() <= 24
-                    && trace
-                        .events
-                        .iter()
-                        .all(|e| code(&e.stage) && e.elapsed_ms <= 120_000)
-                    && trace
-                        .events
-                        .windows(2)
-                        .all(|w| w[0].elapsed_ms <= w[1].elapsed_ms),
-                "send_protocol_unsupported",
-            )?;
-        }
         require(
-            code(&self.stage)
-                && self.screen_awake_reason.as_deref().is_none_or(code)
-                && self.last_error.as_deref().is_none_or(code)
-                && self.retry_after_ms <= 120_000,
+            self.schema == "device_environment/1"
+                && !self.observation_id.is_nil()
+                && self.observed_at <= chrono::Utc::now() + chrono::Duration::minutes(5),
             "send_protocol_unsupported",
         )
     }
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct RuntimeReport {
-    pub runtime_epoch: Uuid,
-    pub schema: String,
-    pub ui_ready: bool,
-    pub ready_reason: Option<String>,
-    pub paused: bool,
-    pub quiescent: bool,
-    pub ui_context_epoch: String,
-    pub conditions: std::collections::BTreeMap<String, bool>,
-    pub preparation: Option<DevicePreparationReport>,
-    pub apk_sha256: String,
 }
 pub fn is_digest(s: &str) -> bool {
     s.len() == 64
@@ -394,15 +354,6 @@ impl PolicyInput {
         )
     }
 }
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ConsentInput {
-    pub delegation_id: Uuid,
-    pub scope_digest: String,
-    pub expected_revision: i64,
-    pub accepted: bool,
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct InspectionInput {
@@ -847,26 +798,34 @@ mod task_status_contract_tests {
 }
 
 #[cfg(test)]
-mod delegation_contract_tests {
+mod environment_contract_tests {
     use super::*;
-
     #[test]
-    fn published_delegation_matches_current_scope_and_digest() {
-        let fixture: Value = serde_json::from_str(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../api-contract/fixtures/shared-runtime-negotiation.json"
-        )))
+    fn closed_observation_round_trips_and_rejects_native_state() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../../../api-contract/fixtures/device-environment.json"
+        ))
         .unwrap();
-        let scope = &fixture["delegation"]["scope"];
-        let expected = delegation_scope(
-            serde_json::from_value(scope["platform_id"].clone()).unwrap(),
-            serde_json::from_value(scope["device_id"].clone()).unwrap(),
-            scope["credential_generation"].as_i64().unwrap(),
-        );
-        assert_eq!(*scope, expected);
-        assert_eq!(
-            fixture["delegation"]["scope_digest"],
-            digest(scope).unwrap()
-        );
+        let report: EnvironmentObservation = serde_json::from_value(fixture.clone()).unwrap();
+        report.validate().unwrap();
+        assert_eq!(serde_json::to_value(report).unwrap(), fixture);
+        for key in [
+            "paused",
+            "accepted",
+            "preparation",
+            "ready_reason",
+            "ui_ready",
+            "quiescent",
+        ] {
+            let mut bad = fixture.clone();
+            bad[key] = serde_json::json!(true);
+            assert!(
+                serde_json::from_value::<EnvironmentObservation>(bad).is_err(),
+                "{key}"
+            );
+        }
+        let mut bad = fixture;
+        bad["interactive"] = serde_json::json!("ready");
+        assert!(serde_json::from_value::<EnvironmentObservation>(bad).is_err());
     }
 }

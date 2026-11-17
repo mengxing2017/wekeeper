@@ -6,13 +6,12 @@ use crate::distribution::domain::shared_mobile::execution::{
 pub(super) async fn context(repo: &Repository, c: &Credential) -> Result<Value> {
     let mut tx = repo.0.begin().await?;
     authenticate(&mut tx, c, false).await?;
-    let delegation = delegation::context(&mut tx, c).await?;
     let turns:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',a.id,'interval_ms',0) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE NOT EXISTS(SELECT 1 FROM mobile_v9_dispatch_state ds WHERE ds.item_id=a.item_id AND ds.state IN ('waiting_resources','completed','stopped','confirmation_expired','dispatch_failed')) AND p.device_id=$1 AND a.current AND a.state='queued' AND (p.plan->>'credential_generation')::bigint=$2 AND NOT t.stopped AND t.confirmed_until>clock_timestamp() ORDER BY t.created_at,i.position LIMIT 100").bind(c.device_id).bind(c.generation).fetch_all(&mut *tx).await?;
     let inspections:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',b.id,'target',jsonb_build_object('kind','group','search_query',t.search_text,'match_policy','exact_unique','identity_constraints','[]'::jsonb)) FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id WHERE b.device_id=$1 AND b.enabled AND t.enabled AND t.archived_at IS NULL LIMIT 100").bind(c.device_id).fetch_all(&mut *tx).await?;
     let (public_key, _) = secrets::sign(&json!({}))?;
     tx.commit().await?;
     Ok(
-        json!({"id":c.device_id,"protocol_version":10,"delegation":delegation,"turns":turns,"inspections":inspections,"verification_key":public_key}),
+        json!({"id":c.device_id,"protocol_version":10,"turns":turns,"inspections":inspections,"verification_key":public_key}),
     )
 }
 pub(super) async fn inspection(
@@ -70,10 +69,6 @@ pub(super) async fn grant(tx: &mut Tx<'_>, c: &Credential, v: GrantRequest) -> R
     )?;
     business_scheme::ensure_open(tx).await?;
     require(sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM device_credentials WHERE token_hash=$1 AND expires_at>clock_timestamp()+interval '210 seconds')").bind(&c.token_hash).fetch_one(&mut **tx).await?,"execution_credential_renewal_required")?;
-    require(
-        delegation::context(tx, c).await?["decision"]["accepted"] == true,
-        "shared_send_consent_required",
-    )?;
     let busy:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_execution_grants WHERE device_id=$1 AND NOT session_closed)").bind(c.device_id).fetch_one(&mut **tx).await?;
     if busy {
         return Ok(json!({"id":c.device_id,"state":"waiting","reason":"device_busy"}));
@@ -112,7 +107,7 @@ pub(super) async fn grant(tx: &mut Tx<'_>, c: &Credential, v: GrantRequest) -> R
     }
 
     let allowed_attempts = &v.eligible_attempt_ids;
-    let rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(a)||jsonb_build_object('plan',p.plan,'plan_digest',p.digest,'content_digest',p.content_digest,'task_id',t.id,'target_id',i.target_id,'confirmed_until',t.confirmed_until,'authorization_kind',t.authorization_kind) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE NOT EXISTS(SELECT 1 FROM mobile_v9_dispatch_state ds WHERE ds.item_id=a.item_id AND ds.state IN ('waiting_resources','completed','stopped','confirmation_expired','dispatch_failed')) AND p.device_id=$1 AND a.id=ANY($2) AND a.current AND a.state='queued' AND a.not_before<=clock_timestamp() AND NOT t.stopped AND t.confirmed_until>clock_timestamp() AND t.next_eligible_at<=clock_timestamp() ORDER BY t.created_at,i.position FOR UPDATE OF a,t").bind(c.device_id).bind(allowed_attempts).fetch_all(&mut **tx).await?;
+    let rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(a)||jsonb_build_object('plan',mobile_business_snapshot(p.plan),'plan_digest',p.digest,'content_digest',p.content_digest,'task_id',t.id,'target_id',i.target_id,'confirmed_until',t.confirmed_until,'authorization_kind',t.authorization_kind) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE NOT EXISTS(SELECT 1 FROM mobile_v9_dispatch_state ds WHERE ds.item_id=a.item_id AND ds.state IN ('waiting_resources','completed','stopped','confirmation_expired','dispatch_failed')) AND p.device_id=$1 AND a.id=ANY($2) AND a.current AND a.state='queued' AND a.not_before<=clock_timestamp() AND NOT t.stopped AND t.confirmed_until>clock_timestamp() AND t.next_eligible_at<=clock_timestamp() ORDER BY t.created_at,i.position FOR UPDATE OF a,t").bind(c.device_id).bind(allowed_attempts).fetch_all(&mut **tx).await?;
     let mut rejected = false;
     for row in rows {
         // Completion facts are authoritative even before the next projection scan.
@@ -192,7 +187,7 @@ pub(super) async fn grant(tx: &mut Tx<'_>, c: &Credential, v: GrantRequest) -> R
         if !device::quota(tx, c.device_id, uid(&row, "target_id")?, aid, true).await? {
             continue;
         }
-        let mut envelope = json!({"id":id,"execution_id":id,"capability_id":id,"schema":"durable_execution/1","protocol_version":10,"kind":"send","state":"granted","max_calls":1,"local_budget_ms":210000,"attempt_id":aid,"task_id":row["task_id"],"target_id":row["target_id"],"device_id":c.device_id,"credential_generation":c.generation,"assignment_revision":row["revision"],"runtime_epoch":v.runtime_epoch,"plan":row["plan"],"plan_digest":row["plan_digest"],"content_digest":row["content_digest"],"timing":timing,"result_credential":secret});
+        let mut envelope = json!({"id":id,"execution_id":id,"capability_id":id,"schema":"durable_execution/1","protocol_version":10,"kind":"send","state":"granted","max_calls":1,"local_budget_ms":210000,"attempt_id":aid,"task_id":row["task_id"],"target_id":row["target_id"],"device_id":c.device_id,"credential_generation":c.generation,"assignment_revision":row["revision"],"runtime_epoch":v.runtime_epoch,"plan":row["plan"],"plan_digest":digest(&row["plan"])?,"content_digest":row["content_digest"],"timing":timing,"result_credential":secret});
         let (public_key, signature) =
             secrets::sign(&envelope).map_err(|_| Error::Policy("signature_failed"))?;
         envelope["signature"] = json!(signature);

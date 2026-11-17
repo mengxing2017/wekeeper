@@ -14,7 +14,6 @@ type Tx<'a> = Transaction<'a, Postgres>;
 pub struct Repository(pub PgPool);
 mod business_scheme;
 pub mod configuration;
-mod delegation;
 pub mod delivery;
 mod device;
 mod diagnostics;
@@ -27,7 +26,6 @@ mod platform;
 mod push;
 mod readiness;
 pub mod records;
-mod screen;
 mod secrets;
 mod task_status;
 mod tasks;
@@ -57,7 +55,7 @@ async fn replay(
     key: &str,
     body: &Value,
 ) -> Result<Option<Value>> {
-    let old:Option<(String,Value)>=sqlx::query_as("SELECT request_hash,response FROM mobile_v9_operations WHERE principal_id=$1 AND generation=$2 AND scope=$3 AND idempotency_key=$4").bind(principal).bind(generation).bind(scope).bind(key).fetch_optional(&mut **tx).await?;
+    let old:Option<(String,Value)>=sqlx::query_as("SELECT request_hash,mobile_business_snapshot(response) FROM mobile_v9_operations WHERE principal_id=$1 AND generation=$2 AND scope=$3 AND idempotency_key=$4").bind(principal).bind(generation).bind(scope).bind(key).fetch_optional(&mut **tx).await?;
     if let Some((h, v)) = old {
         require(h == digest(body)?, "idempotency_payload_conflict")?;
         Ok(Some(v))
@@ -100,12 +98,13 @@ fn uid(v: &Value, k: &str) -> Result<Uuid> {
     serde_json::from_value(v[k].clone()).map_err(|_| Error::Conflict)
 }
 async fn task(tx: &mut Tx<'_>, id: Uuid) -> Result<Value> {
-    let mut value: Value = sqlx::query_scalar("SELECT to_jsonb(t)||jsonb_build_object('items',coalesce((SELECT jsonb_agg(to_jsonb(i)||jsonb_build_object('attempts',(SELECT jsonb_agg(to_jsonb(a)||jsonb_build_object('plan',p.plan,'plan_digest',p.digest,'evidence',(SELECT to_jsonb(e) FROM channel_execution_observations e WHERE e.attempt_id=a.id ORDER BY e.id DESC LIMIT 1),'result_reason',coalesce((SELECT g.result_body->>'reason' FROM mobile_execution_grants g WHERE g.attempt_id=a.id),(SELECT e.body->>'reason' FROM mobile_v9_send_events e WHERE e.attempt_id=a.id AND e.receipt->>'disposition'<>'archived' ORDER BY e.created_at DESC,e.id DESC LIMIT 1))) ORDER BY a.attempt_no) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id WHERE a.item_id=i.id)) ORDER BY i.position) FROM mobile_v9_task_items i WHERE i.task_id=t.id),'[]'::jsonb)) FROM mobile_v9_tasks t WHERE t.id=$1").bind(id).fetch_optional(&mut **tx).await?.ok_or(Error::NotFound)?;
+    let mut value: Value = sqlx::query_scalar("SELECT to_jsonb(t)||jsonb_build_object('items',coalesce((SELECT jsonb_agg(to_jsonb(i)||jsonb_build_object('attempts',(SELECT jsonb_agg(to_jsonb(a)||jsonb_build_object('plan',mobile_business_snapshot(p.plan),'plan_digest',p.digest,'evidence',(SELECT to_jsonb(e) FROM channel_execution_observations e WHERE e.attempt_id=a.id ORDER BY e.id DESC LIMIT 1),'result_reason',coalesce((SELECT g.result_body->>'reason' FROM mobile_execution_grants g WHERE g.attempt_id=a.id),(SELECT e.body->>'reason' FROM mobile_v9_send_events e WHERE e.attempt_id=a.id AND e.receipt->>'disposition'<>'archived' ORDER BY e.created_at DESC,e.id DESC LIMIT 1))) ORDER BY a.attempt_no) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id WHERE a.item_id=i.id)) ORDER BY i.position) FROM mobile_v9_task_items i WHERE i.task_id=t.id),'[]'::jsonb)) FROM mobile_v9_tasks t WHERE t.id=$1").bind(id).fetch_optional(&mut **tx).await?.ok_or(Error::NotFound)?;
     let receipts:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('attempt_id',r.attempt_id,'received_at',r.received_at) FROM mobile_v9_task_receipts r JOIN mobile_v9_attempts a ON a.id=r.attempt_id JOIN mobile_v9_task_items i ON i.id=a.item_id WHERE i.task_id=$1").bind(id).fetch_all(&mut **tx).await?;
     if let Some(items) = value["items"].as_array_mut() {
         for item in items {
             if let Some(attempts) = item["attempts"].as_array_mut() {
                 for attempt in attempts {
+                    attempt["plan_digest"] = json!(digest(&attempt["plan"])?);
                     attempt["device_received_at"] = receipts
                         .iter()
                         .find(|r| r["attempt_id"] == attempt["id"])
@@ -115,7 +114,7 @@ async fn task(tx: &mut Tx<'_>, id: Uuid) -> Result<Value> {
             }
         }
     }
-    let dispatches:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('item_id',ds.item_id,'state',ds.state,'reason',ds.reason,'revision',ds.revision,'max_rounds',ds.max_rounds,'completed_rounds',ds.completed_rounds,'finished_at',ds.finished_at,'next_retry_at',ds.next_retry_at,'updated_at',ds.updated_at,'last_failed_attempt_id',ds.last_failed_attempt_id,'candidates',sc.candidates,'assignments',coalesce((SELECT jsonb_agg(to_jsonb(r)||jsonb_build_object('from_device_name',op.plan->>'device_name','to_device_name',np.plan->>'device_name') ORDER BY r.created_at,r.id) FROM mobile_v9_reassignments r JOIN mobile_v9_attempts a ON a.id=r.new_attempt_id JOIN mobile_v9_plans np ON np.id=a.plan_id JOIN mobile_v9_attempts oa ON oa.id=r.old_attempt_id JOIN mobile_v9_plans op ON op.id=oa.plan_id WHERE a.item_id=ds.item_id),'[]'::jsonb)) FROM mobile_v9_dispatch_state ds JOIN mobile_v9_dispatch_scopes sc ON sc.item_id=ds.item_id JOIN mobile_v9_task_items i ON i.id=ds.item_id WHERE i.task_id=$1").bind(id).fetch_all(&mut **tx).await?;
+    let dispatches:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('item_id',ds.item_id,'state',ds.state,'reason',ds.reason,'revision',ds.revision,'max_rounds',ds.max_rounds,'completed_rounds',ds.completed_rounds,'finished_at',ds.finished_at,'next_retry_at',ds.next_retry_at,'updated_at',ds.updated_at,'last_failed_attempt_id',ds.last_failed_attempt_id,'candidates',mobile_business_snapshot(sc.candidates),'assignments',coalesce((SELECT jsonb_agg(to_jsonb(r)||jsonb_build_object('from_device_name',op.plan->>'device_name','to_device_name',np.plan->>'device_name') ORDER BY r.created_at,r.id) FROM mobile_v9_reassignments r JOIN mobile_v9_attempts a ON a.id=r.new_attempt_id JOIN mobile_v9_plans np ON np.id=a.plan_id JOIN mobile_v9_attempts oa ON oa.id=r.old_attempt_id JOIN mobile_v9_plans op ON op.id=oa.plan_id WHERE a.item_id=ds.item_id),'[]'::jsonb)) FROM mobile_v9_dispatch_state ds JOIN mobile_v9_dispatch_scopes sc ON sc.item_id=ds.item_id JOIN mobile_v9_task_items i ON i.id=ds.item_id WHERE i.task_id=$1").bind(id).fetch_all(&mut **tx).await?;
     if let Some(items) = value["items"].as_array_mut() {
         for item in items {
             if let Some(dispatch) = dispatches.iter().find(|d| d["item_id"] == item["id"]) {
@@ -327,25 +326,10 @@ impl Store for Repository {
     ) -> Result<Value> {
         device::write(self, c, key, command).await
     }
-    async fn delegation_read(&self, c: &Credential) -> Result<Value> {
-        let mut tx = self.0.begin().await?;
-        authenticate(&mut tx, c, false).await?;
-        let delegation = delegation::context(&mut tx, c).await?;
-        let value = delegation_context_view(c, delegation, chrono::Utc::now());
-        tx.commit().await?;
-        Ok(value)
-    }
+
     async fn device_read(&self, c: &Credential) -> Result<Value> {
         execution::context(self, c).await
     }
-}
-
-fn delegation_context_view(
-    c: &Credential,
-    delegation: Value,
-    observed_at: chrono::DateTime<chrono::Utc>,
-) -> Value {
-    json!({"id":c.device_id,"device_id":c.device_id,"credential_generation":c.generation,"authorization_schema":SCOPE,"delegation":delegation,"observed_at":observed_at,"runtime_report_version":2})
 }
 
 fn hash_bytes(bytes: &[u8]) -> String {
@@ -356,26 +340,7 @@ fn hash_bytes(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod default_policy_tests {
     use super::*;
-    #[test]
-    fn delegation_context_advertises_additive_runtime_diagnostics_without_changing_consent() {
-        let fixture: Value = serde_json::from_str(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../api-contract/fixtures/shared-runtime-negotiation.json"
-        )))
-        .unwrap();
-        let credential = Credential {
-            device_id: serde_json::from_value(fixture["device_id"].clone()).unwrap(),
-            generation: 1,
-            token_hash: "not-exposed".into(),
-        };
-        let value = delegation_context_view(
-            &credential,
-            fixture["delegation"].clone(),
-            serde_json::from_value(fixture["observed_at"].clone()).unwrap(),
-        );
-        assert_eq!(value, fixture);
-        assert!(value.get("token_hash").is_none());
-    }
+
     #[test]
     fn no_configuration_has_valid_bounded_defaults_without_a_fabricated_database_id() {
         let p = default_policy();
