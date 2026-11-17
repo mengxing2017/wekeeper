@@ -4,7 +4,7 @@ export interface Row {
   id: UUID;
   revision: number;
 }
-export type DeviceControlKind = "task_available" | "configuration_changed" | "request_status" | "cancel_execution";
+export type DeviceControlKind = "configuration_changed" | "request_status" | "cancel_execution";
 export interface DeviceControlCommand {
   id: UUID; sequence: number; kind: DeviceControlKind;
   state: "queued" | "delivered" | "accepted" | "completed" | "rejected" | "expired";
@@ -12,7 +12,7 @@ export interface DeviceControlCommand {
 }
 export interface DeviceControlSnapshot {
   id: UUID; state: "connecting" | "online" | "suspect" | "offline" | "disabled" | "unauthorized";
-  last_control_heartbeat_at: string | null; transport: "wss" | "https" | null;
+  last_control_heartbeat_at: string | null; transport: "wss" | null;
   readiness: string | null; block_reason: string | null;
   desired_paused: boolean; desired_revision: number; credential_expires_at: string | null;
   transport_connected?: boolean;
@@ -25,10 +25,16 @@ export interface DeviceControlPresence extends DeviceControlSnapshot {
 }
 export interface DeviceControlPulse {
   connection_id: UUID; epoch: number; heartbeat_id: UUID; heartbeat_sequence: number; probe_id?: UUID | null;
+  runtime_epoch: UUID; execution_receipts: UUID[];
   readiness: string; block_reason: string | null;
   receipts: Array<{ id: UUID; state: "accepted" | "completed" | "rejected"; result_code: string | null }>;
 }
+export interface ExecutionDelivery {
+ schema:'mobile_execution_delivery/1';delivery_id:UUID;transmission_id:UUID;connection_id:UUID;epoch:number;
+ delivery:import('../mobile-execution/shared-send/v2').TaskDelivery;
+}
 export interface DeviceControlFrame {
+  executions:ExecutionDelivery[];execution_receipts:UUID[];
   id: UUID; connection_id: UUID; epoch: number; protocol_version: 1;
   probe_id?: UUID; heartbeat_id: UUID | null; heartbeat_interval_seconds: number; offline_after_seconds: number;
   server_time: string; desired_paused: boolean; desired_revision: number;

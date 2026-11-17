@@ -10,5 +10,7 @@
   "desired_paused": false,
   "desired_revision": 3,
   "commands": [],
-  "credential_expires_at": "2026-11-30T00:00:00Z"
+  "credential_expires_at": "2026-11-30T00:00:00Z",
+  "executions": [],
+  "execution_receipts": []
 }

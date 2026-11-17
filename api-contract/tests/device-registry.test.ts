@@ -13,7 +13,7 @@ test("device control presence and commands use the authenticated platform client
   expect(fetcher.mock.calls[0][0]).toBe("/api/v1/platform/execution-devices/phone/control");
   expect(JSON.parse(fetcher.mock.calls[0][1]?.body as string).data.attributes).toEqual({ kind: "request_status" });
   expect(JSON.parse(fetcher.mock.calls[0][1]?.body as string).data.type).toBe("device-control-commands");
-  for (const kind of ["task_available", "configuration_changed"] as const) {
+  for (const kind of ["request_status", "configuration_changed"] as const) {
     await deviceRegistryApi.controlCommand("phone", kind, `${kind}-once`);
     const call = fetcher.mock.calls.at(-1)!;
     expect(call[0]).toBe("/api/v1/platform/execution-devices/phone/control");
@@ -25,7 +25,7 @@ test("device control presence and commands use the authenticated platform client
 
 test("batched device list preserves the shared control presence projection", async () => {
   const fixture = (await import("../fixtures/device-control-presence.json")).default;
-  const snapshot: import("../src/modules/device-registry").DeviceControlSnapshot = { ...fixture, state: "connecting", transport: "https" };
+  const snapshot: import("../src/modules/device-registry").DeviceControlSnapshot = { ...fixture, state: "connecting", transport: "wss" };
   const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response({ data: [{ type: "execution-devices", id: fixture.id, attributes: { name: "phone", control: snapshot } }] }));
   vi.stubGlobal("fetch", fetcher);
   const page = await deviceRegistryApi.devices();

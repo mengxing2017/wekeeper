@@ -118,6 +118,9 @@ export interface DispatchEvent {
   reason_label?: string;
 }
 export interface DeliveryExchange {
+  transport:'wss';connection_id:string|null;connection_epoch:number|null;
+  accepted_at:string|null;receipt_deadline_at:string|null;result_deadline_at:string|null;result_received_at:string|null;
+  superseded_reason:string|null;reception_state:string;
   id: string;
   device_id: string;
   generation: number;

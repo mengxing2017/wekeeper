@@ -19,12 +19,12 @@ it('uses only the new completion resource and stable result identity',async()=>{
  expect(calls[0]).toEqual({path:'/api/v10/device-execution/execution-completions',body:{data:{type:'execution-completions',attributes:body}},key:body.result_id})
 })
 
-it('receives the signed task in one delivery without sending downstream candidate IDs',async()=>{
- const calls:Array<{path:string;body:unknown;key:string|undefined}>=[]
- const client=createClient(async r=>{calls.push({path:r.path,body:JSON.parse(r.body as string),key:r.headers['Idempotency-Key']});return {status:200,headers:{'content-type':'application/vnd.api+json'},body:{data:{id:fixture.delivery.id,type:'task-deliveries',attributes:Object.fromEntries(Object.entries(fixture.delivery).filter(([key])=>key!=='id'))}}}})
- const body={runtime_epoch:fixture.grant.runtime_epoch,inspection_id:null}
- const received=await durableExecutionApi(client).deliver(body,'stable-delivery-key')
- expect(calls).toEqual([{path:'/api/v10/device-execution/task-deliveries',body:{data:{type:'task-deliveries',attributes:body}},key:'stable-delivery-key'}])
- expect(received.execution).toEqual(fixture.grant)
- expect(received.verification_key).toBe(fixture.verification_key)
+it('uses an explicit zero-send inspection endpoint without candidate selection',async()=>{
+ const calls:Array<{path:string;body:unknown}>=[]
+ const client=createClient(async r=>{calls.push({path:r.path,body:JSON.parse(r.body as string)});return {status:200,headers:{'content-type':'application/vnd.api+json'},body:{data:{id:fixture.grant.id,type:'inspection-executions',attributes:{state:'waiting'}}}}})
+ const body={runtime_epoch:fixture.grant.runtime_epoch,inspection_id:'00000000-0000-4000-8000-000000000011'}
+ await durableExecutionApi(client).inspect(body,'inspection')
+ expect(calls[0]).toEqual({path:'/api/v10/device-execution/inspection-executions',body:{data:{type:'inspection-executions',attributes:body}}})
+ expect(durableExecutionApi(client)).not.toHaveProperty('deliver')
+ expect(durableExecutionApi(client)).not.toHaveProperty('grant')
 })
