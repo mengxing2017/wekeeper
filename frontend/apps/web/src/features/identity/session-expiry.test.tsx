@@ -17,7 +17,7 @@ function mount(status: number, background = false) {
   vi.stubGlobal('fetch', fetcher)
   const cache = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } })
   cache.setQueryData(['session'], { csrf: 'old-csrf', user })
-  cache.setQueryData(['private-data'], ['private school results'])
+  cache.setQueryData(['private-data'], ['private distribution results'])
   function BackgroundRequest() {
     useQuery({ queryKey: ['protected-refresh'], queryFn: identity.session, retry: false })
     return <p>后台加载中</p>

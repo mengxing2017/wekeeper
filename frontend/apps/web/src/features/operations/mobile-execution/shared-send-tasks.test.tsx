@@ -12,7 +12,7 @@ beforeEach(() => {
   vi.resetAllMocks()
   vi.mocked(sharedSend.task).mockResolvedValue({id:'task',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-03'})
   vi.mocked(api.targets).mockResolvedValue({ items: [{ id: 'target', search_text: '实际搜索文字', remark: '', enabled: true, archived_at: null, metadata_revision: 1, locator_revision: 1 }] })
-  vi.mocked(sharedSend.overview).mockResolvedValue({ id: 'school', tasks: [], drafts: [], readiness: [], pool: [], inspections: [] })
+  vi.mocked(sharedSend.overview).mockResolvedValue({ id: 'global', tasks: [], drafts: [], readiness: [], pool: [], inspections: [] })
   vi.mocked(sharedSend.taskPreview).mockImplementation(async()=>({id:preview.id,draft:{id:'draft',targets:[{id:'target',name:'实际搜索文字'}],intent_id:'intent',target_ids:['target'],message,content_type:'text/plain',between_targets_seconds:30,revision:1,content_digest:'hash'},preview}))
 })
 async function compose(admin = true) {
@@ -134,7 +134,7 @@ it('缺少管理员角色时明确说明权限原因，而不是无说明置灰'
 it('打开详情持续轮询，失败保留快照与输入，关闭停止旧任务查询',async()=>{
  vi.useFakeTimers({toFake:['setInterval','clearInterval']})
  const task={id:'task',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-03',items:[{id:'item',target_id:'target',position:0,attempts:[{id:'attempt',state:'queued',revision:1,current:true,attempt_no:1,plan_digest:'hash',plan:{search_text:'实际搜索文字',device_id:'phone',device_name:'测试手机'},execution_status:{conditions:[{code:'runtime_stale',message:'等待手机上报当前执行条件',owner:'system'}]}}]}]} as unknown as Awaited<ReturnType<typeof sharedSend.task>>
- vi.mocked(sharedSend.overview).mockResolvedValue({id:'school',tasks:[task],drafts:[],readiness:[],pool:[],inspections:[]})
+ vi.mocked(sharedSend.overview).mockResolvedValue({id:'global',tasks:[task],drafts:[],readiness:[],pool:[],inspections:[]})
  vi.mocked(sharedSend.task).mockResolvedValue(task)
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}})
  const ui=()=><QueryClientProvider client={client}><SharedSendTasks admin/></QueryClientProvider>
@@ -166,7 +166,7 @@ it('打开详情持续轮询，失败保留快照与输入，关闭停止旧任�
 
 it('排队任务分别显示平台已创建与手机已接收，接收回执不改变执行条件',async()=>{
  const task={id:'task',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-04',items:[{id:'item',target_id:'target-uuid',position:0,attempts:[{id:'attempt',state:'queued',revision:1,current:true,attempt_no:1,plan_digest:'hash',plan:{target_name:'冻结群名',search_text:'专用搜索文字',device_id:'phone',device_name:'测试手机'},execution_status:{conditions:[{code:'runtime_stale',message:'等待手机执行条件更新',owner:'system'}]}}]}]} as unknown as Awaited<ReturnType<typeof sharedSend.task>>
- vi.mocked(sharedSend.overview).mockResolvedValue({id:'school',tasks:[task],drafts:[],readiness:[],pool:[],inspections:[]})
+ vi.mocked(sharedSend.overview).mockResolvedValue({id:'global',tasks:[task],drafts:[],readiness:[],pool:[],inspections:[]})
  vi.mocked(sharedSend.task).mockResolvedValue(task)
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}})
  render(<QueryClientProvider client={client}><SharedSendTasks admin/></QueryClientProvider>)
@@ -188,7 +188,7 @@ it('群名变化必须重新预览，手机配置不是受理条件',async()=>{
  const row={binding_id:'binding',device_id:'phone',target_id:'target',device_name:'测试手机',target_name:'实际搜索文字',search_text:'实际搜索文字',state:code,ready:false,plan_selectable:true,confirmable:false,execution_ready:false,automatic:true,blockers:[{code,message:text,owner:'system',automatic:false}],inspection:null,inspection_state:'not_scheduled' as const,retry_at:null,retry_remaining:3,configuration_id:null,configuration_digest:null,consent_state:'accepted' as const,runtime_state:'screen_off' as const,execution_conditions:[{code:'device_screen_off',message:'手机屏幕已关闭，有有效待办时自动准备亮屏',owner:'device',automatic:true}]}
  pending.plan.items[0]={...pending.plan.items[0],blocker:text,readiness:[row]}
  vi.mocked(sharedSend.taskPreview).mockResolvedValue(response(pending))
- vi.mocked(sharedSend.overview).mockResolvedValue({id:'school',tasks:[],drafts:[],readiness:[{...row,search_text:'新群名'}],pool:[],inspections:[]})
+ vi.mocked(sharedSend.overview).mockResolvedValue({id:'global',tasks:[],drafts:[],readiness:[{...row,search_text:'新群名'}],pool:[],inspections:[]})
  await compose();fireEvent.click(screen.getByRole('button',{name: /^预\s*览$/}))
  expect(await screen.findByText(`受理检查：${text}`)).toBeTruthy()
  expect(screen.queryByText(`受理条件：${text}`)).toBeNull()
@@ -201,7 +201,7 @@ it('群名变化必须重新预览，手机配置不是受理条件',async()=>{
 it('展示授权候选和自动换机轨迹，历史尝试结果冲突仍可核对',async()=>{
  const candidates:SharedCandidate[]=['甲','乙'].map((name,index)=>({target_id:'target',target_name:'实际搜索文字',device_id:`phone-${index}`,device_name:`候选${name}`,binding_id:`binding-${index}`,binding_locator_revision:1,target_locator_revision:1,target:{kind:'group',search_query:'实际搜索文字',match_policy:'exact_unique',identity_constraints:[]},credential_generation:1,delegation_id:null}))
  const task={id:'task',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-04',items:[{id:'item',target_id:'target',position:0,dispatch:{state:'needs_review',candidates,assignments:[{id:'assignment',source:'automatic',from_device_name:'候选甲',to_device_name:'候选乙',created_at:'2026-11-04T00:00:00Z'}]},attempts:[{id:'old',state:'unknown',current:false,attempt_no:1,revision:3,plan:{...candidates[0],message,between_targets_seconds:30}},{id:'new',state:'queued',current:true,attempt_no:2,revision:1,plan:{...candidates[1],message,between_targets_seconds:30}}]}]} as unknown as Awaited<ReturnType<typeof sharedSend.task>>
- vi.mocked(sharedSend.overview).mockResolvedValue({id:'school',tasks:[task],drafts:[],readiness:[],pool:[],inspections:[]})
+ vi.mocked(sharedSend.overview).mockResolvedValue({id:'global',tasks:[task],drafts:[],readiness:[],pool:[],inspections:[]})
  vi.mocked(sharedSend.task).mockResolvedValue(task)
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}})
  render(<QueryClientProvider client={client}><SharedSendTasks admin/></QueryClientProvider>)
@@ -225,7 +225,7 @@ it('展示授权候选和自动换机轨迹，历史尝试结果冲突仍可核�
 
 it('页面识别失败显示实际原因，授权候选继续处理且不要求版本适配',async()=>{
  const task={id:'task',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-05',items:[{id:'item',target_id:'target',position:0,dispatch:{state:'assigned',candidates:[{device_name:'候选乙',search_text:'乙备注群名'}],assignments:[]},attempts:[{id:'old',state:'failed_before_call',result_reason:'page_unrecognized',current:false,attempt_no:1,revision:3,plan:{search_text:'甲备注群名',device_name:'候选甲'}},{id:'new',state:'queued',current:true,attempt_no:2,revision:1,plan:{search_text:'乙备注群名',device_name:'候选乙'}}]}]} as unknown as Awaited<ReturnType<typeof sharedSend.task>>
- vi.mocked(sharedSend.overview).mockResolvedValue({id:'school',tasks:[task],drafts:[],readiness:[],pool:[],inspections:[]})
+ vi.mocked(sharedSend.overview).mockResolvedValue({id:'global',tasks:[task],drafts:[],readiness:[],pool:[],inspections:[]})
  vi.mocked(sharedSend.task).mockResolvedValue(task)
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}})
  render(<QueryClientProvider client={client}><SharedSendTasks admin/></QueryClientProvider>)
@@ -246,7 +246,7 @@ it('三轮耗尽自动显示整任务停止，领取记录不再显示准备中�
  failed.items![0].dispatch!.completed_rounds=3
  failed.items![0].dispatch!.next_retry_at=null
  // The persisted manual stop flag and leased attempt do not change on exhaustion.
- vi.mocked(sharedSend.overview).mockResolvedValue({id:'school',tasks:[{...running,items:undefined}],drafts:[],readiness:[],pool:[],inspections:[]})
+ vi.mocked(sharedSend.overview).mockResolvedValue({id:'global',tasks:[{...running,items:undefined}],drafts:[],readiness:[],pool:[],inspections:[]})
  vi.mocked(sharedSend.task).mockResolvedValueOnce(running).mockResolvedValue(failed)
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}})
  render(<QueryClientProvider client={client}><SharedSendTasks admin/></QueryClientProvider>)
@@ -280,7 +280,7 @@ it('列表不打开详情也区分完成、手动停止和三轮耗尽，不采�
   {...base,id:'failed-task',stopped:false,status:'dispatch_failed'},
   {...base,id:'running-task',stopped:false,status:'dispatching'},
  ]
- vi.mocked(sharedSend.overview).mockResolvedValue({id:'school',tasks,drafts:[],readiness:[],pool:[],inspections:[]})
+ vi.mocked(sharedSend.overview).mockResolvedValue({id:'global',tasks,drafts:[],readiness:[],pool:[],inspections:[]})
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}})
  client.setQueryData(['mobile-execution','shared-task','completed-task'],{...tasks[0],status:'stopped'})
  render(<QueryClientProvider client={client}><SharedSendTasks admin/></QueryClientProvider>)

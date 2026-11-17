@@ -38,7 +38,7 @@ function show(platformAdmin = true) {
         allowedKeys={visibleNavigationKeys(platformAdmin)}
         onLogout={onLogout}
       >
-        <p>学校内容</p>
+        <p>分发内容</p>
       </AppShell>
     </MemoryRouter>,
   )
@@ -46,7 +46,6 @@ function show(platformAdmin = true) {
 }
 it('shows role-appropriate navigation and routes business selections', () => {
   const { onNavigate } = show()
-  expect(screen.queryByRole('menuitem', { name: '学校管理' })).toBeNull()
   expect(screen.getByRole('menuitem', { name: '客户群' }).getAttribute('aria-current')).toBe(
     'page',
   )
@@ -60,7 +59,6 @@ it('shows role-appropriate navigation and routes business selections', () => {
 })
 it('provides platform management and logout for an administrator', async () => {
   const { onLogout, onNavigate } = show(true)
-  expect(screen.queryByRole('menuitem', { name: '学校管理' })).toBeNull()
   expect(screen.getByRole('menuitem', { name: '手机设备' })).toBeTruthy()
   expect(screen.queryByRole('menuitem', { name: '业务单位与分组' })).toBeNull()
   expect(screen.queryByRole('menuitem', { name: '广告序列轮询' })).toBeNull()
@@ -98,7 +96,7 @@ it('collapses the desktop sidebar while keeping the active page and account acce
   expect(document.querySelector('.workspace-shell')?.classList.contains('is-collapsed')).toBe(false)
 })
 
-it('opens static help without routing or changing the school selection', () => {
+it('opens static help without changing the active page', () => {
   const { onNavigate } = show()
   expect(screen.getByRole('link', { name: '帮助中心' }).getAttribute('href')).toBe('/docs/')
   const help = screen.getByRole('link', { name: '使用说明' })

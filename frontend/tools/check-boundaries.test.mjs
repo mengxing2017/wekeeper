@@ -4,7 +4,7 @@ import { violations } from './check-boundaries.mjs'
 test('checks static, type-only, re-export and dynamic imports, without client boundary bypasses', () => {
   for (const statement of [
     "import type {User} from '@wekeeper/api-contract/identity'",
-    "export * from '@wekeeper/api-contract/community'",
+    "export * from '@wekeeper/api-contract/business'",
     "const x=import('@wekeeper/api-contract/client')",
   ]) {
     assert.ok(
@@ -26,4 +26,12 @@ test('checks static, type-only, re-export and dynamic imports, without client bo
   )
   assert.ok(violations('apps/web/src/main.ts', "import x from '../../miniapp/src/main'").length)
   assert.ok(violations('packages/core/index.ts', "export * from '../../apps/web/src/main'").length)
+})
+
+test('feature API imports use the contract package exports', () => {
+  const file = 'apps/web/src/features/identity/api/index.ts'
+  for (const spec of ['@wekeeper/api-contract', '@wekeeper/api-contract/unsupported', '@wekeeper/api-contract/src/http']) {
+    assert.deepEqual(violations(file, `export * from '${spec}'`), ['只能引用 contract 声明的包导出'])
+  }
+  assert.deepEqual(violations(file, "export * from '@wekeeper/api-contract/mobile-execution/shared-send/v2'"), [])
 })
