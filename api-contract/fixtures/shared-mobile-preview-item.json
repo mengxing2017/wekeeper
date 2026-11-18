@@ -4,7 +4,7 @@
   "target": {
     "id": "00000000-0000-4000-8000-000000000011",
     "name": "家长通知群",
-    "search_text": "手机内实际群名",
+    "search_text": "家长通知群",
     "locator_revision": 2,
     "client_kind": "wecom"
   },
@@ -17,23 +17,27 @@
       "target_id": "00000000-0000-4000-8000-000000000011",
       "device_name": "共享手机甲",
       "target_name": "家长通知群",
-      "search_text": "手机内实际群名",
-      "state": "inspection_not_scheduled",
+      "search_text": "家长通知群",
+      "state": "waiting_connection",
       "ready": false,
       "automatic": true,
-      "blockers": [
+      "blockers": [],
+      "client_kind": "wecom",
+      "plan_selectable": true,
+      "confirmable": true,
+      "execution_ready": false,
+      "online": false,
+      "environment": null,
+      "execution_conditions": [
         {
-          "code": "inspection_not_scheduled",
-          "message": "尚未建立可领取的检查任务，等待系统评估",
+          "code": "waiting_connection",
+          "message": "手机当前离线，平台将选择下一授权候选",
           "owner": "system",
+          "action": "平台自动切换可用候选",
           "automatic": true
         }
-      ],
-      "inspection": null,
-      "inspection_state": "not_scheduled",
-      "retry_at": null,
-      "retry_remaining": 3
+      ]
     }
   ],
-  "blocker": "device_not_eligible"
+  "blocker": "请选择已绑定手机"
 }
