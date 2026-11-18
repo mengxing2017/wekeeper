@@ -184,14 +184,6 @@ async fn serve_inner(
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         }
     });
-    let usage_worker = tokio::spawn(async move {
-        loop {
-            if usages.reconcile_usages().await.is_err() {
-                tracing::warn!("mobile usage reconciliation failed; persisted intents will retry");
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        }
-    });
     let messages = crate::message_orchestration::south::adapter::postgres::Repository(
         application.pool.clone(),
     );
@@ -243,8 +235,7 @@ async fn serve_inner(
     let _ = dispatch_worker.await;
     delivery_notify_worker.abort();
     let _ = delivery_notify_worker.await;
-    usage_worker.abort();
-    let _ = usage_worker.await;
+
     broadcast_read_worker.abort();
     let _ = broadcast_read_worker.await;
     broadcast_worker.abort();

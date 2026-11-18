@@ -67,7 +67,6 @@ pub(super) async fn grant(tx: &mut Tx<'_>, c: &Credential, v: GrantRequest) -> R
         v.eligible_attempt_ids.len() <= 100 && !v.runtime_epoch.is_nil(),
         "execution_request_invalid",
     )?;
-    business_scheme::ensure_open(tx).await?;
     require(sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM device_credentials WHERE token_hash=$1 AND expires_at>clock_timestamp()+interval '210 seconds')").bind(&c.token_hash).fetch_one(&mut **tx).await?,"execution_credential_renewal_required")?;
     let busy:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_execution_grants WHERE device_id=$1 AND NOT session_closed)").bind(c.device_id).fetch_one(&mut **tx).await?;
     if busy {
@@ -152,21 +151,9 @@ pub(super) async fn grant(tx: &mut Tx<'_>, c: &Credential, v: GrantRequest) -> R
         if !device::quota(tx, c.device_id, uid(&row, "target_id")?, aid, false).await? {
             continue;
         }
-        let usages = match usage_budgets::check(tx, c.device_id, uid(&row, "target_id")?).await {
-            Ok(usages) => usages,
-            Err(Error::Policy("quota_wait")) => {
-                records::check(
-                    tx,
-                    c.device_id,
-                    "usage_quota",
-                    "quota_exhausted",
-                    json!({"attempt_id":aid}),
-                )
-                .await?;
-                continue;
-            }
-            Err(error) => return Err(error),
-        };
+        if !resource_budgets::check(tx, uid(&row["plan"], "binding_id")?).await? {
+            continue;
+        }
         let id = Uuid::now_v7();
         let secret = secrets::token();
         let timing = match timing(tx, &row, c.device_id).await {
@@ -201,7 +188,7 @@ pub(super) async fn grant(tx: &mut Tx<'_>, c: &Credential, v: GrantRequest) -> R
             "execution_delivery_too_large",
         )?;
         sqlx::query("INSERT INTO mobile_execution_grants(id,attempt_id,device_id,credential_generation,kind,execute_before,result_credential_hash,envelope) VALUES($1,$2,$3,$4,'send',$5::text::timestamptz,$6,$7)").bind(id).bind(aid).bind(c.device_id).bind(c.generation).bind(timing["execute_before"].as_str().ok_or(Error::Conflict)?).bind(hash(&secret)).bind(secrets::seal(&envelope).map_err(|_|Error::Policy("encryption_failed"))?).execute(&mut **tx).await?;
-        usage_budgets::record(tx, id, &usages).await?;
+        resource_budgets::record(tx, id, uid(&row["plan"], "binding_id")?).await?;
         sqlx::query("UPDATE mobile_v9_attempts SET state='leased',revision=revision+1 WHERE id=$1")
             .bind(aid)
             .execute(&mut **tx)
@@ -310,7 +297,7 @@ pub(super) async fn apply_results(tx: &mut Tx<'_>) -> Result<()> {
     Ok(())
 }
 
-/// Shorten the fixed local budget at confirmation, usage and policy time boundaries.
+/// Shorten the fixed local budget at confirmation, resource and business scheme time boundaries.
 async fn timing(tx: &mut Tx<'_>, row: &Value, device: Uuid) -> Result<Value> {
     let now: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
         .fetch_one(&mut **tx)
@@ -319,16 +306,12 @@ async fn timing(tx: &mut Tx<'_>, row: &Value, device: Uuid) -> Result<Value> {
     let confirmed: chrono::DateTime<chrono::Utc> =
         serde_json::from_value(row["confirmed_until"].clone()).map_err(|_| Error::Conflict)?;
     until = until.min(confirmed);
-    for usage in tasks::operative_usages(tx, device, uid(row, "target_id")?).await? {
-        let expiry: chrono::DateTime<chrono::Utc> =
-            serde_json::from_value(usage["expires_at"].clone()).map_err(|_| Error::Conflict)?;
+    if let Some(expiry) = resource_budgets::expiry(tx, device, uid(row, "target_id")?).await? {
         until = until.min(expiry);
     }
     let policies = [
         device::frozen_policy(tx, uid(row, "id")?).await?,
-        policy(tx)
-            .await?
-            .ok_or(Error::Policy("shared_send_policy_invalid"))?,
+        business_scheme::current_for_attempt(tx, uid(row, "id")?).await?,
     ];
     for policy in policies {
         let boundary:Option<chrono::DateTime<chrono::Utc>>=sqlx::query_scalar("WITH times AS (SELECT t,extract(isodow FROM t AT TIME ZONE $1)::int AS day,(extract(hour FROM t AT TIME ZONE $1)*60+extract(minute FROM t AT TIME ZONE $1))::int AS minute FROM generate_series($3::timestamptz,$4::timestamptz,interval '1 second') t) SELECT min(t) FROM times n WHERE NOT EXISTS(SELECT 1 FROM jsonb_array_elements($2::jsonb) w WHERE CASE WHEN (w->>'start_minute')::int<(w->>'end_minute')::int THEN (w->'weekdays') @> to_jsonb(ARRAY[n.day]) AND n.minute>=(w->>'start_minute')::int AND n.minute<(w->>'end_minute')::int ELSE ((w->'weekdays') @> to_jsonb(ARRAY[n.day]) AND n.minute>=(w->>'start_minute')::int) OR ((w->'weekdays') @> to_jsonb(ARRAY[((n.day+5)%7)+1]) AND n.minute<(w->>'end_minute')::int) END)").bind(policy["timezone"].as_str().ok_or(Error::Conflict)?).bind(&policy["allowed_windows"]).bind(now).bind(until).fetch_one(&mut **tx).await?;

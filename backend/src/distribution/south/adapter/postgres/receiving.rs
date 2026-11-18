@@ -216,7 +216,7 @@ impl Store for Repository {
             return Err(Error::NotFound);
         }
         if channel == Channel::Mobile && input.enabled {
-            sqlx::query("INSERT INTO mobile_device_target_bindings(id,device_id,target_id,created_by,updated_by) SELECT gen_random_uuid(),d.id,t.id,$3,$3 FROM unnest($1::uuid[]) d(id) CROSS JOIN unnest($2::uuid[]) t(id) ON CONFLICT(device_id,target_id) DO UPDATE SET enabled=true,updated_by=$3,updated_at=clock_timestamp()")
+            sqlx::query("INSERT INTO mobile_device_target_bindings(id,device_id,target_id,created_by,updated_by) SELECT gen_random_uuid(),d.id,t.id,$3,$3 FROM unnest($1::uuid[]) d(id) CROSS JOIN unnest($2::uuid[]) t(id) ON CONFLICT(device_id,target_id) DO NOTHING")
                 .bind(&input.device_ids).bind(&input.target_ids).bind(actor.id).execute(&mut *tx).await?;
         }
         let result = Configuration {

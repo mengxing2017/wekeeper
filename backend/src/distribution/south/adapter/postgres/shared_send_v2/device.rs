@@ -6,26 +6,35 @@ pub(super) async fn quota(
     attempt: Uuid,
     reserve: bool,
 ) -> Result<bool> {
-    let p = policy(tx)
-        .await?
-        .ok_or(Error::Policy("shared_send_not_released"))?;
-    let frozen:Option<Value>=sqlx::query_scalar("SELECT coalesce(to_jsonb(policy),nullif(u.body->'scheme','null'::jsonb),to_jsonb(task_policy),$2::jsonb) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id LEFT JOIN mobile_usage_scopes m ON m.scope_id=(p.plan->>'scope_id')::uuid LEFT JOIN mobile_usages u ON u.id=m.usage_id LEFT JOIN mobile_v9_send_policy_versions policy ON policy.id=(u.body->>'scheme_id')::uuid LEFT JOIN mobile_v9_send_policy_versions task_policy ON task_policy.id=(p.plan->>'policy_id')::uuid WHERE a.id=$1").bind(attempt).bind(default_policy()).fetch_optional(&mut **tx).await?;
+    let p = business_scheme::current_for_attempt(tx, attempt).await?;
+    if p["mode"] != "enabled" {
+        records::check(
+            tx,
+            device,
+            "business_scheme",
+            "execution_paused",
+            json!({"business_unit_id":p["business_unit_id"]}),
+        )
+        .await?;
+        return Ok(false);
+    }
+    let frozen = Some(business_scheme::frozen_for_attempt(tx, attempt).await?);
     if let Some(original) = frozen.filter(|p| p.is_object())
-        && !quota_policy(tx, device, target, attempt, &original, false).await?
+        && !quota_policy(tx, device, target, attempt, &original, false, true).await?
     {
         return Ok(false);
     }
-    if !quota_policy(tx, device, target, attempt, &p, false).await? {
+    if !quota_policy(tx, device, target, attempt, &p, false, true).await? {
         return Ok(false);
     }
     if reserve {
-        quota_policy(tx, device, target, attempt, &p, true).await
+        quota_policy(tx, device, target, attempt, &p, true, true).await
     } else {
         Ok(true)
     }
 }
 pub(super) async fn frozen_policy(tx: &mut Tx<'_>, attempt: Uuid) -> Result<Value> {
-    Ok(sqlx::query_scalar("SELECT coalesce(to_jsonb(policy),nullif(u.body->'scheme','null'::jsonb),to_jsonb(task_policy),$2::jsonb) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id LEFT JOIN mobile_usage_scopes m ON m.scope_id=(p.plan->>'scope_id')::uuid LEFT JOIN mobile_usages u ON u.id=m.usage_id LEFT JOIN mobile_v9_send_policy_versions policy ON policy.id=(u.body->>'scheme_id')::uuid LEFT JOIN mobile_v9_send_policy_versions task_policy ON task_policy.id=(p.plan->>'policy_id')::uuid WHERE a.id=$1").bind(attempt).bind(default_policy()).fetch_one(&mut **tx).await?)
+    business_scheme::frozen_for_attempt(tx, attempt).await
 }
 async fn quota_policy(
     tx: &mut Tx<'_>,
@@ -34,6 +43,7 @@ async fn quota_policy(
     attempt: Uuid,
     p: &Value,
     reserve: bool,
+    include_device: bool,
 ) -> Result<bool> {
     let limits: Limits = serde_json::from_value(p["limits"].clone())
         .map_err(|_| Error::Policy("shared_send_policy_invalid"))?;
@@ -54,12 +64,19 @@ async fn quota_policy(
         return Ok(false);
     }
 
+    let unit = p["business_unit_id"]
+        .as_str()
+        .map(|id| format!("unit:{id}"))
+        .unwrap_or_else(|| "unassigned_manual".into());
     let keys = [
-        ("global".to_owned(), limits.global),
-        (format!("device:{device}"), limits.device),
-        (format!("target:{target}"), limits.target),
+        (format!("{unit}:total"), limits.total),
+        (format!("{unit}:device:{device}"), limits.device),
+        (format!("{unit}:target:{target}"), limits.target),
     ];
-    for (key, l) in &keys {
+    for (key, l) in keys
+        .iter()
+        .filter(|(key, _)| include_device || !key.contains(":device:"))
+    {
         let row=sqlx::query("SELECT count(*) FILTER (WHERE recorded_at>clock_timestamp()-make_interval(secs=>$2::double precision)) AS used,coalesce(bool_or(recorded_at>clock_timestamp()-make_interval(secs=>$3::double precision)),false) AS cooling FROM mobile_v9_quota_reservations WHERE dimension_key=$1 AND state<>'released' AND attempt_id<>$4 AND (recorded_at>clock_timestamp()-make_interval(secs=>greatest($2::double precision,$3::double precision)))").bind(key).bind(l.window_seconds as f64).bind(l.interval_seconds as f64).bind(attempt).fetch_one(&mut **tx).await?;
         let daily:i64=sqlx::query_scalar("SELECT count(*) FROM mobile_v9_quota_reservations WHERE dimension_key=$1 AND state<>'released' AND attempt_id<>$2 AND (recorded_at>=(date_trunc('day',clock_timestamp() AT TIME ZONE $3) AT TIME ZONE $3))").bind(key).bind(attempt).bind(timezone).fetch_one(&mut **tx).await?;
         if daily >= l.daily_max_calls
@@ -151,4 +168,22 @@ pub(super) async fn write(
     .await?;
     tx.commit().await?;
     Ok(result)
+}
+
+pub(super) async fn business_wait(
+    tx: &mut Tx<'_>,
+    device: Uuid,
+    target: Uuid,
+    attempt: Uuid,
+) -> Result<bool> {
+    let current = business_scheme::current_for_attempt(tx, attempt).await?;
+    if current["mode"] != "enabled" {
+        return Ok(true);
+    }
+    for p in [frozen_policy(tx, attempt).await?, current] {
+        if !quota_policy(tx, device, target, attempt, &p, false, false).await? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }

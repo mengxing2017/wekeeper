@@ -30,101 +30,6 @@ pub(super) fn dependencies(row: &Value) -> Value {
     }
     Value::Object(deps)
 }
-pub(super) async fn grant(tx: &mut Tx<'_>, row: &Value) -> Result<Option<Value>> {
-    // The grant is an execution and metering projection keyed on the phone's real
-    // locator identity, never on a generic device or access revision: re-enabling a
-    // resource must not permanently invalidate an otherwise valid business scope.
-    sqlx::query_scalar("SELECT to_jsonb(g) FROM mobile_v9_scope_grants g WHERE $1=ANY(g.device_ids) AND ($2=ANY(g.target_ids) OR g.auto_targets) AND ($3::uuid IS NULL OR g.id=$3) AND g.expires_at>clock_timestamp() AND (EXISTS(SELECT 1 FROM mobile_usage_scopes us JOIN mobile_usages u ON u.id=us.usage_id WHERE us.scope_id=g.id AND u.approval='approved' AND u.state='active' AND u.expires_at>clock_timestamp() AND NOT EXISTS(SELECT 1 FROM mobile_usages n WHERE n.budget_root=u.budget_root AND n.approval='approved' AND (n.created_at,n.id)>(u.created_at,u.id)) AND EXISTS(SELECT 1 FROM execution_devices ud JOIN mobile_device_target_bindings ub ON ub.device_id=ud.id JOIN mobile_targets ut ON ut.id=ub.target_id WHERE ud.id=$1 AND ut.id=$2  AND us.resource_snapshot=jsonb_build_object('binding_locator_revision',ub.locator_revision,'target_locator_revision',ut.locator_revision,'target',jsonb_build_object('kind','group','search_query',ut.search_text,'match_policy','exact_unique','identity_constraints','[]'::jsonb))))) AND NOT EXISTS(SELECT 1 FROM mobile_v9_scope_revocations r WHERE r.grant_id=g.id) ORDER BY g.created_at DESC,g.id DESC LIMIT 1").bind(uid(row,"device_id")?).bind(uid(row,"target_id")?).bind(row.get("scope_id").map(|_|uid(row,"scope_id")).transpose()?).fetch_optional(&mut **tx).await.map_err(Into::into)
-}
-/// Current business control state for a device/target, resolved from the
-/// operative approved usage version of each budget root. Pending, declined and
-/// superseded applications are history and never act as an implicit disable; only
-/// an explicit pause, revocation or a real expiry on the operative version blocks.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum ScopeControl {
-    /// No operative approved usage, or an active unexpired one: the effective
-    /// binding authorizes this target.
-    Authorized,
-    Paused,
-    Revoked,
-    Expired,
-}
-
-pub(super) async fn scope_control(
-    tx: &mut Tx<'_>,
-    device: Uuid,
-    target: Uuid,
-) -> Result<ScopeControl> {
-    let usages = operative_usages(tx, device, target).await?;
-    Ok(scope_decision(&usages))
-}
-
-fn scope_decision(usages: &[Value]) -> ScopeControl {
-    let control_time = |u: &Value| {
-        u["control_at"]
-            .as_str()
-            .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok())
-            .unwrap_or(chrono::DateTime::<chrono::Utc>::MIN_UTC)
-    };
-    let latest_live = usages
-        .iter()
-        .filter(|u| {
-            u["state"] == "active" && u["expired"] == false && u["projection_revoked"] != true
-        })
-        .map(control_time)
-        .max();
-    // A later explicit reopening can replace an older revoked business root.
-    // Conversely, a pause/revocation performed after that reopening still wins.
-    let current_disable = |u: &&Value| latest_live.is_none_or(|t| control_time(u) >= t);
-    if usages
-        .iter()
-        .filter(current_disable)
-        .any(|u| u["state"] == "revoked" || u["projection_revoked"] == true)
-    {
-        ScopeControl::Revoked
-    } else if usages
-        .iter()
-        .filter(current_disable)
-        .any(|u| u["state"] == "paused")
-    {
-        ScopeControl::Paused
-    } else if latest_live.is_some() {
-        ScopeControl::Authorized
-    } else if usages
-        .iter()
-        .any(|u| u["state"] == "active" && u["expired"] == true)
-    {
-        ScopeControl::Expired
-    } else {
-        ScopeControl::Authorized
-    }
-}
-
-/// Resolve current approved versions before matching resources, so a superseded
-/// record cannot keep controlling a target removed from its successor.
-pub(super) async fn operative_usages(
-    tx: &mut Tx<'_>,
-    device: Uuid,
-    target: Uuid,
-) -> Result<Vec<Value>> {
-    sqlx::query_scalar("SELECT to_jsonb(u)||jsonb_build_object('expired',u.expires_at<=clock_timestamp(),'control_at',greatest(u.created_at,coalesce((SELECT max(e.created_at) FROM mobile_usage_events e JOIN mobile_usages eu ON eu.id=e.usage_id WHERE eu.budget_root=u.budget_root AND e.action IN ('pause','resume','revoke','approve','approved')),u.created_at),coalesce((SELECT max(r.created_at) FROM mobile_usage_scopes m JOIN mobile_v9_scope_revocations r ON r.grant_id=m.scope_id WHERE m.usage_id=u.id AND m.device_id=$1 AND m.target_id=$2),u.created_at)),'projection_revoked',EXISTS(SELECT 1 FROM mobile_usage_scopes m JOIN mobile_v9_scope_revocations r ON r.grant_id=m.scope_id WHERE m.usage_id=u.id AND m.device_id=$1 AND m.target_id=$2)) FROM mobile_usages u WHERE u.approval='approved' AND (u.body->'device_ids' @> jsonb_build_array($1::uuid) AND (u.body->'auto_targets'='true'::jsonb OR EXISTS(SELECT 1 FROM jsonb_array_elements(u.body->'targets') t WHERE t->>'id'=$2::uuid::text))) AND NOT EXISTS(SELECT 1 FROM mobile_usages n WHERE n.budget_root=u.budget_root AND n.approval='approved' AND (n.created_at,n.id)>(u.created_at,u.id))").bind(device).bind(target).fetch_all(&mut **tx).await.map_err(Into::into)
-}
-
-/// An enabled device-target binding already authorizes this
-/// device/target. The internal usage grant is an execution and metering
-/// projection, not an extra opening step: a missing or drifted projection never
-/// blocks a currently authorized task. Only a real pause, revocation or expiry on
-/// the operative business usage version is enforced here.
-pub(super) async fn validate_scope(tx: &mut Tx<'_>, plan: &Value) -> Result<()> {
-    // Current explicit controls always win, even if an older grant still matches.
-    match scope_control(tx, uid(plan, "device_id")?, uid(plan, "target_id")?).await? {
-        ScopeControl::Authorized => Ok(()),
-        ScopeControl::Paused => Err(Error::Policy("shared_send_usage_paused")),
-        ScopeControl::Revoked => Err(Error::Policy("shared_send_usage_revoked")),
-        ScopeControl::Expired => Err(Error::Policy("shared_send_usage_expired")),
-    }
-}
-
 // Validate platform authorization and frozen dependencies only. Target identity is interpreted
 // by the device after delivery; missing execution metadata must not block task acceptance.
 pub(super) async fn validate_plan(tx: &mut Tx<'_>, plan: &Value) -> Result<()> {
@@ -160,7 +65,6 @@ pub(super) async fn validate_plan(tx: &mut Tx<'_>, plan: &Value) -> Result<()> {
             "execution plan dependency mismatch");
         return Err(Error::Policy("plan_dependency_changed"));
     }
-    validate_scope(tx, plan).await?;
     Ok(())
 }
 pub(super) async fn validate_risk(tx: &mut Tx<'_>, plan: &Value) -> Result<()> {
@@ -214,8 +118,11 @@ pub(super) async fn write(tx: &mut Tx<'_>, a: &Actor, command: TaskCommand) -> R
             .await?)
         }
         TaskCommand::Preview(input) => {
-            let sending_status = business_scheme::status(tx).await?;
             let d:Value=sqlx::query_scalar("SELECT to_jsonb(d) FROM mobile_v9_task_drafts d WHERE id=$1 AND revision=$2 AND NOT EXISTS(SELECT 1 FROM mobile_v9_tasks t WHERE t.draft_id=d.id)").bind(input.draft_id).bind(input.expected_revision).fetch_optional(&mut **tx).await?.ok_or(Error::Conflict)?;
+            let unit: Option<Uuid> = serde_json::from_value(d["business_unit_id"].clone())
+                .map_err(|_| Error::Conflict)?;
+            let effective = business_scheme::resolve(tx, unit).await?;
+            let sending_status = business_scheme::status_for(tx, unit).await?;
             let targets: Vec<Uuid> =
                 serde_json::from_value(d["target_ids"].clone()).map_err(|_| Error::Conflict)?;
             require(
@@ -239,9 +146,6 @@ pub(super) async fn write(tx: &mut Tx<'_>, a: &Actor, command: TaskCommand) -> R
                 let mut choices = candidates(tx, *target).await?;
                 let mut confirmation_issues = std::collections::BTreeMap::new();
                 for choice in &mut choices {
-                    if let Some(g) = grant(tx, choice).await? {
-                        choice["scope_id"] = g["id"].clone();
-                    }
                     let issue = match validate_plan(tx, choice).await {
                         Ok(()) => None,
                         Err(Error::Policy(code)) => Some(code.to_owned()),
@@ -270,15 +174,6 @@ pub(super) async fn write(tx: &mut Tx<'_>, a: &Actor, command: TaskCommand) -> R
                             .get(&uid(choice, "device_id")?)
                             .map(String::as_str)
                         {
-                            Some("shared_send_usage_paused") => {
-                                "当前业务此手机与目标群的使用范围已暂停，请在使用管理恢复后再确认"
-                            }
-                            Some("shared_send_usage_revoked") => {
-                                "当前业务此手机与目标群的使用范围已撤销，请在使用管理核对"
-                            }
-                            Some("shared_send_usage_expired") => {
-                                "当前业务此手机与目标群的使用范围已到期，请在使用管理办理续期"
-                            }
                             Some("shared_send_review_required") => {
                                 "存在未核对的发送结果，请先核对原任务"
                             }
@@ -293,9 +188,9 @@ pub(super) async fn write(tx: &mut Tx<'_>, a: &Actor, command: TaskCommand) -> R
                 };
                 items.push(json!({"position":position,"target_id":target,"target":target_info,"selected":chosen,"candidates":choices,"readiness":target_status,"blocker":blocker}));
             }
-            let p = policy(tx).await?;
+            let p = Some(effective.clone());
             let id = Uuid::now_v7();
-            let plan = json!({"schema":SCHEMA,"intent_id":d["intent_id"],"draft_id":input.draft_id,"draft_revision":input.expected_revision,"between_targets_seconds":d["between_targets_seconds"],"message":d["message"],"content_digest":d["content_digest"],"items":items,"policy_id":p.as_ref().map(|p|&p["id"]),"sending_status":sending_status});
+            let plan = json!({"schema":SCHEMA,"intent_id":d["intent_id"],"draft_id":input.draft_id,"draft_revision":input.expected_revision,"between_targets_seconds":d["between_targets_seconds"],"message":d["message"],"content_digest":d["content_digest"],"items":items,"policy_id":p.as_ref().map(|p|&p["id"]),"sending_status":sending_status,"business_unit_id":unit,"scheme_snapshot":effective});
             let h = digest(&plan)?;
             sqlx::query("INSERT INTO mobile_v9_previews(id,draft_id,draft_revision,plan,digest,policy_id) VALUES($1,$2,$3,$4,$5,$6)").bind(id).bind(input.draft_id).bind(input.expected_revision).bind(&plan).bind(&h).bind(p.as_ref().map(policy_id).transpose()?.flatten()).execute(&mut **tx).await?;
             Ok(
@@ -319,9 +214,13 @@ pub(super) async fn write(tx: &mut Tx<'_>, a: &Actor, command: TaskCommand) -> R
             }
             let p:Value=sqlx::query_scalar("SELECT to_jsonb(p) FROM mobile_v9_previews p JOIN mobile_v9_task_drafts d ON d.id=p.draft_id AND d.revision=p.draft_revision WHERE p.id=$1 AND p.expires_at>clock_timestamp() AND p.digest=$2 FOR UPDATE OF d").bind(input.preview_id).bind(input.preview_digest).fetch_optional(&mut **tx).await?.ok_or(Error::Policy("preview_expired"))?;
             let plan = &p["plan"];
-            policy(tx)
-                .await?
-                .ok_or(Error::Policy("shared_send_not_released"))?;
+            let unit: Option<Uuid> = serde_json::from_value(plan["business_unit_id"].clone())
+                .map_err(|_| Error::Conflict)?;
+            require(
+                digest(&business_scheme::resolve(tx, unit).await?)?
+                    == digest(&plan["scheme_snapshot"])?,
+                "business_scheme_changed",
+            )?;
             let items = plan["items"].as_array().ok_or(Error::Conflict)?;
             for item in items {
                 require(
@@ -379,9 +278,6 @@ pub(super) async fn write(tx: &mut Tx<'_>, a: &Actor, command: TaskCommand) -> R
                 .into_iter()
                 .find(|x| x["device_id"] == json!(input.device_id))
                 .ok_or(Error::Policy("plan_dependency_changed"))?;
-            if let Some(scope) = grant(tx, &plan).await? {
-                plan["scope_id"] = scope["id"].clone();
-            }
             validate_plan(tx, &plan).await?;
             let allowed: Option<Value> = sqlx::query_scalar(
                 "SELECT candidates FROM mobile_v9_dispatch_scopes WHERE item_id=$1",
@@ -567,55 +463,6 @@ mod candidate_selection_tests {
 }
 
 #[cfg(test)]
-mod scope_control_tests {
-    use super::*;
-    #[test]
-    fn explicit_controls_win_over_another_live_grant() {
-        let active = json!({"state":"active","expired":false});
-        assert_eq!(
-            scope_decision(&[active.clone(), json!({"state":"paused"})]),
-            ScopeControl::Paused
-        );
-        assert_eq!(
-            scope_decision(&[active.clone(), json!({"state":"revoked"})]),
-            ScopeControl::Revoked
-        );
-        assert_eq!(
-            scope_decision(&[
-                active,
-                json!({"state":"active","expired":false,"projection_revoked":true})
-            ]),
-            ScopeControl::Revoked
-        );
-    }
-    #[test]
-    fn reopening_replaces_an_older_revocation_but_a_later_pause_still_wins() {
-        let reopened =
-            json!({"state":"active","expired":false,"control_at":"2026-11-03T12:00:00Z"});
-        let revoked = json!({"state":"revoked","control_at":"2026-11-02T12:00:00Z"});
-        assert_eq!(
-            scope_decision(&[revoked, reopened.clone()]),
-            ScopeControl::Authorized
-        );
-        let paused = json!({"state":"paused","control_at":"2026-11-03T13:00:00Z"});
-        assert_eq!(scope_decision(&[reopened, paused]), ScopeControl::Paused);
-    }
-    #[test]
-    fn live_business_outweighs_expired_history_but_not_an_explicit_disable() {
-        let expired = json!({"state":"active","expired":true});
-        assert_eq!(scope_decision(&[]), ScopeControl::Authorized);
-        assert_eq!(
-            scope_decision(std::slice::from_ref(&expired)),
-            ScopeControl::Expired
-        );
-        assert_eq!(
-            scope_decision(&[expired, json!({"state":"active","expired":false})]),
-            ScopeControl::Authorized
-        );
-    }
-}
-
-#[cfg(test)]
 mod group_target_tests {
     use super::*;
     #[test]
@@ -644,7 +491,10 @@ pub(super) async fn create_authorized_task(
     p: &Value,
 ) -> Result<Value> {
     let plan = &p["plan"];
-    let current = policy(tx).await?.ok_or(Error::Unavailable)?;
+    let unit: Option<Uuid> =
+        serde_json::from_value(plan["business_unit_id"].clone()).map_err(|_| Error::Conflict)?;
+    let current = plan["scheme_snapshot"].clone();
+    require(current.is_object(), "shared_send_policy_invalid")?;
     let items = plan["items"].as_array().ok_or(Error::Conflict)?;
     let id = Uuid::now_v7();
     let snap = p["source_snapshot_id"]
@@ -665,7 +515,7 @@ pub(super) async fn create_authorized_task(
         } else {
             "manual"
         };
-    sqlx::query("INSERT INTO mobile_v9_tasks(id,draft_id,intent_id,preview_id,confirmed_by,confirmed_until,authorization_kind) VALUES($1,$2,$3,$4,$5,clock_timestamp()+make_interval(secs=>$6::double precision),$7)").bind(id).bind(uid(plan,"draft_id")?).bind(uid(plan,"intent_id")?).bind(uid(p,"id")?).bind(principal).bind(current["confirmation_seconds"].as_i64().ok_or(Error::Conflict)? as f64).bind(authorization_kind).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO mobile_v9_tasks(id,draft_id,intent_id,preview_id,confirmed_by,confirmed_until,authorization_kind,business_unit_id,scheme_snapshot) VALUES($1,$2,$3,$4,$5,clock_timestamp()+make_interval(secs=>$6::double precision),$7,$8,$9)").bind(id).bind(uid(plan,"draft_id")?).bind(uid(plan,"intent_id")?).bind(uid(p,"id")?).bind(principal).bind(current["confirmation_seconds"].as_i64().ok_or(Error::Conflict)? as f64).bind(authorization_kind).bind(unit).bind(&current).execute(&mut **tx).await?;
     if let Some(not_before) = plan["not_before"].as_str() {
         sqlx::query("UPDATE mobile_v9_tasks SET next_eligible_at=greatest(next_eligible_at,$2::text::timestamptz) WHERE id=$1").bind(id).bind(not_before).execute(&mut **tx).await?;
     }
@@ -681,7 +531,7 @@ pub(super) async fn create_authorized_task(
         frozen["attempt_id"] = json!(aid);
         frozen["message"] = json!(message);
         frozen["content_digest"] = plan["content_digest"].clone();
-        let minimum = ["global", "device", "target"]
+        let minimum = ["total", "device", "target"]
             .iter()
             .filter_map(|k| current["limits"][k]["interval_seconds"].as_i64())
             .max()
@@ -692,7 +542,7 @@ pub(super) async fn create_authorized_task(
                 .ok_or(Error::Conflict)?
                 .max(minimum)
         );
-        frozen["policy_id"] = p["policy_id"].clone();
+        frozen["policy_id"] = current["id"].clone();
         frozen["selection_policy"] = json!("exact_unique");
         sqlx::query("INSERT INTO mobile_v9_task_items(id,task_id,intent_id,target_id,position) VALUES($1,$2,$3,$4,$5)").bind(iid).bind(id).bind(uid(plan,"intent_id")?).bind(uid(item,"target_id")?).bind(item["position"].as_i64().ok_or(Error::Conflict)? as i32).execute(&mut **tx).await?;
         sqlx::query("INSERT INTO mobile_v9_plans(id,item_id,target_id,device_id,snapshot_id,plan,digest,content_digest) VALUES($1,$2,$3,$4,$5,$6,$7,$8)").bind(pid).bind(iid).bind(uid(item,"target_id")?).bind(uid(&frozen,"device_id")?).bind(snap).bind(&frozen).bind(digest(&frozen)?).bind(plan["content_digest"].as_str()).execute(&mut **tx).await?;

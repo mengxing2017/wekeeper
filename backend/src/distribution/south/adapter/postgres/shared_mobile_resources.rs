@@ -57,7 +57,7 @@ impl Store for Repository {
                 "SELECT jsonb_build_object('id',d.id,'name',d.name,'enabled',d.enabled,'last_seen_at',d.last_seen_at) FROM execution_devices d WHERE strpos(lower(d.name),lower($1))>0 AND ($2::uuid IS NULL OR d.id=$2) ORDER BY d.created_at,d.id LIMIT $3 OFFSET $4"
             }
             Resource::Bindings | Resource::PlatformBindings => {
-                "SELECT to_jsonb(b)||jsonb_build_object('device_name',d.name,'search_text',t.search_text,'target_locator_revision',t.locator_revision,'available',b.enabled AND d.enabled AND t.enabled AND t.archived_at IS NULL) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id WHERE (strpos(lower(t.search_text),lower($1))>0 OR strpos(lower(d.name),lower($1))>0) AND ($2::uuid IS NULL OR b.device_id=$2) ORDER BY b.created_at,b.id LIMIT $3 OFFSET $4"
+                "SELECT to_jsonb(b)||jsonb_build_object('device_name',d.name,'search_text',t.search_text,'target_locator_revision',t.locator_revision,'used_calls',(SELECT count(*) FROM mobile_execution_resource_charges rc JOIN mobile_execution_grants rg ON rg.id=rc.execution_id WHERE rc.budget_root=b.budget_root AND coalesce(rg.result_body->>'outcome','pending') NOT IN ('not_called','failed')),'available',b.enabled AND d.enabled AND t.enabled AND t.archived_at IS NULL) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id WHERE (strpos(lower(t.search_text),lower($1))>0 OR strpos(lower(d.name),lower($1))>0) AND ($2::uuid IS NULL OR b.device_id=$2) ORDER BY b.created_at,b.id LIMIT $3 OFFSET $4"
             }
         };
         let rows = sqlx::query_scalar(sql)
@@ -167,8 +167,12 @@ impl Store for Repository {
             "update-binding" => {
                 let v: SharedBindingUpdate = serde_json::from_value(input.clone())
                     .map_err(|_| Error::Invalid("绑定字段无效".into()))?;
-                let n=sqlx::query("UPDATE mobile_device_target_bindings b SET enabled=$3,revision=revision+CASE WHEN enabled<>$3 THEN 1 ELSE 0 END,locator_revision=locator_revision+CASE WHEN enabled<>$3 THEN 1 ELSE 0 END,updated_by=$4,updated_at=clock_timestamp() WHERE id=$1 AND revision=$2 AND (NOT $3 OR EXISTS(SELECT 1 FROM mobile_targets t  JOIN execution_devices d ON d.id=b.device_id WHERE t.id=b.target_id AND t.enabled AND t.archived_at IS NULL AND d.enabled))")
-                    .bind(resource).bind(v.expected_revision).bind(v.enabled).bind(actor.id).execute(&mut *tx).await?.rows_affected();
+                crate::business::require(
+                    v.max_calls.is_none_or(|n| n > 0),
+                    "resource_budget_invalid",
+                )?;
+                let n=sqlx::query("UPDATE mobile_device_target_bindings b SET enabled=$3,max_calls=$5,valid_until=$6,revision=revision+1,locator_revision=locator_revision+CASE WHEN enabled<>$3 THEN 1 ELSE 0 END,updated_by=$4,updated_at=clock_timestamp() WHERE id=$1 AND revision=$2 AND (NOT $3 OR EXISTS(SELECT 1 FROM mobile_targets t  JOIN execution_devices d ON d.id=b.device_id WHERE t.id=b.target_id AND t.enabled AND t.archived_at IS NULL AND d.enabled))")
+                    .bind(resource).bind(v.expected_revision).bind(v.enabled).bind(actor.id).bind(v.max_calls).bind(v.valid_until).execute(&mut *tx).await?.rows_affected();
                 if n != 1 {
                     return Err(Error::Policy("revision_conflict"));
                 }

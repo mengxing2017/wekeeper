@@ -74,7 +74,11 @@ async fn ready(tx: &mut Tx<'_>, candidate: &Value) -> Result<bool> {
         .bind(uid(candidate,"device_id")?).bind(candidate["credential_generation"].as_i64()).fetch_optional(&mut **tx).await?.unwrap_or(json!({}));
     let reason =
         crate::distribution::domain::shared_mobile::dispatch_records::candidate_reason(&facts);
-    let reason = if reason == "passed" && facts["connection_available"] != true {
+    let reason = if reason == "passed"
+        && !resource_budgets::check(tx, uid(candidate, "binding_id")?).await?
+    {
+        "resource_budget_unavailable"
+    } else if reason == "passed" && facts["connection_available"] != true {
         "delivery_connection_unavailable"
     } else {
         reason
@@ -160,6 +164,18 @@ async fn reconcile_inner(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
     }
     sqlx::query("UPDATE mobile_v9_dispatch_state SET assigned_at=coalesce(assigned_at,clock_timestamp()),round_started_at=coalesce(round_started_at,clock_timestamp()) WHERE item_id=$1").bind(item).execute(&mut **tx).await?;
     let grant:Option<Value>=sqlx::query_scalar("SELECT (to_jsonb(g)-'envelope')||jsonb_build_object('deadline_reached',CASE WHEN accepted_at IS NULL AND result_id IS NULL THEN receipt_deadline_at ELSE result_deadline_at END<=clock_timestamp()) FROM mobile_execution_grants g WHERE attempt_id=$1").bind(aid).fetch_optional(&mut **tx).await?;
+    if grant.is_none()
+        && device::business_wait(
+            tx,
+            uid(&row["plan"], "device_id")?,
+            uid(&row, "target_id")?,
+            aid,
+        )
+        .await?
+    {
+        sqlx::query("UPDATE mobile_v9_dispatch_state SET round_started_at=clock_timestamp(),next_retry_at=clock_timestamp()+interval '5 seconds',reason='business_scheme_wait' WHERE item_id=$1").bind(item).execute(&mut **tx).await?;
+        return Ok(());
+    }
     // Record the current candidate too: an offline singleton never enters the successor loop.
     if grant.is_none() {
         let current_choices = tasks::raw_candidates(tx, uid(&row, "target_id")?).await?;
@@ -256,6 +272,20 @@ async fn reconcile_inner(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
             reason = Some("plan_dependency_changed");
         }
     }
+    let current_quota_wait = reason.is_none()
+        && grant.is_none()
+        && state == "queued"
+        && !device::quota(
+            tx,
+            uid(&row["plan"], "device_id")?,
+            uid(&row, "target_id")?,
+            aid,
+            false,
+        )
+        .await?;
+    if current_quota_wait {
+        reason = Some("quota_wait");
+    }
     if grant.is_none() && row["plan"]["execution"]["contract"] != "device_owned/1" {
         reason = Some("execution_contract_replaced");
     }
@@ -321,6 +351,7 @@ async fn reconcile_inner(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
     let origin = row["round_origin"].as_u64().ok_or(Error::Conflict)? as usize;
     let designated_unknown:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_dispatch_intakes i JOIN receiving_dispatch_deliveries d ON d.id=i.delivery_id WHERE i.item_id=$1 AND d.device_id IS NOT NULL) AND EXISTS(SELECT 1 FROM mobile_v9_attempts a JOIN mobile_execution_grants g ON g.attempt_id=a.id WHERE a.item_id=$1 AND a.state NOT IN ('verified_not_sent','failed_before_call','observed_sent','manually_confirmed_sent') AND (g.result_id IS NULL OR g.result_body->>'outcome'='unknown'))")
         .bind(item).fetch_one(&mut **tx).await?;
+    let mut quota_wait = current_quota_wait;
     for offset in start..approved.len() {
         if designated_unknown {
             event(
@@ -406,6 +437,7 @@ async fn reconcile_inner(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
         )
         .await?
         {
+            quota_wait = true;
             event(
                 tx,
                 item,
@@ -417,10 +449,7 @@ async fn reconcile_inner(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
             .await?;
             continue;
         }
-        let mut next = candidate.clone();
-        if !snapshot["scope_id"].is_null() {
-            next["scope_id"] = snapshot["scope_id"].clone();
-        }
+        let next = candidate.clone();
         replace(tx, &row, &next, "automatic", reason).await?;
         sqlx::query("UPDATE mobile_v9_dispatch_state SET candidate_cursor=$2,assigned_at=clock_timestamp() WHERE item_id=$1")
             .bind(item)
@@ -437,6 +466,10 @@ async fn reconcile_inner(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
             None => status(tx, item, "executing", "awaiting_receipt").await,
             Some(why) => status(tx, item, "assigned", why).await,
         };
+    }
+    if quota_wait {
+        sqlx::query("UPDATE mobile_v9_dispatch_state SET round_started_at=clock_timestamp(),next_retry_at=clock_timestamp()+interval '5 seconds',reason='quota_wait' WHERE item_id=$1").bind(item).execute(&mut **tx).await?;
+        return Ok(());
     }
     // An obsolete frozen scope cannot regain authority by waiting for a phone.
     // Keep its original plans and results, and never silently replace its target.

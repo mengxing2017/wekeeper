@@ -78,6 +78,7 @@ impl IntoResponse for Error {
             ),
             Self::Policy("physical_device_busy") => (StatusCode::CONFLICT,"physical_device_busy","该手机正在执行其他操作或存在待核对结果，请先处理原任务，不能强制解锁".into()),
             Self::Policy("plan_dependency_changed") => (StatusCode::CONFLICT,"plan_dependency_changed","该尝试的有效目标或授权已变化，已结束该未发放许可的尝试；其他合法任务继续调度".into()),
+            Self::Policy("business_scheme_changed") => (StatusCode::CONFLICT,"business_scheme_changed","业务方案已变化，请保留当前内容并重新预览".into()),
             Self::Policy("revision_conflict") => (
                 StatusCode::CONFLICT,
                 "revision_conflict",
@@ -130,17 +131,13 @@ impl IntoResponse for Error {
             Self::Policy(code) if code.starts_with("shared_send_") => (
                 StatusCode::CONFLICT,code,match code {
                     "shared_send_key_required" => "平台尚未配置共享发送密钥，请联系部署维护人员配置后再开放发送",
-                    "shared_send_scheme_missing" => "平台尚未配置业务方案，请系统管理员在手机群消息使用管理中配置",
+                    "shared_send_scheme_missing" => "业务方案无效，请系统管理员核对当前单位方案",
                     "shared_send_preparation_only" => "平台仅开放内容准备或预览，实际发送需系统管理员开放",
                     "shared_send_scheme_unsupported" => "现有方案不支持当前发送业务，请系统管理员重新保存业务方案",
                     "shared_send_platform_closed" => "平台已关闭新发送，请系统管理员核对业务方案",
                     "shared_send_execution_configuration_invalid" => "当前发送配置异常，本次未执行。可报告问题，修复后重新预览",
-                    "shared_send_not_released" => "平台尚未开放当前发送业务，请查看手机群消息使用管理中的使用状态和业务方案",
+                    "shared_send_not_released" => "当前业务方案不可用，请核对单位配置",
                     "shared_send_device_not_ready" => "设备或检查条件已变化，请重新生成逐群预览并查看当前阻塞原因",
-                    "shared_send_usage_paused" => "此手机与目标群的使用范围已暂停，请在使用管理恢复后再发送",
-                    "shared_send_usage_revoked" => "此手机与目标群的使用范围已撤销，请在使用管理核对",
-                    "shared_send_usage_expired" => "此手机与目标群的使用范围已到期，请在使用管理办理续期",
-                    "shared_send_usage_unavailable" => "手机与目标群的使用范围当前不可用，请在使用管理查看具体状态",
                     "shared_send_review_required" => "原尝试必须先完成未发送核对并确认设备已停止，不能直接改派或重发",
                     "shared_send_environment_required" | "shared_send_environment_unsupported" => "等待手机刷新实际环境或由产品研发完成该环境适配",
                     "shared_send_flow_invalid" => "发送流程不符合对应协议契约，请平台维护人员核对流程、控件规则和执行预算",

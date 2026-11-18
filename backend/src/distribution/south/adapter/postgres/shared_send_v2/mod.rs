@@ -26,12 +26,10 @@ mod platform;
 mod push;
 mod readiness;
 pub mod records;
+mod resource_budgets;
 mod secrets;
 mod task_status;
 mod tasks;
-mod usage;
-mod usage_budgets;
-mod usage_locators;
 mod wait_states;
 async fn guard(tx: &mut Tx<'_>) -> Result<()> {
     sqlx::query("SELECT pg_advisory_xact_lock(78234610243)")
@@ -76,17 +74,12 @@ async fn remember(
     Ok(())
 }
 async fn policy(tx: &mut Tx<'_>) -> Result<Option<Value>> {
-    Ok(sqlx::query_scalar(
-        "SELECT to_jsonb(p) FROM mobile_v9_send_policy_versions p ORDER BY revision DESC LIMIT 1",
-    )
-    .fetch_optional(&mut **tx)
-    .await?
-    .or_else(|| Some(default_policy())))
+    Ok(Some(business_scheme::resolve(tx, None).await?))
 }
 fn default_policy() -> Value {
     let limits =
         json!({"interval_seconds":30,"window_seconds":3600,"max_calls":30,"daily_max_calls":150});
-    json!({"id":null,"revision":0,"mode":"enabled","limits":{"global":limits,"device":limits,"target":limits},"timezone":"Asia/Shanghai","allowed_windows":[{"weekdays":[1,2,3,4,5,6,7],"start_minute":0,"end_minute":1440}],"confirmation_seconds":86400,"inspection_seconds":3600,"retry_seconds":300,"retry_limit":3})
+    json!({"id":null,"revision":0,"mode":"enabled","limits":{"total":limits,"device":limits,"target":limits},"timezone":"Asia/Shanghai","allowed_windows":[{"weekdays":[1,2,3,4,5,6,7],"start_minute":0,"end_minute":1440}],"confirmation_seconds":86400,"inspection_seconds":3600,"retry_seconds":300,"retry_limit":3})
 }
 fn policy_id(p: &Value) -> Result<Option<Uuid>> {
     p["id"]
@@ -209,16 +202,28 @@ impl Store for Repository {
         })
     }
 
-    async fn usage_read(&self, a: &Actor, id: Option<Uuid>, get_options: bool) -> Result<Value> {
-        Repository::usage_read(self, a, id, get_options).await
+    async fn scheme_read(&self, a: &Actor, unit: Option<Uuid>) -> Result<Value> {
+        business_scheme::read(self, a, unit).await
     }
-    async fn usage_write(
+    async fn scheme_write(
         &self,
         a: &Actor,
         key: &str,
-        command: crate::distribution::domain::shared_mobile::usage::UsageCommand,
+        unit: Option<Uuid>,
+        input: Option<
+            crate::distribution::domain::shared_mobile::business_scheme::BusinessSchemeInput,
+        >,
+        mutation: crate::distribution::domain::shared_mobile::business_scheme::SchemeMutation,
     ) -> Result<Value> {
-        Repository::usage_write(self, a, key, command).await
+        business_scheme::write(self, a, key, unit, input, mutation).await
+    }
+    async fn preview_task(
+        &self,
+        a: &Actor,
+        key: &str,
+        input: crate::distribution::domain::shared_mobile::business_scheme::TaskPreviewInput,
+    ) -> Result<Value> {
+        business_scheme::preview(self, a, key, input).await
     }
     async fn artifact_content(&self, a: &Actor, id: Uuid) -> Result<Vec<u8>> {
         let mut tx = self.0.begin().await?;
@@ -269,7 +274,7 @@ impl Store for Repository {
             task_status::attach(&mut tx, &mut tasks).await?;
             let drafts:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(d)||jsonb_build_object('targets',coalesce((SELECT jsonb_agg(jsonb_build_object('id',t.id,'name',t.search_text) ORDER BY ids.n) FROM unnest(d.target_ids) WITH ORDINALITY ids(id,n) JOIN mobile_targets t ON t.id=ids.id ),'[]'::jsonb)) FROM mobile_v9_task_drafts d WHERE NOT EXISTS(SELECT 1 FROM mobile_v9_tasks t WHERE t.draft_id=d.id) ORDER BY created_at DESC LIMIT 100").fetch_all(&mut *tx).await?;
             let inspections:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(i)-'challenge' FROM mobile_v9_send_inspections i  ORDER BY id DESC LIMIT 100").fetch_all(&mut *tx).await?;
-            json!({"id":"tasks","tasks":tasks,"drafts":drafts,"inspections":inspections,"readiness":readiness::resources(&mut tx).await?,"pool":readiness::pool(&mut tx).await?,"sending_status":business_scheme::status(&mut tx).await?})
+            json!({"id":"tasks","tasks":tasks,"drafts":drafts,"inspections":inspections,"readiness":readiness::resources(&mut tx).await?,"pool":readiness::pool(&mut tx).await?})
         };
         tx.commit().await?;
         Ok(v)
@@ -284,7 +289,6 @@ impl Store for Repository {
         guard(&mut tx).await?;
         authorize(&mut tx, a.id, true).await?;
         let (scope, body) = match &command {
-            PlatformCommand::Policy(v) => ("policy", json!(v)),
             PlatformCommand::Manage(v) => ("management", json!(v)),
             PlatformCommand::Artifact(v) => (
                 "artifact",
@@ -297,13 +301,6 @@ impl Store for Repository {
         let v = match command {
             PlatformCommand::Manage(v) => platform::write(&mut tx, a, v).await?,
             PlatformCommand::Artifact(v) => platform::artifact(&mut tx, a, v).await?,
-            PlatformCommand::Policy(v) => {
-                v.validate()?;
-                if matches!(v.mode.as_str(), "enabled") {
-                    secrets::seal(&json!({}))?;
-                }
-                business_scheme::save(&mut tx, a, v).await?
-            }
         };
         remember(&mut tx, a.id, 0, scope, key, &body, &v).await?;
         tx.commit().await?;
@@ -379,15 +376,7 @@ mod default_policy_tests {
 
 /// Routing freezes only business-authorized candidates, never transient phone readiness.
 pub(crate) async fn routing_candidates(tx: &mut Tx<'_>, target: Uuid) -> Result<Vec<Value>> {
-    let mut result = Vec::new();
-    for candidate in tasks::raw_candidates(tx, target).await? {
-        if tasks::scope_control(tx, uid(&candidate, "device_id")?, target).await?
-            == tasks::ScopeControl::Authorized
-        {
-            result.push(candidate);
-        }
-    }
-    Ok(result)
+    tasks::raw_candidates(tx, target).await
 }
 
 pub mod source_routing;

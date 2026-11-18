@@ -130,6 +130,29 @@ pub(super) async fn assess(
                 })
                 .ok();
         }
+        if grant.is_none()
+            && let Some(d) = &dispatch
+            && matches!(
+                d["reason"].as_str(),
+                Some("business_scheme_wait" | "quota_wait")
+            )
+        {
+            add(
+                &mut conditions,
+                "business_scheme_wait",
+                "等待本单位方案允许的执行开关、时段或额度",
+                "admin",
+                true,
+                device,
+            );
+            let condition = conditions.last_mut().ok_or(Error::Conflict)?;
+            condition.scope_type = "business_context".into();
+            condition.scope_id = task["business_unit_id"]
+                .as_str()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(uid(task, "id")?);
+            condition.retry_at = serde_json::from_value(d["next_retry_at"].clone()).ok();
+        }
         if conditions.is_empty()
             && let Some(d) = &dispatch
             && d["state"] != "assigned"

@@ -208,51 +208,6 @@ pub(super) async fn write(tx: &mut Tx<'_>, a: &Actor, command: ManagementCommand
             sqlx::query("INSERT INTO mobile_v9_acceptance_runs(id,release_id,stage,apk_id,evidence_ids,validation_ids,cases,soak_hours,soak_passed,historical_debt_closed,reviewer_id,reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)").bind(id).bind(v.release_id).bind(v.stage).bind(v.apk_id).bind(v.evidence_ids).bind(v.validation_ids).bind(json!(v.cases)).bind(v.soak_hours).bind(v.soak_passed).bind(v.historical_debt_closed).bind(a.id).bind(v.reason).execute(&mut **tx).await?;
             Ok(json!({"id":id}))
         }
-        ManagementCommand::Scopes(v) => {
-            text(&v.reason)?;
-            require(
-                !v.device_ids.is_empty()
-                    && v.device_ids.len() <= 100
-                    && (!v.target_ids.is_empty() || v.auto_targets)
-                    && v.target_ids.len() <= 100
-                    && (1..=100000).contains(&v.max_calls)
-                    && v.expires_at > chrono::Utc::now()
-                    && v.expires_at < chrono::Utc::now() + chrono::Duration::days(366),
-                "shared_send_scope_invalid",
-            )?;
-            let ac: Value = sqlx::query_scalar(
-                "SELECT to_jsonb(a) FROM mobile_v9_acceptance_runs a WHERE id=$1",
-            )
-            .bind(v.acceptance_id)
-            .fetch_optional(&mut **tx)
-            .await?
-            .ok_or(Error::NotFound)?;
-            if ac["stage"] == "test_send" {
-                require(
-                    !v.auto_targets
-                        && v.max_calls <= 20
-                        && v.expires_at < chrono::Utc::now() + chrono::Duration::days(1),
-                    "shared_send_trial_limit",
-                )?;
-            }
-            let n: i64 = sqlx::query_scalar(
-                "SELECT count(*) FROM execution_devices WHERE id=ANY($1) AND enabled",
-            )
-            .bind(&v.device_ids)
-            .fetch_one(&mut **tx)
-            .await?;
-            require(
-                n == v.device_ids.len() as i64,
-                "shared_send_resource_invalid",
-            )?;
-            sqlx::query("INSERT INTO mobile_v9_scope_grants(id,release_id,acceptance_id,stage,device_ids,target_ids,auto_targets,max_calls,expires_at,reason,created_by,resource_revisions) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)").bind(id).bind(uid(&ac,"release_id")?).bind(v.acceptance_id).bind(ac["stage"].as_str()).bind(v.device_ids).bind(v.target_ids).bind(v.auto_targets).bind(v.max_calls).bind(v.expires_at).bind(v.reason).bind(a.id).bind(json!({})).execute(&mut **tx).await?;
-            Ok(json!({"id":id}))
-        }
-        ManagementCommand::Revocations(v) => {
-            text(&v.reason)?;
-            sqlx::query("INSERT INTO mobile_v9_scope_revocations(grant_id,reason,actor_id) VALUES($1,$2,$3)").bind(v.grant_id).bind(v.reason).bind(a.id).execute(&mut **tx).await?;
-            Ok(json!({"id":v.grant_id}))
-        }
         ManagementCommand::Support(v) => {
             text(&v.reason)?;
             sqlx::query("INSERT INTO mobile_v9_support_requests(id,device_id,reason,state,created_by) VALUES($1,$2,$3,'submitted',$4)").bind(id).bind(v.device_id).bind(v.reason).bind(a.id).execute(&mut **tx).await?;
@@ -283,8 +238,6 @@ pub(super) async fn read(tx: &mut Tx<'_>, page: u32) -> Result<Value> {
         ("samples", "mobile_v9_human_samples"),
         ("releases", "mobile_v9_adapter_releases"),
         ("acceptances", "mobile_v9_acceptance_runs"),
-        ("scopes", "mobile_v9_scope_grants"),
-        ("revocations", "mobile_v9_scope_revocations"),
         ("validations", "mobile_v9_send_inspections"),
         ("support", "mobile_v9_support_requests"),
         ("withdrawals", "mobile_v9_adapter_withdrawals"),
