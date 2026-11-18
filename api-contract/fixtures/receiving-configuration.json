@@ -10,7 +10,8 @@
     ],
     "sender_ids": [],
     "target_selection_mode": "all",
-    "device_dispatch_mode": "round_robin"
+    "device_dispatch_mode": "round_robin",
+    "client_kind": "wecom"
   },
   "wecom_input": {
     "name": "企业微信接收",
@@ -59,14 +60,17 @@
     "device_dispatch_mode": "round_robin",
     "revision": 1,
     "next_target_id": null,
-    "next_device_id": null
+    "next_device_id": null,
+    "client_kind": "wecom"
   },
   "target_input": {
     "name": "接收群",
-    "directory_group_id": null
+    "directory_group_id": null,
+    "client_kind": "wecom"
   },
   "target": {
     "id": "33333333-3333-4333-8333-333333333333",
-    "name": "接收群"
+    "name": "接收群",
+    "client_kind": "wecom"
   }
 }

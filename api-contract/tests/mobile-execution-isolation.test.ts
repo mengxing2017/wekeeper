@@ -2,13 +2,13 @@ import { afterEach, expect, test, vi } from 'vitest'
 import { mobileExecutionApi } from '../src/modules/mobile-execution'
 import { setCsrf } from '../src/http'
 afterEach(() => { vi.unstubAllGlobals(); setCsrf('') })
-test('independent phone targets use JSON:API and preserve exact search text without official identities', async () => {
-  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ data: { type: 'mobile-targets', id: 'target', attributes: { search_text: '备注  群🦦' } } }), { headers: { 'Content-Type': 'application/vnd.api+json' } }))
+test.each(['wecom','wechat'] as const)('independent %s targets preserve exact search text and explicit type', async client_kind => {
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ data: { type: 'mobile-targets', id: 'target', attributes: { client_kind, search_text: '备注  群🦦' } } }), { headers: { 'Content-Type': 'application/vnd.api+json' } }))
   vi.stubGlobal('fetch', fetcher)
-  await mobileExecutionApi.createTarget({ search_text: '备注  群🦦' }, 'stable-key')
+  await mobileExecutionApi.createTarget({client_kind, search_text: '备注  群🦦' }, 'stable-key')
   expect(fetcher.mock.calls[0][0]).toBe('/api/v1/mobile-execution/targets')
   const request = fetcher.mock.calls[0][1]
-  expect(JSON.parse(String(request?.body))).toEqual({ data: { type: 'mobile-targets', attributes: { search_text: '备注  群🦦' } } })
+  expect(JSON.parse(String(request?.body))).toEqual({ data: { type: 'mobile-targets', attributes: { client_kind, search_text: '备注  群🦦' } } })
   expect(request?.headers).toMatchObject({ 'Idempotency-Key': 'stable-key' })
 })
 test('shared binding selects devices for a target without additional group names', async () => {

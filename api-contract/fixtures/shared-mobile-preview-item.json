@@ -5,7 +5,8 @@
     "id": "00000000-0000-4000-8000-000000000011",
     "name": "家长通知群",
     "search_text": "手机内实际群名",
-    "locator_revision": 2
+    "locator_revision": 2,
+    "client_kind": "wecom"
   },
   "selected": null,
   "candidates": [],

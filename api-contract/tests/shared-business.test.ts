@@ -43,7 +43,7 @@ it('device inbox encodes cursors and receipt resources without creating send cla
 it('optional environment observations use a separate closed protocol',async()=>{
  const {default:fixture}=await import('../fixtures/device-environment.json')
  const {durableExecutionApi}=await import('../src/modules/mobile-execution/shared-send/v2')
- const report:import('../src/modules/mobile-execution/shared-send/v2').DeviceEnvironmentObservation={...fixture,schema:'device_environment/1',interactive:'no',keyguard_locked:'no',device_locked:'no',keyguard_secure:'unknown',accessibility:'yes',notification:'unknown',wecom_login:'logged_in'}
+ const report:import('../src/modules/mobile-execution/shared-send/v2').DeviceEnvironmentObservation={...fixture,schema:'device_environment/2',applications:{wecom:'unknown',wechat:'unknown'},interactive:'no',keyguard_locked:'no',device_locked:'no',keyguard_secure:'unknown',accessibility:'yes',notification:'unknown'}
  const calls:unknown[]=[]
  const client=createClient(async r=>{calls.push({path:r.path,body:JSON.parse(r.body as string)});return {status:200,headers:{'content-type':'application/vnd.api+json'},body:{data:{type:'mobile-device-environments',id:report.observation_id,attributes:{recorded:true}}}}})
  await durableExecutionApi(client).observeEnvironment(report,'observation')

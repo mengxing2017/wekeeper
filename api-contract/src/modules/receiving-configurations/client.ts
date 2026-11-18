@@ -1,12 +1,13 @@
+import type {MobileClient} from '../mobile-execution/client-kind'
 import type {Client} from '../../http/client'
 export type ReceivingMode = 'all' | 'round_robin'
 export type ReceivingChannel = 'mobile' | 'wecom'
 export interface ReceivingConfigurationInput {
-  name:string; enabled:boolean; target_selection_mode:ReceivingMode; device_dispatch_mode:ReceivingMode|null; target_ids:string[]; device_ids:string[]; sender_ids:string[]
+  client_kind?:MobileClient; name:string; enabled:boolean; target_selection_mode:ReceivingMode; device_dispatch_mode:ReceivingMode|null; target_ids:string[]; device_ids:string[]; sender_ids:string[]
 }
 export interface ReceivingConfiguration extends ReceivingConfigurationInput {id:string; business_unit_id:string; revision:number; next_target_id:string|null; next_device_id:string|null}
-export interface ReceivingTargetInput {name:string;directory_group_id:string|null}
-export interface ReceivingResources {directory_groups:{id:string;name:string}[];targets:{id:string;name:string}[];devices:{id:string;name:string}[];senders:{id:string;name:string}[]}
+export interface ReceivingTargetInput {client_kind?:MobileClient;name:string;directory_group_id:string|null}
+export interface ReceivingResources {directory_groups:{id:string;name:string}[];targets:{id:string;name:string;client_kind?:MobileClient}[];devices:{id:string;name:string}[];senders:{id:string;name:string}[]}
 /** Enabling a unit configuration explicitly authorizes automatic dispatch of new messages. */
 export function createReceivingConfigurationClient({requestResource,requestCollection}:Pick<Client,'requestResource'|'requestCollection'>,channel:ReceivingChannel) {
  const base=(unit:string)=>`/api/v1/${channel==='mobile'?'mobile-execution':'wecom-distribution'}/business-units/${encodeURIComponent(unit)}`

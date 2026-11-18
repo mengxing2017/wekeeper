@@ -1,5 +1,5 @@
 {
-  "schema": "device_environment/1",
+  "schema": "device_environment/2",
   "observation_id": "018f0000-0000-7000-8000-000000000001",
   "observed_at": "2026-11-17T04:10:09Z",
   "interactive": "no",
@@ -8,5 +8,8 @@
   "keyguard_secure": "unknown",
   "accessibility": "yes",
   "notification": "unknown",
-  "wecom_login": "logged_in"
+  "applications": {
+    "wecom": "logged_in",
+    "wechat": "unknown"
+  }
 }

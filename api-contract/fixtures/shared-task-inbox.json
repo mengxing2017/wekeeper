@@ -45,7 +45,8 @@
           }
         ],
         "device_state_observed_at": null
-      }
+      },
+      "client_kind": "wecom"
     }
   ],
   "page": {

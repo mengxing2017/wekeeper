@@ -14,7 +14,7 @@ it.each([
   const fetchMock = vi.fn().mockImplementation(async () => Response.json(response, {headers: {'content-type': 'application/vnd.api+json'}}))
   vi.stubGlobal('fetch', fetchMock)
   const input = channel === 'mobile-execution' ? fixture.input : fixture.wecom_input
-  expect(await client.save(configuration.business_unit_id, id, {...input,target_selection_mode:'all',device_dispatch_mode:channel==='mobile-execution'?'round_robin':null})).toEqual(configuration)
+  expect(await client.save(configuration.business_unit_id, id, {...input,client_kind:channel==='mobile-execution'?'wecom':undefined,target_selection_mode:'all',device_dispatch_mode:channel==='mobile-execution'?'round_robin':null})).toEqual(configuration)
   const base = `/api/v1/${channel}/business-units/${configuration.business_unit_id}/receiving-configurations`
   expect(fetchMock.mock.calls[0][0]).toBe(`${base}/${id}`)
   expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({data: {type, attributes: input}})
@@ -26,7 +26,7 @@ it.each([
 })
 
 it('creates a receiving target directly in a business unit',async()=>{
- const input=fixture.target_input;const unit=fixture.configuration.business_unit_id,id=fixture.target.id
+ const input={...fixture.target_input,client_kind:"wecom" as const};const unit=fixture.configuration.business_unit_id,id=fixture.target.id
  const fetchMock=vi.fn().mockResolvedValue(Response.json({data:{type:'receiving-targets',id,attributes:{name:input.name}}},{headers:{'content-type':'application/vnd.api+json'}}));vi.stubGlobal('fetch',fetchMock)
  expect(await mobileReceivingConfigurations.target(unit,id,input)).toEqual({id,name:'接收群'})
  expect(fetchMock.mock.calls[0][0]).toBe(`/api/v1/mobile-execution/business-units/${unit}/receiving-targets/${id}`)

@@ -1,23 +1,23 @@
+import type {MobileClient} from '../client-kind'
 import type {ChannelObservation} from '../../execution-evidence'
 export {executionEvidenceLabels} from '../../execution-evidence'
 import type { Client } from '../../../http/client'
-import type { Json } from '../../business/types'
-export const SHARED_SEND_SCHEMA = 'shared_mobile_send/2' as const
-export interface SharedDraftInput { target_ids:string[]; message:string; content_type:'text/plain'; expected_revision?:number;between_targets_seconds:number }
+export const SHARED_SEND_SCHEMA = 'shared_mobile_send/3' as const
+export interface SharedDraftInput { client_kind:MobileClient; target_ids:string[]; message:string; content_type:'text/plain'; expected_revision?:number;between_targets_seconds:number }
 export interface SharedDraft extends SharedDraftInput {business_unit_id:string|null; targets:Array<{id:string;name:string}>;id:string; intent_id:string; revision:number; content_digest:string }
 /** UI adaptation and local configuration are owned exclusively by the phone. */
-export interface DeviceExecutionIntent {contract:'device_owned/1';capability:'wecom.group_text'}
+export type DeviceExecutionIntent = {contract:'device_owned/2'} & ({client_kind:'wecom';capability:'wecom.group_text'}|{client_kind:'wechat';capability:'wechat.group_text'})
 export interface GroupTarget {kind:'group';search_query:string;match_policy:'exact_unique';identity_constraints:[]}
 export interface SharedCandidate {
+ client_kind:MobileClient;
  target_id:string; target_name:string;device_name:string;device_id:string; binding_id:string; binding_locator_revision:number;
- target_locator_revision:number|null; target?:GroupTarget; /** Historical snapshots only. */ search_text?:string;
- credential_generation:number; /** Historical snapshots only. New tasks never carry UI rules. */ release_id?:string|null; flow_digest?:string|null;
- scope_id?:string;confirmable?:boolean;flow?:Record<string,Json>|null;execution?:DeviceExecutionIntent;
+ target_locator_revision:number|null; target:GroupTarget;
+ credential_generation:number;scope_id?:string;confirmable?:boolean;execution:DeviceExecutionIntent;
 }
 export interface SharedPlan extends SharedCandidate {schema:typeof SHARED_SEND_SCHEMA;intent_id:string;item_id:string;attempt_id:string;message:string;content_digest:string;selection_policy:'exact_unique';between_targets_seconds:number;policy_id:string}
 export interface SharedConfigurationIssue {code:string;path:string}
 export interface SharedConfigurationStatus {capability:'wecom.group_text';available:boolean;configuration_id:string|null;version:string|null;flow_digest:string|null;issue:SharedConfigurationIssue|null;source:'platform_runtime_configuration';observed_at:string}
-export interface SharedPreview { created_at?:string;id:string;digest:string;expires_at:string;plan:{business_unit_id:string|null;scheme_snapshot:BusinessScheme;configuration?:SharedConfigurationStatus;sending_status?:SendingStatus;schema:typeof SHARED_SEND_SCHEMA;draft_id:string;draft_revision:number;intent_id:string;message:string;content_digest:string;policy_id:string|null;items:Array<{position:number;target_id:string;target:{id:string;name:string;search_text:string;locator_revision:number};selected:SharedCandidate|null;candidates:SharedCandidate[];blocker:string|null;readiness?:SharedReadiness[]}>} }
+export interface SharedPreview { created_at?:string;id:string;digest:string;expires_at:string;plan:{client_kind:MobileClient;business_unit_id:string|null;scheme_snapshot:BusinessScheme;configuration?:SharedConfigurationStatus;sending_status?:SendingStatus;schema:typeof SHARED_SEND_SCHEMA;draft_id:string;draft_revision:number;intent_id:string;message:string;content_digest:string;policy_id:string|null;items:Array<{position:number;target_id:string;target:{id:string;client_kind:MobileClient;name:string;search_text:string;locator_revision:number};selected:SharedCandidate|null;candidates:SharedCandidate[];blocker:string|null;readiness?:SharedReadiness[]}>} }
 export type SharedAttemptState='queued'|'leased'|'prepared'|'invocation_issued'|'observed_sent'|'unknown'|'failed_before_call'|'invalidated'|'cancelled'|'verified_not_sent'|'manually_confirmed_sent'
 export interface SharedExecutionCondition {waiting_since?:string|null;reason_changed_at?:string|null;code:string;category:string;affected_action:string;scope_type:string;scope_id:string;owner:string;message:string;automatic:boolean;next_action:string;observed_at:string;valid_until:string|null;retry_at:string|null}
 export interface SharedExecutionStatus {phase:'waiting'|'ready'|'executing'|'completed'|'blocked'|'unknown';observed_at:string;conditions:SharedExecutionCondition[];device_state_observed_at:string|null}
@@ -25,13 +25,13 @@ export interface SharedAttempt {evidence?:ChannelObservation|null;invalidated_at
 export interface SharedDispatchAssignment {id:string;old_attempt_id:string;new_attempt_id:string;actor_id:string;source:'manual'|'automatic';reason:string;created_at:string;from_device_name:string|null;to_device_name:string|null}
 export interface SharedDispatchSnapshot {item_id:string;state:'scheduling'|'assigned'|'waiting_resources'|'executing'|'completed'|'needs_review'|'stopped'|'confirmation_expired'|'dispatch_failed';reason:string;revision:number;max_rounds:number;completed_rounds:number;finished_at:string|null;next_retry_at:string|null;updated_at:string;last_failed_attempt_id:string|null;candidates:SharedCandidate[];assignments:SharedDispatchAssignment[]}
 export type SharedTaskStatus = 'dispatching'|'completed'|'stopped'|'dispatch_failed'|'confirmation_expired'|'needs_review'
-export interface SharedTask {business_unit_id:string|null;scheme_snapshot:BusinessScheme;status?:SharedTaskStatus;id:string;intent_id:string;revision:number;stopped:boolean;created_at:string;confirmed_until?:string;next_eligible_at?:string;items?:Array<{id:string;target_id:string;position:number;dispatch?:SharedDispatchSnapshot;attempts:SharedAttempt[]}>}
+export interface SharedTask {client_kind:MobileClient;business_unit_id:string|null;scheme_snapshot:BusinessScheme;status?:SharedTaskStatus;id:string;intent_id:string;revision:number;stopped:boolean;created_at:string;confirmed_until?:string;next_eligible_at?:string;items?:Array<{id:string;target_id:string;position:number;dispatch?:SharedDispatchSnapshot;attempts:SharedAttempt[]}>}
 export interface SharedReadiness {target?:GroupTarget|null;online?:boolean;environment?:DeviceEnvironmentObservation|null;execution_conditions?:Array<{code:string;message:string;owner:string;automatic:boolean;action?:string}>;device_name:string;target_name:string;search_text:string;inspection_state:'waiting_prerequisites'|'not_scheduled'|'queued'|'running'|'passed'|'expired'|'failed'|'stale'|'retry_wait'|'retry_exhausted';retry_at:string|null;retry_remaining:number;binding_id:string;device_id:string;target_id:string;state:string;plan_selectable:boolean;confirmable:boolean;execution_ready:boolean;ready:boolean;automatic:boolean;blockers:Array<{code:string;message:string;owner:string;automatic:boolean}>;inspection:{id:string;state:string;expires_at:string}|null}
 export interface SharedOverview {configuration?:SharedConfigurationStatus;sending_status?:SendingStatus;id:string;tasks:SharedTask[];drafts:SharedDraft[];readiness:SharedReadiness[];pool:Array<{id:string;name:string}>;inspections:Array<{id:string;binding_id:string;state:string;expires_at:string}>}
 export interface SharedLimit {interval_seconds:number;window_seconds:number;max_calls:number;daily_max_calls:number}
 interface ResolvedScheme {expected_revision:number;mode:'disabled'|'enabled';confirmation_seconds:number;inspection_seconds:number;retry_seconds:number;retry_limit:number;timezone:string;allowed_windows:Array<{weekdays:number[];start_minute:number;end_minute:number}>;limits:{total:SharedLimit;device:SharedLimit;target:SharedLimit};reason:string}
 export type ObservedFact='yes'|'no'|'unknown'
-export interface DeviceEnvironmentObservation {schema:'device_environment/1';observation_id:string;observed_at:string;interactive:ObservedFact;keyguard_locked:ObservedFact;device_locked:ObservedFact;keyguard_secure:ObservedFact;accessibility:ObservedFact;notification:ObservedFact;wecom_login:'logged_in'|'login_required'|'unknown'}
+export interface DeviceEnvironmentObservation {schema:'device_environment/2';observation_id:string;observed_at:string;interactive:ObservedFact;keyguard_locked:ObservedFact;device_locked:ObservedFact;keyguard_secure:ObservedFact;accessibility:ObservedFact;notification:ObservedFact;applications:Record<MobileClient,'logged_in'|'login_required'|'unknown'>}
 export function createSharedSendV2Client(client:Pick<Client,'requestResource'>) {
  const root=()=>`/api/v1/mobile-execution`
  const one=client.requestResource
@@ -59,7 +59,7 @@ export interface SendingStatus {platform:'default'|'disabled'|'enabled';can_conf
 export interface BusinessSchemeInput {expected_revision:number;enabled:boolean;confirmed:boolean;timezone:string;allowed_windows:ResolvedScheme['allowed_windows'];limits:ResolvedScheme['limits'];reason:string}
 export type BusinessScheme=ResolvedScheme & {id:string|null;revision:number;scope_revision:number;source:'builtin'|'default'|'unit';business_unit_id:string|null;builtin_version?:string}
 
-export interface SharedTaskInboxItem { task_id:string;item_id:string;attempt_id:string;assignment_revision:1;target_id:string;target_name:string;search_text:string;device_id:string;device_name:string;position:number;total:number;assigned_total:number;assigned_at:string;confirmed_until:string;attempt_state:SharedAttemptState;current:boolean;task_stopped:boolean;confirmation_expired:boolean;next_eligible_at:string|null;execution_status:SharedExecutionStatus }
+export interface SharedTaskInboxItem {client_kind:MobileClient; task_id:string;item_id:string;attempt_id:string;assignment_revision:1;target_id:string;target_name:string;search_text:string;device_id:string;device_name:string;position:number;total:number;assigned_total:number;assigned_at:string;confirmed_until:string;attempt_state:SharedAttemptState;current:boolean;task_stopped:boolean;confirmation_expired:boolean;next_eligible_at:string|null;execution_status:SharedExecutionStatus }
 export interface SharedTaskInbox { id:string;device_id:string;credential_generation:number;queue_revision:number;observed_at:string;items:SharedTaskInboxItem[];page:{has_more:boolean;next_cursor:string|null} }
 export interface SharedTaskReceiptInput {receipt_id:string;queue_revision:number;items:Array<{attempt_id:string;assignment_revision:1}>}
 export interface SharedTaskReceipt {id:string;accepted:Array<{attempt_id:string;received_at:string}>;rejected:Array<{attempt_id:string;code:string}>}
