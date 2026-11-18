@@ -148,14 +148,16 @@ a:focus-visible {
   border-top: 1px solid #e8edf3;
   color: var(--color-text);
 }
-.app-navigation .ant-menu-item {
+.app-navigation .ant-menu-item,
+.app-navigation > .ant-menu > .ant-menu-submenu > .ant-menu-submenu-title {
   width: auto;
   margin: 4px 0;
 }
 .app-navigation .ant-menu-inline-collapsed {
   width: 48px;
 }
-.app-navigation .ant-menu-inline-collapsed .ant-menu-item {
+.app-navigation .ant-menu-inline-collapsed .ant-menu-item,
+.app-navigation > .ant-menu-inline-collapsed > .ant-menu-submenu > .ant-menu-submenu-title {
   padding-inline: 16px;
 }
 .sidebar-footer {

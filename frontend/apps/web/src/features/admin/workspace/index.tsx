@@ -46,7 +46,6 @@ const states: Record<string, string> = {
   operator: '运营',
   admin: '分发管理员',
   revoked: '已撤销分发授权',
-  prepared: '等待客户端结果',
   client_reported_success: '客户端报告成功',
   client_reported_failure: '客户端报告失败',
   unknown: '结果不确定',

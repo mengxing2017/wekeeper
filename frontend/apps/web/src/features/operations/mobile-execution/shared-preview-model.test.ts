@@ -6,11 +6,11 @@ it('没有旧选中项的目标也会加入本次设备选择',()=>{
  const items=[{target_id:'target',selected:null},{target_id:'other',selected:{device_id:'other-phone'}}] as SharedPreview['plan']['items']
  expect(previewSelections(items,'target','new-phone')).toEqual([{target_id:'other',device_id:'other-phone'},{target_id:'target',device_id:'new-phone'}])
 })
-it('业务资源变化要求重新预览，手机状态和配置不影响平台确认',()=>{
+it('业务资源变化要求重新预览，手机状态不影响平台确认',()=>{
  const snapshot={binding_id:'binding',search_text:'群名',plan_selectable:true}
  const preview={plan:{items:[{readiness:[snapshot]}]}} as unknown as SharedPreview
  const overview=(row:unknown)=>({readiness:[row]}) as Parameters<typeof previewResourcesChanged>[1]
- expect(previewResourcesChanged(preview,overview({...snapshot,configuration_id:'new'}))).toBe(false)
+ expect(previewResourcesChanged(preview,overview({...snapshot,online:false}))).toBe(false)
  expect(previewResourcesChanged(preview,overview({...snapshot,search_text:'新群名'}))).toBe(true)
  expect(previewResourcesChanged(preview,overview({...snapshot,plan_selectable:false}))).toBe(true)
 })

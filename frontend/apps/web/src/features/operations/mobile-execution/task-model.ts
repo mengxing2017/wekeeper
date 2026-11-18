@@ -9,7 +9,6 @@ export function taskError(error: unknown): string {
   const messages: Record<string, string> = {
     dispatch_round_limit_exceeded:'任务已停止调度，请复制原意图为新草稿并重新确认。',
     dispatch_candidate_already_visited:'该手机本轮已尝试，请等待平台按剩余轮次自动调度。',
-    shared_send_execution_configuration_invalid: '当前发送配置异常，本次未执行。可报告问题，修复后重新预览。',
     forbidden: '当前账号没有全局系统管理员权限，请核对账号状态与权限。',
     unauthorized: '登录已失效，请重新登录后查看任务记录，核实原操作结果。',
   }
