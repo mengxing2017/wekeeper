@@ -1,7 +1,7 @@
 //! Planning remains possible while device conditions are waiting.
 use super::*;
 pub(super) async fn resources(tx: &mut Tx<'_>) -> Result<Vec<Value>> {
-    let rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(b)||jsonb_build_object('device_name',d.name,'target_name',t.search_text,'search_text',t.search_text,'online',coalesce(cp.state IN ('online','suspect'),false),'environment',e.observation) FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id JOIN execution_devices d ON d.id=b.device_id LEFT JOIN device_control_presence cp ON cp.id=d.id LEFT JOIN mobile_device_environments e ON e.device_id=d.id AND e.credential_generation=d.credential_generation ORDER BY d.name,b.id").fetch_all(&mut **tx).await?;
+    let rows:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(b)||jsonb_build_object('client_kind',t.client_kind,'device_name',d.name,'target_name',t.search_text,'search_text',t.search_text,'online',coalesce(cp.state IN ('online','suspect'),false),'environment',e.observation) FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id JOIN execution_devices d ON d.id=b.device_id LEFT JOIN device_control_presence cp ON cp.id=d.id LEFT JOIN mobile_device_environments e ON e.device_id=d.id AND e.credential_generation=d.credential_generation ORDER BY d.name,b.id").fetch_all(&mut **tx).await?;
     let mut result = Vec::new();
     for mut row in rows {
         row["resource_allowed"] = json!(resource_budgets::check(tx, uid(&row, "id")?).await?);
@@ -39,7 +39,7 @@ pub(super) async fn resources(tx: &mut Tx<'_>) -> Result<Vec<Value>> {
             && row["online"] == true
             && row["resource_allowed"] == true;
         let inspection_state = "not_scheduled";
-        result.push(json!({"binding_id":row["id"],"device_id":row["device_id"],"target_id":row["target_id"],"device_name":row["device_name"],"target_name":row["target_name"],"search_text":row["search_text"],"target":candidate.as_ref().map(|c|c["target"].clone()),"plan_selectable":selectable,"confirmable":confirmable,"execution_ready":ready,"ready":ready,"state":if ready{json!("ready_for_task")}else{blockers.first().or_else(||execution_conditions.first()).map(|b|b["code"].clone()).unwrap_or(json!("waiting"))},"online":row["online"],"environment":row["environment"],"execution_conditions":execution_conditions,"blockers":blockers,"inspection":inspection,"inspection_state":inspection_state,"retry_remaining":remaining,"retry_at":retry_at,"automatic":true}));
+        result.push(json!({"client_kind":row["client_kind"],"binding_id":row["id"],"device_id":row["device_id"],"target_id":row["target_id"],"device_name":row["device_name"],"target_name":row["target_name"],"search_text":row["search_text"],"target":candidate.as_ref().map(|c|c["target"].clone()),"plan_selectable":selectable,"confirmable":confirmable,"execution_ready":ready,"ready":ready,"state":if ready{json!("ready_for_task")}else{blockers.first().or_else(||execution_conditions.first()).map(|b|b["code"].clone()).unwrap_or(json!("waiting"))},"online":row["online"],"environment":row["environment"],"execution_conditions":execution_conditions,"blockers":blockers,"inspection":inspection,"inspection_state":inspection_state,"retry_remaining":remaining,"retry_at":retry_at,"automatic":true}));
     }
     Ok(result)
 }

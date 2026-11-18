@@ -27,7 +27,7 @@ struct Filter {
     device_id: Option<Uuid>,
     status: Option<String>,
     mine: Option<bool>,
-    kind: Option<String>,
+    client_kind: Option<crate::distribution::domain::shared_mobile::MobileClient>,
 }
 impl Filter {
     fn page(&self) -> Page {
@@ -36,7 +36,7 @@ impl Filter {
             page_size: self.page_size,
             status: self.status.clone(),
             mine: self.mine,
-            kind: self.kind.clone(),
+            kind: self.client_kind.map(|c| c.as_str().to_owned()),
             ..Page::default()
         }
     }

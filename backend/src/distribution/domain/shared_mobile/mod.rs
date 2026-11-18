@@ -8,9 +8,31 @@ pub mod runtime_configuration;
 // Historical UI rule packages only. Modern task targets use exact_unique.
 pub const SELECTION_POLICY: &str = "first_group_result";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MobileClient {
+    Wecom,
+    Wechat,
+}
+impl MobileClient {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Wecom => "wecom",
+            Self::Wechat => "wechat",
+        }
+    }
+    pub fn capability(self) -> &'static str {
+        match self {
+            Self::Wecom => "wecom.group_text",
+            Self::Wechat => "wechat.group_text",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TargetInput {
+    pub client_kind: MobileClient,
     pub search_text: String,
     #[serde(default)]
     pub remark: String,
@@ -77,6 +99,7 @@ mod tests {
     #[test]
     fn locator_preserves_internal_whitespace_and_unicode() {
         let v = TargetInput {
+            client_kind: MobileClient::Wecom,
             search_text: "家长  A群🦦".into(),
             remark: String::new(),
             duplicate_confirmation: None,
@@ -91,10 +114,12 @@ mod tests {
     }
     #[test]
     fn group_name_alone_can_create_and_update_a_target() {
-        let input: TargetInput =
-            serde_json::from_value(serde_json::json!({"search_text":"通知群"})).unwrap();
+        let input: TargetInput = serde_json::from_value(
+            serde_json::json!({"client_kind":"wecom","search_text":"通知群"}),
+        )
+        .unwrap();
         input.validate().unwrap();
-        let update: TargetUpdate = serde_json::from_value(serde_json::json!({"search_text":"通知群","expected_revision":1,"remark":"","enabled":true})).unwrap();
+        let update: TargetUpdate = serde_json::from_value(serde_json::json!({"client_kind":"wecom","search_text":"通知群","expected_revision":1,"remark":"","enabled":true})).unwrap();
         assert_eq!(update.search_text, input.search_text);
     }
     #[test]
@@ -115,6 +140,7 @@ mod tests {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TargetUpdate {
+    pub client_kind: MobileClient,
     pub expected_revision: i64,
     pub search_text: String,
     pub remark: String,
@@ -182,3 +208,37 @@ pub mod business_scheme;
 pub mod execution;
 
 pub mod dispatch_records;
+
+#[cfg(test)]
+mod mobile_client_tests {
+    use super::*;
+    #[test]
+    fn group_type_is_explicit_and_closed_for_both_clients() {
+        for kind in ["wecom", "wechat"] {
+            let value = serde_json::json!({"client_kind":kind,"search_text":"同名通知群"});
+            let target: TargetInput = serde_json::from_value(value).unwrap();
+            target.validate().unwrap();
+            assert_eq!(target.client_kind.as_str(), kind);
+            assert_eq!(
+                target.client_kind.capability(),
+                format!("{kind}.group_text")
+            );
+        }
+        for kind in [
+            serde_json::Value::Null,
+            serde_json::json!("automation"),
+            serde_json::json!("personal_location"),
+        ] {
+            assert!(
+                serde_json::from_value::<TargetInput>(
+                    serde_json::json!({"client_kind":kind,"search_text":"通知群"})
+                )
+                .is_err()
+            );
+        }
+        assert!(
+            serde_json::from_value::<TargetInput>(serde_json::json!({"search_text":"通知群"}))
+                .is_err()
+        );
+    }
+}

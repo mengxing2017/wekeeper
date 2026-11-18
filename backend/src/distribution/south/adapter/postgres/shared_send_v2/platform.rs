@@ -244,7 +244,7 @@ pub(super) async fn read(tx: &mut Tx<'_>, page: u32) -> Result<Value> {
         ("diagnostics", "mobile_v9_diagnostics"),
     ] {
         let mut values: Vec<Value> = sqlx::query_scalar(&format!(
-            "SELECT mobile_business_snapshot(to_jsonb(t)-'challenge') FROM {table} t ORDER BY created_at DESC LIMIT 101 OFFSET $1"
+            "SELECT (to_jsonb(t)-'challenge') FROM {table} t ORDER BY created_at DESC LIMIT 101 OFFSET $1"
         ))
         .bind(offset).fetch_all(&mut **tx)
         .await?;

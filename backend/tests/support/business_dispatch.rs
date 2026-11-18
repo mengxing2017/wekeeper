@@ -65,7 +65,7 @@ impl Fixture {
         sqlx::query("INSERT INTO business_units(id,platform_id,name,created_by,updated_by) VALUES($1,$2,'单位',$3,$3)").bind(unit).bind(platform).bind(actor_id).execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO source_routes(route_id,source_id,business_unit_id,route_name,status) VALUES($1,$2,$3,'消息','active')").bind(&route).bind(platform).bind(unit).execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO execution_devices(id,name,enabled,credential_generation) VALUES($1,'Offline',true,1)").bind(device).execute(&pool).await.unwrap();
-        sqlx::query("INSERT INTO mobile_targets(id,search_text,created_by,updated_by) VALUES($1,'群名',$2,$2)").bind(target).bind(actor_id).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO mobile_targets(client_kind,id,search_text,created_by,updated_by) VALUES('wecom',$1,'群名',$2,$2)").bind(target).bind(actor_id).execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO mobile_device_target_bindings(id,device_id,target_id,created_by,updated_by) VALUES($1,$2,$3,$4,$4)").bind(Uuid::new_v4()).bind(device).bind(target).bind(actor_id).execute(&pool).await.unwrap();
         let actor:Actor=serde_json::from_value(json!({"id":actor_id,"username":"dispatch-admin","display_name":"Admin","platform_admin":true,"wecom_authenticated":false})).unwrap();
         Self {
@@ -90,6 +90,9 @@ impl Fixture {
                 self.unit,
                 id,
                 ConfigurationInput {
+                    client_kind: Some(
+                        wekeeper_api::distribution::domain::shared_mobile::MobileClient::Wecom,
+                    ),
                     target_selection_mode:
                         wekeeper_api::distribution::domain::receiving::SelectionMode::All,
                     device_dispatch_mode: Some(

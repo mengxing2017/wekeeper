@@ -60,6 +60,8 @@ pub fn reconcile_cursor(old: &[Uuid], new: &[Uuid], next: Option<Uuid>) -> Optio
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigurationInput {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_kind: Option<super::shared_mobile::MobileClient>,
     pub name: String,
     pub enabled: bool,
     pub target_ids: Vec<Uuid>,
@@ -73,6 +75,10 @@ pub struct ConfigurationInput {
 impl ConfigurationInput {
     pub fn validate(&mut self, channel: Channel) -> Result<()> {
         self.name = text(&self.name, 1, 120)?;
+        require(
+            (channel == Channel::Mobile) == self.client_kind.is_some(),
+            "receiving_client_required",
+        )?;
         require(
             match channel {
                 Channel::Mobile => self.device_dispatch_mode.is_some(),
@@ -101,6 +107,8 @@ impl ConfigurationInput {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Configuration {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_kind: Option<super::shared_mobile::MobileClient>,
     pub id: Uuid,
     pub business_unit_id: Uuid,
     pub name: String,
@@ -118,11 +126,15 @@ pub struct Configuration {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TargetInput {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_kind: Option<super::shared_mobile::MobileClient>,
     pub name: String,
     pub directory_group_id: Option<Uuid>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TargetResource {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_kind: Option<super::shared_mobile::MobileClient>,
     pub id: Uuid,
     pub name: String,
 }

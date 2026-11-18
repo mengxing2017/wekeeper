@@ -51,13 +51,13 @@ impl Store for Repository {
         let (limit, offset) = page.fetch_bounds()?;
         let sql = match resource {
             Resource::Targets | Resource::PlatformTargets => {
-                "SELECT to_jsonb(t) FROM mobile_targets t WHERE t.archived_at IS NULL AND strpos(lower(t.search_text),lower($1))>0 AND ($2::uuid IS NULL OR EXISTS(SELECT 1 FROM mobile_device_target_bindings b WHERE b.target_id=t.id AND b.device_id=$2 AND b.enabled)) ORDER BY t.created_at,t.id LIMIT $3 OFFSET $4"
+                "SELECT to_jsonb(t) FROM mobile_targets t WHERE t.archived_at IS NULL AND ($5::text IS NULL OR t.client_kind=$5) AND strpos(lower(t.search_text),lower($1))>0 AND ($2::uuid IS NULL OR EXISTS(SELECT 1 FROM mobile_device_target_bindings b WHERE b.target_id=t.id AND b.device_id=$2 AND b.enabled)) ORDER BY t.created_at,t.id LIMIT $3 OFFSET $4"
             }
             Resource::Devices | Resource::PlatformDevices => {
-                "SELECT jsonb_build_object('id',d.id,'name',d.name,'enabled',d.enabled,'last_seen_at',d.last_seen_at) FROM execution_devices d WHERE strpos(lower(d.name),lower($1))>0 AND ($2::uuid IS NULL OR d.id=$2) ORDER BY d.created_at,d.id LIMIT $3 OFFSET $4"
+                "SELECT jsonb_build_object('id',d.id,'name',d.name,'enabled',d.enabled,'last_seen_at',d.last_seen_at) FROM execution_devices d WHERE ($5::text IS NULL OR $5 IN ('wecom','wechat')) AND strpos(lower(d.name),lower($1))>0 AND ($2::uuid IS NULL OR d.id=$2) ORDER BY d.created_at,d.id LIMIT $3 OFFSET $4"
             }
             Resource::Bindings | Resource::PlatformBindings => {
-                "SELECT to_jsonb(b)||jsonb_build_object('device_name',d.name,'search_text',t.search_text,'target_locator_revision',t.locator_revision,'used_calls',(SELECT count(*) FROM mobile_execution_resource_charges rc JOIN mobile_execution_grants rg ON rg.id=rc.execution_id WHERE rc.budget_root=b.budget_root AND coalesce(rg.result_body->>'outcome','pending') NOT IN ('not_called','failed')),'available',b.enabled AND d.enabled AND t.enabled AND t.archived_at IS NULL) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id WHERE (strpos(lower(t.search_text),lower($1))>0 OR strpos(lower(d.name),lower($1))>0) AND ($2::uuid IS NULL OR b.device_id=$2) ORDER BY b.created_at,b.id LIMIT $3 OFFSET $4"
+                "SELECT to_jsonb(b)||jsonb_build_object('client_kind',t.client_kind,'device_name',d.name,'search_text',t.search_text,'target_locator_revision',t.locator_revision,'used_calls',(SELECT count(*) FROM mobile_execution_resource_charges rc JOIN mobile_execution_grants rg ON rg.id=rc.execution_id WHERE rc.budget_root=b.budget_root AND coalesce(rg.result_body->>'outcome','pending') NOT IN ('not_called','failed')),'available',b.enabled AND d.enabled AND t.enabled AND t.archived_at IS NULL) FROM mobile_device_target_bindings b JOIN execution_devices d ON d.id=b.device_id JOIN mobile_targets t ON t.id=b.target_id WHERE ($5::text IS NULL OR t.client_kind=$5) AND (strpos(lower(t.search_text),lower($1))>0 OR strpos(lower(d.name),lower($1))>0) AND ($2::uuid IS NULL OR b.device_id=$2) ORDER BY b.created_at,b.id LIMIT $3 OFFSET $4"
             }
         };
         let rows = sqlx::query_scalar(sql)
@@ -65,6 +65,7 @@ impl Store for Repository {
             .bind(device)
             .bind(limit)
             .bind(offset)
+            .bind(page.kind)
             .fetch_all(&mut *tx)
             .await?;
         tx.commit().await?;
@@ -101,11 +102,12 @@ impl Store for Repository {
                 let v: TargetInput = serde_json::from_value(input.clone())
                     .map_err(|_| Error::Invalid("目标字段无效".into()))?;
                 v.validate()?;
-                let candidates:Vec<(Uuid,i64,i64)>=sqlx::query_as("SELECT id,metadata_revision,locator_revision FROM mobile_targets WHERE search_text=$1 AND archived_at IS NULL ORDER BY id").bind(&v.search_text).fetch_all(&mut *tx).await?;
+                let candidates:Vec<(Uuid,i64,i64)>=sqlx::query_as("SELECT id,metadata_revision,locator_revision FROM mobile_targets WHERE search_text=$1 AND client_kind=$2 AND archived_at IS NULL ORDER BY id").bind(&v.search_text).bind(v.client_kind.as_str()).fetch_all(&mut *tx).await?;
                 if !candidates.is_empty() {
                     // Confirmation binds exact input and duplicate candidates, never inferred identity.
-                    let confirmation =
-                        hash(&json!([v.search_text, v.remark, candidates]).to_string());
+                    let confirmation = hash(
+                        &json!([v.client_kind, v.search_text, v.remark, candidates]).to_string(),
+                    );
                     if v.duplicate_confirmation.as_deref() != Some(&confirmation) {
                         let response = json!({"id":resource,"confirmation_required":true,"duplicate_confirmation":confirmation});
                         sqlx::query("INSERT INTO shared_mobile_resource_operations(actor_id,scope,idempotency_key,payload_hash,result) VALUES($1,$2,$3,$4,$5)")
@@ -114,8 +116,8 @@ impl Store for Repository {
                         return Ok(response);
                     }
                 }
-                sqlx::query("INSERT INTO mobile_targets(id,search_text,remark,created_by,updated_by) VALUES($1,$2,$3,$4,$4)")
-                    .bind(resource).bind(&v.search_text).bind(&v.remark).bind(actor.id).execute(&mut *tx).await?;
+                sqlx::query("INSERT INTO mobile_targets(id,search_text,remark,created_by,updated_by,client_kind) VALUES($1,$2,$3,$4,$4,$5)")
+                    .bind(resource).bind(&v.search_text).bind(&v.remark).bind(actor.id).bind(v.client_kind.as_str()).execute(&mut *tx).await?;
                 object(&mut tx, "mobile_targets", resource).await?
             }
             "update-target" => {
@@ -123,7 +125,7 @@ impl Store for Repository {
                     .map_err(|_| Error::Invalid("目标字段无效".into()))?;
                 validate_text(&v.search_text, 1, 256, 1024)?;
                 validate_text(&v.remark, 0, 2000, 8000)?;
-                let n=sqlx::query("UPDATE mobile_targets SET search_text=$3,remark=$4,enabled=$5,metadata_revision=metadata_revision+1,locator_revision=locator_revision+CASE WHEN search_text<>$3 THEN 1 ELSE 0 END,updated_by=$6,updated_at=clock_timestamp() WHERE id=$1 AND metadata_revision=$2 AND archived_at IS NULL").bind(resource).bind(v.expected_revision).bind(v.search_text).bind(v.remark).bind(v.enabled).bind(actor.id).execute(&mut *tx).await?.rows_affected();
+                let n=sqlx::query("UPDATE mobile_targets SET search_text=$3,remark=$4,enabled=$5,metadata_revision=metadata_revision+1,locator_revision=locator_revision+CASE WHEN search_text<>$3 THEN 1 ELSE 0 END,updated_by=$6,updated_at=clock_timestamp() WHERE id=$1 AND metadata_revision=$2 AND client_kind=$7 AND archived_at IS NULL").bind(resource).bind(v.expected_revision).bind(v.search_text).bind(v.remark).bind(v.enabled).bind(actor.id).bind(v.client_kind.as_str()).execute(&mut *tx).await?.rows_affected();
                 if n != 1 {
                     return Err(Error::Policy("revision_conflict"));
                 }

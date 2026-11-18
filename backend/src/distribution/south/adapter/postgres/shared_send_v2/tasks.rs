@@ -2,11 +2,11 @@ use super::*;
 /// Every phone receives the same business group name; bindings only select authorized devices.
 pub(super) async fn raw_candidates(tx: &mut Tx<'_>, target: Uuid) -> Result<Vec<Value>> {
     sqlx::query_scalar(r#"SELECT jsonb_build_object(
- 'target_id',t.id,'target_name',t.search_text,'device_name',d.name,'device_id',d.id,'binding_id',b.id,'binding_locator_revision',b.locator_revision,
+ 'client_kind',t.client_kind,'target_id',t.id,'target_name',t.search_text,'device_name',d.name,'device_id',d.id,'binding_id',b.id,'binding_locator_revision',b.locator_revision,
  'target_locator_revision',t.locator_revision,
  'target',jsonb_build_object('kind','group','search_query',t.search_text,'match_policy','exact_unique','identity_constraints','[]'::jsonb),
  'credential_generation',d.credential_generation,
- 'execution',jsonb_build_object('contract','device_owned/1','capability','wecom.group_text'))
+ 'execution',jsonb_build_object('contract','device_owned/2','client_kind',t.client_kind,'capability',t.client_kind||'.group_text'))
  FROM mobile_device_target_bindings b JOIN mobile_targets t ON t.id=b.target_id
  JOIN execution_devices d ON d.id=b.device_id
  WHERE t.id=$1 AND t.enabled AND t.archived_at IS NULL AND b.enabled AND d.enabled
@@ -18,6 +18,8 @@ pub(super) async fn candidates(tx: &mut Tx<'_>, target: Uuid) -> Result<Vec<Valu
 pub(super) fn dependencies(row: &Value) -> Value {
     let mut deps = serde_json::Map::new();
     for k in [
+        "client_kind",
+        "execution",
         "target_id",
         "device_id",
         "binding_id",
@@ -40,8 +42,12 @@ pub(super) async fn validate_plan(tx: &mut Tx<'_>, plan: &Value) -> Result<()> {
         "retired_target_contract",
     )?;
     require(
-        plan["execution"]["contract"] == "device_owned/1"
-            && plan["execution"]["capability"] == "wecom.group_text"
+        plan["execution"]["contract"] == "device_owned/2"
+            && plan["execution"]["client_kind"] == plan["client_kind"]
+            && serde_json::from_value::<crate::distribution::domain::shared_mobile::MobileClient>(
+                plan["client_kind"].clone(),
+            )
+            .is_ok_and(|c| plan["execution"]["capability"] == c.capability())
             && plan.get("flow").is_none()
             && plan.get("flow_digest").is_none(),
         "execution_contract_replaced",
@@ -91,9 +97,10 @@ pub(super) async fn write(tx: &mut Tx<'_>, a: &Actor, command: TaskCommand) -> R
         TaskCommand::Draft(id, input) => {
             let input = input.normalized()?;
             let count: i64 = sqlx::query_scalar(
-                "SELECT count(*) FROM mobile_targets WHERE id=ANY($1) AND archived_at IS NULL",
+                "SELECT count(*) FROM mobile_targets WHERE id=ANY($1) AND client_kind=$2 AND archived_at IS NULL",
             )
             .bind(&input.target_ids)
+            .bind(input.client_kind.as_str())
             .fetch_one(&mut **tx)
             .await?;
             require(
@@ -101,17 +108,17 @@ pub(super) async fn write(tx: &mut Tx<'_>, a: &Actor, command: TaskCommand) -> R
                 "shared_send_targets_invalid",
             )?;
             let id = if let Some(id) = id {
-                let n=sqlx::query("UPDATE mobile_v9_task_drafts SET target_ids=$2,message=$3,content_digest=$4,between_targets_seconds=$6,revision=revision+1 WHERE id=$1 AND revision=$5 AND NOT EXISTS(SELECT 1 FROM mobile_v9_tasks t WHERE t.draft_id=$1)").bind(id).bind(input.target_ids).bind(&input.message).bind(hash(&input.message)).bind(input.expected_revision).bind(input.between_targets_seconds).execute(&mut **tx).await?.rows_affected();
+                let n=sqlx::query("UPDATE mobile_v9_task_drafts SET target_ids=$2,message=$3,content_digest=$4,between_targets_seconds=$6,client_kind=$7,revision=revision+1 WHERE id=$1 AND revision=$5 AND NOT EXISTS(SELECT 1 FROM mobile_v9_tasks t WHERE t.draft_id=$1)").bind(id).bind(input.target_ids).bind(&input.message).bind(hash(&input.message)).bind(input.expected_revision) .bind(input.between_targets_seconds).bind(input.client_kind.as_str()).execute(&mut **tx).await?.rows_affected();
                 require(n == 1, "revision_conflict")?;
                 id
             } else {
                 require(input.expected_revision.is_none(), "revision_conflict")?;
                 let id = Uuid::now_v7();
-                sqlx::query("INSERT INTO mobile_v9_task_drafts(id,intent_id,actor_id,target_ids,message,content_digest,between_targets_seconds) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(id).bind(Uuid::now_v7()).bind(a.id).bind(input.target_ids).bind(&input.message).bind(hash(&input.message)).bind(input.between_targets_seconds).execute(&mut **tx).await?;
+                sqlx::query("INSERT INTO mobile_v9_task_drafts(id,intent_id,actor_id,target_ids,message,content_digest,between_targets_seconds,client_kind) VALUES($1,$2,$3,$4,$5,$6,$7,$8)").bind(id).bind(Uuid::now_v7()).bind(a.id).bind(input.target_ids).bind(&input.message).bind(hash(&input.message)) .bind(input.between_targets_seconds).bind(input.client_kind.as_str()).execute(&mut **tx).await?;
                 id
             };
             Ok(sqlx::query_scalar(
-                "SELECT to_jsonb(d)||jsonb_build_object('targets',coalesce((SELECT jsonb_agg(jsonb_build_object('id',t.id,'name',t.search_text) ORDER BY ids.n) FROM unnest(d.target_ids) WITH ORDINALITY ids(id,n) JOIN mobile_targets t ON t.id=ids.id ),'[]'::jsonb)) FROM mobile_v9_task_drafts d WHERE id=$1",
+                "SELECT to_jsonb(d)||jsonb_build_object('targets',coalesce((SELECT jsonb_agg(jsonb_build_object('id',t.id,'client_kind',t.client_kind,'name',t.search_text) ORDER BY ids.n) FROM unnest(d.target_ids) WITH ORDINALITY ids(id,n) JOIN mobile_targets t ON t.id=ids.id ),'[]'::jsonb)) FROM mobile_v9_task_drafts d WHERE id=$1",
             )
             .bind(id)
             .fetch_one(&mut **tx)
@@ -157,7 +164,7 @@ pub(super) async fn write(tx: &mut Tx<'_>, a: &Actor, command: TaskCommand) -> R
                         confirmation_issues.insert(uid(choice, "device_id")?, issue);
                     }
                 }
-                let target_info:PreviewTarget = sqlx::query_scalar::<_,Value>("SELECT jsonb_build_object('id',id,'name',search_text,'search_text',search_text,'locator_revision',locator_revision) FROM mobile_targets WHERE id=$1 ").bind(target).fetch_optional(&mut **tx).await?.map(serde_json::from_value).transpose().map_err(|_|Error::Conflict)?.ok_or(Error::NotFound)?;
+                let target_info:PreviewTarget = sqlx::query_scalar::<_,Value>("SELECT jsonb_build_object('id',id,'client_kind',client_kind,'name',search_text,'search_text',search_text,'locator_revision',locator_revision) FROM mobile_targets WHERE id=$1 ").bind(target).fetch_optional(&mut **tx).await?.map(serde_json::from_value).transpose().map_err(|_|Error::Conflict)?.ok_or(Error::NotFound)?;
                 let target_status: Vec<Value> = status
                     .iter()
                     .filter(|r| r["target_id"] == json!(target))
@@ -190,7 +197,7 @@ pub(super) async fn write(tx: &mut Tx<'_>, a: &Actor, command: TaskCommand) -> R
             }
             let p = Some(effective.clone());
             let id = Uuid::now_v7();
-            let plan = json!({"schema":SCHEMA,"intent_id":d["intent_id"],"draft_id":input.draft_id,"draft_revision":input.expected_revision,"between_targets_seconds":d["between_targets_seconds"],"message":d["message"],"content_digest":d["content_digest"],"items":items,"policy_id":p.as_ref().map(|p|&p["id"]),"sending_status":sending_status,"business_unit_id":unit,"scheme_snapshot":effective});
+            let plan = json!({"client_kind":d["client_kind"],"schema":SCHEMA,"intent_id":d["intent_id"],"draft_id":input.draft_id,"draft_revision":input.expected_revision,"between_targets_seconds":d["between_targets_seconds"],"message":d["message"],"content_digest":d["content_digest"],"items":items,"policy_id":p.as_ref().map(|p|&p["id"]),"sending_status":sending_status,"business_unit_id":unit,"scheme_snapshot":effective});
             let h = digest(&plan)?;
             sqlx::query("INSERT INTO mobile_v9_previews(id,draft_id,draft_revision,plan,digest,policy_id) VALUES($1,$2,$3,$4,$5,$6)").bind(id).bind(input.draft_id).bind(input.expected_revision).bind(&plan).bind(&h).bind(p.as_ref().map(policy_id).transpose()?.flatten()).execute(&mut **tx).await?;
             Ok(
@@ -224,7 +231,7 @@ pub(super) async fn write(tx: &mut Tx<'_>, a: &Actor, command: TaskCommand) -> R
             let items = plan["items"].as_array().ok_or(Error::Conflict)?;
             for item in items {
                 require(
-                    item["selected"]["execution"]["contract"] == "device_owned/1",
+                    item["selected"]["execution"]["contract"] == "device_owned/2",
                     "preview_expired",
                 )?;
                 validate_plan(tx, &item["selected"]).await?;
@@ -245,7 +252,7 @@ pub(super) async fn write(tx: &mut Tx<'_>, a: &Actor, command: TaskCommand) -> R
                 !input.reason.trim().is_empty() && input.reason.len() <= 2000,
                 "shared_send_reason_required",
             )?;
-            let old:Value=sqlx::query_scalar("SELECT to_jsonb(a)||jsonb_build_object('plan',mobile_business_snapshot(p.plan),'snapshot_id',p.snapshot_id,'target_id',i.target_id,'task_id',i.task_id) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE a.id=$1  AND a.current AND NOT t.stopped").bind(id).fetch_optional(&mut **tx).await?.ok_or(Error::NotFound)?;
+            let old:Value=sqlx::query_scalar("SELECT to_jsonb(a)||jsonb_build_object('plan',p.plan,'snapshot_id',p.snapshot_id,'target_id',i.target_id,'task_id',i.task_id) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id JOIN mobile_v9_task_items i ON i.id=a.item_id JOIN mobile_v9_tasks t ON t.id=i.task_id WHERE a.id=$1  AND a.current AND NOT t.stopped").bind(id).fetch_optional(&mut **tx).await?.ok_or(Error::NotFound)?;
             require(
                 old["revision"] == input.expected_revision
                     && matches!(

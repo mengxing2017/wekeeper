@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeSet;
 use uuid::Uuid;
-pub const SCHEMA: &str = "shared_mobile_send/2";
+pub const SCHEMA: &str = "shared_mobile_send/3";
 /// A read observation; it never grants a lease, consent or a send permission.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -63,7 +63,7 @@ mod execution_status_tests {
     use super::*;
     #[test]
     fn business_drafts_reject_retired_phase_inputs() {
-        let mut value = serde_json::json!({"target_ids":[Uuid::now_v7()],"message":"通知","content_type":"text/plain","expected_revision":null,"between_targets_seconds":30});
+        let mut value = serde_json::json!({"client_kind":"wecom","target_ids":[Uuid::now_v7()],"message":"通知","content_type":"text/plain","expected_revision":null,"between_targets_seconds":30});
         serde_json::from_value::<DraftInput>(value.clone())
             .unwrap()
             .normalized()
@@ -123,6 +123,7 @@ pub fn next_decision_revision(
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DraftInput {
+    pub client_kind: super::MobileClient,
     pub target_ids: Vec<Uuid>,
     pub message: String,
     pub content_type: String,
@@ -221,12 +222,15 @@ pub struct EnvironmentObservation {
     pub keyguard_secure: ObservedFact,
     pub accessibility: ObservedFact,
     pub notification: ObservedFact,
-    pub wecom_login: ApplicationLogin,
+    pub applications: std::collections::BTreeMap<String, ApplicationLogin>,
 }
 impl EnvironmentObservation {
     pub fn validate(&self) -> Result<()> {
         require(
-            self.schema == "device_environment/1"
+            self.schema == "device_environment/2"
+                && self.applications.len() == 2
+                && self.applications.contains_key("wecom")
+                && self.applications.contains_key("wechat")
                 && !self.observation_id.is_nil()
                 && self.observed_at <= chrono::Utc::now() + chrono::Duration::minutes(5),
             "send_protocol_unsupported",
@@ -377,6 +381,7 @@ pub struct Reassignment {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct PreviewTarget {
+    pub client_kind: super::MobileClient,
     pub id: Uuid,
     pub name: String,
     pub search_text: String,

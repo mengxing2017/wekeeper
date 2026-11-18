@@ -9,11 +9,11 @@ pub async fn targets(tx: &mut Transaction<'_, Postgres>, channel: &str) -> Resul
     require_channel(channel)?;
     let mut result = Vec::new();
     if channel == "mobile" {
-        let rows=sqlx::query("SELECT id,search_text FROM mobile_targets WHERE enabled AND archived_at IS NULL ORDER BY id FOR SHARE").fetch_all(&mut **tx).await?;
+        let rows=sqlx::query("SELECT id,search_text,client_kind FROM mobile_targets WHERE enabled AND archived_at IS NULL ORDER BY id FOR SHARE").fetch_all(&mut **tx).await?;
         for row in rows {
             let id: Uuid = row.get("id");
             let candidates = super::shared_send_v2::routing_candidates(tx, id).await?;
-            result.push(json!({"id":id,"name":row.get::<String,_>("search_text"),"identity":{"candidates":candidates},"resource_available":!candidates.is_empty()}));
+            result.push(json!({"id":id,"name":row.get::<String,_>("search_text"),"identity":{"client_kind":row.get::<String,_>("client_kind"),"candidates":candidates},"resource_available":!candidates.is_empty()}));
         }
     } else {
         let rows = sqlx::query(

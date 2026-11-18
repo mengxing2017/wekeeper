@@ -49,7 +49,7 @@ with tempfile.TemporaryDirectory(prefix='wekeeper-live-') as directory:
             assert any(c.name=='wekeeper_session' and c.has_nonstandard_attr('HttpOnly') for c in jar)
             targets='/api/v1/mobile-execution/targets'
             request(targets,'POST',{'search_text':'Denied'},expected=403)
-            created=request(targets,'POST',{'search_text':'Live smoke'},csrf)['data']
+            created=request(targets,'POST',{'client_kind':'wechat','search_text':'Live smoke'},csrf)['data']
             assert created['attributes']['search_text']=='Live smoke'
             request('/api/v1/wecom-distribution/groups')
             request(targets)

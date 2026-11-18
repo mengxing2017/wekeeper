@@ -995,7 +995,7 @@ fn attempt_execution_observation_preserves_missing_receipt_and_device_times() {
 #[test]
 fn unit_task_preview_has_a_server_side_context_and_rejects_unknown_fields() {
     use wekeeper_api::distribution::domain::shared_mobile::business_scheme::TaskPreviewInput;
-    let body = serde_json::json!({"draft_id":null,"expected_revision":null,"business_unit_id":"00000000-0000-0000-0000-000000000001","target_ids":["00000000-0000-0000-0000-000000000002"],"message":" 原样正文\n","between_targets_seconds":30,"selections":[]});
+    let body = serde_json::json!({"draft_id":null,"expected_revision":null,"business_unit_id":"00000000-0000-0000-0000-000000000001","client_kind":"wecom","target_ids":["00000000-0000-0000-0000-000000000002"],"message":" 原样正文\n","between_targets_seconds":30,"selections":[]});
     let preview: TaskPreviewInput = serde_json::from_value(body.clone()).unwrap();
     assert_eq!(serde_json::to_value(preview).unwrap(), body);
     let mut invalid = body.clone();

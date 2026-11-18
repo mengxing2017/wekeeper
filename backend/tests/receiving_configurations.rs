@@ -33,6 +33,9 @@ async fn unit_configuration_has_no_workspace_version_or_target_exclusivity() {
             f.unit,
             a,
             ConfigurationInput {
+                client_kind: Some(
+                    wekeeper_api::distribution::domain::shared_mobile::MobileClient::Wecom,
+                ),
                 target_selection_mode:
                     wekeeper_api::distribution::domain::receiving::SelectionMode::All,
                 device_dispatch_mode: Some(
@@ -85,6 +88,9 @@ async fn unit_creates_target_and_binds_phone_without_workspace_setup() {
             f.unit,
             id,
             TargetInput {
+                client_kind: Some(
+                    wekeeper_api::distribution::domain::shared_mobile::MobileClient::Wecom,
+                ),
                 name: "只填写一个群名".into(),
                 directory_group_id: None,
             },
@@ -99,6 +105,9 @@ async fn unit_creates_target_and_binds_phone_without_workspace_setup() {
             f.unit,
             id,
             TargetInput {
+                client_kind: Some(
+                    wekeeper_api::distribution::domain::shared_mobile::MobileClient::Wecom,
+                ),
                 name: "只填写一个群名".into(),
                 directory_group_id: None,
             },
@@ -130,7 +139,7 @@ async fn devices_and_targets(f: &Fixture, n: usize) -> (Vec<Uuid>, Vec<Uuid>) {
         let target = Uuid::new_v4();
         sqlx::query("INSERT INTO execution_devices(id,name,enabled,credential_generation) VALUES($1,$2,true,1)").bind(device).bind(format!("Phone {i}")).execute(&f.pool).await.unwrap();
         sqlx::query(
-            "INSERT INTO mobile_targets(id,search_text,created_by,updated_by) VALUES($1,$2,$3,$3)",
+            "INSERT INTO mobile_targets(client_kind,id,search_text,created_by,updated_by) VALUES('wecom',$1,$2,$3,$3)",
         )
         .bind(target)
         .bind(format!("群 {i}"))
@@ -158,6 +167,9 @@ async fn policy(
             f.unit,
             id,
             ConfigurationInput {
+                client_kind: Some(
+                    wekeeper_api::distribution::domain::shared_mobile::MobileClient::Wecom,
+                ),
                 name: "策略".into(),
                 enabled: true,
                 target_ids: targets,

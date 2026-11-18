@@ -327,7 +327,7 @@ async fn interrupted_ad_commit_uses_original_frozen_targets_and_decision() {
 async fn unavailable_target_does_not_block_other_targets() {
     let f = Fixture::new().await;
     let missing = Uuid::new_v4();
-    sqlx::query("INSERT INTO mobile_targets(id,search_text,created_by,updated_by) VALUES($1,'没有手机的群',$2,$2)").bind(missing).bind(f.actor.id).execute(&f.pool).await.unwrap();
+    sqlx::query("INSERT INTO mobile_targets(client_kind,id,search_text,created_by,updated_by) VALUES('wecom',$1,'没有手机的群',$2,$2)").bind(missing).bind(f.actor.id).execute(&f.pool).await.unwrap();
     f.configure(vec![missing, f.target]).await;
     sqlx::query("DELETE FROM mobile_device_target_bindings WHERE target_id=$1")
         .bind(missing)
@@ -385,6 +385,7 @@ async fn both_channels_share_one_ad_and_aggregate_official_results_without_membe
             f.unit,
             Uuid::new_v4(),
             ConfigurationInput {
+                client_kind: None,
                 target_selection_mode:
                     wekeeper_api::distribution::domain::receiving::SelectionMode::All,
                 device_dispatch_mode: None,
@@ -1250,7 +1251,7 @@ async fn two_groups_have_independent_progress_and_one_message_outcome() {
     use wekeeper_api::message_orchestration::south::adapter::postgres::Repository;
     let f = Fixture::new().await;
     let second = Uuid::new_v4();
-    sqlx::query("INSERT INTO mobile_targets(id,search_text,created_by,updated_by) VALUES($1,'第二个群',$2,$2)").bind(second).bind(f.actor.id).execute(&f.pool).await.unwrap();
+    sqlx::query("INSERT INTO mobile_targets(client_kind,id,search_text,created_by,updated_by) VALUES('wecom',$1,'第二个群',$2,$2)").bind(second).bind(f.actor.id).execute(&f.pool).await.unwrap();
     f.configure(vec![f.target, second]).await;
     let (_, receipt) = f.message().await;
     f.run().await;

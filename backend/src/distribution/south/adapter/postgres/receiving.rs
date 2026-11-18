@@ -116,8 +116,11 @@ impl Store for Repository {
             .await?;
         let resource: serde_json::Value = match channel {
             Channel::Mobile => {
-                sqlx::query("INSERT INTO mobile_targets(id,search_text,created_by,updated_by) VALUES($1,$2,$3,$3) ON CONFLICT(id) DO NOTHING").bind(id).bind(&input.name).bind(actor.id).execute(&mut *tx).await?;
-                sqlx::query_scalar("SELECT jsonb_build_object('id',id,'name',search_text) FROM mobile_targets WHERE id=$1  AND search_text=$2 AND archived_at IS NULL").bind(id).bind(&input.name).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?
+                let kind = input
+                    .client_kind
+                    .ok_or(Error::Policy("receiving_client_required"))?;
+                sqlx::query("INSERT INTO mobile_targets(id,search_text,created_by,updated_by,client_kind) VALUES($1,$2,$3,$3,$4) ON CONFLICT(id) DO NOTHING").bind(id).bind(&input.name).bind(actor.id).bind(kind.as_str()).execute(&mut *tx).await?;
+                sqlx::query_scalar("SELECT jsonb_build_object('id',id,'name',search_text,'client_kind',client_kind) FROM mobile_targets WHERE id=$1 AND search_text=$2 AND client_kind=$3 AND archived_at IS NULL").bind(id).bind(&input.name).bind(kind.as_str()).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?
             }
             Channel::Wecom => {
                 sqlx::query("INSERT INTO wecom_groups(id,corp_id,chat_id,name,directory_group_id) SELECT $1,o.corp_id,o.key,$2,o.id  FROM wecom_asset_objects o JOIN wecom_directory_state ds ON ds.singleton WHERE o.id=$3 AND o.kind='groups' AND o.corp_id=ds.corp_id AND o.credential_generation=ds.credential_generation AND o.verification='verified' AND o.visibility='visible' ON CONFLICT DO NOTHING").bind(id).bind(&input.name).bind(input.directory_group_id).execute(&mut *tx).await?;
@@ -140,7 +143,7 @@ impl Store for Repository {
         authorize(&mut tx, actor.id, unit, true).await?;
         let (targets, devices, senders): (Vec<Value>, Vec<Value>, Vec<Value>) = match channel {
             Channel::Mobile => (
-                sqlx::query_scalar("SELECT jsonb_build_object('id',id,'name',search_text) FROM mobile_targets WHERE archived_at IS NULL ORDER BY id").fetch_all(&mut *tx).await?,
+                sqlx::query_scalar("SELECT jsonb_build_object('id',id,'name',search_text,'client_kind',client_kind) FROM mobile_targets WHERE archived_at IS NULL ORDER BY id").fetch_all(&mut *tx).await?,
                 sqlx::query_scalar("SELECT jsonb_build_object('id',id,'name',name) FROM execution_devices ORDER BY id").fetch_all(&mut *tx).await?, vec![]),
             Channel::Wecom => (
                 sqlx::query_scalar("SELECT jsonb_build_object('id',id,'name',name) FROM wecom_groups WHERE active ORDER BY id").fetch_all(&mut *tx).await?, vec![],
@@ -203,6 +206,14 @@ impl Store for Repository {
         if count != input.target_ids.len() as i64 {
             return Err(Error::NotFound);
         }
+        if channel == Channel::Mobile {
+            let count:i64=sqlx::query_scalar("SELECT count(*) FROM mobile_targets WHERE id=ANY($1) AND client_kind=$2 AND archived_at IS NULL")
+                .bind(&input.target_ids).bind(input.client_kind.ok_or(Error::Policy("receiving_client_required"))?.as_str()).fetch_one(&mut *tx).await?;
+            crate::business::require(
+                count == input.target_ids.len() as i64,
+                "shared_send_client_mismatch",
+            )?;
+        }
         let (table, ids) = match channel {
             Channel::Mobile => ("execution_devices", &input.device_ids),
             Channel::Wecom => ("accounts", &input.sender_ids),
@@ -220,6 +231,7 @@ impl Store for Repository {
                 .bind(&input.device_ids).bind(&input.target_ids).bind(actor.id).execute(&mut *tx).await?;
         }
         let result = Configuration {
+            client_kind: input.client_kind,
             id,
             business_unit_id: unit,
             name: input.name,
@@ -325,6 +337,10 @@ pub(crate) async fn plans(
             };
             let mut target: DeliveryTarget =
                 serde_json::from_value(resource.clone()).map_err(|_| Error::Unavailable)?;
+            if channel == Channel::Mobile && target.identity["client_kind"] != json!(c.client_kind)
+            {
+                return Err(Error::Policy("shared_send_client_mismatch"));
+            }
             let (key, field, ids) = if channel == Channel::Mobile {
                 ("candidates", "device_id", &device_order)
             } else {

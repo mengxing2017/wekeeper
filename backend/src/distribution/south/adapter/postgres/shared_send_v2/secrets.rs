@@ -34,7 +34,7 @@ fn seal_with(value: &Value, key: &aead::LessSafeKey) -> Result<Vec<u8>> {
     let mut body = serde_json::to_vec(value).map_err(|_| Error::Conflict)?;
     key.seal_in_place_append_tag(
         aead::Nonce::assume_unique_for_key(nonce),
-        aead::Aad::from(b"shared_mobile_send/2"),
+        aead::Aad::from(b"shared_mobile_send/3"),
         &mut body,
     )
     .map_err(|_| Error::Unavailable)?;
@@ -50,7 +50,7 @@ fn open_with(value: &[u8], key: &aead::LessSafeKey) -> Result<Value> {
     let plaintext = key
         .open_in_place(
             aead::Nonce::assume_unique_for_key(nonce),
-            aead::Aad::from(b"shared_mobile_send/2"),
+            aead::Aad::from(b"shared_mobile_send/3"),
             &mut body,
         )
         .map_err(|_| Error::Policy("shared_send_secret_invalid"))?;

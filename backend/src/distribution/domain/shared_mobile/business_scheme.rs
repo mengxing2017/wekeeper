@@ -77,6 +77,7 @@ pub struct SchemeMutation {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskPreviewInput {
+    pub client_kind: super::MobileClient,
     pub draft_id: Option<Uuid>,
     pub expected_revision: Option<i64>,
     pub business_unit_id: Option<Uuid>,

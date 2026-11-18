@@ -54,7 +54,7 @@ impl Fixture {
         sqlx::query("INSERT INTO execution_devices(id,name,enabled,credential_generation) VALUES($1,'Offline phone',true,1)").bind(device).execute(&pool).await.unwrap();
         let targets = vec![Uuid::new_v4(), Uuid::new_v4()];
         for target in &targets {
-            sqlx::query("INSERT INTO mobile_targets(id,search_text,created_by,updated_by) VALUES($1,'测试群',$2,$2)").bind(target).bind(actor_id).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO mobile_targets(client_kind,id,search_text,created_by,updated_by) VALUES('wecom',$1,'测试群',$2,$2)").bind(target).bind(actor_id).execute(&pool).await.unwrap();
             sqlx::query("INSERT INTO mobile_device_target_bindings(id,device_id,target_id,created_by,updated_by) VALUES($1,$2,$3,$4,$4)").bind(Uuid::new_v4()).bind(device).bind(target).bind(actor_id).execute(&pool).await.unwrap();
         }
         let release = Uuid::new_v4();
@@ -185,6 +185,7 @@ async fn business_configuration_does_not_require_technical_delivery() {
             &f.actor,
             "blocked-preview",
             TaskPreviewInput {
+                client_kind: wekeeper_api::distribution::domain::shared_mobile::MobileClient::Wecom,
                 business_unit_id: None,
                 draft_id: None,
                 expected_revision: None,
@@ -277,7 +278,7 @@ async fn business_configuration_does_not_require_technical_delivery() {
         serde_json::from_value(pool_current(&current_task["items"][0])["id"].clone()).unwrap();
     let grant = pool_delivery(&f, &c, epoch, aid).await;
     assert_eq!(grant["state"], "granted", "{grant}");
-    assert_eq!(grant["plan"]["execution"]["contract"], "device_owned/1");
+    assert_eq!(grant["plan"]["execution"]["contract"], "device_owned/2");
     assert!(grant["plan"].get("flow").is_none());
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_v9_invocations")
@@ -442,6 +443,7 @@ async fn runtime_configuration_is_independent_and_invalid_update_does_not_replac
             &f.actor,
             "runtime-only-preview",
             TaskPreviewInput {
+                client_kind: wekeeper_api::distribution::domain::shared_mobile::MobileClient::Wecom,
                 business_unit_id: None,
                 draft_id: None,
                 expected_revision: None,
@@ -456,7 +458,7 @@ async fn runtime_configuration_is_independent_and_invalid_update_does_not_replac
     assert!(preview["preview"]["plan"]["items"][0]["blocker"].is_null());
     assert_eq!(
         preview["preview"]["plan"]["items"][0]["selected"]["execution"]["contract"],
-        "device_owned/1"
+        "device_owned/2"
     );
     assert_eq!(preview["preview"]["plan"]["configuration"], Value::Null);
     sqlx::query("UPDATE execution_devices SET enabled=false WHERE id=$1")
@@ -527,6 +529,7 @@ async fn pool_confirm_keyed(f: &Fixture, targets: Vec<Uuid>, key: &str) -> Value
             &f.actor,
             &format!("{key}-preview"),
             TaskPreviewInput {
+                client_kind: wekeeper_api::distribution::domain::shared_mobile::MobileClient::Wecom,
                 business_unit_id: None,
                 draft_id: None,
                 expected_revision: None,
@@ -563,7 +566,21 @@ async fn pool_tick(f: &Fixture) {
     .execute(&f.pool)
     .await
     .unwrap();
-    f.repo().reconcile_dispatch().await.unwrap();
+    // Advisory locks span schemas, so another parallel fixture can make a
+    // nonblocking scan skip this fixture. Wait for its due work to be evaluated.
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            f.repo().reconcile_dispatch().await.unwrap();
+            let due: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_dispatch_state WHERE next_retry_at<=clock_timestamp() AND state NOT IN ('completed','stopped','confirmation_expired','dispatch_failed'))")
+                .fetch_one(&f.pool).await.unwrap();
+            if !due {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("fixture dispatch work remained due after repeated scans");
 }
 // Advance persisted round time explicitly; pool_tick itself never advances time.
 async fn pool_expire_round(f: &Fixture) {
@@ -1222,6 +1239,7 @@ async fn offline_binding_is_selectable_and_confirmable_without_environment_or_co
     assert_eq!(status["readiness"][0]["confirmable"], true);
     assert_eq!(status["readiness"][0]["execution_ready"], false);
     let input = DraftInput {
+        client_kind: wekeeper_api::distribution::domain::shared_mobile::MobileClient::Wecom,
         target_ids: f.targets.clone(),
         message: "  测试\n🙂  ".into(),
         content_type: "text/plain".into(),
@@ -1491,7 +1509,7 @@ async fn direct_delivery_signs_before_transport_and_reconnect_reuses_one_capabil
     let attempt = serde_json::from_value(pool_current(&detail["items"][0])["id"].clone()).unwrap();
     let grant = pool_delivery(&f, &c, runtime, attempt).await;
     assert_eq!(grant["max_calls"], 1);
-    assert_eq!(grant["plan"]["execution"]["contract"], "device_owned/1");
+    assert_eq!(grant["plan"]["execution"]["contract"], "device_owned/2");
     assert!(grant["plan"].get("flow").is_none());
     let connection = Uuid::new_v4();
     sqlx::query(
@@ -1822,6 +1840,7 @@ async fn unit_preview(f: &Fixture, unit: Option<Uuid>, device: Uuid, key: &str) 
             &f.actor,
             key,
             TaskPreviewInput {
+                client_kind: wekeeper_api::distribution::domain::shared_mobile::MobileClient::Wecom,
                 business_unit_id: unit,
                 draft_id: None,
                 expected_revision: None,
@@ -2093,5 +2112,62 @@ async fn singleton_phone_quota_wait_does_not_exhaust_dispatch_rounds() {
     let task = pool_detail(&f, &task).await;
     assert_eq!(task["items"][0]["dispatch"]["completed_rounds"], 0);
     assert_eq!(task["items"][0]["dispatch"]["reason"], "quota_wait");
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn dual_client_same_phone_preserves_kind_and_rejects_mixed_targets() {
+    use wekeeper_api::distribution::domain::shared_mobile::{
+        MobileClient, business_scheme::TaskPreviewInput,
+    };
+    let f = Fixture::with_adapter(false).await;
+    // Same display name, same physical device, separate application identities.
+    sqlx::query("UPDATE mobile_targets SET client_kind='wechat' WHERE id=$1")
+        .bind(f.targets[1])
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let request = |kind, targets| TaskPreviewInput {
+        client_kind: kind,
+        business_unit_id: None,
+        draft_id: None,
+        expected_revision: None,
+        target_ids: targets,
+        message: "双客户端通知".into(),
+        between_targets_seconds: 30,
+        selections: vec![],
+    };
+    let repo = f.repo();
+    for (position, kind) in [MobileClient::Wecom, MobileClient::Wechat]
+        .into_iter()
+        .enumerate()
+    {
+        let result = repo
+            .preview_task(
+                &f.actor,
+                &format!("client-{position}"),
+                request(kind, vec![f.targets[position]]),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result["draft"]["client_kind"], kind.as_str());
+        let item = &result["preview"]["plan"]["items"][0];
+        assert_eq!(item["target"]["client_kind"], kind.as_str());
+        assert_eq!(
+            item["candidates"][0]["execution"]["capability"],
+            kind.capability()
+        );
+        assert_eq!(item["candidates"][0]["device_id"], json!(f.device));
+    }
+    assert!(
+        repo.preview_task(
+            &f.actor,
+            "mixed",
+            request(MobileClient::Wechat, f.targets.clone())
+        )
+        .await
+        .is_err()
+    );
     f.close().await;
 }

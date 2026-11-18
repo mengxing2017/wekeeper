@@ -160,6 +160,7 @@ pub(super) async fn preview(
         TaskCommand::Draft(
             input.draft_id,
             DraftInput {
+                client_kind: input.client_kind,
                 target_ids: input.target_ids,
                 message: input.message,
                 content_type: "text/plain".into(),
