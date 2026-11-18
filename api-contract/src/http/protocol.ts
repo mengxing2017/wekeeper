@@ -140,14 +140,10 @@ export function resourceType(path: string): string {
     if(rawKind==="shared-v2-support")return "mobile-v9-support";
     if(rawKind==="shared-v2-management")return "mobile-v9-management";
     switch (kind) {
+      case "business-schemes": return "mobile-business-schemes";
       case "receiving-configurations": return "mobile-receiving-configurations";
-      case "usage-options": return "mobile-usage-options";
-      case "usage-previews": return "mobile-usage-previews";
-      case "usage-requests": return "mobile-usages";
-      case "usages": return parts[5]==="issues"?"mobile-usage-issues":"mobile-usages";
-      case "usage-task-previews": return "mobile-usage-task-previews";
       case "shared-task-drafts": return "mobile-shared-drafts";
-      case "shared-task-previews": return "mobile-shared-previews";
+      case "shared-task-previews": return "mobile-task-previews";
       case "shared-tasks": return parts[5] === "stops" ? "mobile-shared-stops" : "mobile-shared-tasks";
       case "shared-items": return parts[5] === "reassignments" ? "mobile-shared-reassignments" : "mobile-shared-reviews";
       case "shared-inspections": return "mobile-shared-inspections";

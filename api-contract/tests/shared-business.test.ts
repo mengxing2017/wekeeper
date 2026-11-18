@@ -1,53 +1,20 @@
 import {expect,it} from 'vitest'
-import {createHash} from 'node:crypto'
-import f from '../fixtures/local-group-text-flow.json'
 import {createSharedSendV2Client} from '../src/modules/mobile-execution/shared-send/v2'
 import {createClient} from '../src/http/client'
-function canonicalJson(v:unknown):string {if(v===null||typeof v!=='object')return JSON.stringify(v);if(Array.isArray(v))return '['+v.map(canonicalJson).join(',')+']';const r=v as Record<string,unknown>;return '{'+Object.keys(r).sort().map(k=>JSON.stringify(k)+':'+canonicalJson(r[k])).join(',')+'}'}
-it('local UI fixtures preserve immutable digests while business requests contain no technical delivery fields',async()=>{
- const hash=(v:unknown)=>createHash('sha256').update(canonicalJson(v)).digest('hex')
- expect(hash(f.flow)).toBe(f.flow_digest)
- const calls:Array<{url:string;body:unknown;key:string|undefined}>=[]
- const client=createClient(async r=>{calls.push({url:r.path,body:r.body?JSON.parse(r.body as string):undefined,key:r.headers['Idempotency-Key']});return {status:200,headers:{'content-type':'application/vnd.api+json'},body:{data:{type:'mobile-usages',id:'new',attributes:{items:[]}}}}})
- const business=createSharedSendV2Client(client)
- await business.usageConfirm({preview_id:'summary',digest:'summary-hash'},'stable-key')
- await business.usageAction('usage','pause',{expected_revision:2,reason:'暂停使用'},'pause-key')
- await business.usageIssue('usage','无法找到群','issue-key')
- await business.taskPreview({target_ids:['target'],message:'  原样文字\n',between_targets_seconds:30},'preview-key')
- expect(calls[0].body).toEqual({data:{type:'mobile-usages',attributes:{preview_id:'summary',digest:'summary-hash'}}})
- expect(calls[1].body).toEqual({data:{type:'mobile-usages',attributes:{expected_revision:2,reason:'暂停使用'}}})
- expect(calls[2].body).toEqual({data:{type:'mobile-usage-issues',attributes:{description:'无法找到群'}}})
- expect(calls[3].body).toEqual({data:{type:'mobile-usage-task-previews',attributes:{target_ids:['target'],message:'  原样文字\n',between_targets_seconds:30}}})
- expect(business).not.toHaveProperty('manage');expect(business).not.toHaveProperty('upload')
-})
-
-it('business input fixture has only business selection values',async()=>{
- const {default:input}=await import('../fixtures/mobile-usage-input.json')
- const calls:unknown[]=[]
- const client=createSharedSendV2Client({requestResource:async(path,...args)=>{calls.push([path,...args]);return {} as never}})
- await client.usagePreview(input,'key')
- expect(calls[0]).toEqual(['/api/v1/mobile-execution/usage-previews','POST',input,undefined,{'Idempotency-Key':'key'}])
- expect(Object.keys(input).sort()).toEqual(['auto_targets','device_ids','expires_at','max_calls','targets'])
-})
-
-it('business scheme has its own authenticated platform endpoint, without technical stages',async()=>{
+it('unit schemes and task previews use explicit scopes without opening a resource range',async()=>{
  const {default:input}=await import('../fixtures/mobile-business-scheme.json')
  const calls:unknown[]=[]
- const client=createSharedSendV2Client({requestResource:async(path,...args)=>{calls.push([path,...args]);return {} as never}})
- await client.saveBusinessScheme(input,'scheme-key')
- expect(calls[0]).toEqual(['/api/v1/platform/mobile-execution/business-schemes','POST',input,undefined,{'Idempotency-Key':'scheme-key'}])
- expect(input).not.toHaveProperty('allowed_stages');expect(input).not.toHaveProperty('release_id')
+ const business=createSharedSendV2Client({requestResource:async(path,...args)=>{calls.push([path,...args]);return {} as never}})
+ await business.businessScheme('unit/a')
+ await business.saveBusinessScheme(input,'save','unit/a')
+ await business.inheritBusinessScheme('unit/a',{expected_revision:1,reason:'默认',confirmed:true},'inherit')
+ await business.taskPreview({business_unit_id:'unit/a',target_ids:['target'],message:'  原样文字\n',between_targets_seconds:30},'preview')
+ expect(calls[0]).toEqual(['/api/v1/mobile-execution/business-schemes/units/unit%2Fa'])
+ expect(calls[1]).toEqual(['/api/v1/mobile-execution/business-schemes/units/unit%2Fa/versions','POST',input,undefined,{'Idempotency-Key':'save'}])
+ expect((calls[2] as unknown[])[0]).toBe('/api/v1/mobile-execution/business-schemes/units/unit%2Fa/inheritances')
+ expect((calls[3] as unknown[])[0]).toBe('/api/v1/mobile-execution/shared-v2-task-previews')
+ expect(business).not.toHaveProperty('usageConfirm');expect(business).not.toHaveProperty('usagePreview')
 })
-
-it('opening summary uses the business group name for every phone',async()=>{
- const {default:fixture}=await import('../fixtures/mobile-usage-locator.json')
- const locator:import('../src/modules/mobile-execution/shared-send/v2').UsageLocator={...fixture,target:{...fixture.target,kind:'group',match_policy:'exact_unique',identity_constraints:[]}}
- expect(locator.search_text).toBe('家长通知群')
- expect(locator.target_locator_revision).toBe(1)
- expect(locator.target?.search_query).toBe('家长通知群')
- expect(locator.binding_locator_revision).toBe(2)
-})
-
 
 it('Rust and TS share observations without native hosting fields',async()=>{
  const {default:fixture}=await import('../fixtures/shared-execution-status.json')
@@ -117,4 +84,18 @@ it('unavailable is an uncalled attempt result without native state',async()=>{
  expect(result.reason).toBe('device_unavailable')
  expect(result.consumed).toBe(false);expect(result.calling_marked).toBe(false)
  expect(result).not.toHaveProperty('paused')
+})
+
+it('scheme writes and task previews use their Rust JSON API resource types',async()=>{
+ const {default:input}=await import('../fixtures/mobile-business-scheme.json')
+ const calls:Array<{path:string;body:unknown}>=[]
+ const client=createClient(async r=>{const type=r.path.includes('business-schemes')?'mobile-business-schemes':'mobile-task-previews';calls.push({path:r.path,body:r.body?JSON.parse(r.body as string):null});return {status:200,headers:{'content-type':'application/vnd.api+json'},body:{data:{type,id:'result',attributes:{}}}}})
+ const business=createSharedSendV2Client(client)
+ await business.saveBusinessScheme(input,'save')
+ await business.saveBusinessScheme(input,'unit-save','unit')
+ await business.inheritBusinessScheme('unit',{expected_revision:2,reason:'restore',confirmed:true},'inherit')
+ const preview={business_unit_id:null,target_ids:['target'],message:'正文',between_targets_seconds:30}
+ await business.taskPreview(preview,'preview')
+ expect(calls.map(c=>(c.body as {data:{type:string}}).data.type)).toEqual(['mobile-business-schemes','mobile-business-schemes','mobile-business-schemes','mobile-task-previews'])
+ expect(calls[3].body).toEqual({data:{type:'mobile-task-previews',attributes:preview}})
 })

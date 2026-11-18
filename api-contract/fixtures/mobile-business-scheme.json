@@ -17,7 +17,7 @@
     }
   ],
   "limits": {
-    "global": {
+    "total": {
       "interval_seconds": 5,
       "window_seconds": 3600,
       "max_calls": 120,

@@ -21,9 +21,9 @@ test('shared binding selects devices for a target without additional group names
 test('enabling and disabling a binding use revisioned platform writes', async () => {
   const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => new Response(JSON.stringify({ data: { type: 'mobile-target-bindings', id: 'binding', attributes: {} } }), { headers: { 'Content-Type': 'application/vnd.api+json' } }))
   vi.stubGlobal('fetch', fetcher)
-  await mobileExecutionApi.updateBinding('binding', { expected_revision: 3, enabled: true }, 'edit')
+  await mobileExecutionApi.updateBinding('binding', { expected_revision: 3, enabled: true, max_calls:null, valid_until:null }, 'edit')
   await mobileExecutionApi.unbind('binding', 4, '维护', 'disable')
   expect(fetcher.mock.calls[0][0]).toBe('/api/v1/platform/mobile-execution/target-bindings/binding')
-  expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body)).data.attributes).toEqual({ expected_revision: 3, enabled: true })
+  expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body)).data.attributes).toEqual({ expected_revision: 3, enabled: true, max_calls:null, valid_until:null })
   expect(fetcher.mock.calls[1][0]).toBe('/api/v1/platform/mobile-execution/target-bindings/binding/revocations')
 })
