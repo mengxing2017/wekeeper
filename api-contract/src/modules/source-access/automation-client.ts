@@ -1,5 +1,5 @@
 import type {Client} from '../../http/client'
-export interface MessageDecision {selected_ad:{material_id:string;placement_id:string;content:{name:string;body:string;link:string|null}}|null;reason:string;selection_count:number;content:string}
+export interface MessageDecision {selected_ad:{material_id:string;placement_id:string;content:{name:string;body:string;link:string|null}}|null;reason:string;selection_count:number|null;content:string}
 export interface MessageDiagnostic {channel:string|null;stage:string;label:string;reason_code:string;explanation:string;severity:string;affected_targets:number;since:string|null;retry_at:string|null;deadline_at:string|null;owner:string;next_action:string;historical_risk:boolean}
 export interface MessageProgress {version:string;stage:string;total:number|null;counts_complete:boolean;diagnostics:MessageDiagnostic[];observed_at:string;results_as_of:string|null;projection_lag:boolean}
 export interface MessageMilestones {received_at:string;handoff_completed_at:string|null;delegated_at:string|null}

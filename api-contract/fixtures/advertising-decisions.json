@@ -1,0 +1,6 @@
+[
+  {"selected_ad":null,"content":"原文\r\n  😀\n","selection_count":null,"reason":"ad_dependency_unavailable"},
+  {"selected_ad":null,"content":"原消息","selection_count":null,"reason":"ad_lock_timeout"},
+  {"selected_ad":null,"content":"原消息","selection_count":null,"reason":"ad_decision_timeout"},
+  {"selected_ad":{"placement_id":"00000000-0000-4000-8000-000000000001","material_id":"00000000-0000-4000-8000-000000000002","content":{"name":"管理名称","body":"广告正文","link":"https://example.org"}},"content":"原消息\n广告正文\nhttps://example.org","selection_count":1,"reason":"selected"}
+]

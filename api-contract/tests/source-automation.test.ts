@@ -17,3 +17,12 @@ it('encodes progress filters and paginated receipt target queries',async()=>{
 import delivery from '../fixtures/business-message-delivery.json'
 import type {MessageDelivery} from '../src/modules/source-access/automation-client'
 it('shares the Rust serialized target diagnostic',()=>{const item:MessageDelivery=delivery;expect(item.diagnostic.stage).toBe('device_receipt');expect(item.outcome).toBe('pending')})
+
+import decisions from '../fixtures/advertising-decisions.json'
+import type {MessageDecision} from '../src/modules/source-access/automation-client'
+it('shares selected and skipped advertising decisions with Rust',()=>{
+ const values:MessageDecision[]=decisions
+ expect(values.slice(0,3).every(value=>value.selection_count===null&&value.selected_ad===null)).toBe(true)
+ expect(values[3].content).toBe('原消息\n广告正文\nhttps://example.org')
+ expect(values[3].selection_count).toBe(1)
+})
