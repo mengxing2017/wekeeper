@@ -1,6 +1,6 @@
 # 配置索引
 
-当前手机业务使用[手机共享发送使用手册](../guide/operator/mobile-execution-tasks.md)，办理步骤见[手机使用管理](../guide/platform-admin/shared-mobile-resources.md)和[手机任务](../guide/operator/mobile-execution-tasks.md)。
+当前手机业务使用[手机共享发送使用手册](../guide/operator/mobile-execution-tasks.md)，办理步骤见[手机业务方案与资源约束](../guide/platform-admin/shared-mobile-resources.md)和[手机任务](../guide/operator/mobile-execution-tasks.md)。
 
 ## 配置来源
 
@@ -13,7 +13,7 @@
 | `frontend/apps/web/vite.config.ts` | Web 开发端口与 API 代理 |
 | `devbox.json` | Rust/Node/pnpm 开发工具环境 |
 | `docs/package.json` / `.vitepress/config.ts` | 文档脚本、页面导航与本地搜索 |
-| 平台「手机群消息使用管理 → 配置业务方案」 | 当前 v9 发送开关、时区、时段及四维业务额度；独立于产品技术交付 |
+| 平台「默认手机群消息业务方案 → 配置业务方案」 | 默认发送开关、时区、时段及单位总量／手机／目标群三类业务额度；独立于产品技术交付 |
 
 具体默认值和完整部署命令见 [Docker 配置手册](../runbooks/docker.md)，不要用不同文档中的示例覆盖已有生产配置。
 
