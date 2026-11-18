@@ -1,7 +1,8 @@
 import { TableText, TableIdentifier } from '../../../shared/table-text'
 import { formatDate, formatUnixSeconds } from '../../../shared/format-date'
 import { PaginationControls as Pager } from '../../../shared/pagination-controls'
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+const MemberChart = lazy(() => import('./member-chart').catch(() => ({ default: () => <Alert type="warning" title="图表暂不可用，请使用下方成员表核对" /> })))
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Descriptions, Card, Drawer, Input, Select, Space, Table, Tabs } from 'antd'
 import {
@@ -288,6 +289,7 @@ export function Assets() {
         </Space>
       </div>
       {list.error && <Alert type="error" title={list.error.message} />}
+      {kind === 'member-statistics' && !list.error && list.data && <Suspense fallback={<p role="status">正在加载成员图表…</p>}><MemberChart rows={list.data.items} /></Suspense>}
       <Table<Row> tableLayout="fixed" scroll={{x:kind==='sync-runs'?1000:kind==='member-statistics'?640:kind==='groups'?1180:980}}
         rowKey="id"
         loading={list.isFetching}
