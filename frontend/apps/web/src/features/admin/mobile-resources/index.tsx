@@ -1,1 +1,1 @@
-export { UsageManagement as SharedMobileResources } from './usage-management'
+export { BusinessSchemePage as SharedMobileResources } from './business-scheme'
