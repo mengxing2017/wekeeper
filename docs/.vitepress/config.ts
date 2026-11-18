@@ -26,6 +26,7 @@ export default defineConfig({
             { text: "选择你的角色", link: "/guide/" },
             { text: "业务域", link: "/guide/business-domains" },
             { text: "第一次登录", link: "/guide/quick-start" },
+            { text: "统计概览", link: "/guide/operator/message-statistics" },
             { text: "全局分发权限", link: "/guide/workspaces" },
             { text: "术语与状态", link: "/guide/glossary" },
             { text: "常见问题", link: "/guide/troubleshooting" },
