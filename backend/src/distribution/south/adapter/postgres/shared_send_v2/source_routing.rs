@@ -29,16 +29,39 @@ pub async fn create(
             .ok_or(Error::Conflict)?
             .clone();
         require(!candidates.is_empty(), "mobile_candidates_missing")?;
-        for c in &mut candidates {
-            if let Some(scope) = tasks::grant(tx, c).await? {
+        let mut eligible = Vec::new();
+        for mut c in candidates.drain(..) {
+            if let Some(scope) = tasks::grant(tx, &c).await? {
                 c["scope_id"] = scope["id"].clone();
             }
-            tasks::validate_plan(tx, c).await?;
-            c["confirmable"] = json!(true);
+            match tasks::validate_plan(tx, &c).await {
+                Ok(()) => {
+                    c["confirmable"] = json!(true);
+                    eligible.push(c);
+                }
+                Err(
+                    error @ (Error::Policy(_)
+                    | Error::Invalid(_)
+                    | Error::Forbidden
+                    | Error::NotFound),
+                ) => {
+                    records::check(
+                        tx,
+                        uid(&c, "device_id")?,
+                        "plan_authorization",
+                        &records::failure(&error),
+                        json!({}),
+                    )
+                    .await?;
+                }
+                Err(error) => return Err(error),
+            }
         }
+        let candidates = eligible;
+        require(!candidates.is_empty(), "mobile_candidates_missing")?;
         items.push(json!({"position":position,"target_id":target.id,"selected":candidates[0],"candidates":candidates}));
     }
-    let plan = json!({"schema":SCHEMA,"intent_id":intent,"draft_id":draft,"draft_revision":1,"between_targets_seconds":input.between_targets_seconds,"message":input.message,"content_digest":hash(&input.message),"items":items,"policy_id":null,"authorization_kind":"source_route","executed_by":"message-orchestration","delegate_id":snapshot.id,"configuration_id":snapshot.configuration_id});
+    let plan = json!({"schema":SCHEMA,"intent_id":intent,"draft_id":draft,"draft_revision":1,"between_targets_seconds":input.between_targets_seconds,"message":input.message,"content_digest":hash(&input.message),"items":items,"policy_id":null,"authorization_kind":"source_route","not_before":snapshot.not_before,"executed_by":"message-orchestration","delegate_id":snapshot.id,"configuration_id":snapshot.configuration_id});
     sqlx::query("INSERT INTO mobile_v9_previews(id,draft_id,draft_revision,plan,digest) VALUES($1,$2,1,$3,$4)").bind(preview).bind(draft).bind(&plan).bind(digest(&plan)?).execute(&mut **tx).await?;
     let p = json!({"id":preview,"plan":plan,"policy_id":null,"source_snapshot_id":snapshot_id});
     let task = tasks::create_authorized_task(tx, authorizer, &p).await?;

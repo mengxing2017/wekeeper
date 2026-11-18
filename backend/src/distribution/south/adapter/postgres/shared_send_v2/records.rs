@@ -85,21 +85,32 @@ impl Repository {
         mut plan: DeliveryPlan,
         content: String,
     ) -> Result<Uuid> {
+        let delivery = plan
+            .delivery_id
+            .ok_or(Error::Policy("delivery_identity_missing"))?;
         let target = plan.targets.first();
         let tid = target.map(|t| t.id);
         let name = target
             .map(|t| t.name.clone())
             .unwrap_or_else(|| "未提供目标群".into());
-        let payload = json!({"configuration_id":plan.configuration_id,"targets":plan.targets,"authorized_by":plan.authorized_by,"content":content});
+        let payload = json!({"configuration_id":plan.configuration_id,"targets":plan.targets,"authorized_by":plan.authorized_by,"content":content,"delivery_id":delivery,"not_before":plan.not_before});
         let fingerprint = digest(&payload)?;
         let mut tx = self.0.begin().await?;
+        let owns:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM receiving_dispatch_deliveries d JOIN receiving_dispatch_targets t ON t.id=d.dispatch_target_id JOIN receiving_dispatch_decisions decision ON decision.id=t.decision_id JOIN orchestration_messages m ON m.id=t.message_id WHERE d.id=$1 AND m.id=$2 AND m.evidence_ref=$3 AND decision.configuration_id=$4 AND t.target_id=$5)")
+            .bind(delivery).bind(message).bind(receipt).bind(plan.configuration_id).bind(tid).fetch_one(&mut *tx).await?;
+        require(owns, "delivery_identity_mismatch")?;
         let proposed = Uuid::now_v7();
         let delegate = Uuid::now_v7();
         let snapshot = Uuid::now_v7();
         plan.id = delegate;
-        sqlx::query("INSERT INTO mobile_dispatch_intakes(id,source_kind,message_id,receipt_id,configuration_id,target_id,target_name,delegate_id,snapshot_id,plan,content,payload_hash) VALUES($1,'source_route',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(message_id,configuration_id,target_id) WHERE source_kind='source_route' DO NOTHING")
- .bind(proposed).bind(message).bind(receipt).bind(plan.configuration_id).bind(tid).bind(name).bind(delegate).bind(snapshot).bind(json!(plan)).bind(&content).bind(&fingerprint).execute(&mut *tx).await?;
-        let row=sqlx::query("SELECT id,payload_hash FROM mobile_dispatch_intakes WHERE message_id=$1 AND configuration_id=$2 AND target_id IS NOT DISTINCT FROM $3 FOR UPDATE").bind(message).bind(plan.configuration_id).bind(tid).fetch_one(&mut *tx).await?;
+        sqlx::query("INSERT INTO mobile_dispatch_intakes(id,source_kind,message_id,receipt_id,configuration_id,target_id,target_name,delegate_id,snapshot_id,plan,content,payload_hash,delivery_id) VALUES($1,'source_route',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(delivery_id) WHERE source_kind='source_route' DO NOTHING")
+ .bind(proposed).bind(message).bind(receipt).bind(plan.configuration_id).bind(tid).bind(name).bind(delegate).bind(snapshot).bind(json!(plan)).bind(&content).bind(&fingerprint).bind(delivery).execute(&mut *tx).await?;
+        let row = sqlx::query(
+            "SELECT id,payload_hash FROM mobile_dispatch_intakes WHERE delivery_id=$1 FOR UPDATE",
+        )
+        .bind(delivery)
+        .fetch_one(&mut *tx)
+        .await?;
         let id: Uuid = row.get("id");
         if row.get::<String, _>("payload_hash") != fingerprint {
             event(
@@ -191,6 +202,8 @@ impl Repository {
  require(plan.targets.iter().all(|t|t.resource_available),"channel_resources_missing")?;
  let snap=uid(&v,"snapshot_id")?;
  sqlx::query("INSERT INTO distribution_message_snapshots(id,channel,content,content_hash) VALUES($1,'mobile',$2,$3)").bind(snap).bind(text).bind(hash(text)).execute(&mut *tx).await?;
+ let stopped:bool=sqlx::query_scalar("SELECT t.stopped FROM receiving_dispatch_deliveries d JOIN receiving_dispatch_targets t ON t.id=d.dispatch_target_id WHERE d.id=$1 FOR SHARE OF t").bind(uid(&v,"delivery_id")?).fetch_one(&mut *tx).await?;
+ require(!stopped,"task_stopped")?;
  let task=super::source_routing::create(&mut tx,&plan,text,plan.authorized_by,snap).await?;
  sqlx::query("INSERT INTO orchestration_delegates(id,message_id,configuration_id,channel,task_id,snapshot_id,plan) VALUES($1,$2,$3,'mobile',$4,$5,$6)").bind(plan.id).bind(uid(&v,"message_id")?).bind(plan.configuration_id).bind(task).bind(snap).bind(json!(plan)).execute(&mut *tx).await?;
  sqlx::query("UPDATE mobile_dispatch_intakes SET creation_state='created',reason_code=NULL,updated_at=clock_timestamp() WHERE id=$1").bind(id).execute(&mut *tx).await?;

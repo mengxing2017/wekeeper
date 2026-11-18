@@ -83,11 +83,6 @@ impl Repository {
         if existing.as_ref().is_some_and(|d| d["state"] == "pending") {
             let execution_enabled: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM business_units u JOIN source_routes r ON r.business_unit_id=u.id WHERE u.id=$1 AND u.active AND r.status='active' AND r.retired_at IS NULL)")
                 .bind(row.get::<Uuid, _>("unit_id")).fetch_one(&mut *tx).await?;
-            let plans = if execution_enabled {
-                receiving::plans(&mut tx, row.get("unit_id")).await?
-            } else {
-                vec![]
-            };
             // Evaluate current global keyword restrictions once. Configuration changes
             // never reinterpret an already frozen message or a delivered attempt.
             let (context, filter_enabled, rules) =
@@ -113,17 +108,17 @@ impl Repository {
             .bind(json!(checked))
             .execute(&mut *tx)
             .await?;
+            let plans = if execution_enabled && checked.outcome != "blocked" {
+                receiving::plans(&mut tx, row.get("unit_id"), id, &text).await?
+            } else {
+                vec![]
+            };
             let reason = if checked.outcome == "blocked" {
                 Some("keyword_blocked")
             } else if !execution_enabled {
                 Some("route_execution_disabled")
             } else if plans.is_empty() {
                 Some("route_no_targets")
-            } else if plans
-                .iter()
-                .all(|p| p.targets.iter().all(|t| !t.resource_available))
-            {
-                Some("channel_resources_missing")
             } else if !plans
                 .iter()
                 .any(|p| crate::advertising::domain::measure(&text, p.channel.as_str()).valid)
@@ -186,17 +181,15 @@ impl Repository {
         .fetch_one(&self.0)
         .await?;
         if frozen.get::<String, _>("state") == "ready" {
-            let plans: Vec<DeliveryPlan> =
-                serde_json::from_value(frozen.get("plans")).map_err(|_| Error::Unavailable)?;
-            for plan in plans.into_iter().filter(|p| p.channel == Channel::Mobile) {
-                for target in plan.targets.clone() {
-                    let mut individual = plan.clone();
-                    individual.targets = vec![target];
-                    crate::distribution::north::local::shared_send_v2::Service(
-                        shared_send_v2::Repository(self.0.clone()),
-                    )
-                    .submit_mobile(id, receipt, individual, frozen.get("content"))
-                    .await?;
+            for individual in receiving::materialize(&self.0, id, 100).await? {
+                // Each phone responsibility owns its durable retry and failure.
+                let result = crate::distribution::north::local::shared_send_v2::Service(
+                    shared_send_v2::Repository(self.0.clone()),
+                )
+                .submit_mobile(id, receipt, individual, frozen.get("content"))
+                .await;
+                if let Err(error) = result {
+                    tracing::warn!(message_id=%id,%error,"phone responsibility retained for retry");
                 }
             }
         }
@@ -209,7 +202,19 @@ impl Repository {
         let plans: Vec<DeliveryPlan> =
             serde_json::from_value(dispatch.get("plans")).map_err(|_| Error::Unavailable)?;
         let content: String = dispatch.get("content");
-        for mut plan in plans.into_iter().filter(|p| p.channel != Channel::Mobile) {
+        for mut plan in plans.into_iter().filter(|p| {
+            p.channel != Channel::Mobile
+                || !crate::advertising::domain::measure(&content, p.channel.as_str()).valid
+        }) {
+            if sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM orchestration_delegates WHERE id=$1)",
+            )
+            .bind(plan.id)
+            .fetch_one(&mut *tx)
+            .await?
+            {
+                continue;
+            }
             if !crate::advertising::domain::measure(&content, plan.channel.as_str()).valid {
                 failed_delegate(&mut tx, id, &plan, "channel_content_invalid").await?;
                 continue;
@@ -252,6 +257,12 @@ impl Repository {
                     Err(error) => return Err(error),
                 }
             }
+        }
+        let outstanding: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM receiving_dispatch_targets t WHERE t.message_id=$1 AND t.channel='mobile' AND NOT t.stopped AND (t.materialized_count<t.expected_count OR EXISTS(SELECT 1 FROM receiving_dispatch_deliveries d LEFT JOIN mobile_dispatch_intakes i ON i.delivery_id=d.id WHERE d.dispatch_target_id=t.id AND (i.id IS NULL OR i.creation_state NOT IN ('created','rejected')))))")
+            .bind(id).fetch_one(&mut *tx).await?;
+        if outstanding {
+            tx.commit().await?;
+            return Ok(());
         }
         let accepted: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM orchestration_delegates WHERE message_id=$1 AND state='delegated')").bind(id).fetch_one(&mut *tx).await?;
         sqlx::query("UPDATE orchestration_dispatches SET state=$2,reason_code=$3,updated_at=clock_timestamp() WHERE message_id=$1").bind(id).bind(if accepted {"delegated"} else {"failed"}).bind(if accepted {None} else {Some("channel_resources_missing")}).execute(&mut *tx).await?;

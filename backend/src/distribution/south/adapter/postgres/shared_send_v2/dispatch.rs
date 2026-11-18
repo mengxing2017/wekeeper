@@ -319,7 +319,21 @@ async fn reconcile_inner(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
     let approved = row["candidates"].as_array().ok_or(Error::Conflict)?;
     let start = row["candidate_cursor"].as_u64().ok_or(Error::Conflict)? as usize;
     let origin = row["round_origin"].as_u64().ok_or(Error::Conflict)? as usize;
+    let designated_unknown:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_dispatch_intakes i JOIN receiving_dispatch_deliveries d ON d.id=i.delivery_id WHERE i.item_id=$1 AND d.device_id IS NOT NULL) AND EXISTS(SELECT 1 FROM mobile_v9_attempts a JOIN mobile_execution_grants g ON g.attempt_id=a.id WHERE a.item_id=$1 AND a.state NOT IN ('verified_not_sent','failed_before_call','observed_sent','manually_confirmed_sent') AND (g.result_id IS NULL OR g.result_body->>'outcome'='unknown'))")
+        .bind(item).fetch_one(&mut **tx).await?;
     for offset in start..approved.len() {
+        if designated_unknown {
+            event(
+                tx,
+                item,
+                &row,
+                "candidate_skipped",
+                None,
+                "designated_phone_result_unknown",
+            )
+            .await?;
+            continue;
+        }
         let index = (origin + offset) % approved.len();
         let snapshot = &approved[index];
         event(

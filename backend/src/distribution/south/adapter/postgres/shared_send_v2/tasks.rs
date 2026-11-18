@@ -666,6 +666,9 @@ pub(super) async fn create_authorized_task(
             "manual"
         };
     sqlx::query("INSERT INTO mobile_v9_tasks(id,draft_id,intent_id,preview_id,confirmed_by,confirmed_until,authorization_kind) VALUES($1,$2,$3,$4,$5,clock_timestamp()+make_interval(secs=>$6::double precision),$7)").bind(id).bind(uid(plan,"draft_id")?).bind(uid(plan,"intent_id")?).bind(uid(p,"id")?).bind(principal).bind(current["confirmation_seconds"].as_i64().ok_or(Error::Conflict)? as f64).bind(authorization_kind).execute(&mut **tx).await?;
+    if let Some(not_before) = plan["not_before"].as_str() {
+        sqlx::query("UPDATE mobile_v9_tasks SET next_eligible_at=greatest(next_eligible_at,$2::text::timestamptz) WHERE id=$1").bind(id).bind(not_before).execute(&mut **tx).await?;
+    }
     for item in items {
         let iid = Uuid::now_v7();
         let pid = Uuid::now_v7();
