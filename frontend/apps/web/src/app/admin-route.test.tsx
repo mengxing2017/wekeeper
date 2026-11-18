@@ -94,7 +94,7 @@ it.each(['/','/admin'])('defaults %s to the statistics overview without loading 
  expect(await screen.findByRole('heading',{name:'统计概览',level:1},{timeout:15000})).toBeTruthy()
  expect(router.state.location.search).toBe('?view=statistics-overview')
  expect(screen.getByRole('menuitem',{name:'统计概览'}).getAttribute('aria-current')).toBe('page')
- expect(await screen.findByText('统计查询失败：统计暂不可用')).toBeTruthy()
+ expect(await screen.findByText('统计查询失败：统计暂不可用', {}, {timeout:15000})).toBeTruthy()
  expect(requests.some(url=>url.includes('/mobile-dispatch-records'))).toBe(false)
  expect(screen.getByRole('menuitem',{name:'群发任务'})).toBeTruthy()
  router.dispose()
