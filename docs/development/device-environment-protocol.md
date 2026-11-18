@@ -6,12 +6,12 @@
 
 | 字段 | 类型/取值 |
 | --- | --- |
-| schema | `device_environment/1` |
+| schema | `device_environment/2` |
 | observation_id | 非空 UUID |
 | observed_at | UTC RFC3339 时间 |
 | interactive、keyguard_locked、device_locked、keyguard_secure | `yes` / `no` / `unknown` |
 | accessibility、notification | `yes` / `no` / `unknown` |
-| wecom_login | `logged_in` / `login_required` / `unknown` |
+| applications | 仅包含 `wecom`、`wechat` 两个必填键，每个值为 `logged_in` / `login_required` / `unknown` |
 
 未知事实显式传 `unknown`。环境观测不用于候选、预览、确认、授权或签发判断，不要求定期上报。设备时间不得超出服务端时间五分钟。平台按当前凭据代次保存最新观测；页面注明观测时间，不能据此宣称当前一定可以执行。共享 fixture 位于 `api-contract/fixtures/device-environment.json`。
 
