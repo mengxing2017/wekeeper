@@ -112,3 +112,15 @@ it('maps every navigation entry to a fixed manual without business parameters', 
   }
   expect(helpHref('unknown')).toBe('/docs/guide/')
 })
+
+it('puts statistics before every business group on desktop and mobile navigation',()=>{
+ const {onNavigate}=show()
+ const first=screen.getAllByRole('menuitem')[0]
+ expect(first.textContent).toContain('统计概览')
+ expect(first.closest('.ant-menu-submenu')).toBeNull()
+ fireEvent.click(first)
+ expect(onNavigate).toHaveBeenCalledWith('statistics-overview')
+ fireEvent.click(screen.getByRole('button',{name:'打开导航'}))
+ expect(screen.getAllByRole('menuitem')[0].textContent).toContain('统计概览')
+ expect(screen.getByRole('link',{name:/WeKeeper/}).getAttribute('href')).toBe('/admin?view=statistics-overview')
+})

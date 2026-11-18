@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Avatar, Breadcrumb, Button, Dropdown, Menu } from 'antd'
 import { MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons'
-import { navigation, navigationDomains } from '../navigation'
+import { navigation, navigationDomains, DEFAULT_ADMIN_URL } from '../navigation'
 export { navigation } from '../navigation'
 import { Link } from 'react-router-dom'
 import { helpHref } from './help'
@@ -53,7 +53,7 @@ export function AppShell({
         跳到主要内容
       </a>
       <header className="global-header">
-        <Link className="header-brand" to="/admin">
+        <Link className="header-brand" to={DEFAULT_ADMIN_URL}>
           <span className="brand-mark">W</span>
           <strong>WeKeeper</strong>
         </Link>
@@ -111,7 +111,7 @@ export function AppShell({
           onClick={() => setOpen(!open)}
           icon={<MenuUnfoldOutlined />}
         />
-        <span>{navigationDomains.find(d => d.key === current.domain)?.label}</span>
+        <span>{current.domain === 'overview' ? '统计概览' : navigationDomains.find(d => d.key === current.domain)?.label}</span>
       </div>
       {open && (
         <Button
@@ -130,9 +130,9 @@ export function AppShell({
             inlineCollapsed={collapsed && !open}
             selectedKeys={[active]}
             defaultOpenKeys={navigationDomains.map(({ key }) => key)}
-            items={navigationDomains.flatMap(({ key: domain, label: domainLabel, icon }) => {
+            items={[...navigation.filter(item => item.topLevel && !item.hidden && allowedKeys.includes(item.key)).map(item => ({key:item.key,label:item.label,title:item.label,icon:<span aria-hidden="true">{item.icon}</span>,'aria-current':active === item.key ? ('page' as const) : undefined})), ...navigationDomains.flatMap(({ key: domain, label: domainLabel, icon }) => {
               const items = navigation.filter(
-                (item) => !item.hidden && item.domain === domain && allowedKeys.includes(item.key),
+                (item) => !item.topLevel && !item.hidden && item.domain === domain && allowedKeys.includes(item.key),
               )
               return items.length
                 ? [
@@ -150,7 +150,7 @@ export function AppShell({
                     },
                   ]
                 : []
-            })}
+            })]}
             onClick={({ key }) => {
               onNavigate(key)
               setOpen(false)
@@ -174,7 +174,7 @@ export function AppShell({
           <div className="page-header">
             <Breadcrumb
               className="breadcrumb"
-              items={[{ title: '运营工作台' }, { title: navigationDomains.find(d => d.key === current.domain)?.label }, { title: current.label }]}
+              items={[{ title: '运营工作台' }, ...(current.domain === 'overview' ? [] : [{ title: navigationDomains.find(d => d.key === current.domain)?.label }]), { title: current.label }]}
             />
             <header className="page-heading">
               <div>

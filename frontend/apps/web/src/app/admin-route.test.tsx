@@ -77,3 +77,25 @@ it.each([
   expect(new URLSearchParams(router.state.location.search).get('view')).toBe(canonical)
   router.dispose()
 })
+
+it.each(['/','/admin'])('defaults %s to the statistics overview without loading the former default',async(entry)=>{
+ const requests:string[]=[]
+ vi.stubGlobal('fetch',vi.fn(async(url:string)=>{
+  requests.push(url)
+  const reply=(type:string,attributes:unknown)=>Response.json({data:{type,id:'current',attributes}},{headers:{'Content-Type':'application/vnd.api+json'}})
+  if(url.endsWith('/auth/session'))return reply('sessions',{csrf:'csrf',user:{id:'admin',username:'admin',display_name:'系统管理员',platform_admin:true,wecom_authenticated:false}})
+  if(url.includes('/business-platforms'))return reply('business-platforms',{items:[],has_more:false})
+  if(url.includes('/message-statistics/queries'))return Response.json({errors:[{status:'503',code:'unavailable',detail:'统计暂不可用'}]},{status:503,headers:{'Content-Type':'application/vnd.api+json'}})
+  throw new Error(`Unexpected request: ${url}`)
+ }))
+ const router=createMemoryRouter([{path:'*',element:<AppRoutes/>}],{initialEntries:[entry]})
+ const cache=new QueryClient({defaultOptions:{queries:{retry:false}}})
+ render(<QueryClientProvider client={cache}><RouterProvider router={router}/></QueryClientProvider>)
+ expect(await screen.findByRole('heading',{name:'统计概览',level:1},{timeout:15000})).toBeTruthy()
+ expect(router.state.location.search).toBe('?view=statistics-overview')
+ expect(screen.getByRole('menuitem',{name:'统计概览'}).getAttribute('aria-current')).toBe('page')
+ expect(await screen.findByText('统计查询失败：统计暂不可用')).toBeTruthy()
+ expect(requests.some(url=>url.includes('/mobile-dispatch-records'))).toBe(false)
+ expect(screen.getByRole('menuitem',{name:'群发任务'})).toBeTruthy()
+ router.dispose()
+})

@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import {
   AimOutlined,
+  BarChartOutlined,
   ApartmentOutlined,
   BranchesOutlined,
   ControlOutlined,
@@ -24,7 +25,9 @@ import {
   UserOutlined,
 } from '@ant-design/icons'
 
-export type NavigationDomain = 'source' | 'wecom' | 'mobile' | 'support'
+export const DEFAULT_ADMIN_VIEW = 'statistics-overview'
+export const DEFAULT_ADMIN_URL = `/admin?view=${DEFAULT_ADMIN_VIEW}`
+export type NavigationDomain = 'overview' | 'source' | 'wecom' | 'mobile' | 'support'
 export const navigationDomains = [
   { key: 'source', label: '消息接收管理', icon: <MessageOutlined /> },
   { key: 'mobile', label: '移动端分发管理', icon: <MobileOutlined /> },
@@ -32,7 +35,7 @@ export const navigationDomains = [
   { key: 'support', label: '系统管理', icon: <SafetyCertificateOutlined /> },
 ] as const
 export type NavigationPage =
-  | {kind: 'mobile-dispatch-records' | 'groups' | 'broadcast-tasks' | 'execution-devices' | 'mobile-business-schemes' | 'mobile-execution-tasks' | 'mobile-targets' | 'wecom-senders' | 'audit' | 'wecom-assets' | 'wecom-directory' | 'administrators' | 'source-credentials' | 'advertisements' | 'keyword-rules' | 'source-automation-tasks'}
+  | {kind: 'statistics-overview' | 'mobile-dispatch-records' | 'groups' | 'broadcast-tasks' | 'execution-devices' | 'mobile-business-schemes' | 'mobile-execution-tasks' | 'mobile-targets' | 'wecom-senders' | 'audit' | 'wecom-assets' | 'wecom-directory' | 'administrators' | 'source-credentials' | 'advertisements' | 'keyword-rules' | 'source-automation-tasks'}
   | {kind: 'receiving-configurations'; channel: 'mobile' | 'wecom'}
   | {kind: 'source-routes'; mode: 'receipts' | 'configuration'}
 
@@ -43,9 +46,11 @@ export interface NavigationItem {
   description: string
   domain: NavigationDomain
   icon: ReactNode
+  topLevel?: boolean
   hidden?: boolean
 }
 export const navigation: NavigationItem[] = [
+  {key:DEFAULT_ADMIN_VIEW,page:{kind:'statistics-overview'},label:'统计概览',description:'接收趋势、周期消息量、业务单位与各通道发送结果。',domain:'overview',topLevel:true,icon:<BarChartOutlined/>},
   {key:'mobile-dispatch-records',page:{kind:'mobile-dispatch-records'},label:'自动任务下发记录',description:'查询手机分发接入、候选评估、交付及具体失败原因。',domain:'mobile',icon:<HistoryOutlined/>},
   {
     key: 'groups', page: {kind: 'groups'},

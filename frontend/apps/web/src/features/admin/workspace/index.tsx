@@ -9,14 +9,15 @@ import { OfficialSenders } from '../../operations/wecom-senders'
 import { MobileExecutionTasks } from '../../operations/mobile-execution/tasks'
 import { SharedMobileResources } from '../mobile-resources'
 import { MobileTargets } from '../../operations/mobile-execution/targets'
-import { navigation, visibleNavigationKeys, type NavigationPage } from '../../../app/navigation'
+import { navigation, visibleNavigationKeys, DEFAULT_ADMIN_VIEW, type NavigationPage } from '../../../app/navigation'
 import { ListPanel } from '../../../shared/list-panel'
 import { formatDate } from '../../../shared/format-date'
 import { Disclosure } from '../../../shared/disclosure'
 import { Navigate, useLocation, useSearchParams } from 'react-router-dom'
 import { canonicalNavigation } from '../../../app/navigation-location'
 import { AppShell } from '../../../app/shell'
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
+const StatisticsOverview = lazy(() => import('../../operations/message-statistics'))
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Alert,
@@ -69,12 +70,13 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
   const cache = useQueryClient()
   const [params, setParams] = useSearchParams()
   const allowedKeys = visibleNavigationKeys(user.platform_admin)
-  const tab = params.get('view') ?? allowedKeys[0] ?? ''
+  const tab = params.get('view') ?? DEFAULT_ADMIN_VIEW
   const knownPage = navigation.find(n => n.key === tab)
-  const navigate = (view: string) => setParams(previous => { const next = new URLSearchParams(previous); next.set('view',view); next.delete('subview'); return next })
+  const navigate = (view: string) => setParams(previous => { const next = new URLSearchParams(previous); next.set('view',view); next.delete('subview'); for (const key of [...next.keys()]) if (key.startsWith('stats_')) next.delete(key); return next })
   const refresh = async () => { await cache.invalidateQueries({queryKey:['business']}) }
   function renderPage(page: NavigationPage) {
     switch (page.kind) {
+      case 'statistics-overview': return <Suspense fallback={<p role="status">正在加载统计…</p>}><StatisticsOverview /></Suspense>
       case 'mobile-dispatch-records': return <MobileDispatchRecords />
       case 'source-credentials': return <SourceAccess />
       case 'advertisements': return <Advertising />

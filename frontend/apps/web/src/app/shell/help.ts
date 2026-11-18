@@ -1,5 +1,6 @@
 // Static help URLs contain no business identifiers or credentials.
 export const pageHelp: Record<string, string> = {
+  'statistics-overview': 'operator/message-statistics',
   'source-credentials': 'operator/source-access',
   advertisements: 'operator/source-access',
   'keyword-rules': 'operator/source-access',

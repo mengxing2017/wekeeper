@@ -14,3 +14,9 @@ it('every visible entry identifies a distinct page or meaningful business mode',
  const pages=navigation.map(item=>JSON.stringify(item.page))
  expect(new Set(pages).size).toBe(pages.length)
 })
+
+it('keeps statistics as the explicit default and first independent entry',async()=>{
+ const {DEFAULT_ADMIN_VIEW}=await import('./navigation')
+ expect(DEFAULT_ADMIN_VIEW).toBe('statistics-overview')
+ expect(navigation[0]).toMatchObject({key:DEFAULT_ADMIN_VIEW,topLevel:true,label:'统计概览'})
+})
