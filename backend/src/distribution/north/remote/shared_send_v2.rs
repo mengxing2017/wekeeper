@@ -273,9 +273,18 @@ pub fn router() -> Router<Application> {
         )
 }
 
+// Built-in schemes have no persisted version ID. Give their HTTP resources a
+// stable identity without turning that identity into a persisted policy ID.
+fn scheme_resource(mut value: serde_json::Value) -> ApiResponse {
+    if value["id"].is_null() {
+        let scope = value["business_unit_id"].as_str().unwrap_or("default");
+        value["id"] = serde_json::json!(format!("builtin:{scope}"));
+    }
+    resource("mobile-business-schemes", value)
+}
+
 async fn scheme_read_default(State(a): State<Application>, actor: Actor) -> Result<ApiResponse> {
-    Ok(resource(
-        "mobile-business-schemes",
+    Ok(scheme_resource(
         service(&a).scheme_read(&actor, None).await?,
     ))
 }
@@ -284,8 +293,7 @@ async fn scheme_read_unit(
     actor: Actor,
     Path(unit): Path<Uuid>,
 ) -> Result<ApiResponse> {
-    Ok(resource(
-        "mobile-business-schemes",
+    Ok(scheme_resource(
         service(&a).scheme_read(&actor, Some(unit)).await?,
     ))
 }
@@ -305,8 +313,7 @@ async fn save_scheme(
         reason: v.reason.clone(),
         confirmed: v.confirmed,
     };
-    Ok(resource(
-        "mobile-business-schemes",
+    Ok(scheme_resource(
         service(&a)
             .scheme_write(&actor, key(&h), unit, Some(v), mutation)
             .await?,
@@ -336,8 +343,7 @@ async fn scheme_inherit(
     h: HeaderMap,
     input: Input,
 ) -> Result<ApiResponse> {
-    Ok(resource(
-        "mobile-business-schemes",
+    Ok(scheme_resource(
         service(&a)
             .scheme_write(
                 &actor,
@@ -388,4 +394,52 @@ fn scheme_router() -> Router<Application> {
             "/api/v1/mobile-execution/shared-v2-task-previews",
             post(task_preview),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scheme_resource;
+    use axum::{body::to_bytes, response::IntoResponse};
+    use serde_json::{Value, json};
+
+    #[tokio::test]
+    async fn builtin_scheme_resources_have_stable_ids_without_a_saved_version() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../../../api-contract/fixtures/mobile-builtin-scheme.json"
+        ))
+        .unwrap();
+        for scope in [None, Some("00000000-0000-4000-8000-000000000001")] {
+            let mut value = fixture["data"]["attributes"].clone();
+            value["id"] = Value::Null;
+            value["business_unit_id"] = json!(scope);
+            let original = value.clone();
+            let response = scheme_resource(value).into_response();
+            assert_eq!(response.status(), 200);
+            let document: Value =
+                serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                    .unwrap();
+            assert_eq!(
+                document["data"]["id"],
+                format!("builtin:{}", scope.unwrap_or("default"))
+            );
+            assert_eq!(document["data"]["attributes"]["revision"], 0);
+            assert_eq!(document["data"]["attributes"]["source"], "builtin");
+            assert!(original["id"].is_null());
+            if scope.is_none() {
+                assert_eq!(document, fixture);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn saved_scheme_resources_keep_the_persisted_version_id() {
+        let response =
+            scheme_resource(json!({"id":"saved-version","source":"default","revision":1}))
+                .into_response();
+        assert_eq!(response.status(), 200);
+        let document: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(document["data"]["id"], "saved-version");
+    }
 }

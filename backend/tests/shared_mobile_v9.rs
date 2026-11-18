@@ -1882,6 +1882,39 @@ async fn unit_schemes_resolve_defaults_independently_and_restore_with_audit() {
     let f = Fixture::with_adapter(false).await;
     let a = scheme_unit(&f).await;
     let b = scheme_unit(&f).await;
+    // Exercise the HTTP boundary: repository reads alone do not catch null JSON:API IDs.
+    use axum::{
+        body::{Body, to_bytes},
+        http::Request,
+    };
+    use tower::ServiceExt;
+    let token = Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO sessions(token_hash,account_id,csrf,expires_at,kind) VALUES($1,$2,'test',now()+interval '1 hour','browser')")
+        .bind(wekeeper_api::business::hash(&token)).bind(f.actor.id).execute(&f.pool).await.unwrap();
+    let app =
+        wekeeper_api::http::app_router(wekeeper_api::bootstrap::build_application(f.pool.clone()));
+    for (path, id) in [
+        ("default".to_owned(), "builtin:default".to_owned()),
+        (format!("units/{a}"), format!("builtin:{a}")),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/mobile-execution/business-schemes/{path}"))
+                    .header("cookie", format!("wekeeper_session={token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let document: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(document["data"]["id"], id);
+        assert_eq!(document["data"]["attributes"]["source"], "builtin");
+    }
     assert_eq!(
         f.repo().scheme_read(&f.actor, Some(a)).await.unwrap()["source"],
         "builtin"
