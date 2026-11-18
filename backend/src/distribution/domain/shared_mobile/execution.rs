@@ -3,6 +3,16 @@ use super::shared_send_v2::require;
 use crate::business::Result;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+/// Per-attempt execution observations. Platform receipt times never represent device clocks.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AttemptExecutionObservation {
+    pub execution_id: Option<Uuid>,
+    pub execution_accepted_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub result_received_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub device_started_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub device_finished_at: Option<chrono::DateTime<chrono::Utc>>,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InspectionRequest {

@@ -2345,7 +2345,7 @@ async fn offline_binding_is_selectable_and_confirmable_without_environment_or_co
             .unwrap()
             .iter()
             .flat_map(|i| i["attempts"].as_array().unwrap())
-            .any(|a| a["id"] == json!(aid) && a["device_received_at"].is_string())
+            .any(|a| a["id"] == json!(aid) && a["inbox_received_at"].is_string())
     );
     // A rolled-back state change cannot leak a wake or change the page version.
     let mut rolled = f.pool.begin().await.unwrap();
@@ -2577,6 +2577,18 @@ async fn direct_timeouts_and_late_receipt_preserve_original_attempt_facts() {
     .unwrap();
     assert_eq!(projection["reception_state"], "receipt_timeout");
     assert!(projection["accepted_at"].is_string());
+    f.repo()
+        .complete_execution(completion(&grant, "not_called"))
+        .await
+        .unwrap();
+    let detail = pool_detail(&f, &task).await;
+    let attempts = detail["items"][0]["attempts"].as_array().unwrap();
+    let first = attempts.iter().find(|a| a["id"] == json!(aid)).unwrap();
+    let second = attempts.iter().find(|a| a["id"] == json!(aid2)).unwrap();
+    assert_eq!(first["execution_id"], json!(id));
+    assert_eq!(second["execution_id"], json!(next_id));
+    assert!(first["result_received_at"].is_string());
+    assert!(second["result_received_at"].is_null());
     f.close().await;
 }
 
@@ -2621,6 +2633,26 @@ async fn result_before_receipt_fences_redelivery_without_a_false_receipt_timeout
     .unwrap();
     assert!(value["accepted_at"].is_null());
     assert_ne!(value["superseded_reason"], "receipt_timeout");
+    let detail = pool_detail(&f, &task).await;
+    let attempt = detail["items"][0]["attempts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["id"] == json!(aid))
+        .unwrap();
+    assert_eq!(attempt["execution_id"], grant["execution_id"]);
+    assert!(attempt["execution_accepted_at"].is_null());
+    assert_eq!(
+        serde_json::from_value::<chrono::DateTime<chrono::Utc>>(
+            attempt["result_received_at"].clone()
+        )
+        .unwrap(),
+        serde_json::from_value::<chrono::DateTime<chrono::Utc>>(
+            value["result_received_at"].clone()
+        )
+        .unwrap()
+    );
+    assert!(attempt.get("device_received_at").is_none());
     f.close().await;
 }
 

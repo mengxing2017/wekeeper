@@ -1047,3 +1047,17 @@ async fn native_hosting_routes_are_removed_and_environment_requires_device_ident
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
+
+#[test]
+fn attempt_execution_observation_preserves_missing_receipt_and_device_times() {
+    use wekeeper_api::distribution::domain::shared_mobile::execution::AttemptExecutionObservation;
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/attempt-execution-observation.json"
+    ))
+    .unwrap();
+    let observation: AttemptExecutionObservation = serde_json::from_value(fixture.clone()).unwrap();
+    assert_eq!(serde_json::to_value(observation).unwrap(), fixture);
+    let empty = serde_json::to_value(AttemptExecutionObservation::default()).unwrap();
+    assert!(empty.as_object().unwrap().values().all(Value::is_null));
+    assert!(empty.get("device_received_at").is_none());
+}

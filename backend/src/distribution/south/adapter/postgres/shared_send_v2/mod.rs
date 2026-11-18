@@ -100,12 +100,22 @@ fn uid(v: &Value, k: &str) -> Result<Uuid> {
 async fn task(tx: &mut Tx<'_>, id: Uuid) -> Result<Value> {
     let mut value: Value = sqlx::query_scalar("SELECT to_jsonb(t)||jsonb_build_object('items',coalesce((SELECT jsonb_agg(to_jsonb(i)||jsonb_build_object('attempts',(SELECT jsonb_agg(to_jsonb(a)||jsonb_build_object('plan',mobile_business_snapshot(p.plan),'plan_digest',p.digest,'evidence',(SELECT to_jsonb(e) FROM channel_execution_observations e WHERE e.attempt_id=a.id ORDER BY e.id DESC LIMIT 1),'result_reason',coalesce((SELECT g.result_body->>'reason' FROM mobile_execution_grants g WHERE g.attempt_id=a.id),(SELECT e.body->>'reason' FROM mobile_v9_send_events e WHERE e.attempt_id=a.id AND e.receipt->>'disposition'<>'archived' ORDER BY e.created_at DESC,e.id DESC LIMIT 1))) ORDER BY a.attempt_no) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id WHERE a.item_id=i.id)) ORDER BY i.position) FROM mobile_v9_task_items i WHERE i.task_id=t.id),'[]'::jsonb)) FROM mobile_v9_tasks t WHERE t.id=$1").bind(id).fetch_optional(&mut **tx).await?.ok_or(Error::NotFound)?;
     let receipts:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('attempt_id',r.attempt_id,'received_at',r.received_at) FROM mobile_v9_task_receipts r JOIN mobile_v9_attempts a ON a.id=r.attempt_id JOIN mobile_v9_task_items i ON i.id=a.item_id WHERE i.task_id=$1").bind(id).fetch_all(&mut **tx).await?;
+    // attempt_id is UNIQUE on mobile_execution_grants; never borrow a successor's facts.
+    let executions: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('attempt_id',g.attempt_id,'observation',jsonb_build_object('execution_id',g.id,'execution_accepted_at',g.accepted_at,'result_received_at',g.result_received_at,'device_started_at',g.device_started_at,'device_finished_at',g.device_finished_at)) FROM mobile_execution_grants g JOIN mobile_v9_attempts a ON a.id=g.attempt_id JOIN mobile_v9_task_items i ON i.id=a.item_id WHERE i.task_id=$1").bind(id).fetch_all(&mut **tx).await?;
     if let Some(items) = value["items"].as_array_mut() {
         for item in items {
             if let Some(attempts) = item["attempts"].as_array_mut() {
                 for attempt in attempts {
                     attempt["plan_digest"] = json!(digest(&attempt["plan"])?);
-                    attempt["device_received_at"] = receipts
+                    let observation = executions.iter().find(|g| g["attempt_id"] == attempt["id"])
+                        .map(|g| serde_json::from_value::<crate::distribution::domain::shared_mobile::execution::AttemptExecutionObservation>(g["observation"].clone()))
+                        .transpose().map_err(|_| Error::Conflict)?.unwrap_or_default();
+                    let fields = serde_json::to_value(observation).map_err(|_| Error::Conflict)?;
+                    attempt
+                        .as_object_mut()
+                        .ok_or(Error::Conflict)?
+                        .extend(fields.as_object().ok_or(Error::Conflict)?.clone());
+                    attempt["inbox_received_at"] = receipts
                         .iter()
                         .find(|r| r["attempt_id"] == attempt["id"])
                         .map(|r| r["received_at"].clone())
