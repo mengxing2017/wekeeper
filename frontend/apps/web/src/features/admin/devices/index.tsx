@@ -95,7 +95,7 @@ export function ExecutionDevices() {
         title="手机设备列表"
         extra={
           <Space wrap>
-            <Button href="/admin?view=shared-mobile-resources">前往手机群消息使用管理</Button>
+            <Button href="/admin?view=mobile-business-schemes">前往默认手机群消息业务方案</Button>
             <Button onClick={() => void refresh()}>刷新</Button>
             <ActionDrawer title="登记手机" buttonLabel="登记" primary>
               <Editor

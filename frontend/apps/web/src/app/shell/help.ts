@@ -18,7 +18,7 @@ export const pageHelp: Record<string, string> = {
   'mobile-dispatch-records': 'operator/mobile-execution-tasks#automatic-dispatch-records',
   'mobile-execution-tasks': 'operator/mobile-execution-tasks',
   'mobile-targets': 'operator/mobile-targets',
-  'shared-mobile-resources': 'platform-admin/shared-mobile-resources',
+  'mobile-business-schemes': 'platform-admin/shared-mobile-resources',
   'execution-devices': 'operator/execution-resources',
   'wecom-senders': 'operator/official-senders',
 }

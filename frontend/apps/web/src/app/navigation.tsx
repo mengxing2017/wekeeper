@@ -32,7 +32,7 @@ export const navigationDomains = [
   { key: 'support', label: '系统管理', icon: <SafetyCertificateOutlined /> },
 ] as const
 export type NavigationPage =
-  | {kind: 'mobile-dispatch-records' | 'groups' | 'broadcast-tasks' | 'execution-devices' | 'shared-mobile-resources' | 'mobile-execution-tasks' | 'mobile-targets' | 'wecom-senders' | 'audit' | 'wecom-assets' | 'wecom-directory' | 'administrators' | 'source-credentials' | 'advertisements' | 'keyword-rules' | 'source-automation-tasks'}
+  | {kind: 'mobile-dispatch-records' | 'groups' | 'broadcast-tasks' | 'execution-devices' | 'mobile-business-schemes' | 'mobile-execution-tasks' | 'mobile-targets' | 'wecom-senders' | 'audit' | 'wecom-assets' | 'wecom-directory' | 'administrators' | 'source-credentials' | 'advertisements' | 'keyword-rules' | 'source-automation-tasks'}
   | {kind: 'receiving-configurations'; channel: 'mobile' | 'wecom'}
   | {kind: 'source-routes'; mode: 'receipts' | 'configuration'}
 
@@ -74,7 +74,7 @@ export const navigation: NavigationItem[] = [
 
 
   },
-  { key: 'shared-mobile-resources', page: {kind: 'shared-mobile-resources'}, icon: <UnlockOutlined />, label: '手机群消息使用管理', description: '开通手机群消息使用范围，处理申请和使用问题。', domain: 'mobile' },
+  { key: 'mobile-business-schemes', page: {kind: 'mobile-business-schemes'}, icon: <UnlockOutlined />, label: '默认手机群消息业务方案', description: '维护各单位未配置专属方案时使用的默认发送规则。', domain: 'mobile' },
   { key: 'mobile-execution-tasks', page: {kind: 'mobile-execution-tasks'}, icon: <ScheduleOutlined />, label: '手机任务', description: '独立管理手机发送任务，预览、确认并查看执行记录。', domain: 'mobile' },
   { key: 'mobile-targets', page: {kind: 'mobile-targets'}, icon: <AimOutlined />, label: '手机目标群', description: '管理独立手机搜索目标和设备绑定，与官方客户群隔离。', domain: 'mobile' },
   { key: 'mobile-receiving-configurations', page: {kind: 'receiving-configurations', channel: 'mobile'}, icon: <ControlOutlined />, label: '手机接收配置', description: '按业务单位维护接收群与候选手机。', domain: 'mobile' },

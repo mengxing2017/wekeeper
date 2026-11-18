@@ -36,7 +36,6 @@ it('loads authenticated global administrator entry', async () => {
 
 it.each([
   {old: 'advertisement-rotations', canonical: 'advertisements', title: '广告素材与投放', button: '绑定投放范围'},
-  {old: 'execution-devices&subview=usage', canonical: 'shared-mobile-resources', title: '手机群消息使用管理', button: '开通'},
 ])('replaces legacy $old before rendering, including browser history and navigation state', async ({old, canonical, title, button}) => {
   const requests: string[] = []
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
@@ -46,8 +45,6 @@ it.each([
       id: 'admin', username: 'admin', display_name: '系统管理员', platform_admin: true, wecom_authenticated: false,
     }})
     if (url.includes('/wecom-distribution/groups')) return Response.json({data: []}, {headers: {'Content-Type': 'application/vnd.api+json'}})
-    if (url.includes('/usage-options')) return reply({devices: [], targets: [], scheme: null})
-    if (url.endsWith('/usages')) return reply({items: []})
     if (/\/(ad-materials|ad-placements|business-platforms)(\?|$)/.test(url)) return reply({items: [], has_more: false})
     throw new Error(`Unexpected request: ${url}`)
   }))

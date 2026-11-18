@@ -89,7 +89,7 @@ function Admin({ user, logout }: { user: User; logout: () => Promise<void> }) {
       case 'broadcast-tasks': return <BroadcastTasks admin platformAdmin />
       case 'groups': return <Panel administrator platformAdmin resource="groups" refresh={refresh} />
       case 'execution-devices': return <ExecutionDevices />
-      case 'shared-mobile-resources': return <SharedMobileResources />
+      case 'mobile-business-schemes': return <SharedMobileResources />
       case 'wecom-assets': return <Assets />
       case 'wecom-directory': return <Directory />
       case 'administrators': return <Administrators user={user} />

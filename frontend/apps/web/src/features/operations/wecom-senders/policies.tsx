@@ -23,7 +23,7 @@ export function DistributionPolicyPanel() {
     finally { setBusy(false) }
   }
   return <Card title="分发资源治理（平台权限）">
-    <p>来源积压按来源累计，官方资源调用量跨来源累计。这里的额度是平台运营限制，不代表官方安全发送次数。手机业务状态在手机使用管理中查看。</p>
+    <p>来源积压按来源累计，官方资源调用量跨来源累计。这里的额度是平台运营限制，不代表官方安全发送次数。手机业务状态在单位手机接收配置与手机任务中查看。</p>
     {(error || query.error) && <Alert type="error" title={error || query.error?.message} />}
     <Table<SourcePolicy> tableLayout="fixed" scroll={{x:600}} rowKey="namespace" pagination={false} dataSource={query.data?.sources ?? []} columns={[
       { title: '受信来源', render: (_,r) => ({'builtin.direct':'直接通知'}[r.namespace]??'已登记业务来源') }, { title: '草稿/待执行限制', width:160, dataIndex: 'max_pending' },
