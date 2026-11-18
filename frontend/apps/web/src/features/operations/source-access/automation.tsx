@@ -1,3 +1,4 @@
+import {PhoneDeliveries} from './phone-deliveries'
 import { PaginationControls } from '../../../shared/pagination-controls'
 import { formatDate } from '../../../shared/format-date'
 import { TableText, TableIdentifier } from '../../../shared/table-text'
@@ -27,6 +28,7 @@ function MessageDetail({row,refresh}:{row:BusinessMessage;refresh:()=>void}){
  const q=useQuery({queryKey:['message-deliveries',row.receipt_id,row.progress.version,page],queryFn:()=>businessMessages.deliveries(row.receipt_id,page),refetchInterval:5000})
  const mismatch=q.data&&q.data.version!==row.progress.version
  return <Space orientation="vertical" style={{width:'100%'}}>
+  {row.business_unit_id&&<PhoneDeliveries receipt={row.receipt_id}/>}
   <Button href={`/admin?view=mobile-dispatch-records&receipt_id=${encodeURIComponent(row.receipt_id)}`}>手机分发下发记录</Button>
   <Typography.Text type="secondary">观察时间：{formatDate(row.progress.observed_at)}；持久汇总时间：{row.progress.results_as_of?formatDate(row.progress.results_as_of):'尚未汇总'}</Typography.Text>
   <Typography.Paragraph style={{whiteSpace:'pre-wrap'}}>{row.content}</Typography.Paragraph>
