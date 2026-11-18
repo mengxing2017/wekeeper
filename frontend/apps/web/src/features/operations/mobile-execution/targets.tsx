@@ -1,3 +1,4 @@
+import {BindingBudgets} from './binding-budgets'
 import { TableRowActions } from '../../../shared/table-row-actions'
 import { TableText } from '../../../shared/table-text'
 import { createIdempotencyKey } from '../../../shared/idempotency-key'
@@ -26,7 +27,7 @@ export function MobileTargets({  admin }: { admin: boolean }) {
     setPendingDuplicate(undefined); setOpen(false); form.resetFields(); void invalidate()
   } })
   const archive = useMutation({ mutationFn: (row: MobileTarget) => api.archiveTarget(row.id, row.metadata_revision, '管理员归档目标', createIdempotencyKey()), onSuccess: invalidate })
-  return <Card title="手机目标群" extra={admin && <Space wrap><Button href="/admin?view=shared-mobile-resources">前往手机群消息使用管理</Button><Button type="primary" onClick={() => { setEditing(undefined); form.resetFields(); setOpen(true) }}>新增</Button></Space>}>
+  return <Card title="手机目标群" extra={admin && <Space wrap><Button href="/admin?view=mobile-business-schemes">前往默认手机群消息业务方案</Button><Button type="primary" onClick={() => { setEditing(undefined); form.resetFields(); setOpen(true) }}>新增</Button></Space>}>
     <Alert type="info" showIcon title="手机目标群独立于官方客户群" description="填写一个群名称即可。手机自行搜索并识别目标，识别失败只影响本次设备尝试。" />
     <Input.Search aria-label="搜索手机目标群" placeholder="搜索群名称" allowClear onSearch={value => { setSearch(value); setPage(1) }} />
     {(targets.error || save.error || archive.error) && <Alert type="error" title={(targets.error || save.error || archive.error)?.message} />}
@@ -39,6 +40,7 @@ export function MobileTargets({  admin }: { admin: boolean }) {
       ]}/> }] : []),
     ]} />
     <PaginationControls page={page} more={targets.data?.page?.has_more} change={setPage} subject="手机目标群" />
+    {admin&&<BindingBudgets/>}
     <Modal title={editing ? '编辑手机目标群' : '新增手机目标群'} open={open} confirmLoading={save.isPending} onCancel={() => { setOpen(false); setPendingDuplicate(undefined) }} onOk={() => void form.validateFields().then(v => save.mutate(v))}>
       <Form form={form} layout="vertical">
         <Form.Item name="search_text" label="群名称" rules={[{ required: true, message: '请填写群名称' }]}><Input /></Form.Item>
