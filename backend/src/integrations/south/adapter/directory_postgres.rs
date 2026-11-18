@@ -231,24 +231,8 @@ impl DirectoryStore for Repository {
         generation: Option<i64>,
     ) -> Result<()> {
         let mut tx = self.0.begin().await?;
-        let current: i64 = sqlx::query_scalar(
-            "SELECT credential_generation FROM wecom_directory_state FOR UPDATE",
-        )
-        .fetch_one(&mut *tx)
-        .await?;
-        if member.is_some() && generation != Some(current) {
-            return Err(Error::Conflict);
-        }
-        if let Some(id) = member {
-            sqlx::query("SELECT id FROM wecom_members WHERE id=$1 AND verification='verified' AND status=1 AND checked_at>now()-interval '1 minute' FOR UPDATE").bind(id).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
-        }
-        let old_member: Option<Uuid> = sqlx::query_scalar("SELECT wecom_member_id FROM accounts WHERE id=$1 AND wecom_binding_revision=$2 FOR UPDATE").bind(account).bind(revision).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
-        sqlx::query("UPDATE accounts SET wecom_member_id=$3,wecom_binding_revision=wecom_binding_revision+1 WHERE id=$1 AND wecom_binding_revision=$2 AND NOT platform_admin AND ($3::uuid IS NULL OR active) RETURNING id").bind(account).bind(revision).bind(member).fetch_optional(&mut *tx).await?.ok_or(Error::Conflict)?;
-        sqlx::query("DELETE FROM sessions WHERE account_id=$1")
-            .bind(account)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("INSERT INTO audit_events(id,actor_id,action,object_id,detail) VALUES($1,$2,'wecom.binding.update',$3,$4)").bind(Uuid::now_v7()).bind(actor).bind(account).bind(json!({"member_id":member,"previous_revision":revision,"previous_member_id":old_member})).execute(&mut *tx).await?;
+        crate::distribution::south::adapter::postgres::broadcast::guard(&mut tx).await?;
+        super::binding::write(&mut tx, actor, account, member, revision, generation).await?;
         tx.commit().await?;
         Ok(())
     }

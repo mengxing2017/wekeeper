@@ -13,7 +13,7 @@ pub struct Repository(pub PgPool);
 type Tx<'a> = Transaction<'a, Postgres>;
 
 /// Official writes serialize independently of mobile execution. Never hold across HTTP.
-pub(super) async fn guard(tx: &mut Tx<'_>) -> Result<()> {
+pub(crate) async fn guard(tx: &mut Tx<'_>) -> Result<()> {
     sqlx::query("SELECT pg_advisory_xact_lock(78234610242)")
         .execute(&mut **tx)
         .await?;

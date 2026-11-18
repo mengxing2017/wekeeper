@@ -1,6 +1,6 @@
 use crate::{
     bootstrap::Application,
-    business::{Actor, Error, Result, require},
+    business::{Error, Result, require},
     http::jsonapi::singleton,
     identity::north::remote::cookie,
 };
@@ -102,9 +102,6 @@ async fn callback_inner(
     )
         .into_response())
 }
-async fn retired_share(_actor: Actor) -> Result<Response> {
-    Err(Error::Invalid("逐群分享已停用，请创建企业群发任务".into()))
-}
 fn oauth_available(a: &Application) -> bool {
     a.integrations
         .capabilities(&a.options.public_origin, a.options.insecure_local_auth)
@@ -127,8 +124,6 @@ pub fn router() -> Router<Application> {
         .route("/api/v1/wecom/status", get(status))
         .route("/api/v1/wecom/oauth/start", get(start))
         .route("/api/v1/wecom/oauth/callback", get(callback))
-        .route("/api/v1/wecom/js-sdk-config", get(retired_share))
-        .route("/api/v1/wecom/config", get(retired_share))
 }
 
 #[cfg(test)]

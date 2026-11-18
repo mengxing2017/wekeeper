@@ -239,10 +239,10 @@ async fn server_only_oauth_directory_cache_and_share_http_gates() {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), 422, "{path}");
+        assert_eq!(response.status(), 404, "{path}");
         let body = String::from_utf8(to_bytes(response.into_body(), 8192).await.unwrap().to_vec())
             .unwrap();
-        assert!(body.contains("逐群分享已停用"), "{path}: {body}");
+        assert!(body.contains("not_found"), "{path}: {body}");
     }
     // The new scope never silently adopts the old directory.
     assert_eq!(

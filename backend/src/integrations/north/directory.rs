@@ -93,8 +93,7 @@ impl<R: DirectoryStore, C: DirectoryClient> Service<R, C> {
     pub async fn bind(&self, a: &Actor, id: Uuid, input: BindingInput) -> Result<()> {
         a.platform()?;
         require(input.revision >= 0, "绑定版本无效")?;
-        let userid = self.store.member_id(input.member_id).await?;
-        let generation = self.verify(&userid).await?;
+        let generation = self.ensure_config().await?;
         self.store
             .bind(
                 a.id,
