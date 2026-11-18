@@ -38,7 +38,7 @@
 
 平台明确暂停新发送时，已有任务的读取与停止仍运行。网络/凭据失效时可能无法停止，必须到企业微信管理端核对；暂停不是撤回。
 
-OAuth 回调仍是 `/api/v1/wecom/oauth/callback`，state 五分钟、一次性消费，成功后返回当前后台群发页。token 缓存仍按 CorpID/Secret 作用域隔离。旧 JS-SDK 签名和配置路由明确返回停用错误，公开能力字段 share_available 恒为 false；全局分发接口中的 `/broadcast-capabilities` 区分创建与管理能力。
+OAuth 回调仍是 `/api/v1/wecom/oauth/callback`，state 五分钟、一次性消费，成功后返回当前后台群发页。token 缓存仍按 CorpID/Secret 作用域隔离。旧 JS-SDK 签名和配置路由未注册，返回统一 404，公开能力字段 share_available 恒为 false；全局分发接口中的 `/broadcast-capabilities` 区分创建与管理能力。
 
 ## 首次部署
 
