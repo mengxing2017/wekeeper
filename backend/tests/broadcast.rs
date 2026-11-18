@@ -1434,3 +1434,289 @@ async fn blocked_official_read_does_not_delay_newly_confirmed_create() {
     job.await.unwrap().unwrap();
     pool.close().await;
 }
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn qualification_router_uses_one_path_and_resource_type_with_live_authorization() {
+    use tower::ServiceExt;
+    let (pool, actor, _, _) = setup().await;
+    let app = wekeeper_api::bootstrap::build_application(pool.clone());
+    let (token, session) = app
+        .identity
+        .0
+        .session(actor.id, "browser", false)
+        .await
+        .unwrap();
+    let router = wekeeper_api::http::app_router(app.clone());
+    let path = format!(
+        "/api/v1/platform/wecom-distribution/wecom-senders/{}/qualification",
+        actor.id
+    );
+    let send = |path: String, token: Option<String>, csrf: String, enabled: bool, revision: i64| {
+        let router = router.clone();
+        async move {
+            let mut request = axum::http::Request::builder()
+                .method("POST")
+                .uri(path)
+                .header("origin", "http://localhost:5173")
+                .header("content-type", "application/vnd.api+json")
+                .header("x-csrf-token", csrf);
+            if let Some(token) = token {
+                request = request.header("cookie", format!("wekeeper_session={token}"));
+            }
+            router.oneshot(request.body(axum::body::Body::from(json!({"data":{"type":"wecom-sender-qualifications","attributes":{"enabled":enabled,"revision":revision}}}).to_string())).unwrap()).await.unwrap()
+        }
+    };
+    assert_eq!(
+        send(path.clone(), None, session.csrf.clone(), false, 0)
+            .await
+            .status(),
+        401
+    );
+    assert_eq!(
+        send(
+            format!(
+                "/api/v1/wecom-distribution/wecom-senders/{}/qualification",
+                actor.id
+            ),
+            Some(token.clone()),
+            session.csrf.clone(),
+            false,
+            0
+        )
+        .await
+        .status(),
+        404
+    );
+    let response = send(
+        path.clone(),
+        Some(token.clone()),
+        session.csrf.clone(),
+        false,
+        0,
+    )
+    .await;
+    assert_eq!(response.status(), 200);
+    let body: Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 8192)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(body["data"]["type"], "wecom-sender-qualifications");
+    assert_eq!(
+        send(
+            path.clone(),
+            Some(token.clone()),
+            session.csrf.clone(),
+            true,
+            0
+        )
+        .await
+        .status(),
+        409
+    );
+    assert_eq!(
+        send(
+            path.clone(),
+            Some(token.clone()),
+            session.csrf.clone(),
+            true,
+            1
+        )
+        .await
+        .status(),
+        200
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM audit_events WHERE action='wecom.sender.qualification'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        2
+    );
+    // A captured administrator actor must not bypass current account permissions.
+    sqlx::query("UPDATE accounts SET platform_admin=false WHERE id=$1")
+        .bind(actor.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        send(
+            path.clone(),
+            Some(token.clone()),
+            session.csrf.clone(),
+            false,
+            2
+        )
+        .await
+        .status(),
+        403
+    );
+    sqlx::query("UPDATE accounts SET active=false WHERE id=$1")
+        .bind(actor.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        send(path, Some(token), session.csrf, false, 2)
+            .await
+            .status(),
+        401
+    );
+    pool.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn directory_and_usage_share_identity_rules_and_preview_freezes_enable_effects() {
+    use wekeeper_api::{
+        distribution::{
+            domain::workflows::{Command as C, Confirmation, UsageInput},
+            north::local::workflows::Service as W,
+            south::adapter::postgres::workflows::Repository as R,
+        },
+        integrations::south::{
+            adapter::directory_postgres::Repository as D, port::DirectoryStore as _,
+        },
+    };
+    let (pool, actor, _, _) = setup().await;
+    let directory = D(pool.clone());
+    let member: Uuid = sqlx::query_scalar("SELECT wecom_member_id FROM accounts WHERE id=$1")
+        .bind(actor.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let groups: Vec<Uuid> =
+        sqlx::query_scalar("SELECT directory_group_id FROM wecom_groups ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    let workflow = W(R(pool.clone()));
+    let input = UsageInput {
+        account_id: actor.id,
+        member_id: member,
+        generation: 1,
+        group_ids: groups.clone(),
+    };
+    // Unlink needs no usable directory snapshot. Active administrators are valid binding targets.
+    directory
+        .bind(actor.id, actor.id, None, 0, None)
+        .await
+        .unwrap();
+    for invalid in [
+        "status=2",
+        "visibility='not_seen'",
+        "verification='unavailable'",
+        "checked_at=now()-interval '25 hours'",
+    ] {
+        sqlx::query(&format!("UPDATE wecom_members SET {invalid} WHERE id=$1"))
+            .bind(member)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            directory
+                .bind(actor.id, actor.id, Some(member), 1, Some(1))
+                .await
+                .is_err(),
+            "{invalid}"
+        );
+        assert!(
+            workflow
+                .command(&actor, C::UsagePreview(input.clone()))
+                .await
+                .is_err(),
+            "{invalid}"
+        );
+        sqlx::query("UPDATE wecom_members SET status=1,visibility='visible',verification='verified',checked_at=now()-interval '2 hours' WHERE id=$1").bind(member).execute(&pool).await.unwrap();
+    }
+    // Both entries accept the same two-hour snapshot; binding alone does not restore qualification.
+    sqlx::query("INSERT INTO wecom_sender_qualifications(account_id,enabled,updated_by) VALUES($1,false,$1)").bind(actor.id).execute(&pool).await.unwrap();
+    directory
+        .bind(actor.id, actor.id, Some(member), 1, Some(1))
+        .await
+        .unwrap();
+    assert!(
+        !sqlx::query_scalar::<_, bool>(
+            "SELECT enabled FROM wecom_sender_qualifications WHERE account_id=$1"
+        )
+        .bind(actor.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    );
+    directory
+        .bind(actor.id, actor.id, None, 2, None)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE wecom_groups SET active=false")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let preview = workflow
+        .command(&actor, C::UsagePreview(input.clone()))
+        .await
+        .unwrap();
+    assert_eq!(preview["summary"]["effects"]["bind_identity"], true);
+    assert_eq!(preview["summary"]["effects"]["enable_qualification"], true);
+    assert_eq!(
+        preview["summary"]["effects"]["restore_group_ids"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    let confirm = |p: &Value| Confirmation {
+        preview_id: p["id"].as_str().unwrap().parse().unwrap(),
+        digest: p["digest"].as_str().unwrap().into(),
+    };
+    sqlx::query("UPDATE wecom_sender_qualifications SET revision=revision+1 WHERE account_id=$1")
+        .bind(actor.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(
+        workflow
+            .command(&actor, C::UsageConfirm(confirm(&preview)))
+            .await
+            .is_err()
+    );
+    let preview = workflow
+        .command(&actor, C::UsagePreview(input.clone()))
+        .await
+        .unwrap();
+    workflow
+        .command(&actor, C::UsageConfirm(confirm(&preview)))
+        .await
+        .unwrap();
+    let revision: i64 =
+        sqlx::query_scalar("SELECT wecom_binding_revision FROM accounts WHERE id=$1")
+            .bind(actor.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(revision, 4);
+    // A new no-op preview stays idempotent and does not silently increase binding revisions.
+    let preview = workflow
+        .command(&actor, C::UsagePreview(input))
+        .await
+        .unwrap();
+    assert_eq!(preview["summary"]["effects"]["bind_identity"], false);
+    assert_eq!(preview["summary"]["effects"]["enable_qualification"], false);
+    workflow
+        .command(&actor, C::UsageConfirm(confirm(&preview)))
+        .await
+        .unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT wecom_binding_revision FROM accounts WHERE id=$1")
+            .bind(actor.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        revision
+    );
+    pool.close().await;
+}

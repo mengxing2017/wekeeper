@@ -62,7 +62,7 @@ const broadcast = {
 };
 const officialSenders={
     list:(page=1)=>requestCollection<OfficialSender>(`/api/v1/wecom-distribution/wecom-senders?page[number]=${page}&page[size]=30`),
-    qualify:(id:string,input:{enabled:boolean;revision:number})=>requestResource<{updated:boolean}>(`/api/v1/wecom-distribution/wecom-senders/${part(id)}/qualification`,'POST',input),
+    qualify:(id:string,input:{enabled:boolean;revision:number})=>requestResource<{updated:boolean}>(`/api/v1/platform/wecom-distribution/wecom-senders/${part(id)}/qualification`,'POST',input),
 };
 const distributionPolicies={
     get:()=>requestResource<DistributionPolicies>('/api/v1/platform/distribution-policies'),

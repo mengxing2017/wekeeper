@@ -127,6 +127,7 @@ export function resourceType(path: string): string {
     if (['groups','broadcast-tasks','official-usage-previews','official-usages','broadcast-task-previews','broadcast-access-requests','broadcast-issues','member-policy-previews','member-policies','official-channel-controls'].includes(kind)) return kind;
     throw new Error('Unknown wecom distribution write resource path');
   }
+  if (parts[2] === 'platform' && parts[3] === 'wecom-distribution' && parts[4] === 'wecom-senders' && parts[6] === 'qualification') return 'wecom-sender-qualifications';
   if (parts[2] === 'platform' && parts[3] === 'wecom-distribution' && parts[4] === 'operators') return 'wecom-bindings';
   if (parts[2] === 'platform' && parts[3] === 'administrators') return 'administrators';
   if(parts[0]==='api' && parts[1]==='v10' && parts[2]==='device-execution') {

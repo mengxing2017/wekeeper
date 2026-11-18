@@ -169,7 +169,7 @@ async fn qualify(
     input: Input,
 ) -> Result<ApiResponse> {
     let body = input.decode::<crate::distribution::domain::content::SenderQualificationInput>(
-        "wecom-senders",
+        "wecom-sender-qualifications",
     )?;
     crate::distribution::north::local::governance::Service(a.pool.clone())
         .qualify(&actor, id, body)

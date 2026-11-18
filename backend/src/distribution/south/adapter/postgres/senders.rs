@@ -33,7 +33,7 @@ impl Repository {
                     enabled,
                     eligible,
                     reason: if !enabled {
-                        Some("分发工作空间发送资格已停用".into())
+                        Some("官方成员发送资格已停用".into())
                     } else if !eligible {
                         Some("官方成员或平台身份不可用，请核对通讯录和映射".into())
                     } else {
@@ -54,6 +54,7 @@ impl Repository {
         actor.platform()?;
         let mut tx = self.0.begin().await?;
         super::broadcast::guard(&mut tx).await?;
+        super::authorization::authorize(&mut tx, actor.id).await?;
         sqlx::query("SELECT a.id FROM accounts a JOIN wecom_members m ON m.id=a.wecom_member_id WHERE a.id=$1 FOR SHARE OF a,m").bind(id).fetch_optional(&mut *tx).await?.ok_or(Error::NotFound)?;
         let updated=sqlx::query("INSERT INTO wecom_sender_qualifications(account_id,enabled,updated_by) SELECT $1,$2,$3  WHERE $4=0 ON CONFLICT(account_id) DO NOTHING").bind(id).bind(input.enabled).bind(actor.id).bind(input.revision).execute(&mut *tx).await?.rows_affected();
         if updated == 0 {

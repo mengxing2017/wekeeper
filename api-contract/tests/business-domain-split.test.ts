@@ -17,8 +17,10 @@ it('uses global official sender governance independently of phone accounts',asyn
  await officialSenders.list();await officialSenders.list(2)
  expect(fetch.mock.calls[0][0]).toContain('/wecom-distribution/wecom-senders')
  expect(fetch.mock.calls[1][0]).toContain('/wecom-distribution/wecom-senders')
- mockResponse('wecom-sender-qualifications',{updated:true})
+ const qualification=mockResponse('wecom-sender-qualifications',{updated:true})
  await officialSenders.qualify('member',{enabled:false,revision:3})
+ expect(qualification.mock.calls[0][0]).toBe('/api/v1/platform/wecom-distribution/wecom-senders/member/qualification')
+ expect(JSON.parse(qualification.mock.calls[0][1].body).data).toEqual({type:'wecom-sender-qualifications',attributes:{enabled:false,revision:3}})
 })
 it('platform policy updates carry a revision and cannot create an external source',async()=>{
  const fetch=mockResponse('distribution-policy-updates',{updated:true})
