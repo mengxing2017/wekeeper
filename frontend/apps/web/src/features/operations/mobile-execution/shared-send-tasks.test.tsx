@@ -1,3 +1,4 @@
+vi.mock('../receiving-configurations/api',()=>({receivingUnits:vi.fn(async()=>[])}))
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -5,15 +6,16 @@ import { api, sharedSend, type SharedPreview, type SharedCandidate } from './api
 import { SharedSendTasks } from './shared-send-tasks'
 vi.mock('./api', () => ({ api: { targets: vi.fn(), bindings: vi.fn() }, sharedSend: { overview: vi.fn(), taskPreview: vi.fn(), confirm: vi.fn(), task: vi.fn() } }))
 afterEach(() => {cleanup();vi.useRealTimers()})
-const response=(p:SharedPreview)=>({id:p.id,draft:{id:'draft',targets:[{id:'target',name:'实际搜索文字'}],intent_id:'intent',target_ids:['target'],message,content_type:'text/plain' as const,between_targets_seconds:30,revision:1,content_digest:'hash'},preview:p})
+const response=(p:SharedPreview)=>({id:p.id,draft:{business_unit_id:null,id:'draft',targets:[{id:'target',name:'实际搜索文字'}],intent_id:'intent',target_ids:['target'],message,content_type:'text/plain' as const,between_targets_seconds:30,revision:1,content_digest:'hash'},preview:p})
 const message = '  第一行\n第二行🙂  '
-const preview: SharedPreview = { id: 'preview', digest: 'digest', expires_at: '2099-01-01T00:00:00Z', plan: { schema: 'shared_mobile_send/2', draft_id: 'draft', draft_revision: 1, intent_id: 'intent', message, content_digest: 'hash', policy_id: null, items: [{ position: 0, target_id: 'target', target:{id:'target',name:'实际搜索文字',search_text:'实际搜索文字',locator_revision:1},selected: null, candidates: [], blocker: 'inspection_required' }] } }
+const scheme={id:null,revision:0,scope_revision:0,source:'builtin' as const,business_unit_id:null,mode:'enabled' as const,expected_revision:0,confirmation_seconds:86400,inspection_seconds:3600,retry_seconds:300,retry_limit:3,timezone:'Asia/Shanghai',allowed_windows:[],limits:{total:{interval_seconds:30,window_seconds:3600,max_calls:30,daily_max_calls:150},device:{interval_seconds:30,window_seconds:3600,max_calls:30,daily_max_calls:150},target:{interval_seconds:30,window_seconds:3600,max_calls:30,daily_max_calls:150}},reason:''}
+const preview: SharedPreview = { id: 'preview', digest: 'digest', expires_at: '2099-01-01T00:00:00Z', plan: { business_unit_id:null,scheme_snapshot:scheme,schema: 'shared_mobile_send/2', draft_id: 'draft', draft_revision: 1, intent_id: 'intent', message, content_digest: 'hash', policy_id: null, items: [{ position: 0, target_id: 'target', target:{id:'target',name:'实际搜索文字',search_text:'实际搜索文字',locator_revision:1},selected: null, candidates: [], blocker: 'inspection_required' }] } }
 beforeEach(() => {
   vi.resetAllMocks()
-  vi.mocked(sharedSend.task).mockResolvedValue({id:'task',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-03'})
+  vi.mocked(sharedSend.task).mockResolvedValue({business_unit_id:null,scheme_snapshot:scheme,id:'task',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-03'})
   vi.mocked(api.targets).mockResolvedValue({ items: [{ id: 'target', search_text: '实际搜索文字', remark: '', enabled: true, archived_at: null, metadata_revision: 1, locator_revision: 1 }] })
   vi.mocked(sharedSend.overview).mockResolvedValue({ id: 'global', tasks: [], drafts: [], readiness: [], pool: [], inspections: [] })
-  vi.mocked(sharedSend.taskPreview).mockImplementation(async()=>({id:preview.id,draft:{id:'draft',targets:[{id:'target',name:'实际搜索文字'}],intent_id:'intent',target_ids:['target'],message,content_type:'text/plain',between_targets_seconds:30,revision:1,content_digest:'hash'},preview}))
+  vi.mocked(sharedSend.taskPreview).mockImplementation(async()=>({id:preview.id,draft:{business_unit_id:null,id:'draft',targets:[{id:'target',name:'实际搜索文字'}],intent_id:'intent',target_ids:['target'],message,content_type:'text/plain',between_targets_seconds:30,revision:1,content_digest:'hash'},preview}))
 })
 async function compose(admin = true) {
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SharedSendTasks admin={admin} /></QueryClientProvider>)
@@ -45,7 +47,7 @@ it('手机连接离线不阻止确认，平台继续受理并调度候选',async
  const phone:SharedCandidate={target_id:'target',target_name:'实际搜索文字',device_name:'测试手机',device_id:'phone',binding_id:'binding',binding_locator_revision:1,target_locator_revision:1,target:{kind:'group',search_query:'实际搜索文字',match_policy:'exact_unique',identity_constraints:[]},credential_generation:1,release_id:null,flow_digest:null,flow:null,confirmable:true}
  pending.plan.items[0]={...pending.plan.items[0],selected:phone,candidates:[phone],blocker:null,readiness:[{binding_id:'binding',device_id:'phone',target_id:'target',device_name:'测试手机',target_name:'实际搜索文字',search_text:'实际搜索文字',state:'waiting_connection',ready:false,plan_selectable:true,confirmable:true,execution_ready:false,automatic:true,blockers:[],inspection:null,inspection_state:'waiting_prerequisites',retry_at:null,retry_remaining:3,execution_conditions:[{code:'waiting_connection',message:'手机当前离线，平台将选择下一授权候选',owner:'system',automatic:true}]}]}
  vi.mocked(sharedSend.taskPreview).mockResolvedValue(response(pending))
- vi.mocked(sharedSend.confirm).mockResolvedValue({id:'task',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-03'})
+ vi.mocked(sharedSend.confirm).mockResolvedValue({business_unit_id:null,scheme_snapshot:scheme,id:'task',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-03'})
  await compose();fireEvent.click(screen.getByRole('button',{name: /^预\s*览$/}))
  expect(await screen.findByText('连接：尚无观察')).toBeTruthy()
  expect(screen.getByText('确认的授权候选：测试手机（实际搜索文字）；所选为首选，范围内允许自动换机。')).toBeTruthy()
@@ -133,7 +135,7 @@ it('缺少管理员角色时明确说明权限原因，而不是无说明置灰'
 
 it('打开详情持续轮询，失败保留快照与输入，关闭停止旧任务查询',async()=>{
  vi.useFakeTimers({toFake:['setInterval','clearInterval']})
- const task={id:'task',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-03',items:[{id:'item',target_id:'target',position:0,attempts:[{id:'attempt',state:'queued',revision:1,current:true,attempt_no:1,plan_digest:'hash',plan:{search_text:'实际搜索文字',device_id:'phone',device_name:'测试手机'},execution_status:{conditions:[{code:'waiting_connection',message:'等待手机连接，平台将选择下一授权候选',owner:'system'}]}}]}]} as unknown as Awaited<ReturnType<typeof sharedSend.task>>
+ const task={business_unit_id:null,scheme_snapshot:scheme,id:'task',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-03',items:[{id:'item',target_id:'target',position:0,attempts:[{id:'attempt',state:'queued',revision:1,current:true,attempt_no:1,plan_digest:'hash',plan:{search_text:'实际搜索文字',device_id:'phone',device_name:'测试手机'},execution_status:{conditions:[{code:'waiting_connection',message:'等待手机连接，平台将选择下一授权候选',owner:'system'}]}}]}]} as unknown as Awaited<ReturnType<typeof sharedSend.task>>
  vi.mocked(sharedSend.overview).mockResolvedValue({id:'global',tasks:[task],drafts:[],readiness:[],pool:[],inspections:[]})
  vi.mocked(sharedSend.task).mockResolvedValue(task)
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}})
@@ -165,7 +167,7 @@ it('打开详情持续轮询，失败保留快照与输入，关闭停止旧任�
 
 
 it('列表同步回执不代表执行包落盘，不改变执行条件',async()=>{
- const task={id:'task',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-04',items:[{id:'item',target_id:'target-uuid',position:0,attempts:[{id:'attempt',state:'queued',revision:1,current:true,attempt_no:1,plan_digest:'hash',plan:{target_name:'冻结群名',search_text:'专用搜索文字',device_id:'phone',device_name:'测试手机'},execution_status:{conditions:[{code:'waiting_connection',message:'等待手机连接，平台将选择下一授权候选',owner:'system'}]}}]}]} as unknown as Awaited<ReturnType<typeof sharedSend.task>>
+ const task={business_unit_id:null,scheme_snapshot:scheme,id:'task',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-04',items:[{id:'item',target_id:'target-uuid',position:0,attempts:[{id:'attempt',state:'queued',revision:1,current:true,attempt_no:1,plan_digest:'hash',plan:{target_name:'冻结群名',search_text:'专用搜索文字',device_id:'phone',device_name:'测试手机'},execution_status:{conditions:[{code:'waiting_connection',message:'等待手机连接，平台将选择下一授权候选',owner:'system'}]}}]}]} as unknown as Awaited<ReturnType<typeof sharedSend.task>>
  vi.mocked(sharedSend.overview).mockResolvedValue({id:'global',tasks:[task],drafts:[],readiness:[],pool:[],inspections:[]})
  vi.mocked(sharedSend.task).mockResolvedValue(task)
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}})
@@ -200,7 +202,7 @@ it('群名变化必须重新预览，手机配置不是受理条件',async()=>{
 
 it('展示授权候选和自动换机轨迹，历史尝试结果冲突仍可核对',async()=>{
  const candidates:SharedCandidate[]=['甲','乙'].map((name,index)=>({target_id:'target',target_name:'实际搜索文字',device_id:`phone-${index}`,device_name:`候选${name}`,binding_id:`binding-${index}`,binding_locator_revision:1,target_locator_revision:1,target:{kind:'group',search_query:'实际搜索文字',match_policy:'exact_unique',identity_constraints:[]},credential_generation:1,}))
- const task={id:'task',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-04',items:[{id:'item',target_id:'target',position:0,dispatch:{state:'needs_review',candidates,assignments:[{id:'assignment',source:'automatic',from_device_name:'候选甲',to_device_name:'候选乙',created_at:'2026-11-04T00:00:00Z'}]},attempts:[{id:'old',state:'unknown',current:false,attempt_no:1,revision:3,plan:{...candidates[0],message,between_targets_seconds:30}},{id:'new',state:'queued',current:true,attempt_no:2,revision:1,plan:{...candidates[1],message,between_targets_seconds:30}}]}]} as unknown as Awaited<ReturnType<typeof sharedSend.task>>
+ const task={business_unit_id:null,scheme_snapshot:scheme,id:'task',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-04',items:[{id:'item',target_id:'target',position:0,dispatch:{state:'needs_review',candidates,assignments:[{id:'assignment',source:'automatic',from_device_name:'候选甲',to_device_name:'候选乙',created_at:'2026-11-04T00:00:00Z'}]},attempts:[{id:'old',state:'unknown',current:false,attempt_no:1,revision:3,plan:{...candidates[0],message,between_targets_seconds:30}},{id:'new',state:'queued',current:true,attempt_no:2,revision:1,plan:{...candidates[1],message,between_targets_seconds:30}}]}]} as unknown as Awaited<ReturnType<typeof sharedSend.task>>
  vi.mocked(sharedSend.overview).mockResolvedValue({id:'global',tasks:[task],drafts:[],readiness:[],pool:[],inspections:[]})
  vi.mocked(sharedSend.task).mockResolvedValue(task)
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}})
@@ -224,7 +226,7 @@ it('展示授权候选和自动换机轨迹，历史尝试结果冲突仍可核�
 
 
 it('页面识别失败显示实际原因，授权候选继续处理且不要求版本适配',async()=>{
- const task={id:'task',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-05',items:[{id:'item',target_id:'target',position:0,dispatch:{state:'assigned',candidates:[{device_name:'候选乙',search_text:'乙备注群名'}],assignments:[]},attempts:[{id:'old',state:'failed_before_call',result_reason:'page_unrecognized',current:false,attempt_no:1,revision:3,plan:{search_text:'甲备注群名',device_name:'候选甲'}},{id:'new',state:'queued',current:true,attempt_no:2,revision:1,plan:{search_text:'乙备注群名',device_name:'候选乙'}}]}]} as unknown as Awaited<ReturnType<typeof sharedSend.task>>
+ const task={business_unit_id:null,scheme_snapshot:scheme,id:'task',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-05',items:[{id:'item',target_id:'target',position:0,dispatch:{state:'assigned',candidates:[{device_name:'候选乙',search_text:'乙备注群名'}],assignments:[]},attempts:[{id:'old',state:'failed_before_call',result_reason:'page_unrecognized',current:false,attempt_no:1,revision:3,plan:{search_text:'甲备注群名',device_name:'候选甲'}},{id:'new',state:'queued',current:true,attempt_no:2,revision:1,plan:{search_text:'乙备注群名',device_name:'候选乙'}}]}]} as unknown as Awaited<ReturnType<typeof sharedSend.task>>
  vi.mocked(sharedSend.overview).mockResolvedValue({id:'global',tasks:[task],drafts:[],readiness:[],pool:[],inspections:[]})
  vi.mocked(sharedSend.task).mockResolvedValue(task)
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}})
@@ -240,7 +242,7 @@ it('页面识别失败显示实际原因，授权候选继续处理且不要求�
 
 it('三轮耗尽自动显示整任务停止，领取记录不再显示准备中，手动刷新仍可获取迟到结果',async()=>{
  vi.useFakeTimers({toFake:['setInterval','clearInterval']})
- const running={id:'task',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-08',next_eligible_at:'2026-11-08T00:00:00Z',items:[{id:'item',target_id:'target',position:0,dispatch:{state:'executing',max_rounds:3,completed_rounds:2,candidates:[],assignments:[]},attempts:[{id:'attempt',state:'leased',revision:1,current:true,attempt_no:3,plan:{target_name:'冻结群名',device_name:'测试手机',device_id:'phone',message,between_targets_seconds:30}}]}]} as unknown as Awaited<ReturnType<typeof sharedSend.task>>
+ const running={business_unit_id:null,scheme_snapshot:scheme,id:'task',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-08',next_eligible_at:'2026-11-08T00:00:00Z',items:[{id:'item',target_id:'target',position:0,dispatch:{state:'executing',max_rounds:3,completed_rounds:2,candidates:[],assignments:[]},attempts:[{id:'attempt',state:'leased',revision:1,current:true,attempt_no:3,plan:{target_name:'冻结群名',device_name:'测试手机',device_id:'phone',message,between_targets_seconds:30}}]}]} as unknown as Awaited<ReturnType<typeof sharedSend.task>>
  const failed=structuredClone(running)
  failed.items![0].dispatch!.state='dispatch_failed'
  failed.items![0].dispatch!.completed_rounds=3
@@ -273,7 +275,7 @@ it('三轮耗尽自动显示整任务停止，领取记录不再显示准备中�
 },60000)
 
 it('列表不打开详情也区分完成、手动停止和三轮耗尽，不采用旧详情缓存',async()=>{
- const base={intent_id:'intent',revision:1,created_at:'2026-11-08'}
+ const base={business_unit_id:null,scheme_snapshot:scheme,intent_id:'intent',revision:1,created_at:'2026-11-08'}
  const tasks:Awaited<ReturnType<typeof sharedSend.task>>[]=[
   {...base,id:'completed-task',stopped:true,status:'completed'},
   {...base,id:'stopped-task',stopped:true,status:'stopped'},

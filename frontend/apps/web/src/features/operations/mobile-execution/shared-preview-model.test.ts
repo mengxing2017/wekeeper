@@ -1,6 +1,6 @@
 // @vitest-environment node
 import {expect,it} from 'vitest'
-import {previewSelections,previewResourcesChanged,isUsageBlocker,currentReadiness,dispatchLabel,taskNeedsPolling,taskProgressLabel,attemptDispatchLabel} from './shared-preview-model'
+import {previewSelections,previewResourcesChanged,currentReadiness,dispatchLabel,taskNeedsPolling,taskProgressLabel,attemptDispatchLabel} from './shared-preview-model'
 import type {SharedPreview} from './api'
 it('没有旧选中项的目标也会加入本次设备选择',()=>{
  const items=[{target_id:'target',selected:null},{target_id:'other',selected:{device_id:'other-phone'}}] as SharedPreview['plan']['items']
@@ -13,7 +13,6 @@ it('业务资源变化要求重新预览，手机状态和配置不影响平台�
  expect(previewResourcesChanged(preview,overview({...snapshot,configuration_id:'new'}))).toBe(false)
  expect(previewResourcesChanged(preview,overview({...snapshot,search_text:'新群名'}))).toBe(true)
  expect(previewResourcesChanged(preview,overview({...snapshot,plan_selectable:false}))).toBe(true)
- expect(isUsageBlocker('business_scope_paused')).toBe(true)
 })
 it('查询失败或绑定缺失时不把预览快照标为当前',()=>{
  const snapshot={binding_id:'binding'} as import('./api').SharedReadiness

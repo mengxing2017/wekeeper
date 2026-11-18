@@ -10,10 +10,6 @@ export function previewResourcesChanged(preview:SharedPreview, overview:SharedOv
     return current && (current.search_text!==snapshot.search_text || current.plan_selectable!==snapshot.plan_selectable)
   }))
 }
-export function isUsageBlocker(code:string) {
-  return ['business_scope_paused','business_scope_revoked','business_scope_expired'].includes(code)
-}
-
 export function currentReadiness(snapshot:SharedReadiness,overview:SharedOverview|undefined,synchronized:boolean) {
   return synchronized ? overview?.readiness.find(r=>r.binding_id===snapshot.binding_id) : undefined
 }

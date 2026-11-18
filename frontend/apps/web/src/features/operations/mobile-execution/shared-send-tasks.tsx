@@ -7,10 +7,10 @@ import { api, sharedSend, executionEvidenceLabels, type SharedDraft, type Shared
 import { createIdempotencyKey } from '../../../shared/idempotency-key'
 import { PaginationControls } from '../../../shared/pagination-controls'
 import { taskError, attemptFailureReason, candidateGroupName } from './task-model'
-import { previewSelections, previewResourcesChanged, isUsageBlocker, currentReadiness, dispatchLabel, taskNeedsPolling, taskProgressLabel, attemptDispatchLabel } from './shared-preview-model'
+import { previewSelections, previewResourcesChanged, currentReadiness, dispatchLabel, taskNeedsPolling, taskProgressLabel, attemptDispatchLabel } from './shared-preview-model'
 import { AttemptObservation, observationTime } from './attempt-observation'
 import { SharedReadinessView } from './shared-readiness-view'
-import { UsageManagement } from '../../admin/mobile-resources/usage-management'
+import {receivingUnits} from '../receiving-configurations/api'
 
 const stateLabels:Record<string,string>={queued:'已入队，等待执行',leased:'手机已领取，准备中',prepared:'手机正在本地准备执行',invocation_issued:'已发单次许可，等待手机结果',observed_sent:'手机观察到新的已发消息，未证明对方送达',unknown:'结果不确定，保留风险并按授权候选调度',failed_before_call:'本次尝试未发出实际调用',invalidated:'执行依据已失效',cancelled:'未执行部分已取消',verified_not_sent:'人工核对确认未发送',manually_confirmed_sent:'人工核对确认已发送'}
 export function SharedSendTasks(props:{admin:boolean}) { return <TaskList {...props}/> }
@@ -21,7 +21,8 @@ function TaskList({  admin }: { admin: boolean }) {
   function keyFor(kind:string,input:unknown){const identity=JSON.stringify([kind,input]);let key=requestKeys.current.get(identity);if(!key){key=createIdempotencyKey();requestKeys.current.set(identity,key)}return key}
   const [action,setAction]=useState<{kind:'stop'|'review'|'reassign';attempt?:SharedAttempt}>()
   const [reason,setReason]=useState('')
-  const [usageOpen,setUsageOpen]=useState(false)
+  const [businessUnit,setBusinessUnit]=useState<string>('')
+  const units=useQuery({queryKey:['receiving-units'],queryFn:receivingUnits})
   const [decision,setDecision]=useState<'still_unknown'|'verified_not_sent'|'manually_confirmed_sent'>('still_unknown')
   const [device,setDevice]=useState<string>()
 
@@ -46,7 +47,7 @@ function TaskList({  admin }: { admin: boolean }) {
   const options = useQuery({ queryKey: ['mobile-execution', 'shared-targets',targetPage,targetSearch], queryFn: () => api.targets(targetPage,targetSearch) })
   const refresh = () => cache.invalidateQueries({ queryKey: ['mobile-execution'] })
   async function generatePreview(selections:Array<{target_id:string;device_id:string}>) {
-    const input={draft_id:draft?.id,expected_revision:draft?.revision,target_ids:targets,message,between_targets_seconds:gap,selections}
+    const input={business_unit_id:businessUnit||null,draft_id:draft?.id,expected_revision:draft?.revision,target_ids:targets,message,between_targets_seconds:gap,selections}
     const result=await sharedSend.taskPreview(input,keyFor('preview',input))
     setDraft(result.draft)
     setTargetNames(n=>({...n,...Object.fromEntries(result.draft.targets.map(t=>[t.id,t.name]))}))
@@ -62,8 +63,8 @@ function TaskList({  admin }: { admin: boolean }) {
     if(action!.kind==='review'){await sharedSend.review(a.id,a.revision,decision,reason,keyFor('review',[a.id,a.revision,decision,reason]));return sharedSend.task(detail!.id)}
     return sharedSend.reassign(a.id,a.revision,device!,reason,keyFor('reassign',[a.id,a.revision,device,reason]))
   },onSuccess:t=>{setDetail(t);setAction(undefined);setReason('');setDevice(undefined);void refresh()}})
-  const error = overview.error || options.error || inspect.error || confirm.error || detailQuery.error || reselect.error || mutate.error || bindings.error
-  const dirty = !!draft && (message.replace(/\r\n?/g, '\n') !== draft.message || targets.join() !== draft.target_ids.join() || gap!==draft.between_targets_seconds)
+  const error = overview.error || options.error || inspect.error || confirm.error || detailQuery.error || reselect.error || mutate.error || bindings.error || units.error
+  const dirty = !!draft && (businessUnit!==(draft.business_unit_id??'') || message.replace(/\r\n?/g, '\n') !== draft.message || targets.join() !== draft.target_ids.join() || gap!==draft.between_targets_seconds)
   const synchronized=overview.isSuccess&&!overview.isError
   const liveOverview=synchronized ? overview.data : undefined
   const resourcesChanged=preview ? previewResourcesChanged(preview,liveOverview) : false
@@ -78,13 +79,15 @@ function TaskList({  admin }: { admin: boolean }) {
       {overview.isError&&<Alert type="warning" title="当前状态同步失败，预览快照不能作为实时状态" description={<Button onClick={()=>void overview.refetch()}>重试</Button>}/>}
       {error && <Alert type="error" title={taskError(error)} />}
       <Input.Search aria-label="搜索手机目标群" placeholder="搜索群名称" onSearch={value=>{setTargetSearch(value);setTargetPage(1)}} />
+      <Select aria-label="任务业务单位" value={businessUnit} style={{minWidth:280}} onChange={v=>{setBusinessUnit(v);setPreview(undefined)}} options={[{value:'',label:'无业务单位（使用默认方案）'},...(units.data??[]).map(u=>({value:u.id,label:u.name}))]}/>
       <Select labelInValue mode="multiple" aria-label="手机目标群" placeholder="选择手机目标群" style={{ width: '100%' }} value={targets.map(value=>({value,label:targetNames[value] ?? draft?.targets.find(t=>t.id===value)?.name ?? '目标信息待核对'}))} onChange={values=>{setTargets(values.map(v=>v.value));setTargetNames(names=>({...names,...Object.fromEntries(values.map(v=>[v.value,String(v.label)]))}))}} options={(options.data?.items ?? []).filter(t => t.enabled && !t.archived_at).map(t => ({ value: t.id, label: t.search_text }))} />
       <PaginationControls page={targetPage} more={options.data?.page?.has_more} change={setTargetPage} subject="可选手机目标群" />
-      {!!overview.data?.drafts.length && <Select aria-label="恢复共享发送草稿" placeholder="恢复已保存草稿" style={{width:'100%'}} options={overview.data.drafts.map(d=>({value:d.id,label:`${d.message.slice(0,30)}（${d.target_ids.length} 个目标群）`}))} onChange={id=>{const d=overview.data!.drafts.find(x=>x.id===id)!;setDraft(d);setTargetNames(n=>({...n,...Object.fromEntries(d.targets.map(t=>[t.id,t.name]))}));setTargets(d.target_ids);setMessage(d.message);setGap(d.between_targets_seconds);setPreview(undefined)}} />}
+      {!!overview.data?.drafts.length && <Select aria-label="恢复共享发送草稿" placeholder="恢复已保存草稿" style={{width:'100%'}} options={overview.data.drafts.map(d=>({value:d.id,label:`${d.message.slice(0,30)}（${d.target_ids.length} 个目标群）`}))} onChange={id=>{const d=overview.data!.drafts.find(x=>x.id===id)!;setDraft(d);setBusinessUnit(d.business_unit_id??'');setTargetNames(n=>({...n,...Object.fromEntries(d.targets.map(t=>[t.id,t.name]))}));setTargets(d.target_ids);setMessage(d.message);setGap(d.between_targets_seconds);setPreview(undefined)}} />}
       <label>逐群间隔（秒）<InputNumber aria-label="逐群间隔秒数" value={gap} min={1} max={86400} precision={0} onChange={v=>setGap(v??30)}/></label>
-      <p>不同目标独立调度，遵守业务间隔；某手机离线或前群待核对不拖住无关目标。间隔由使用方案与此处设置共同约束。</p>
+      <p>不同目标独立调度，遵守业务间隔；某手机离线或前群待核对不拖住无关目标。间隔由业务方案与此处设置共同约束。</p>
       <Space>{targets.map((id,index)=><span key={id}>{index+1}. {targetNames[id]??draft?.targets.find(t=>t.id===id)?.name??'目标群'} <Button disabled={index===0} onClick={()=>setTargets(ids=>{const next=[...ids];[next[index-1],next[index]]=[next[index],next[index-1]];return next})}>前移</Button></span>)}</Space>
       <Input.TextArea aria-label="发送文字" rows={5} value={message} onChange={e => setMessage(e.target.value)} placeholder="输入实际发送的文字；空格与换行会保留" />
+      {preview&&<p>任务业务单位：{units.data?.find(u=>u.id===preview.plan.business_unit_id)?.name??preview.plan.business_unit_id??'无业务单位'}；方案来源：{{unit:'单位专属方案',default:'默认方案',builtin:'系统内置默认方案'}[preview.plan.scheme_snapshot.source]}；版本 {preview.plan.scheme_snapshot.id??preview.plan.scheme_snapshot.builtin_version??'内置默认'}。</p>}
       <Button type="primary" loading={inspect.isPending} disabled={!message.trim() || !targets.length || reselect.isPending || confirm.isPending} onClick={() => inspect.mutate()}>预览</Button>
       {dirty && <Alert type="warning" title="文字或目标群已修改，请重新预览" />}
       {preview && !dirty && <>
@@ -102,7 +105,6 @@ function TaskList({  admin }: { admin: boolean }) {
               return <div key={snapshot.binding_id}>
                 <SharedReadinessView snapshot={snapshot} current={current} blocked={!!i.blocker}/>
                 <p>确认的授权候选：{i.candidates.filter(c=>c.confirmable!==false).map(c=>`${c.device_name}（${candidateGroupName(c)}）`).join('、')}；所选为首选，范围内允许自动换机。</p>
-                {admin&&snapshot.blockers.some(b=>isUsageBlocker(b.code))&&<Button onClick={()=>setUsageOpen(true)}>查看使用范围</Button>}
               </div>
             })}
             {i.blocker&&!(i.readiness?.length)&&<p>没有可选绑定，请核对目标群与手机的关联</p>}
@@ -116,15 +118,14 @@ function TaskList({  admin }: { admin: boolean }) {
         { title: '操作', width:88, render: (_, t) => <Button type="link" onClick={() => setSelected({id:t.id})}>详情</Button> },
       ]} />
     </Space>
-    <Modal title="手机群消息使用管理" open={usageOpen} footer={null} width={1000} onCancel={()=>setUsageOpen(false)}><UsageManagement admin={admin}/></Modal>
     <Modal title="共享任务逐群进度" open={!!selected && !!selected} footer={null} onCancel={() => setDetail(undefined)}>
       <Button onClick={()=>void detailQuery.refetch()} loading={detailQuery.isFetching}>刷新</Button>
       {detailQuery.isPending && <p>正在读取逐群进度…</p>}
       {!!detailQuery.dataUpdatedAt && <p>最近获取时间：{new Date(detailQuery.dataUpdatedAt).toLocaleString()}</p>}
       {detailQuery.error && <Alert type="warning" title="进度读取失败，以下为上次获取的快照" description={taskError(detailQuery.error)}/>}
       {detail && <p role="status">{taskProgressLabel(detail)}</p>}
-      {detail && <p>确认有效至：{detail.confirmed_until ?? '待核对'}；目标独立调度，候选范围内自动换机{taskNeedsPolling(detail)&&<>；最早安排：{detail.next_eligible_at??'待核对'}</>}。已到期的任务需要复制为新草稿并重新确认。</p>}
-      {detail?.items?.length && <Button onClick={()=>{const items=[...detail.items!].sort((a,b)=>a.position-b.position);const plans=items.map(i=>i.attempts.find(a=>a.current)?.plan);const first=plans[0];if(!first)return;setDraft(undefined);setTargets(items.map(i=>i.target_id));setTargetNames(Object.fromEntries(plans.filter(p=>!!p).map(p=>[p.target_id,candidateGroupName(p)])));setMessage(first.message);setGap(first.between_targets_seconds);setPreview(undefined);setDetail(undefined)}}>复制草稿</Button>}
+      {detail && <p>业务单位：{units.data?.find(u=>u.id===detail.business_unit_id)?.name??detail.business_unit_id??'无业务单位'}；方案：{detail.scheme_snapshot?.source==='unit'?'单位专属':'默认'}。确认有效至：{detail.confirmed_until ?? '待核对'}；目标独立调度，候选范围内自动换机{taskNeedsPolling(detail)&&<>；最早安排：{detail.next_eligible_at??'待核对'}</>}。已到期的任务需要复制为新草稿并重新确认。</p>}
+      {detail?.items?.length && <Button onClick={()=>{const items=[...detail.items!].sort((a,b)=>a.position-b.position);const plans=items.map(i=>i.attempts.find(a=>a.current)?.plan);const first=plans[0];if(!first)return;setDraft(undefined);setBusinessUnit(detail.business_unit_id??'');setTargets(items.map(i=>i.target_id));setTargetNames(Object.fromEntries(plans.filter(p=>!!p).map(p=>[p.target_id,candidateGroupName(p)])));setMessage(first.message);setGap(first.between_targets_seconds);setPreview(undefined);setDetail(undefined)}}>复制草稿</Button>}
       {!!detail?.items?.length && <p>将创建新草稿，需重新预览并确认。</p>}
       {detail && admin && taskNeedsPolling(detail) && <Button danger onClick={()=>setAction({kind:'stop'})}>停止后续</Button>}
       {detail && admin && taskNeedsPolling(detail) && <p>仅停止尚未发放许可的部分，已发出的调用不会撤回。</p>}
