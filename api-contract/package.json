@@ -29,7 +29,8 @@
     "./advertising": "./src/modules/advertising/index.ts",
     "./advertising/client": "./src/modules/advertising/client.ts",
     "./advertising/material-client": "./src/modules/advertising/material-client.ts",
-    "./mobile-execution/dispatch-records": "./src/modules/mobile-execution/shared-send/dispatch-records.ts"
+    "./mobile-execution/dispatch-records": "./src/modules/mobile-execution/shared-send/dispatch-records.ts",
+    "./message-statistics": "./src/modules/message-statistics/index.ts"
   },
   "scripts": {
     "build": "tsc --noEmit && tsc -p tsconfig.platform.json",

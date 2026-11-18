@@ -108,6 +108,7 @@ export function resourceType(path: string): string {
     if(unitPath[5]==='receiving-resources')return 'receiving-resources';
   }
   const parts = path.split("?")[0].split("/").filter(Boolean);
+  if (parts[2] === 'admin' && parts[3] === 'message-statistics') return parts.at(-1) === 'exports' ? 'message-statistics-exports' : 'message-statistics-queries';
   if (parts[1] === 'v2' && parts[2] === 'admin') {
     if (parts[3] === 'ad-materials') return parts[5] === 'publications' ? 'ad-material-publications' : parts[5] === 'archive' ? 'ad-material-archives' : 'ad-materials';
     if (parts[3] === 'ad-placements') return parts[5] === 'state' ? 'ad-placement-states' : 'ad-placements';

@@ -1,0 +1,55 @@
+{
+  "id": "00000000-0000-4000-8000-000000000001",
+  "metric_version": "message-statistics/1",
+  "generated_at": "2026-11-18T02:00:00Z",
+  "expires_at": "2026-11-18T02:30:00Z",
+  "timezone": "Asia/Shanghai",
+  "basis": "cohort",
+  "filter": {
+    "start": "2026-11-01",
+    "end": "2026-11-18",
+    "grain": "day",
+    "platform_id": null,
+    "business_unit_id": null,
+    "route_id": null,
+    "source_kind": "all",
+    "channel": null,
+    "client_kind": null
+  },
+  "summary": {
+    "received": "0",
+    "dispatched": "0",
+    "not_dispatched": "0",
+    "partial_channel_failure": "0",
+    "processing": "0",
+    "incomplete": "0",
+    "historical_risk": "0",
+    "targets": {
+      "total": "9007199254740993",
+      "sent": "0",
+      "failed": "0",
+      "unknown": "0",
+      "pending": "9007199254740993"
+    },
+    "responsibilities": {
+      "total": "9007199254740993",
+      "sent": "0",
+      "failed": "0",
+      "unknown": "0",
+      "pending": "9007199254740993"
+    },
+    "attention": {
+      "total": "9007199254740993",
+      "sent": "0",
+      "failed": "0",
+      "unknown": "0",
+      "pending": "9007199254740993"
+    }
+  },
+  "cards": [],
+  "trend": [],
+  "channels": [],
+  "units": [],
+  "failures": [],
+  "unclassified": "0"
+}
