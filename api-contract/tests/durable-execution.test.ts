@@ -28,3 +28,13 @@ it('uses an explicit zero-send inspection endpoint without candidate selection',
  expect(durableExecutionApi(client)).not.toHaveProperty('deliver')
  expect(durableExecutionApi(client)).not.toHaveProperty('grant')
 })
+
+// The same serialized observation is consumed by the task UI and checked by Rust.
+import observation from '../fixtures/attempt-execution-observation.json'
+import type { SharedAttempt } from '../src/modules/mobile-execution/shared-send/v2'
+it('keeps result, inbox and execution receipts independent',()=>{
+ const attempt: Pick<SharedAttempt,'execution_id'|'execution_accepted_at'|'result_received_at'|'device_started_at'|'device_finished_at'|'inbox_received_at'> = {...observation,inbox_received_at:'2026-11-17T17:41:50Z'}
+ expect(attempt.execution_accepted_at).toBeNull()
+ expect(attempt.result_received_at! < attempt.inbox_received_at!).toBe(true)
+ expect(attempt).not.toHaveProperty('device_received_at')
+})
