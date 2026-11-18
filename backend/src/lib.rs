@@ -17,3 +17,5 @@ pub mod system;
 pub mod source_access;
 
 pub mod message_orchestration;
+
+pub mod message_statistics;

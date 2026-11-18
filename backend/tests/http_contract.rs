@@ -1010,3 +1010,49 @@ fn unit_task_preview_has_a_server_side_context_and_rejects_unknown_fields() {
             .is_none()
     );
 }
+
+#[tokio::test]
+async fn statistics_wire_counts_and_all_routes_require_identity() {
+    use axum::response::IntoResponse;
+    use wekeeper_api::message_statistics::domain::Overview;
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../api-contract/fixtures/message-statistics.json"
+    ))
+    .unwrap();
+    let model: Overview = serde_json::from_value(fixture.clone()).unwrap();
+    let response =
+        http::jsonapi::singleton("message-statistics-queries", model.id, model).into_response();
+    assert_eq!(response.status(), StatusCode::OK);
+    let actual: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(
+        actual["data"]["attributes"]["summary"]["targets"]["total"],
+        "9007199254740993"
+    );
+    let mut expected = fixture;
+    expected.as_object_mut().unwrap().remove("id");
+    assert_eq!(actual["data"]["attributes"], expected);
+    let base = "/api/v2/admin/message-statistics/queries";
+    for (method, suffix) in [
+        ("POST", ""),
+        ("GET", "/00000000-0000-4000-8000-000000000001"),
+        ("GET", "/00000000-0000-4000-8000-000000000001/details"),
+        (
+            "GET",
+            "/00000000-0000-4000-8000-000000000001/breakdowns?dimension=unit",
+        ),
+        ("POST", "/00000000-0000-4000-8000-000000000001/exports"),
+    ] {
+        let r = app()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(format!("{base}{suffix}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+    }
+}

@@ -64,6 +64,8 @@ impl IntoResponse for Error {
     fn into_response(self) -> Response {
         let (status, code, message): (StatusCode, &str, String) = match self {
             Self::Policy("mobile_target_unresolved") => (StatusCode::CONFLICT,"mobile_target_unresolved","目标已有待执行或待核对项，请先处理原任务，不要换设备重复安排".into()),
+            Self::Policy("statistics_snapshot_changed") => (StatusCode::CONFLICT,"statistics_snapshot_changed","发送结果已更新，请同步刷新统计".into()),
+            Self::Policy("statistics_snapshot_expired") => (StatusCode::GONE,"statistics_snapshot_expired","统计快照已过期，请重新查询".into()),
             Self::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized", "请先登录".into()),
             Self::Forbidden => (
                 StatusCode::FORBIDDEN,
