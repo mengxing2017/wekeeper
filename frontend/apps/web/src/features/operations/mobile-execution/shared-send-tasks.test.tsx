@@ -164,7 +164,7 @@ it('打开详情持续轮询，失败保留快照与输入，关闭停止旧任�
 },60000)
 
 
-it('排队任务分别显示平台已创建与手机已接收，接收回执不改变执行条件',async()=>{
+it('列表同步回执不代表执行包落盘，不改变执行条件',async()=>{
  const task={id:'task',intent_id:'intent',revision:1,stopped:false,created_at:'2026-11-04',items:[{id:'item',target_id:'target-uuid',position:0,attempts:[{id:'attempt',state:'queued',revision:1,current:true,attempt_no:1,plan_digest:'hash',plan:{target_name:'冻结群名',search_text:'专用搜索文字',device_id:'phone',device_name:'测试手机'},execution_status:{conditions:[{code:'waiting_connection',message:'等待手机连接，平台将选择下一授权候选',owner:'system'}]}}]}]} as unknown as Awaited<ReturnType<typeof sharedSend.task>>
  vi.mocked(sharedSend.overview).mockResolvedValue({id:'global',tasks:[task],drafts:[],readiness:[],pool:[],inspections:[]})
  vi.mocked(sharedSend.task).mockResolvedValue(task)
@@ -173,9 +173,9 @@ it('排队任务分别显示平台已创建与手机已接收，接收回执不�
  fireEvent.click(await screen.findByRole('button',{name: /^详\s*情$/},{timeout:10_000}))
  expect(await screen.findByText(/平台已创建，等待手机同步/,{},{timeout:10_000})).toBeTruthy()
  expect(screen.getByText(/冻结群名/)).toBeTruthy()
- const received=structuredClone(task);received.items![0].attempts[0].device_received_at='2026-11-04T00:00:00Z'
+ const received=structuredClone(task);received.items![0].attempts[0].inbox_received_at='2026-11-04T00:00:00Z'
  act(()=>{client.setQueryData(['mobile-execution','shared-task','task'],received)})
- expect(await screen.findByText(/手机已接收，等待执行条件/,{},{timeout:10_000})).toBeTruthy()
+ expect(await screen.findByText(/任务列表已同步，等待执行包交付/,{},{timeout:10_000})).toBeTruthy()
  expect(screen.getByText(/等待手机连接，平台将选择下一授权候选/)).toBeTruthy()
  expect(sharedSend.confirm).not.toHaveBeenCalled()
  client.clear()
@@ -230,7 +230,7 @@ it('页面识别失败显示实际原因，授权候选继续处理且不要求�
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}})
  render(<QueryClientProvider client={client}><SharedSendTasks admin/></QueryClientProvider>)
  fireEvent.click(await screen.findByRole('button',{name: /^详\s*情$/},{timeout:10_000}))
- expect(await screen.findByText('；本次尝试：手机无法识别当前企业微信页面',{},{timeout:10_000})).toBeTruthy()
+ expect(await screen.findByText('；本次尝试：手机无法识别当前企业微信页面（原因码：page_unrecognized）',{},{timeout:10_000})).toBeTruthy()
  expect(screen.getByText('目标调度：已分配可用候选手机')).toBeTruthy()
  expect(screen.getByText(/平台已受理，按授权候选调度/)).toBeTruthy()
  expect(screen.queryByText(/版本适配|交付处理|排队等待共享手机/)).toBeNull()
