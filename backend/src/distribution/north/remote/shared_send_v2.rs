@@ -60,12 +60,10 @@ async fn confirm(
     Ok(resource(
         "mobile-shared-tasks",
         service(&a)
-            .usage_write(
+            .task_write(
                 &actor,
                 key(&h),
-                crate::distribution::domain::shared_mobile::usage::UsageCommand::TaskConfirm(
-                    input.decode("mobile-shared-tasks")?,
-                ),
+                TaskCommand::Confirm(input.decode("mobile-shared-tasks")?),
             )
             .await?,
     ))
@@ -231,7 +229,7 @@ async fn execution_completion(State(a): State<Application>, input: Input) -> Res
 }
 pub fn router() -> Router<Application> {
     Router::new()
-        .merge(usage_router())
+        .merge(scheme_router())
         .merge(super::mobile_dispatch_records::router())
         .route(
             "/api/v10/device-execution/inspection-executions",
@@ -275,223 +273,119 @@ pub fn router() -> Router<Application> {
         )
 }
 
-async fn usage_options(State(a): State<Application>, actor: Actor) -> Result<ApiResponse> {
+async fn scheme_read_default(State(a): State<Application>, actor: Actor) -> Result<ApiResponse> {
     Ok(resource(
-        "mobile-usage-options",
-        service(&a).usage_read(&actor, None, true).await?,
+        "mobile-business-schemes",
+        service(&a).scheme_read(&actor, None).await?,
     ))
 }
-async fn usage_list(State(a): State<Application>, actor: Actor) -> Result<ApiResponse> {
-    Ok(resource(
-        "mobile-usages",
-        service(&a).usage_read(&actor, None, false).await?,
-    ))
-}
-async fn usage_global(State(a): State<Application>, actor: Actor) -> Result<ApiResponse> {
-    Ok(resource(
-        "mobile-usages",
-        service(&a).usage_read(&actor, None, false).await?,
-    ))
-}
-async fn usage_global_options(State(a): State<Application>, actor: Actor) -> Result<ApiResponse> {
-    Ok(resource(
-        "mobile-usage-options",
-        service(&a).usage_read(&actor, None, true).await?,
-    ))
-}
-async fn usage_preview(
+async fn scheme_read_unit(
     State(a): State<Application>,
+    actor: Actor,
+    Path(unit): Path<Uuid>,
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "mobile-business-schemes",
+        service(&a).scheme_read(&actor, Some(unit)).await?,
+    ))
+}
+async fn save_scheme(
+    a: Application,
     actor: Actor,
     h: HeaderMap,
     input: Input,
+    unit: Option<Uuid>,
 ) -> Result<ApiResponse> {
-    Ok(resource(
-        "mobile-usage-previews",
-        service(&a)
-            .usage_write(
-                &actor,
-                key(&h),
-                crate::distribution::domain::shared_mobile::usage::UsageCommand::Preview(
-                    input.decode("mobile-usage-previews")?,
-                ),
-            )
-            .await?,
-    ))
-}
-async fn usage_confirm(
-    State(a): State<Application>,
-    actor: Actor,
-    h: HeaderMap,
-    input: Input,
-) -> Result<ApiResponse> {
-    Ok(resource(
-        "mobile-usages",
-        service(&a)
-            .usage_write(
-                &actor,
-                key(&h),
-                crate::distribution::domain::shared_mobile::usage::UsageCommand::Confirm(
-                    input.decode("mobile-usages")?,
-                ),
-            )
-            .await?,
-    ))
-}
-async fn usage_mutate(
-    State(a): State<Application>,
-    actor: Actor,
-    Path((id, operation)): Path<(Uuid, String)>,
-    h: HeaderMap,
-    input: Input,
-) -> Result<ApiResponse> {
-    Ok(resource(
-        "mobile-usages",
-        service(&a)
-            .usage_write(
-                &actor,
-                key(&h),
-                crate::distribution::domain::shared_mobile::usage::UsageCommand::Mutate {
-                    id,
-                    operation,
-                    mutation: input.decode("mobile-usages")?,
-                },
-            )
-            .await?,
-    ))
-}
-async fn usage_task_preview(
-    State(a): State<Application>,
-    actor: Actor,
-    h: HeaderMap,
-    input: Input,
-) -> Result<ApiResponse> {
-    Ok(resource(
-        "mobile-usage-task-previews",
-        service(&a)
-            .usage_write(
-                &actor,
-                key(&h),
-                crate::distribution::domain::shared_mobile::usage::UsageCommand::TaskPreview(
-                    input.decode("mobile-usage-task-previews")?,
-                ),
-            )
-            .await?,
-    ))
-}
-async fn business_scheme(
-    State(a): State<Application>,
-    actor: Actor,
-    h: HeaderMap,
-    input: Input,
-) -> Result<ApiResponse> {
-    let v: crate::distribution::domain::shared_mobile::usage::BusinessSchemeInput =
-        input.decode("mobile-business-schemes")?;
+    use crate::distribution::domain::shared_mobile::business_scheme::{
+        BusinessSchemeInput, SchemeMutation,
+    };
+    let v: BusinessSchemeInput = input.decode("mobile-business-schemes")?;
+    let mutation = SchemeMutation {
+        expected_revision: v.expected_revision,
+        reason: v.reason.clone(),
+        confirmed: v.confirmed,
+    };
     Ok(resource(
         "mobile-business-schemes",
         service(&a)
-            .platform_write(&actor, key(&h), PlatformCommand::Policy(v.policy()?))
+            .scheme_write(&actor, key(&h), unit, Some(v), mutation)
             .await?,
     ))
 }
-fn usage_router() -> Router<Application> {
+async fn scheme_save_default(
+    State(a): State<Application>,
+    actor: Actor,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    save_scheme(a, actor, h, input, None).await
+}
+async fn scheme_save_unit(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(unit): Path<Uuid>,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    save_scheme(a, actor, h, input, Some(unit)).await
+}
+async fn scheme_inherit(
+    State(a): State<Application>,
+    actor: Actor,
+    Path(unit): Path<Uuid>,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "mobile-business-schemes",
+        service(&a)
+            .scheme_write(
+                &actor,
+                key(&h),
+                Some(unit),
+                None,
+                input.decode("mobile-business-schemes")?,
+            )
+            .await?,
+    ))
+}
+async fn task_preview(
+    State(a): State<Application>,
+    actor: Actor,
+    h: HeaderMap,
+    input: Input,
+) -> Result<ApiResponse> {
+    Ok(resource(
+        "mobile-task-previews",
+        service(&a)
+            .preview_task(&actor, key(&h), input.decode("mobile-task-previews")?)
+            .await?,
+    ))
+}
+fn scheme_router() -> Router<Application> {
     Router::new()
         .route(
-            "/api/v1/platform/mobile-execution/business-schemes",
-            post(business_scheme),
+            "/api/v1/mobile-execution/business-schemes/default",
+            get(scheme_read_default),
         )
         .route(
-            "/api/v1/mobile-execution/usages/{id}/issues/{issue}/responses",
-            post(usage_issue_update),
+            "/api/v1/mobile-execution/business-schemes/default/versions",
+            post(scheme_save_default),
         )
         .route(
-            "/api/v1/platform/mobile-execution/usage-requests",
-            get(usage_global),
+            "/api/v1/mobile-execution/business-schemes/units/{unit}",
+            get(scheme_read_unit),
         )
         .route(
-            "/api/v1/platform/mobile-execution/usage-options",
-            get(usage_global_options),
-        )
-        .route("/api/v1/mobile-execution/usage-options", get(usage_options))
-        .route(
-            "/api/v1/mobile-execution/usage-previews",
-            post(usage_preview),
+            "/api/v1/mobile-execution/business-schemes/units/{unit}/versions",
+            post(scheme_save_unit),
         )
         .route(
-            "/api/v1/mobile-execution/usages",
-            get(usage_list).post(usage_confirm),
-        )
-        .route("/api/v1/mobile-execution/usages/{id}", get(usage_detail))
-        .route(
-            "/api/v1/mobile-execution/usages/{id}/issues",
-            post(usage_issue),
+            "/api/v1/mobile-execution/business-schemes/units/{unit}/inheritances",
+            post(scheme_inherit),
         )
         .route(
-            "/api/v1/mobile-execution/usages/{id}/{operation}",
-            post(usage_mutate),
+            "/api/v1/mobile-execution/shared-v2-task-previews",
+            post(task_preview),
         )
-        .route(
-            "/api/v1/mobile-execution/usage-task-previews",
-            post(usage_task_preview),
-        )
-}
-
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct UsageIssue {
-    description: String,
-}
-async fn usage_issue(
-    State(a): State<Application>,
-    actor: Actor,
-    Path(id): Path<Uuid>,
-    h: HeaderMap,
-    input: Input,
-) -> Result<ApiResponse> {
-    let v: UsageIssue = input.decode("mobile-usage-issues")?;
-    Ok(resource(
-        "mobile-usage-issues",
-        service(&a)
-            .usage_write(
-                &actor,
-                key(&h),
-                crate::distribution::domain::shared_mobile::usage::UsageCommand::Issue {
-                    id,
-                    description: v.description,
-                },
-            )
-            .await?,
-    ))
-}
-async fn usage_detail(
-    State(a): State<Application>,
-    actor: Actor,
-    Path(id): Path<Uuid>,
-) -> Result<ApiResponse> {
-    Ok(resource(
-        "mobile-usages",
-        service(&a).usage_read(&actor, Some(id), false).await?,
-    ))
-}
-
-async fn usage_issue_update(
-    State(a): State<Application>,
-    actor: Actor,
-    Path((id, issue_id)): Path<(Uuid, Uuid)>,
-    h: HeaderMap,
-    input: Input,
-) -> Result<ApiResponse> {
-    Ok(resource(
-        "mobile-usages",
-        service(&a)
-            .usage_write(
-                &actor,
-                key(&h),
-                crate::distribution::domain::shared_mobile::usage::UsageCommand::IssueUpdate {
-                    id,
-                    issue_id,
-                    input: input.decode("mobile-usage-issues")?,
-                },
-            )
-            .await?,
-    ))
 }

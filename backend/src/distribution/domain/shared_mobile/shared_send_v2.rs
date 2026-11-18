@@ -280,13 +280,13 @@ pub struct Limit {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Limits {
-    pub global: Limit,
+    pub total: Limit,
     pub device: Limit,
     pub target: Limit,
 }
 impl Limits {
     pub fn validate(&self) -> Result<()> {
-        for v in [&self.global, &self.device, &self.target] {
+        for v in [&self.total, &self.device, &self.target] {
             require(
                 (1..=86400).contains(&v.interval_seconds)
                     && (1..=2592000).contains(&v.window_seconds)
@@ -345,10 +345,8 @@ impl PolicyInput {
             "shared_send_policy_invalid",
         )?;
         require(
-            matches!(
-                self.mode.as_str(),
-                "disabled" | "draft_only" | "preview_only" | "enabled"
-            ) && !self.reason.trim().is_empty()
+            matches!(self.mode.as_str(), "disabled" | "enabled")
+                && !self.reason.trim().is_empty()
                 && self.reason.len() <= 2000,
             "shared_send_policy_invalid",
         )
@@ -513,24 +511,6 @@ pub struct AcceptanceInput {
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct ScopeInput {
-    pub acceptance_id: Uuid,
-
-    pub device_ids: Vec<Uuid>,
-    pub target_ids: Vec<Uuid>,
-    pub auto_targets: bool,
-    pub max_calls: i64,
-    pub expires_at: chrono::DateTime<chrono::Utc>,
-    pub reason: String,
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct RevocationInput {
-    pub grant_id: Uuid,
-    pub reason: String,
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct SupportInput {
     pub device_id: Uuid,
 
@@ -561,8 +541,6 @@ pub enum ManagementCommand {
     Withdrawals(WithdrawalInput),
     Validations(ValidationInput),
     Acceptances(AcceptanceInput),
-    Scopes(ScopeInput),
-    Revocations(RevocationInput),
     Support(SupportInput),
     SupportUpdates(SupportUpdate),
 }

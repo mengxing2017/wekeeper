@@ -18,7 +18,6 @@ pub enum TaskCommand {
 }
 #[derive(Clone, Debug)]
 pub enum PlatformCommand {
-    Policy(PolicyInput),
     Manage(ManagementCommand),
     Artifact(ArtifactUpload),
 }
@@ -83,17 +82,26 @@ pub trait Store: Clone + Send + Sync {
         v: InboxReceipt,
     ) -> impl Future<Output = Result<Value>> + Send;
     fn credential(&self, token: &str) -> impl Future<Output = Result<Credential>> + Send;
-    fn usage_read(
+    fn scheme_read(
         &self,
         a: &Actor,
-        id: Option<Uuid>,
-        get_options: bool,
+        unit: Option<Uuid>,
     ) -> impl Future<Output = Result<Value>> + Send;
-    fn usage_write(
+    fn scheme_write(
         &self,
         a: &Actor,
         key: &str,
-        command: crate::distribution::domain::shared_mobile::usage::UsageCommand,
+        unit: Option<Uuid>,
+        input: Option<
+            crate::distribution::domain::shared_mobile::business_scheme::BusinessSchemeInput,
+        >,
+        mutation: crate::distribution::domain::shared_mobile::business_scheme::SchemeMutation,
+    ) -> impl Future<Output = Result<Value>> + Send;
+    fn preview_task(
+        &self,
+        a: &Actor,
+        key: &str,
+        input: crate::distribution::domain::shared_mobile::business_scheme::TaskPreviewInput,
     ) -> impl Future<Output = Result<Value>> + Send;
     fn task_write(
         &self,

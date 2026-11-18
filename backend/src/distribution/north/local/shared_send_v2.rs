@@ -80,21 +80,30 @@ impl<R: Store> Service<R> {
     pub async fn credential(&self, token: &str) -> Result<Credential> {
         self.0.credential(token).await
     }
-    pub async fn usage_read(
-        &self,
-        a: &Actor,
-        id: Option<Uuid>,
-        get_options: bool,
-    ) -> Result<Value> {
-        self.0.usage_read(a, id, get_options).await
+    pub async fn scheme_read(&self, a: &Actor, unit: Option<Uuid>) -> Result<Value> {
+        self.0.scheme_read(a, unit).await
     }
-    pub async fn usage_write(
+    pub async fn scheme_write(
         &self,
         a: &Actor,
         key: &str,
-        command: crate::distribution::domain::shared_mobile::usage::UsageCommand,
+        unit: Option<Uuid>,
+        input: Option<
+            crate::distribution::domain::shared_mobile::business_scheme::BusinessSchemeInput,
+        >,
+        mutation: crate::distribution::domain::shared_mobile::business_scheme::SchemeMutation,
     ) -> Result<Value> {
-        self.0.usage_write(a, &text(key, 1, 128)?, command).await
+        self.0
+            .scheme_write(a, &text(key, 1, 128)?, unit, input, mutation)
+            .await
+    }
+    pub async fn preview_task(
+        &self,
+        a: &Actor,
+        key: &str,
+        input: crate::distribution::domain::shared_mobile::business_scheme::TaskPreviewInput,
+    ) -> Result<Value> {
+        self.0.preview_task(a, &text(key, 1, 128)?, input).await
     }
     pub async fn task_write(&self, a: &Actor, key: &str, command: TaskCommand) -> Result<Value> {
         self.0.task_write(a, &text(key, 1, 128)?, command).await

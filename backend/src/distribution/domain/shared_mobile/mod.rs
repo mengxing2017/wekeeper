@@ -61,6 +61,8 @@ impl SharedBindingInput {
 pub struct SharedBindingUpdate {
     pub expected_revision: i64,
     pub enabled: bool,
+    pub max_calls: Option<i64>,
+    pub valid_until: Option<chrono::DateTime<chrono::Utc>>,
 }
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -137,7 +139,7 @@ mod shared_binding_tests {
             bad[field] = serde_json::json!("retired");
             assert!(serde_json::from_value::<SharedBindingInput>(bad).is_err());
         }
-        let update = serde_json::json!({"expected_revision":1,"enabled":true});
+        let update = serde_json::json!({"expected_revision":1,"enabled":true,"max_calls":null,"valid_until":null});
         assert_eq!(
             serde_json::to_value(
                 serde_json::from_value::<SharedBindingUpdate>(update.clone()).unwrap()
@@ -175,7 +177,7 @@ pub mod shared_send_v2;
 mod flow_v3;
 pub use flow_v3::*;
 
-pub mod usage;
+pub mod business_scheme;
 
 pub mod execution;
 
