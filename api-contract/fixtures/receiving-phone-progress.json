@@ -1,0 +1,52 @@
+{
+  "id": "00000000-0000-4000-8000-000000000001",
+  "items": [
+    {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "dispatch_target_id": "00000000-0000-4000-8000-000000000003",
+      "device_id": "00000000-0000-4000-8000-000000000004",
+      "position": 0,
+      "message_id": "00000000-0000-4000-8000-000000000005",
+      "target_id": "00000000-0000-4000-8000-000000000006",
+      "target_name": "接收群",
+      "device_name": "手机 A",
+      "intake_id": null,
+      "task_id": null,
+      "item_id": null,
+      "outcome": "pending",
+      "stage": "creating_tasks",
+      "reason_code": "intake_registered",
+      "historical_risk": false,
+      "last_progress_at": "2026-11-18T00:00:00Z"
+    }
+  ],
+  "targets": [
+    {
+      "id": "00000000-0000-4000-8000-000000000003",
+      "message_id": "00000000-0000-4000-8000-000000000005",
+      "channel": "mobile",
+      "target_id": "00000000-0000-4000-8000-000000000006",
+      "target_name": "接收群",
+      "expected_count": 3,
+      "materialized_count": 1,
+      "stopped": false,
+      "sent": 0,
+      "failed": 0,
+      "unknown": 0,
+      "pending": 3,
+      "outcome": "pending",
+      "last_progress_at": "2026-11-18T00:00:00Z",
+      "historical_risk": false
+    }
+  ],
+  "summary": {
+    "target_count": 1,
+    "expected_count": 3,
+    "materialized_count": 1,
+    "sent": 0,
+    "failed": 0,
+    "unknown": 0,
+    "pending": 3
+  },
+  "has_more": false
+}
