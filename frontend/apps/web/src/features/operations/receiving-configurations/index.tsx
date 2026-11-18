@@ -1,3 +1,4 @@
+import {BusinessSchemePage} from '../../admin/mobile-resources/business-scheme'
 import { TableText } from '../../../shared/table-text'
 import {useState} from 'react'
 import {useMutation,useQuery,useQueryClient} from '@tanstack/react-query'
@@ -22,6 +23,7 @@ export function ReceivingConfigurations({channel,scope,admin,platformAdmin}:{cha
  {!scope&&<Select aria-label="业务单位" placeholder="选择业务单位" style={{minWidth:280}} value={selected||undefined} onChange={v=>{setSelected(v);setPage(1)}} options={units.data?.map(u=>({value:u.id,label:u.name}))}/>}
  <Alert type="info" title="按业务单位维护接收群与发送资源" description="启用即授权系统自动处理该单位之后的新消息。同一个群可供多个配置使用；每条消息按配置选择群；全部手机模式由每台手机分别发送，可能向同一群发送多次。配置变更不追溯已有消息。"/>
  {(query.error||resources.error||units.error)&&<Alert type="error" title={query.error?.message||resources.error?.message||units.error?.message}/>}
+ {channel==='mobile'&&unit&&admin&&<BusinessSchemePage key={unit} unit={unit} unitName={units.data?.find(u=>u.id===unit)?.name??unit}/>}
  <Table<ReceivingConfiguration> tableLayout="fixed" scroll={{x:480}} rowKey="id" dataSource={query.data?.items??[]} loading={!!unit&&query.isFetching} pagination={false} columns={[{title:'名称',dataIndex:'name', render:value=><TableText value={value}/>},{title:'状态', width:80,render:(_,r)=><Tag>{r.enabled?'启用':'停用'}</Tag>},{title:'群接收方式',render:(_,r)=>r.target_selection_mode==='round_robin'?'轮询一个群':'全部群'},{title:'手机下发方式',render:(_,r)=>channel==='mobile'?(r.device_dispatch_mode==='all'?'全部手机分别执行':'轮询首选并自动换机'):'—'},{title:'群数量', width:96,render:(_,r)=>r.target_ids.length},...(admin?[{title:'操作', width:88,render:(_:unknown,r:ReceivingConfiguration)=><Button type="link" onClick={()=>edit(r)}>编辑</Button>}]:[])]}/>
  <PaginationControls page={page} more={query.data?.page?.has_more} busy={query.isFetching} change={setPage} subject="接收配置"/>
  </Space>
