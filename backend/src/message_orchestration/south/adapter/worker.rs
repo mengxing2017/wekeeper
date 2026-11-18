@@ -22,43 +22,69 @@ impl Repository {
             .await?;
         let ids:Vec<Uuid>=sqlx::query_scalar("SELECT m.id FROM orchestration_messages m LEFT JOIN orchestration_dispatches d ON d.message_id=m.id WHERE (d.message_id IS NULL OR (d.state IN ('pending','preparing','ready') AND d.next_attempt_at<=clock_timestamp())) ORDER BY m.accepted_at,m.id LIMIT 50")
             .fetch_all(&self.0).await?;
-        for id in ids {
-            // Persist retry identity before reading configuration or keyword dependencies.
-            sqlx::query("INSERT INTO orchestration_dispatches(message_id,content,decision,plans,state) VALUES($1,'','{}','[]','pending') ON CONFLICT DO NOTHING").bind(id).execute(&self.0).await?;
-            if let Err(error) = self.process(id).await {
-                tracing::warn!(message_id=%id,error=?error,"message delegation will retry");
-                if matches!(
-                    error,
-                    Error::Invalid(_)
-                        | Error::Policy(_)
-                        | Error::Conflict
-                        | Error::Forbidden
-                        | Error::NotFound
-                ) {
-                    let mut tx = self.0.begin().await?;
-                    sqlx::query("UPDATE orchestration_dispatches SET state='failed',reason_code='channel_resources_missing',updated_at=clock_timestamp() WHERE message_id=$1 AND state IN ('pending','preparing','ready')").bind(id).execute(&mut *tx).await?;
-                    let receipt: Uuid = sqlx::query_scalar(
-                        "SELECT evidence_ref FROM orchestration_messages WHERE id=$1",
-                    )
-                    .bind(id)
-                    .fetch_one(&mut *tx)
-                    .await?;
-                    mirror(
-                        &mut tx,
-                        receipt,
-                        "not_dispatched",
-                        Some("channel_resources_missing"),
-                    )
-                    .await?;
-                    tx.commit().await?;
-                } else {
-                    sqlx::query("UPDATE orchestration_dispatches SET last_error_code='internal_processing_unavailable',failures=failures+1,next_attempt_at=clock_timestamp()+make_interval(secs=>LEAST(300,5*power(2,LEAST(failures,6)))),updated_at=clock_timestamp() WHERE message_id=$1 AND state IN ('pending','preparing','ready')").bind(id).execute(&self.0).await?;
-                }
-            } else {
-                sqlx::query("UPDATE orchestration_dispatches SET last_error_code=NULL WHERE message_id=$1 AND last_error_code IS NOT NULL").bind(id).execute(&self.0).await?;
+        let mut ids = ids.into_iter();
+        let mut jobs = tokio::task::JoinSet::new();
+        for _ in 0..4 {
+            if let Some(id) = ids.next() {
+                let repo = self.clone();
+                jobs.spawn(async move { repo.process_one(id).await });
             }
         }
-        self.aggregate().await
+        let mut failure = None;
+        while let Some(result) = jobs.join_next().await {
+            match result {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    failure = Some(error);
+                }
+                Err(_) => {
+                    failure = Some(Error::Unavailable);
+                }
+            }
+            if let Some(id) = ids.next() {
+                let repo = self.clone();
+                jobs.spawn(async move { repo.process_one(id).await });
+            }
+        }
+        self.aggregate().await?;
+        failure.map_or(Ok(()), Err)
+    }
+    async fn process_one(&self, id: Uuid) -> Result<()> {
+        // Persist retry identity before reading configuration or keyword dependencies.
+        sqlx::query("INSERT INTO orchestration_dispatches(message_id,content,decision,plans,state) VALUES($1,'','{}','[]','pending') ON CONFLICT DO NOTHING").bind(id).execute(&self.0).await?;
+        if let Err(error) = self.process(id).await {
+            tracing::warn!(message_id=%id,error=?error,"message delegation will retry");
+            if matches!(
+                error,
+                Error::Invalid(_)
+                    | Error::Policy(_)
+                    | Error::Conflict
+                    | Error::Forbidden
+                    | Error::NotFound
+            ) {
+                let mut tx = self.0.begin().await?;
+                sqlx::query("UPDATE orchestration_dispatches SET state='failed',reason_code='channel_resources_missing',updated_at=clock_timestamp() WHERE message_id=$1 AND state IN ('pending','preparing','ready')").bind(id).execute(&mut *tx).await?;
+                let receipt: Uuid = sqlx::query_scalar(
+                    "SELECT evidence_ref FROM orchestration_messages WHERE id=$1",
+                )
+                .bind(id)
+                .fetch_one(&mut *tx)
+                .await?;
+                mirror(
+                    &mut tx,
+                    receipt,
+                    "not_dispatched",
+                    Some("channel_resources_missing"),
+                )
+                .await?;
+                tx.commit().await?;
+            } else {
+                sqlx::query("UPDATE orchestration_dispatches SET last_error_code='internal_processing_unavailable',failures=failures+1,next_attempt_at=clock_timestamp()+make_interval(secs=>LEAST(300,5*power(2,LEAST(failures,6)))),updated_at=clock_timestamp() WHERE message_id=$1 AND state IN ('pending','preparing','ready')").bind(id).execute(&self.0).await?;
+            }
+        } else {
+            sqlx::query("UPDATE orchestration_dispatches SET last_error_code=NULL WHERE message_id=$1 AND last_error_code IS NOT NULL").bind(id).execute(&self.0).await?;
+        }
+        Ok(())
     }
     async fn process(&self, id: Uuid) -> Result<()> {
         let row=sqlx::query("SELECT platform_id,unit_id,evidence_ref,original FROM orchestration_messages WHERE id=$1").bind(id).fetch_one(&self.0).await?;
@@ -70,10 +96,14 @@ impl Repository {
             .to_owned();
         let mut tx = self.0.begin().await?;
         // A transaction lock, not an in-memory per-message waiting thread.
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,178))")
-            .bind(id.to_string())
-            .execute(&mut *tx)
-            .await?;
+        let acquired: bool =
+            sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(hashtextextended($1,178))")
+                .bind(id.to_string())
+                .fetch_one(&mut *tx)
+                .await?;
+        if !acquired {
+            return Ok(());
+        }
         let existing: Option<Value> = sqlx::query_scalar(
             "SELECT to_jsonb(d) FROM orchestration_dispatches d WHERE message_id=$1 FOR UPDATE",
         )
