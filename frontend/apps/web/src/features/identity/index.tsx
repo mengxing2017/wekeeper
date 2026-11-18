@@ -56,6 +56,15 @@ export function SessionGate({
         cache.getMutationCache().clear()
       } catch (e) {
         setError((e as Error).message)
+        // A lost response may hide successful revocation. Recheck the actual session.
+        try {
+          const session = await identity.session()
+          cache.setQueryData(['session'], session)
+          if (!session) {
+            cache.removeQueries({ predicate: query => query.queryKey[0] !== 'session' })
+            cache.getMutationCache().clear()
+          }
+        } catch { /* HTTP 401 uses the shared expiry lifecycle; network errors keep the visible session. */ }
       } finally {
         logoutRequest.current = null
         setBusy(false)

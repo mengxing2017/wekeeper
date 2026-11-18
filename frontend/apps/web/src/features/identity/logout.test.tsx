@@ -50,16 +50,16 @@ it('cancels protected queries before submitting logout', async () => {
   expect(await screen.findByRole('heading',{name:'登录管理后台'})).toBeTruthy()
 })
 it('reports failed logout without claiming success and permits retry', async () => {
-  const fetcher = vi.fn().mockRejectedValueOnce(new Error('network unavailable')).mockImplementation(async () => Response.json({data:null},{headers}))
+  const fetcher = vi.fn().mockRejectedValueOnce(new Error('network unavailable')).mockImplementation(async (_:string,options?:RequestInit) => Response.json(options?.method==='GET'?{data:{type:'sessions',id:'session',attributes:{csrf:'csrf',user}}}:{data:null},{headers}))
   vi.stubGlobal('fetch',fetcher)
   const cache = mount()
   fireEvent.click(screen.getByRole('button',{name:'退出登录'}))
   expect(await screen.findByText('网络中断，请刷新记录核对操作结果')).toBeTruthy()
   expect(screen.getByText('受保护工作区')).toBeTruthy()
-  expect(cache.getQueryData(['session'])).toEqual({csrf:'csrf',user})
+  expect(cache.getQueryData(['session'])).toMatchObject({csrf:'csrf',user})
   fireEvent.click(screen.getByRole('button',{name:'退出登录'}))
   expect(await screen.findByRole('heading',{name:'登录管理后台'})).toBeTruthy()
-  expect(fetcher).toHaveBeenCalledTimes(2)
+  expect(fetcher).toHaveBeenCalledTimes(3)
 })
 it('deduplicates logout while awaiting revocation and does not exit before success', async () => {
   let finish!: (value: Response) => void
@@ -73,4 +73,14 @@ it('deduplicates logout while awaiting revocation and does not exit before succe
   expect(screen.getByText('受保护工作区')).toBeTruthy()
   finish(Response.json({data:null},{headers}))
   expect(await screen.findByRole('heading',{name:'登录管理后台'})).toBeTruthy()
+})
+
+it('rechecks the session when the logout response is lost after server revocation',async()=>{
+ const fetcher=vi.fn().mockRejectedValueOnce(new Error('lost response')).mockResolvedValue(Response.json({data:null},{headers}))
+ vi.stubGlobal('fetch',fetcher)
+ const cache=mount()
+ fireEvent.click(screen.getByRole('button',{name:'退出登录'}))
+ expect(await screen.findByRole('heading',{name:'登录管理后台'})).toBeTruthy()
+ expect(fetcher.mock.calls[1][0]).toBe('/api/v1/auth/session')
+ expect(cache.getQueryData(['private-data'])).toBeUndefined()
 })
