@@ -55,9 +55,6 @@ pub(super) async fn resolve(tx: &mut Tx<'_>, unit: Option<Uuid>) -> Result<Value
     };
     Ok(p)
 }
-pub(super) async fn status(tx: &mut Tx<'_>) -> Result<SendingStatus> {
-    status_for(tx, None).await
-}
 pub(super) async fn status_for(tx: &mut Tx<'_>, unit: Option<Uuid>) -> Result<SendingStatus> {
     let p = resolve(tx, unit).await?;
     Ok(SendingStatus::project(if p["source"] == "builtin" {

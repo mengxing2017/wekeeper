@@ -20,20 +20,13 @@ async fn generation(tx: &mut Tx<'_>, g: i64) -> Result<String> {
 }
 async fn usage_snapshot(tx: &mut Tx<'_>, _a: &Actor, v: &UsageInput) -> Result<Value> {
     let corp = generation(tx, v.generation).await?;
-    let member:Value=sqlx::query_scalar("SELECT to_jsonb(m) FROM wecom_members m WHERE id=$1 AND verification='verified' AND status=1 AND visibility='visible' AND checked_at>now()-interval '24 hours' FOR SHARE").bind(v.member_id).fetch_optional(&mut **tx).await?.ok_or_else(||Error::Invalid("成员目录未准备，请由平台负责人处理".into()))?;
-    let account:Value=sqlx::query_scalar("SELECT jsonb_build_object('id',id,'display_name',display_name,'wecom_member_id',wecom_member_id,'binding_revision',wecom_binding_revision) FROM accounts WHERE id=$1 AND active FOR UPDATE").bind(v.account_id).fetch_optional(&mut **tx).await?.ok_or(Error::NotFound)?;
-    require(
-        account["wecom_member_id"].is_null() || account["wecom_member_id"] == json!(v.member_id),
-        "该账号已绑定其他官方成员",
-    )?;
-    let collision: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM accounts WHERE wecom_member_id=$1 AND id<>$2)",
+    let (member, account) = crate::integrations::south::adapter::binding::snapshot(
+        tx,
+        v.account_id,
+        v.member_id,
+        v.generation,
     )
-    .bind(v.member_id)
-    .bind(v.account_id)
-    .fetch_one(&mut **tx)
     .await?;
-    require(!collision, "该官方成员已关联其他账号，请由负责人核对")?;
     let qualification: Option<Value> = sqlx::query_scalar(
         "SELECT to_jsonb(q) FROM wecom_sender_qualifications q WHERE account_id=$1 FOR SHARE",
     )
@@ -60,10 +53,17 @@ async fn usage_snapshot(tx: &mut Tx<'_>, _a: &Actor, v: &UsageInput) -> Result<V
     )
 }
 async fn apply_usage(tx: &mut Tx<'_>, a: &Actor, v: &UsageInput, snapshot: &Value) -> Result<()> {
-    if snapshot["account"]["wecom_member_id"].is_null() {
-        preview::platform(tx, a).await?;
-        sqlx::query("UPDATE accounts SET wecom_member_id=$2,wecom_binding_revision=wecom_binding_revision+1 WHERE id=$1 AND wecom_member_id IS NULL").bind(v.account_id).bind(v.member_id).execute(&mut **tx).await?;
-    }
+    crate::integrations::south::adapter::binding::write(
+        tx,
+        a.id,
+        v.account_id,
+        Some(v.member_id),
+        snapshot["account"]["binding_revision"]
+            .as_i64()
+            .ok_or(Error::Conflict)?,
+        Some(v.generation),
+    )
+    .await?;
     sqlx::query("INSERT INTO wecom_sender_qualifications(account_id,enabled,updated_by) VALUES($1,true,$2) ON CONFLICT(account_id) DO UPDATE SET enabled=true,revision=wecom_sender_qualifications.revision+1,updated_by=EXCLUDED.updated_by,updated_at=now() WHERE NOT wecom_sender_qualifications.enabled").bind(v.account_id).bind(a.id).execute(&mut **tx).await?;
     for g in snapshot["groups"].as_array().ok_or(Error::Conflict)? {
         let d = &g["directory"];
@@ -231,7 +231,18 @@ impl Store for Repository {
             Command::UsagePreview(v) => {
                 preview::authorize(&mut tx, a, "admin").await?;
                 let snapshot = usage_snapshot(&mut tx, a, &v).await?;
-                preview::create(&mut tx, a, "official_usage", json!(v), snapshot.clone()).await?
+                {
+                    let mut summary = json!(v);
+                    summary["effects"] = json!({
+                        "bind_identity": snapshot["account"]["wecom_member_id"].is_null(),
+                        "enable_qualification": snapshot["qualification"].is_null() || snapshot["qualification"]["enabled"] != true,
+                        "restore_group_ids": snapshot["groups"].as_array().ok_or(Error::Conflict)?.iter().filter(|g| !g["binding"].is_null() && g["binding"]["active"] == false).map(|g| g["directory"]["id"].clone()).collect::<Vec<_>>()
+                    });
+                    let mut result =
+                        preview::create(&mut tx, a, "official_usage", json!(v), snapshot).await?;
+                    result["summary"] = summary;
+                    result
+                }
             }
             Command::UsageConfirm(c) => {
                 preview::authorize(&mut tx, a, "admin").await?;

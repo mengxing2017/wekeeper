@@ -18,14 +18,9 @@ struct Fixture {
     actor: Actor,
     device: Uuid,
     targets: Vec<Uuid>,
-    release: Uuid,
-    acceptance: Uuid,
 }
 impl Fixture {
     async fn new() -> Self {
-        Self::with_adapter(true).await
-    }
-    async fn with_adapter(seed_adapter: bool) -> Self {
         let url = std::env::var("WEKEEPER_TEST_DATABASE_URL")
             .expect("explicit isolated database required");
         let base = PgPool::connect(&url).await.unwrap();
@@ -57,11 +52,6 @@ impl Fixture {
             sqlx::query("INSERT INTO mobile_targets(client_kind,id,search_text,created_by,updated_by) VALUES('wecom',$1,'测试群',$2,$2)").bind(target).bind(actor_id).execute(&pool).await.unwrap();
             sqlx::query("INSERT INTO mobile_device_target_bindings(id,device_id,target_id,created_by,updated_by) VALUES($1,$2,$3,$4,$4)").bind(Uuid::new_v4()).bind(device).bind(target).bind(actor_id).execute(&pool).await.unwrap();
         }
-        let release = Uuid::new_v4();
-        let acceptance = Uuid::new_v4();
-        if seed_adapter {
-            Self::seed_adapter(&pool, actor_id, device, release, acceptance).await;
-        }
         let actor=serde_json::from_value(json!({"id":actor_id,"username":"v9-admin","display_name":"Admin","platform_admin":true,"wecom_authenticated":false})).unwrap();
         Self {
             pool,
@@ -70,52 +60,7 @@ impl Fixture {
             actor,
             device,
             targets,
-            release,
-            acceptance,
         }
-    }
-    async fn seed_adapter(
-        pool: &PgPool,
-        actor_id: Uuid,
-        device: Uuid,
-        release: Uuid,
-        acceptance: Uuid,
-    ) {
-        Self::seed_runtime_configuration(pool, release).await;
-        let flow = Uuid::new_v4();
-        let artifact = Uuid::new_v4();
-        let baseline = Uuid::new_v4();
-        let fixture: Value = serde_json::from_str(include_str!(
-            "../../api-contract/fixtures/local-group-text-flow.json"
-        ))
-        .unwrap();
-        sqlx::query("INSERT INTO mobile_v9_flows(id,name,flow,digest,created_by) VALUES($1,'Synthetic',$2,$3,$4)").bind(flow).bind(&fixture["flow"]).bind(fixture["flow_digest"].as_str()).bind(actor_id).execute(pool).await.unwrap();
-        sqlx::query("INSERT INTO mobile_v9_artifacts(id,kind,name,sha256,content,created_by) VALUES($1,'apk','Synthetic',repeat('a',64),$2,$3)").bind(artifact).bind(vec![1u8]).bind(actor_id).execute(pool).await.unwrap();
-        sqlx::query("INSERT INTO mobile_v9_baselines(id,flow_id,device_id,samples,evidence_ids,min_interval_ms,recorded_by) VALUES($1,$2,$3,'[]',ARRAY[$4]::uuid[],1000,$5)").bind(baseline).bind(flow).bind(device).bind(artifact).bind(actor_id).execute(pool).await.unwrap();
-        sqlx::query("INSERT INTO mobile_v9_adapter_releases(id,name,version,flow_id,flow,content_digest,baseline_id,evidence_ids,created_by) VALUES($1,'Synthetic','1',$2,$3,$4,$5,ARRAY[$6]::uuid[],$7)").bind(release).bind(flow).bind(&fixture["flow"]).bind(fixture["flow_digest"].as_str()).bind(baseline).bind(artifact).bind(actor_id).execute(pool).await.unwrap();
-        sqlx::query("INSERT INTO mobile_v9_acceptance_runs(id,release_id,stage,apk_id,evidence_ids,validation_ids,cases,soak_hours,soak_passed,historical_debt_closed,reviewer_id,reason) VALUES($1,$2,'test_send',$3,ARRAY[$3]::uuid[],'{}','{}',0,false,false,$4,'Synthetic test only')").bind(acceptance).bind(release).bind(artifact).bind(actor_id).execute(pool).await.unwrap();
-    }
-    async fn seed_runtime_configuration(pool: &PgPool, id: Uuid) {
-        use wekeeper_api::distribution::{
-            domain::shared_mobile::runtime_configuration::RuntimeConfiguration,
-            south::adapter::postgres::shared_send_v2::configuration,
-        };
-        let fixture: Value = serde_json::from_str(include_str!(
-            "../../api-contract/fixtures/local-group-text-flow.json"
-        ))
-        .unwrap();
-        configuration::install(
-            pool,
-            &RuntimeConfiguration {
-                id,
-                version: "Synthetic test only".into(),
-                capability: "wecom.group_text".into(),
-                flow: fixture["flow"].clone(),
-                flow_digest: fixture["flow_digest"].as_str().unwrap().into(),
-            },
-        )
-        .await
-        .unwrap();
     }
     async fn close(self) {
         self.pool.close().await;
@@ -127,19 +72,6 @@ impl Fixture {
     }
     fn repo(&self) -> Repository {
         Repository(self.pool.clone())
-    }
-    async fn activate(&self, key: &str) -> wekeeper_api::business::Result<Value> {
-        self.repo()
-            .platform_write(
-                &self.actor,
-                key,
-                PlatformCommand::Manage(ManagementCommand::Activations(ActivationInput {
-                    release_id: self.release,
-                    expected_revision: 0,
-                    reason: "Synthetic test".into(),
-                })),
-            )
-            .await
     }
 }
 
@@ -153,29 +85,9 @@ impl ObjectLimits {
 
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn concurrent_activation_has_one_winner_and_immutable_audit() {
-    let f = Fixture::new().await;
-    let (a, b) = tokio::join!(f.activate("left"), f.activate("right"));
-    assert_ne!(a.is_ok(), b.is_ok());
-    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM mobile_v9_activation_events")
-        .fetch_one(&f.pool)
-        .await
-        .unwrap();
-    assert_eq!(count, 1);
-    assert!(
-        sqlx::query("DELETE FROM mobile_v9_activation_events")
-            .execute(&f.pool)
-            .await
-            .is_err()
-    );
-    f.close().await;
-}
-
-#[tokio::test]
-#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn business_configuration_does_not_require_technical_delivery() {
     use wekeeper_api::distribution::domain::shared_mobile::business_scheme::*;
-    let f = Fixture::with_adapter(false).await;
+    let f = Fixture::new().await;
     let r = f.repo();
     let options = r.scheme_read(&f.actor, None).await.unwrap();
     assert!(options.get("delivery").is_none());
@@ -281,7 +193,7 @@ async fn business_configuration_does_not_require_technical_delivery() {
     assert_eq!(grant["plan"]["execution"]["contract"], "device_owned/2");
     assert!(grant["plan"].get("flow").is_none());
     assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_v9_invocations")
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM pg_class WHERE relnamespace=current_schema()::regnamespace AND relname='mobile_v9_invocations'")
             .fetch_one(&f.pool)
             .await
             .unwrap(),
@@ -293,7 +205,7 @@ async fn business_configuration_does_not_require_technical_delivery() {
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn optional_environment_observation_ignores_global_housekeeping_and_is_idempotent() {
-    let f = Fixture::with_adapter(false).await;
+    let f = Fixture::new().await;
     let token = "wk_device_environment-observation-test";
     sqlx::query("INSERT INTO device_credentials(token_hash,device_id,generation,expires_at) VALUES($1,$2,1,clock_timestamp()+interval '1 hour')")
         .bind(wekeeper_api::business::hash(token)).bind(f.device).execute(&f.pool).await.unwrap();
@@ -346,97 +258,22 @@ async fn reconciliation_never_schedules_downstream_ui_checks() {
     let token = "wk_device_synthetic-check-isolation";
     sqlx::query("INSERT INTO device_credentials(token_hash,device_id,generation,expires_at) VALUES($1,$2,1,clock_timestamp()+interval '1 hour')").bind(wekeeper_api::business::hash(token)).bind(f.device).execute(&f.pool).await.unwrap();
     assert!(r.credential(token).await.is_ok());
-    sqlx::query(&format!("CREATE FUNCTION reject_one_check() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.target_id='{}'::uuid THEN RAISE EXCEPTION 'synthetic check insert failure'; END IF; RETURN NEW; END $$",f.targets[0])).execute(&f.pool).await.unwrap();
-    sqlx::query("CREATE TRIGGER reject_one_check BEFORE INSERT ON mobile_v9_send_inspections FOR EACH ROW EXECUTE FUNCTION reject_one_check()").execute(&f.pool).await.unwrap();
     let _ = r.task_read(&f.actor, None).await.unwrap();
-    let count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM mobile_v9_send_inspections WHERE target_id=$1 AND state='pending'",
-    )
-    .bind(f.targets[1])
-    .fetch_one(&f.pool)
-    .await
-    .unwrap();
-    assert_eq!(
-        count, 0,
-        "platform must never schedule downstream UI checks"
-    );
-    sqlx::query("DROP TRIGGER reject_one_check ON mobile_v9_send_inspections")
-        .execute(&f.pool)
-        .await
-        .unwrap();
-    let _ = r.task_read(&f.actor, None).await.unwrap();
-    let count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM mobile_v9_send_inspections WHERE target_id=$1 AND state='pending'",
-    )
-    .bind(f.targets[0])
-    .fetch_one(&f.pool)
-    .await
-    .unwrap();
-    assert_eq!(
-        count, 0,
-        "reconciliation must not create downstream UI checks"
-    );
+    r.task_read(&f.actor, None).await.unwrap();
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM mobile_execution_grants WHERE kind='inspection'")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 0, "reads must never schedule downstream UI checks");
     f.close().await;
 }
 
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn runtime_configuration_is_independent_and_invalid_update_does_not_replace_current() {
-    use wekeeper_api::distribution::{
-        domain::{
-            shared_mobile::business_scheme::*,
-            shared_mobile::runtime_configuration::RuntimeConfiguration,
-        },
-        south::adapter::postgres::shared_send_v2::configuration,
-    };
-    let f = Fixture::with_adapter(false).await;
-    assert_eq!(
-        configuration::status(&f.pool).await.unwrap()["issue"]["code"],
-        "configuration_missing"
-    );
-    Fixture::seed_runtime_configuration(&f.pool, f.release).await;
-    assert_eq!(
-        configuration::status(&f.pool).await.unwrap()["available"],
-        true
-    );
-    // Reinstall is idempotent, without a service account or acceptance record.
-    Fixture::seed_runtime_configuration(&f.pool, f.release).await;
-    for table in [
-        "mobile_v9_adapter_releases",
-        "mobile_v9_acceptance_runs",
-        "mobile_v9_artifacts",
-    ] {
-        assert_eq!(
-            sqlx::query_scalar::<_, i64>(&format!("SELECT count(*) FROM {table}"))
-                .fetch_one(&f.pool)
-                .await
-                .unwrap(),
-            0
-        );
-    }
-    let fixture: Value = serde_json::from_str(include_str!(
-        "../../api-contract/fixtures/local-group-text-flow.json"
-    ))
-    .unwrap();
-    let mut bad = RuntimeConfiguration {
-        id: Uuid::new_v4(),
-        version: "bad".into(),
-        capability: "wecom.group_text".into(),
-        flow: fixture["flow"].clone(),
-        flow_digest: "invalid".into(),
-    };
-    assert!(configuration::install(&f.pool, &bad).await.is_err());
-    bad.id = f.release;
-    bad.flow_digest = fixture["flow_digest"].as_str().unwrap().into();
-    assert!(configuration::install(&f.pool, &bad).await.is_err());
-    bad.version = "Synthetic test only".into();
-    assert!(configuration::verify(&f.pool, &bad).await.is_ok());
-    bad.id = Uuid::new_v4();
-    assert!(configuration::verify(&f.pool, &bad).await.is_err());
-    assert_eq!(
-        configuration::status(&f.pool).await.unwrap()["configuration_id"],
-        json!(f.release)
-    );
+async fn task_preview_and_resources_need_no_ui_configuration() {
+    use wekeeper_api::distribution::domain::shared_mobile::business_scheme::*;
+    let f = Fixture::new().await;
     let preview = f
         .repo()
         .preview_task(
@@ -644,7 +481,7 @@ async fn pool_delivery(
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn task_confirmation_and_read_exclude_internal_dispatch_cursor() {
-    let f = Fixture::with_adapter(false).await;
+    let f = Fixture::new().await;
     // An offline phone must not prevent task acceptance or require an extra opening step.
     let task = pool_confirm(&f, vec![f.targets[0]]).await;
     let dispatch = &task["items"][0]["dispatch"];
@@ -670,7 +507,7 @@ async fn task_confirmation_and_read_exclude_internal_dispatch_cursor() {
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn offline_preference_dispatches_authorized_phone_and_never_expands_scope() {
-    let f = Fixture::with_adapter(false).await;
+    let f = Fixture::new().await;
     let b = pool_phone(&f, "B").await;
     let (_cb, _eb) = pool_ready(&f, b).await;
     let task = pool_confirm(&f, vec![f.targets[0]]).await;
@@ -726,7 +563,7 @@ async fn offline_preference_dispatches_authorized_phone_and_never_expands_scope(
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn unknown_waits_only_until_result_deadline_then_switches_phone() {
-    let f = Fixture::with_adapter(false).await;
+    let f = Fixture::new().await;
     let b = pool_phone(&f, "B").await;
     let (ca, ea) = pool_ready(&f, f.device).await;
     let (_cb, _eb) = pool_ready(&f, b).await;
@@ -755,7 +592,7 @@ async fn unknown_waits_only_until_result_deadline_then_switches_phone() {
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn explicit_failure_switches_on_next_scan_without_five_minute_wait() {
-    let f = Fixture::with_adapter(false).await;
+    let f = Fixture::new().await;
     let b = pool_phone(&f, "B").await;
     let (ca, ea) = pool_ready(&f, f.device).await;
     let (_cb, _eb) = pool_ready(&f, b).await;
@@ -782,7 +619,7 @@ async fn explicit_failure_switches_on_next_scan_without_five_minute_wait() {
 #[tokio::test]
 #[ignore = "requires explicit isolated database"]
 async fn late_success_keeps_successor_identity_and_completes_target() {
-    let f = Fixture::with_adapter(false).await;
+    let f = Fixture::new().await;
     let b = pool_phone(&f, "B").await;
     let (ca, ea) = pool_ready(&f, f.device).await;
     let (cb, _eb) = pool_ready(&f, b).await;
@@ -827,7 +664,7 @@ async fn late_success_keeps_successor_identity_and_completes_target() {
 #[tokio::test]
 #[ignore = "requires explicit isolated database"]
 async fn concurrent_scanners_create_one_current_successor() {
-    let f = Fixture::with_adapter(false).await;
+    let f = Fixture::new().await;
     let b = pool_phone(&f, "B").await;
     let (ca, ea) = pool_ready(&f, f.device).await;
     let (_cb, _eb) = pool_ready(&f, b).await;
@@ -875,7 +712,7 @@ fn completion(
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn dispatch_visits_every_candidate_exactly_three_times() {
-    let f = Fixture::with_adapter(false).await;
+    let f = Fixture::new().await;
     let b = pool_phone(&f, "B").await;
     let c = pool_phone(&f, "C").await;
     let mut phones = Vec::new();
@@ -924,7 +761,7 @@ async fn dispatch_visits_every_candidate_exactly_three_times() {
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn dispatch_receipt_timeout_and_business_interval_do_not_refresh_budget() {
-    let f = Fixture::with_adapter(false).await;
+    let f = Fixture::new().await;
     pool_ready(&f, f.device).await;
     let task = pool_confirm(&f, vec![f.targets[0]]).await;
     let initial = pool_current(&task["items"][0])["id"].clone();
@@ -985,7 +822,7 @@ async fn dispatch_receipt_timeout_and_business_interval_do_not_refresh_budget() 
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn dispatch_third_round_success_completes_without_failure() {
-    let f = Fixture::with_adapter(false).await;
+    let f = Fixture::new().await;
     let (credential, epoch) = pool_ready(&f, f.device).await;
     let task = pool_confirm(&f, vec![f.targets[0]]).await;
     for _ in 0..2 {
@@ -1019,7 +856,7 @@ async fn dispatch_third_round_success_completes_without_failure() {
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn dispatch_exhausted_target_does_not_block_other_targets() {
-    let f = Fixture::with_adapter(false).await;
+    let f = Fixture::new().await;
     let (credential, epoch) = pool_ready(&f, f.device).await;
     let task = pool_confirm(&f, f.targets.clone()).await;
     let first = serde_json::from_value::<Uuid>(task["items"][0]["id"].clone()).unwrap();
@@ -1049,7 +886,7 @@ async fn dispatch_exhausted_target_does_not_block_other_targets() {
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn delivered_phone_heartbeat_freshness_does_not_cancel_execution() {
-    let f = Fixture::with_adapter(false).await;
+    let f = Fixture::new().await;
     let b = pool_phone(&f, "B").await;
     let (credential, epoch) = pool_ready(&f, f.device).await;
     pool_ready(&f, b).await;
@@ -1089,7 +926,7 @@ async fn delivered_phone_heartbeat_freshness_does_not_cancel_execution() {
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn offline_scans_cannot_consume_a_five_minute_round() {
-    let f = Fixture::with_adapter(false).await;
+    let f = Fixture::new().await;
     let task = pool_confirm(&f, vec![f.targets[0]]).await;
     for round in 0..3 {
         for _ in 0..3 {
@@ -1116,7 +953,7 @@ async fn offline_scans_cannot_consume_a_five_minute_round() {
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn task_list_status_matches_detail_and_completion_survives_manual_stop() {
-    let f = Fixture::with_adapter(false).await;
+    let f = Fixture::new().await;
     let (credential, epoch) = pool_ready(&f, f.device).await;
     let task = pool_confirm(&f, vec![f.targets[0]]).await;
     let task_id = serde_json::from_value::<Uuid>(task["id"].clone()).unwrap();
@@ -1193,7 +1030,7 @@ async fn task_list_status_matches_detail_and_completion_survives_manual_stop() {
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn candidate_retains_assignment_through_two_lost_cycles_and_transport_repair() {
-    let f = Fixture::with_adapter(false).await;
+    let f = Fixture::new().await;
     let b = pool_phone(&f, "B").await;
     pool_ready(&f, f.device).await;
     pool_ready(&f, b).await;
@@ -1229,9 +1066,8 @@ async fn candidate_retains_assignment_through_two_lost_cycles_and_transport_repa
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn offline_binding_is_selectable_and_confirmable_without_environment_or_consent() {
     let f = Fixture::new().await;
-    f.activate("activate").await.unwrap();
     let r = f.repo();
-    let policy:PolicyInput=serde_json::from_value(json!({"expected_revision":0,"mode":"enabled","confirmation_seconds":600,"inspection_seconds":600,"retry_seconds":300,"retry_limit":3,"timezone":"Asia/Shanghai","allowed_windows":[{"weekdays":[1,2,3,4,5,6,7],"start_minute":0,"end_minute":1440}],"limits":ObjectLimits::value(),"reason":"Synthetic test"})).unwrap();
+    let policy:PolicyInput=serde_json::from_value(json!({"expected_revision":0,"mode":"enabled","confirmation_seconds":600,"timezone":"Asia/Shanghai","allowed_windows":[{"weekdays":[1,2,3,4,5,6,7],"start_minute":0,"end_minute":1440}],"limits":ObjectLimits::value(),"reason":"Synthetic test"})).unwrap();
     save_policy(&r, &f.actor, "policy", policy).await.unwrap();
 
     let status = r.task_read(&f.actor, None).await.unwrap();
@@ -1433,25 +1269,6 @@ async fn offline_binding_is_selectable_and_confirmable_without_environment_or_co
             .unwrap(),
         task
     );
-    let artifact: Uuid =
-        sqlx::query_scalar("SELECT apk_id FROM mobile_v9_acceptance_runs WHERE id=$1")
-            .bind(f.acceptance)
-            .fetch_one(&f.pool)
-            .await
-            .unwrap();
-    assert_eq!(
-        f.repo().artifact_content(&f.actor, artifact).await.unwrap(),
-        vec![1u8]
-    );
-    let mut outsider = f.actor.clone();
-    outsider.id = Uuid::new_v4();
-    sqlx::query("INSERT INTO accounts(id,username,display_name,platform_admin) VALUES($1,'outsider','Outsider',false)").bind(outsider.id).execute(&f.pool).await.unwrap();
-    assert!(
-        f.repo()
-            .artifact_content(&outsider, artifact)
-            .await
-            .is_err()
-    );
     f.close().await;
 }
 
@@ -1501,7 +1318,7 @@ async fn acknowledge_execution(
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn direct_delivery_signs_before_transport_and_reconnect_reuses_one_capability() {
-    let f = Fixture::with_adapter(false).await;
+    let f = Fixture::new().await;
     let (c, runtime) = pool_ready(&f, f.device).await;
     let task = pool_confirm(&f, vec![f.targets[0]]).await;
     pool_tick(&f).await;
@@ -1555,7 +1372,7 @@ async fn direct_delivery_signs_before_transport_and_reconnect_reuses_one_capabil
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn direct_timeouts_and_late_receipt_preserve_original_attempt_facts() {
-    let f = Fixture::with_adapter(false).await;
+    let f = Fixture::new().await;
     let b = pool_phone(&f, "B").await;
     let (c, e) = pool_ready(&f, f.device).await;
     let (cb, eb) = pool_ready(&f, b).await;
@@ -1624,7 +1441,7 @@ async fn direct_timeouts_and_late_receipt_preserve_original_attempt_facts() {
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn result_before_receipt_fences_redelivery_without_a_false_receipt_timeout() {
-    let f = Fixture::with_adapter(false).await;
+    let f = Fixture::new().await;
     let (c, e) = pool_ready(&f, f.device).await;
     let task = pool_confirm(&f, vec![f.targets[0]]).await;
     pool_tick(&f).await;
@@ -1690,7 +1507,7 @@ async fn result_before_receipt_fences_redelivery_without_a_false_receipt_timeout
 async fn real_websocket_directly_delivers_signed_execution_and_old_routes_are_absent() {
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
-    let f = Fixture::with_adapter(false).await;
+    let f = Fixture::new().await;
     let (c, runtime) = pool_ready(&f, f.device).await;
     let token = format!("wk_device_{}", Uuid::new_v4());
     sqlx::query("INSERT INTO device_credentials(token_hash,device_id,generation,expires_at) VALUES($1,$2,1,clock_timestamp()+interval '1 hour')").bind(wekeeper_api::business::hash(&token)).bind(c.device_id).execute(&f.pool).await.unwrap();
@@ -1879,7 +1696,7 @@ async fn confirm_preview(
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn unit_schemes_resolve_defaults_independently_and_restore_with_audit() {
     use wekeeper_api::distribution::domain::shared_mobile::business_scheme::SchemeMutation;
-    let f = Fixture::with_adapter(false).await;
+    let f = Fixture::new().await;
     let a = scheme_unit(&f).await;
     let b = scheme_unit(&f).await;
     // Exercise the HTTP boundary: repository reads alone do not catch null JSON:API IDs.
@@ -1978,7 +1795,7 @@ async fn unit_schemes_resolve_defaults_independently_and_restore_with_audit() {
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn unit_scheme_changes_invalidate_only_affected_previews_and_pause_without_spending_rounds() {
-    let f = Fixture::with_adapter(false).await;
+    let f = Fixture::new().await;
     let unit = scheme_unit(&f).await;
     scheme_save(&f, Some(unit), scheme_input(false, 0), "unit")
         .await
@@ -2029,7 +1846,7 @@ async fn unit_scheme_changes_invalidate_only_affected_previews_and_pause_without
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn inherited_unit_quotas_are_independent_and_version_changes_do_not_reset_usage() {
-    let f = Fixture::with_adapter(false).await;
+    let f = Fixture::new().await;
     let a = scheme_unit(&f).await;
     let b = scheme_unit(&f).await;
     let phone_b = pool_phone(&f, "Phone B").await;
@@ -2066,7 +1883,7 @@ async fn inherited_unit_quotas_are_independent_and_version_changes_do_not_reset_
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn resource_budget_is_shared_across_units_and_uncalled_results_release_it() {
-    let f = Fixture::with_adapter(false).await;
+    let f = Fixture::new().await;
     let a = scheme_unit(&f).await;
     let b = scheme_unit(&f).await;
     scheme_save(&f, None, scheme_input(true, 0), "default")
@@ -2118,7 +1935,7 @@ async fn resource_budget_is_shared_across_units_and_uncalled_results_release_it(
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn singleton_phone_quota_wait_does_not_exhaust_dispatch_rounds() {
-    let f = Fixture::with_adapter(false).await;
+    let f = Fixture::new().await;
     let unit = scheme_unit(&f).await;
     let mut input = scheme_input(true, 0);
     input.limits.device.daily_max_calls = 1;
@@ -2154,7 +1971,7 @@ async fn dual_client_same_phone_preserves_kind_and_rejects_mixed_targets() {
     use wekeeper_api::distribution::domain::shared_mobile::{
         MobileClient, business_scheme::TaskPreviewInput,
     };
-    let f = Fixture::with_adapter(false).await;
+    let f = Fixture::new().await;
     // Same display name, same physical device, separate application identities.
     sqlx::query("UPDATE mobile_targets SET client_kind='wechat' WHERE id=$1")
         .bind(f.targets[1])
@@ -2203,4 +2020,214 @@ async fn dual_client_same_phone_preserves_kind_and_rejects_mixed_targets() {
         .is_err()
     );
     f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn human_review_and_late_results_share_original_grant_projection() {
+    for (decision, outcome, expected) in [
+        ("still_unknown", "unknown", "unknown"),
+        (
+            "manually_confirmed_sent",
+            "unknown",
+            "manually_confirmed_sent",
+        ),
+        (
+            "manually_confirmed_sent",
+            "not_called",
+            "manually_confirmed_sent",
+        ),
+        ("manually_confirmed_sent", "observed_sent", "observed_sent"),
+        ("verified_not_sent", "not_called", "verified_not_sent"),
+        ("verified_not_sent", "observed_sent", "observed_sent"),
+    ] {
+        let f = Fixture::new().await;
+        let b = pool_phone(&f, "B").await;
+        let (ca, ea) = pool_ready(&f, f.device).await;
+        let (_cb, _eb) = pool_ready(&f, b).await;
+        let task = pool_confirm(&f, vec![f.targets[0]]).await;
+        let detail = pool_detail(&f, &task).await;
+        let aid: Uuid =
+            serde_json::from_value(pool_current(&detail["items"][0])["id"].clone()).unwrap();
+        let grant = pool_delivery(&f, &ca, ea, aid).await;
+        assert_eq!(grant["state"], "granted");
+        // Receipt timeout permits B while A's original local authorization is still valid.
+        sqlx::query("UPDATE mobile_execution_grants SET receipt_deadline_at=clock_timestamp()-interval '1 second',result_deadline_at=clock_timestamp()-interval '1 second' WHERE attempt_id=$1").bind(aid).execute(&f.pool).await.unwrap();
+        pool_tick(&f).await;
+        let detail = pool_detail(&f, &task).await;
+        let successor = pool_current(&detail["items"][0])["id"].clone();
+        assert_ne!(successor, json!(aid));
+        let old = detail["items"][0]["attempts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["id"] == json!(aid))
+            .unwrap();
+        let review = Review {
+            expected_revision: old["revision"].as_i64().unwrap(),
+            decision: decision.into(),
+            evidence: "人工检查原尝试记录".into(),
+        };
+        if decision == "verified_not_sent" {
+            assert!(
+                f.repo()
+                    .task_write(
+                        &f.actor,
+                        "premature-review",
+                        TaskCommand::Review(aid, review.clone())
+                    )
+                    .await
+                    .is_err()
+            );
+            sqlx::query("UPDATE mobile_execution_grants SET execute_before=clock_timestamp()-interval '1 second' WHERE attempt_id=$1").bind(aid).execute(&f.pool).await.unwrap();
+        }
+        let result = f
+            .repo()
+            .task_write(&f.actor, "review", TaskCommand::Review(aid, review.clone()))
+            .await
+            .unwrap();
+        assert_eq!(
+            result,
+            f.repo()
+                .task_write(&f.actor, "review", TaskCommand::Review(aid, review))
+                .await
+                .unwrap()
+        );
+        // Review is human evidence, never a fabricated device result or physical unlock.
+        let fact: (Option<Uuid>, bool) = sqlx::query_as(
+            "SELECT result_id,session_closed FROM mobile_execution_grants WHERE attempt_id=$1",
+        )
+        .bind(aid)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+        assert_eq!(fact, (None, false));
+        let final_result = completion(&grant, outcome);
+        let receipt = f
+            .repo()
+            .complete_execution(final_result.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            receipt,
+            f.repo().complete_execution(final_result).await.unwrap()
+        );
+        pool_tick(&f).await;
+        pool_tick(&f).await;
+        let detail = pool_detail(&f, &task).await;
+        let original = detail["items"][0]["attempts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["id"] == json!(aid))
+            .unwrap();
+        assert_eq!(original["state"], expected, "{decision} + {outcome}");
+        assert_eq!(
+            original["evidence"]["normalized_result"],
+            match expected {
+                "observed_sent" | "manually_confirmed_sent" => "sent",
+                "verified_not_sent" => "failed",
+                _ => "unknown",
+            }
+        );
+        assert_eq!(pool_current(&detail["items"][0])["id"], successor);
+        if matches!(expected, "observed_sent" | "manually_confirmed_sent") {
+            assert_eq!(detail["items"][0]["dispatch"]["state"], "completed");
+        }
+        let count:i64=sqlx::query_scalar("SELECT count(*) FROM mobile_v9_reviews r JOIN mobile_execution_grants g ON g.id=r.execution_id AND g.attempt_id=r.attempt_id WHERE r.attempt_id=$1").bind(aid).fetch_one(&f.pool).await.unwrap();
+        assert_eq!(count, 1);
+        let states: Vec<String> = sqlx::query_scalar(
+            "SELECT DISTINCT state FROM mobile_v9_quota_reservations WHERE attempt_id=$1",
+        )
+        .bind(aid)
+        .fetch_all(&f.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            states,
+            vec![match expected {
+                "observed_sent" | "manually_confirmed_sent" => "consumed",
+                "unknown" => "risk_held",
+                _ => "released",
+            }]
+        );
+        f.close().await;
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn persisted_result_and_concurrent_review_settle_once_without_rewriting_device_facts() {
+    for concurrent in [false, true] {
+        let f = Fixture::new().await;
+        let (c, epoch) = pool_ready(&f, f.device).await;
+        let task = pool_confirm(&f, vec![f.targets[0]]).await;
+        let detail = pool_detail(&f, &task).await;
+        let aid: Uuid =
+            serde_json::from_value(pool_current(&detail["items"][0])["id"].clone()).unwrap();
+        let grant = pool_delivery(&f, &c, epoch, aid).await;
+        sqlx::query("UPDATE mobile_execution_grants SET receipt_deadline_at=clock_timestamp()-interval '1 second',result_deadline_at=clock_timestamp()-interval '1 second' WHERE attempt_id=$1").bind(aid).execute(&f.pool).await.unwrap();
+        pool_tick(&f).await;
+        let revision: i64 =
+            sqlx::query_scalar("SELECT revision FROM mobile_v9_attempts WHERE id=$1")
+                .bind(aid)
+                .fetch_one(&f.pool)
+                .await
+                .unwrap();
+        let review = TaskCommand::Review(
+            aid,
+            Review {
+                expected_revision: revision,
+                decision: "manually_confirmed_sent".into(),
+                evidence: "独立人工证据".into(),
+            },
+        );
+        let completed = completion(&grant, "observed_sent");
+        let repo = f.repo();
+        if concurrent {
+            let (fact, _review) = tokio::join!(
+                repo.complete_execution(completed.clone()),
+                repo.task_write(&f.actor, "review", review)
+            );
+            fact.unwrap();
+        } else {
+            repo.complete_execution(completed.clone()).await.unwrap();
+            assert!(repo.task_write(&f.actor, "review", review).await.is_err());
+        }
+        pool_tick(&f).await;
+        pool_tick(&f).await;
+        assert_eq!(
+            sqlx::query_scalar::<_, String>("SELECT state FROM mobile_v9_attempts WHERE id=$1")
+                .bind(aid)
+                .fetch_one(&f.pool)
+                .await
+                .unwrap(),
+            "observed_sent"
+        );
+        assert_eq!(
+            pool_detail(&f, &task).await["items"][0]["dispatch"]["state"],
+            "completed"
+        );
+        let stored: Uuid = sqlx::query_scalar(
+            "SELECT result_id FROM mobile_execution_grants WHERE attempt_id=$1 AND applied",
+        )
+        .bind(aid)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+        assert_eq!(stored, completed.result_id);
+        let review_count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM mobile_v9_reviews WHERE attempt_id=$1")
+                .bind(aid)
+                .fetch_one(&f.pool)
+                .await
+                .unwrap();
+        if concurrent {
+            assert!(review_count <= 1);
+        } else {
+            assert_eq!(review_count, 0);
+        }
+
+        f.close().await;
+    }
 }

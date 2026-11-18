@@ -30,7 +30,7 @@ impl ExecutionPhase {
             "queued" if !current => Self::Blocked,
             "queued" if waiting => Self::Waiting,
             "queued" => Self::Ready,
-            "leased" | "prepared" | "invocation_issued" => Self::Executing,
+            "leased" => Self::Executing,
             "unknown" => Self::Unknown,
             "observed_sent" | "manually_confirmed_sent" => Self::Completed,
             _ => Self::Blocked,
@@ -100,7 +100,7 @@ mod execution_status_tests {
             ExecutionPhase::Unknown
         );
         assert_eq!(
-            ExecutionPhase::project("prepared", true, true),
+            ExecutionPhase::project("leased", true, true),
             ExecutionPhase::Executing
         );
     }
@@ -315,9 +315,6 @@ pub struct PolicyInput {
     pub expected_revision: i64,
     pub mode: String,
     pub confirmation_seconds: i64,
-    pub inspection_seconds: i64,
-    pub retry_seconds: i64,
-    pub retry_limit: i64,
     pub timezone: String,
     pub allowed_windows: Vec<AllowedWindow>,
     pub limits: Limits,
@@ -327,10 +324,7 @@ impl PolicyInput {
     pub fn validate(&self) -> Result<()> {
         self.limits.validate()?;
         require(
-            (60..=604800).contains(&self.confirmation_seconds)
-                && (60..=86400).contains(&self.inspection_seconds)
-                && (1..=86400).contains(&self.retry_seconds)
-                && (1..=32).contains(&self.retry_limit),
+            (60..=604800).contains(&self.confirmation_seconds),
             "shared_send_policy_invalid",
         )?;
         require(
@@ -398,157 +392,6 @@ pub struct PreviewItem {
     pub readiness: Vec<Value>,
     pub blocker: Option<String>,
 }
-/// Expiry takes precedence over a historic stored state.
-pub fn inspection_state(
-    state: Option<&str>,
-    live: bool,
-    eligible: bool,
-    failures: i64,
-    cooling: bool,
-) -> &'static str {
-    match (state, live) {
-        (Some("passed"), true) => "passed",
-        (Some("pending"), true) => "queued",
-        (Some("leased"), true) => "running",
-        _ if !eligible => "waiting_prerequisites",
-        _ if failures >= 3 => "retry_exhausted",
-        _ if cooling => "retry_wait",
-        (Some("passed" | "pending" | "leased"), false) => "expired",
-        (Some("failed"), _) => "failed",
-        (Some("stale"), _) => "stale",
-        _ => "not_scheduled",
-    }
-}
-
-/// Preview and confirmation must not mistake an inspected phone for a ready phone.
-pub fn preview_blocker(device: Option<Uuid>, readiness: &[Value]) -> Option<String> {
-    let Some(device) = device else {
-        return Some(
-            if readiness.is_empty() {
-                "shared_binding_missing"
-            } else {
-                "device_not_eligible"
-            }
-            .into(),
-        );
-    };
-    match readiness
-        .iter()
-        .find(|r| r["device_id"] == serde_json::json!(device))
-    {
-        Some(r) if r["ready"] == true && r["blockers"].as_array().is_some_and(Vec::is_empty) => {
-            None
-        }
-        Some(r) => Some(
-            r["blockers"]
-                .as_array()
-                .and_then(|b| b.first())
-                .and_then(|b| b["code"].as_str())
-                .unwrap_or("device_not_eligible")
-                .into(),
-        ),
-        None => Some("device_not_eligible".into()),
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct FlowInput {
-    pub name: String,
-    pub flow: super::FlowV3,
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct BaselineInput {
-    pub flow_id: Uuid,
-    pub sample_ids: Vec<Uuid>,
-    pub evidence_ids: Vec<Uuid>,
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct HumanSampleInput {
-    pub flow_id: Uuid,
-    pub device_id: Uuid,
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReleaseInput {
-    pub name: String,
-    pub version: String,
-    pub flow_id: Uuid,
-    pub baseline_id: Uuid,
-    pub evidence_ids: Vec<Uuid>,
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ActivationInput {
-    pub release_id: Uuid,
-    pub expected_revision: i64,
-    pub reason: String,
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct WithdrawalInput {
-    pub release_id: Uuid,
-    pub reason: String,
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ValidationInput {
-    pub flow_id: Uuid,
-    pub binding_id: Uuid,
-    pub launch_path: String,
-    pub apk_id: Uuid,
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct AcceptanceInput {
-    pub release_id: Uuid,
-    pub stage: String,
-    pub apk_id: Uuid,
-    pub evidence_ids: Vec<Uuid>,
-    pub validation_ids: Vec<Uuid>,
-    pub cases: std::collections::BTreeMap<String, bool>,
-    pub soak_hours: i64,
-    pub soak_passed: bool,
-    pub historical_debt_closed: bool,
-    pub reason: String,
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct SupportInput {
-    pub device_id: Uuid,
-
-    pub reason: String,
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct SupportUpdate {
-    pub id: Uuid,
-    pub expected_revision: i64,
-    pub state: String,
-    pub response: String,
-    pub release_id: Option<Uuid>,
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(
-    tag = "action",
-    content = "input",
-    rename_all = "kebab-case",
-    deny_unknown_fields
-)]
-pub enum ManagementCommand {
-    Flows(Box<FlowInput>),
-    HumanSamples(HumanSampleInput),
-    Baselines(BaselineInput),
-    Releases(ReleaseInput),
-    Activations(ActivationInput),
-    Withdrawals(WithdrawalInput),
-    Validations(ValidationInput),
-    Acceptances(AcceptanceInput),
-    Support(SupportInput),
-    SupportUpdates(SupportUpdate),
-}
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Diagnostic {
@@ -558,13 +401,6 @@ pub struct Diagnostic {
     pub stage: String,
     pub details: std::collections::BTreeMap<String, String>,
 }
-#[derive(Clone, Debug)]
-pub struct ArtifactUpload {
-    pub kind: String,
-    pub name: String,
-    pub content: Vec<u8>,
-}
-
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InboxQuery {

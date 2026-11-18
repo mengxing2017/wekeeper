@@ -6,8 +6,6 @@ use serde_json::Value;
 use uuid::Uuid;
 #[derive(Clone, Debug)]
 pub enum TaskCommand {
-    Support(SupportInput),
-
     Draft(Option<Uuid>, DraftInput),
     Inspection(InspectionInput),
     Preview(PreviewInput),
@@ -15,11 +13,6 @@ pub enum TaskCommand {
     Stop(Uuid, Mutation),
     Review(Uuid, Review),
     Reassign(Uuid, Reassignment),
-}
-#[derive(Clone, Debug)]
-pub enum PlatformCommand {
-    Manage(ManagementCommand),
-    Artifact(ArtifactUpload),
 }
 #[derive(Clone, Debug)]
 pub enum DeviceCommand {
@@ -110,15 +103,6 @@ pub trait Store: Clone + Send + Sync {
         command: TaskCommand,
     ) -> impl Future<Output = Result<Value>> + Send;
     fn task_read(&self, a: &Actor, id: Option<Uuid>) -> impl Future<Output = Result<Value>> + Send;
-    fn platform_write(
-        &self,
-        a: &Actor,
-        key: &str,
-        command: PlatformCommand,
-    ) -> impl Future<Output = Result<Value>> + Send;
-    fn platform_read(&self, a: &Actor, page: u32) -> impl Future<Output = Result<Value>> + Send;
-    fn artifact_content(&self, a: &Actor, id: Uuid)
-    -> impl Future<Output = Result<Vec<u8>>> + Send;
     fn device_write(
         &self,
         c: &Credential,

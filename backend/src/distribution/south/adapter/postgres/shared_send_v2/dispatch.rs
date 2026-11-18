@@ -319,7 +319,7 @@ async fn reconcile_inner(tx: &mut Tx<'_>, item: Uuid) -> Result<()> {
     let reason = reason.unwrap_or("execution_failed");
     sqlx::query("UPDATE mobile_execution_grants SET state='superseded',superseded_reason=$2 WHERE attempt_id=$1 AND state='active'").bind(aid).bind(reason).execute(&mut **tx).await?;
     sqlx::query("UPDATE mobile_v9_quota_reservations SET state=CASE WHEN EXISTS(SELECT 1 FROM mobile_execution_grants WHERE attempt_id=$1) THEN 'risk_held' ELSE 'released' END WHERE attempt_id=$1 AND state='reserved'").bind(aid).execute(&mut **tx).await?;
-    sqlx::query("UPDATE mobile_v9_attempts SET termination_reason=$2 WHERE id=$1")
+    sqlx::query("UPDATE mobile_v9_attempts a SET termination_reason=$2,state=CASE WHEN a.state IN ('queued','leased') AND EXISTS(SELECT 1 FROM mobile_execution_grants g WHERE g.attempt_id=a.id AND g.result_id IS NULL) THEN 'unknown' ELSE a.state END,revision=revision+CASE WHEN a.state IN ('queued','leased') AND EXISTS(SELECT 1 FROM mobile_execution_grants g WHERE g.attempt_id=a.id AND g.result_id IS NULL) THEN 1 ELSE 0 END WHERE id=$1")
         .bind(aid)
         .bind(reason)
         .execute(&mut **tx)

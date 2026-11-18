@@ -144,3 +144,98 @@ async fn empty_baseline_initializes_current_configuration_and_enforces_device_co
     .unwrap();
     pool.close().await;
 }
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn business_chain_cleanup_applies_forward_and_preserves_current_execution_objects() {
+    use sqlx::Executor;
+    let url = std::env::var("WEKEEPER_TEST_DATABASE_URL").expect("isolated database required");
+    let base = sqlx::PgPool::connect(&url).await.unwrap();
+    let schema = format!("cleanup_{}", uuid::Uuid::new_v4().simple());
+    base.execute(format!("CREATE SCHEMA {schema}").as_str())
+        .await
+        .unwrap();
+    let search = format!("SET search_path TO {schema},public");
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .after_connect(move |c, _| {
+            let search = search.clone();
+            Box::pin(async move {
+                c.execute(search.as_str()).await?;
+                Ok(())
+            })
+        })
+        .connect(&url)
+        .await
+        .unwrap();
+    // Exercise the complete pre-cleanup structure, then the new forward-only migration.
+    for migration in database::MIGRATOR.iter() {
+        sqlx::raw_sql(&migration.sql).execute(&pool).await.unwrap();
+        if migration.version == 202611180224 {
+            assert!(
+                sqlx::query_scalar::<_, Option<String>>(
+                    "SELECT to_regclass('mobile_v9_invocations')::text"
+                )
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+                .is_some()
+            );
+        }
+    }
+    for table in [
+        "mobile_v9_invocations",
+        "mobile_v9_risk_guards",
+        "mobile_v9_send_events",
+        "mobile_v9_send_inspections",
+        "mobile_v9_diagnostics",
+        "mobile_v9_support_requests",
+        "mobile_v9_support_events",
+        "mobile_v9_flows",
+        "mobile_v9_artifacts",
+        "mobile_v9_baselines",
+        "mobile_v9_human_samples",
+        "mobile_v9_adapter_releases",
+        "mobile_v9_adapter_withdrawals",
+        "mobile_v9_acceptance_runs",
+        "mobile_v9_activations",
+        "mobile_v9_activation_events",
+        "mobile_capability_deliveries",
+        "mobile_runtime_configuration_current",
+        "mobile_runtime_configurations",
+    ] {
+        let exists: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
+            .bind(format!("{schema}.{table}"))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(!exists, "retired table remains: {table}");
+    }
+    for table in [
+        "mobile_execution_grants",
+        "mobile_execution_delivery_outbox",
+        "mobile_execution_diagnostics",
+        "mobile_execution_resource_charges",
+        "mobile_v9_tasks",
+        "mobile_v9_task_items",
+        "mobile_v9_attempts",
+        "mobile_v9_reviews",
+        "mobile_v9_dispatch_state",
+        "mobile_v9_dispatch_scopes",
+        "mobile_v9_quota_reservations",
+        "mobile_v9_task_receipts",
+        "audit_events",
+    ] {
+        let exists: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
+            .bind(format!("{schema}.{table}"))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(exists, "current table missing: {table}");
+    }
+    pool.close().await;
+    base.execute(format!("DROP SCHEMA {schema} CASCADE").as_str())
+        .await
+        .unwrap();
+    base.close().await;
+}

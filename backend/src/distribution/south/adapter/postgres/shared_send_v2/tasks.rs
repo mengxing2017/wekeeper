@@ -79,20 +79,6 @@ pub(super) async fn validate_risk(tx: &mut Tx<'_>, plan: &Value) -> Result<()> {
 }
 pub(super) async fn write(tx: &mut Tx<'_>, a: &Actor, command: TaskCommand) -> Result<Value> {
     match command {
-        TaskCommand::Support(v) => {
-            crate::distribution::domain::shared_mobile::validate_text(&v.reason, 1, 2000, 8000)?;
-            let bound: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM mobile_device_target_bindings WHERE device_id=$1)",
-            )
-            .bind(v.device_id)
-            .fetch_one(&mut **tx)
-            .await?;
-            require(bound, "shared_binding_missing")?;
-            let id = Uuid::now_v7();
-            sqlx::query("INSERT INTO mobile_v9_support_requests(id,device_id,reason,state,created_by) VALUES($1,$2,$3,'submitted',$4)").bind(id).bind(v.device_id).bind(v.reason).bind(a.id).execute(&mut **tx).await?;
-            Ok(json!({"id":id,"state":"submitted"}))
-        }
-
         TaskCommand::Inspection(v) => inspections::request(tx, a, v).await,
         TaskCommand::Draft(id, input) => {
             let input = input.normalized()?;
@@ -364,6 +350,7 @@ pub(super) async fn write(tx: &mut Tx<'_>, a: &Actor, command: TaskCommand) -> R
                     && input.evidence.len() <= 2000,
                 "shared_send_review_invalid",
             )?;
+            execution::apply_results(tx).await?;
             let row = sqlx::query(
                 "SELECT id,revision,state FROM mobile_v9_attempts WHERE id=$1 FOR UPDATE",
             )
@@ -377,11 +364,11 @@ pub(super) async fn write(tx: &mut Tx<'_>, a: &Actor, command: TaskCommand) -> R
                 "revision_conflict",
             )?;
             if input.decision == "verified_not_sent" {
-                let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_invocations WHERE attempt_id=$1 AND execute_before>clock_timestamp())").bind(id).fetch_one(&mut **tx).await?;
+                let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_execution_grants WHERE attempt_id=$1 AND execute_before>clock_timestamp())").bind(id).fetch_one(&mut **tx).await?;
                 require(!active, "shared_send_review_required")?;
             }
             let rid = Uuid::now_v7();
-            sqlx::query("INSERT INTO mobile_v9_reviews(id,attempt_id,reviewer,decision,evidence) VALUES($1,$2,$3,$4,$5)").bind(rid).bind(id).bind(a.id).bind(&input.decision).bind(&input.evidence).execute(&mut **tx).await?;
+            sqlx::query("INSERT INTO mobile_v9_reviews(id,attempt_id,reviewer,decision,evidence,execution_id,attempt_revision) VALUES($1,$2,$3,$4,$5,(SELECT id FROM mobile_execution_grants WHERE attempt_id=$2),$6)").bind(rid).bind(id).bind(a.id).bind(&input.decision).bind(&input.evidence).bind(input.expected_revision).execute(&mut **tx).await?;
             if input.decision == "still_unknown" {
                 sqlx::query("UPDATE mobile_v9_attempts SET revision=revision+1 WHERE id=$1")
                     .bind(id)
@@ -389,36 +376,9 @@ pub(super) async fn write(tx: &mut Tx<'_>, a: &Actor, command: TaskCommand) -> R
                     .await?;
             }
             if input.decision != "still_unknown" {
-                sqlx::query(
-                    "UPDATE mobile_v9_attempts SET state=$2,revision=revision+1 WHERE id=$1",
-                )
-                .bind(id)
-                .bind(&input.decision)
-                .execute(&mut **tx)
-                .await?;
-                let state = if input.decision == "verified_not_sent" {
-                    "released"
-                } else {
-                    "consumed"
-                };
-                sqlx::query("UPDATE mobile_v9_invocations SET state=$2 WHERE attempt_id=$1")
-                    .bind(id)
-                    .bind(state)
-                    .execute(&mut **tx)
-                    .await?;
-                sqlx::query("UPDATE mobile_v9_quota_reservations SET state=$2 WHERE attempt_id=$1")
-                    .bind(id)
-                    .bind(state)
-                    .execute(&mut **tx)
-                    .await?;
-                sqlx::query("UPDATE mobile_v9_risk_guards SET state='closed' WHERE attempt_id=$1")
-                    .bind(id)
-                    .execute(&mut **tx)
-                    .await?;
-            }
-            if input.decision == "manually_confirmed_sent" {
-                sqlx::query("UPDATE mobile_v9_dispatch_state SET state='completed',reason='manually_confirmed_sent',next_retry_at=NULL,finished_at=coalesce(finished_at,clock_timestamp()),revision=revision+1,updated_at=clock_timestamp() WHERE item_id=(SELECT item_id FROM mobile_v9_attempts WHERE id=$1)").bind(id).execute(&mut **tx).await?;
-                sqlx::query("UPDATE mobile_execution_grants g SET state='superseded' FROM mobile_v9_attempts a WHERE a.item_id=(SELECT item_id FROM mobile_v9_attempts WHERE id=$1) AND g.attempt_id=a.id AND g.state='active'").bind(id).execute(&mut **tx).await?;
+                let outcome: Option<String> = sqlx::query_scalar("SELECT result_body->>'outcome' FROM mobile_execution_grants WHERE attempt_id=$1")
+                    .bind(id).fetch_optional(&mut **tx).await?.flatten();
+                execution::settle_attempt(tx, id, outcome.as_deref().unwrap_or("unknown")).await?;
             }
             Ok(json!({"id":rid,"attempt_id":id,"decision":input.decision}))
         }

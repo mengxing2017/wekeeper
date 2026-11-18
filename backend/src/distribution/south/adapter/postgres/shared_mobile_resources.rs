@@ -135,7 +135,7 @@ impl Store for Repository {
                 let v: RevisionInput = serde_json::from_value(input.clone())
                     .map_err(|_| Error::Invalid("归档字段无效".into()))?;
                 validate_text(&v.reason, 1, 2000, 8000)?;
-                let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_task_items i JOIN mobile_v9_attempts a ON a.item_id=i.id WHERE i.target_id=$1 AND a.current AND a.state IN ('queued','leased','prepared','invocation_issued','unknown'))").bind(resource).fetch_one(&mut *tx).await?;
+                let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_v9_task_items i JOIN mobile_v9_attempts a ON a.item_id=i.id WHERE i.target_id=$1 AND a.current AND a.state IN ('queued','leased','unknown'))").bind(resource).fetch_one(&mut *tx).await?;
                 if active {
                     return Err(Error::Policy("mobile_target_unresolved"));
                 }

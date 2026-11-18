@@ -265,34 +265,8 @@ pub(super) async fn apply_results(tx: &mut Tx<'_>) -> Result<()> {
         let outcome = row["result_body"]["outcome"]
             .as_str()
             .ok_or(Error::Conflict)?;
-        let state = match outcome {
-            "observed_sent" => "observed_sent",
-            "unknown" => "unknown",
-            _ => "failed_before_call",
-        };
-        sqlx::query("UPDATE mobile_v9_attempts SET state=$2,revision=revision+1 WHERE id=$1")
-            .bind(aid)
-            .bind(state)
-            .execute(&mut **tx)
-            .await?;
-        sqlx::query("UPDATE mobile_v9_quota_reservations SET state=$2 WHERE attempt_id=$1")
-            .bind(aid)
-            .bind(match outcome {
-                "observed_sent" => "consumed",
-                "unknown" => "risk_held",
-                _ => "released",
-            })
-            .execute(&mut **tx)
-            .await?;
+        settle_attempt(tx, aid, outcome).await?;
         sqlx::query("UPDATE mobile_execution_grants SET applied=true,state=CASE WHEN $2='unknown' AND state='active' THEN 'active' ELSE 'completed' END WHERE id=$1").bind(uid(&row,"id")?).bind(outcome).execute(&mut **tx).await?;
-        if outcome == "observed_sent" {
-            // A retired target scope may already be terminal when its original
-            // phone reports success. Record that fact without resuming dispatch.
-            sqlx::query("UPDATE mobile_execution_grants g SET state='superseded' FROM mobile_v9_attempts a WHERE g.attempt_id=a.id AND a.item_id=(SELECT item_id FROM mobile_v9_attempts WHERE id=$1) AND g.id<>$2 AND g.state='active'")
-                .bind(aid).bind(uid(&row,"id")?).execute(&mut **tx).await?;
-            sqlx::query("UPDATE mobile_v9_dispatch_state SET state='completed',reason='result_recorded',next_retry_at=NULL,finished_at=coalesce(finished_at,clock_timestamp()),revision=revision+1,updated_at=clock_timestamp() WHERE item_id=(SELECT item_id FROM mobile_v9_attempts WHERE id=$1)")
-                .bind(aid).execute(&mut **tx).await?;
-        }
     }
     Ok(())
 }
@@ -325,4 +299,36 @@ async fn timing(tx: &mut Tx<'_>, row: &Value, device: Uuid) -> Result<Value> {
         "execution_window_too_short",
     )?;
     Ok(json!({"server_time":now,"not_before":now,"execute_before":until}))
+}
+
+/// One projection for device results and explicit human reconciliation, under the dispatch barrier.
+pub(super) async fn settle_attempt(tx: &mut Tx<'_>, aid: Uuid, outcome: &str) -> Result<()> {
+    let review: Option<String> = sqlx::query_scalar("SELECT decision FROM mobile_v9_reviews WHERE attempt_id=$1 AND decision<>'still_unknown' ORDER BY created_at DESC,id DESC LIMIT 1")
+        .bind(aid).fetch_optional(&mut **tx).await?;
+    let state = crate::distribution::domain::shared_mobile::execution::settled_attempt_state(
+        outcome,
+        review.as_deref(),
+    );
+    sqlx::query("UPDATE mobile_v9_attempts SET state=$2,revision=revision+1 WHERE id=$1")
+        .bind(aid)
+        .bind(state)
+        .execute(&mut **tx)
+        .await?;
+    let quota = match state {
+        "observed_sent" | "manually_confirmed_sent" => "consumed",
+        "unknown" => "risk_held",
+        _ => "released",
+    };
+    sqlx::query("UPDATE mobile_v9_quota_reservations SET state=$2 WHERE attempt_id=$1")
+        .bind(aid)
+        .bind(quota)
+        .execute(&mut **tx)
+        .await?;
+    if matches!(state, "observed_sent" | "manually_confirmed_sent") {
+        sqlx::query("UPDATE mobile_execution_grants g SET state='superseded' FROM mobile_v9_attempts a WHERE g.attempt_id=a.id AND a.item_id=(SELECT item_id FROM mobile_v9_attempts WHERE id=$1) AND g.state='active'")
+            .bind(aid).execute(&mut **tx).await?;
+        sqlx::query("UPDATE mobile_v9_dispatch_state SET state='completed',reason=$2,next_retry_at=NULL,finished_at=coalesce(finished_at,clock_timestamp()),revision=revision+1,updated_at=clock_timestamp() WHERE item_id=(SELECT item_id FROM mobile_v9_attempts WHERE id=$1)")
+            .bind(aid).bind(state).execute(&mut **tx).await?;
+    }
+    Ok(())
 }

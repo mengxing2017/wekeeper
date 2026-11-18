@@ -13,8 +13,6 @@ type Tx<'a> = Transaction<'a, Postgres>;
 #[derive(Clone)]
 pub struct Repository(pub PgPool);
 mod business_scheme;
-pub mod configuration;
-pub mod delivery;
 mod device;
 mod diagnostics;
 mod dispatch;
@@ -22,7 +20,6 @@ pub(crate) mod execution;
 mod execution_status;
 mod inbox;
 mod inspections;
-mod platform;
 mod push;
 mod readiness;
 pub mod records;
@@ -73,13 +70,10 @@ async fn remember(
     sqlx::query("INSERT INTO mobile_v9_operations(principal_id,generation,scope,idempotency_key,request_hash,response) VALUES($1,$2,$3,$4,$5,$6)").bind(principal).bind(generation).bind(scope).bind(key).bind(digest(body)?).bind(result).execute(&mut **tx).await?;
     Ok(())
 }
-async fn policy(tx: &mut Tx<'_>) -> Result<Option<Value>> {
-    Ok(Some(business_scheme::resolve(tx, None).await?))
-}
 fn default_policy() -> Value {
     let limits =
         json!({"interval_seconds":30,"window_seconds":3600,"max_calls":30,"daily_max_calls":150});
-    json!({"id":null,"revision":0,"mode":"enabled","limits":{"total":limits,"device":limits,"target":limits},"timezone":"Asia/Shanghai","allowed_windows":[{"weekdays":[1,2,3,4,5,6,7],"start_minute":0,"end_minute":1440}],"confirmation_seconds":86400,"inspection_seconds":3600,"retry_seconds":300,"retry_limit":3})
+    json!({"id":null,"revision":0,"mode":"enabled","limits":{"total":limits,"device":limits,"target":limits},"timezone":"Asia/Shanghai","allowed_windows":[{"weekdays":[1,2,3,4,5,6,7],"start_minute":0,"end_minute":1440}],"confirmation_seconds":86400})
 }
 fn policy_id(p: &Value) -> Result<Option<Uuid>> {
     p["id"]
@@ -91,7 +85,7 @@ fn uid(v: &Value, k: &str) -> Result<Uuid> {
     serde_json::from_value(v[k].clone()).map_err(|_| Error::Conflict)
 }
 async fn task(tx: &mut Tx<'_>, id: Uuid) -> Result<Value> {
-    let mut value: Value = sqlx::query_scalar("SELECT to_jsonb(t)||jsonb_build_object('client_kind',(SELECT d.client_kind FROM mobile_v9_task_drafts d WHERE d.id=t.draft_id),'items',coalesce((SELECT jsonb_agg(to_jsonb(i)||jsonb_build_object('attempts',(SELECT jsonb_agg(to_jsonb(a)||jsonb_build_object('plan',p.plan,'plan_digest',p.digest,'evidence',(SELECT to_jsonb(e) FROM channel_execution_observations e WHERE e.attempt_id=a.id ORDER BY e.id DESC LIMIT 1),'result_reason',coalesce((SELECT g.result_body->>'reason' FROM mobile_execution_grants g WHERE g.attempt_id=a.id),(SELECT e.body->>'reason' FROM mobile_v9_send_events e WHERE e.attempt_id=a.id AND e.receipt->>'disposition'<>'archived' ORDER BY e.created_at DESC,e.id DESC LIMIT 1))) ORDER BY a.attempt_no) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id WHERE a.item_id=i.id)) ORDER BY i.position) FROM mobile_v9_task_items i WHERE i.task_id=t.id),'[]'::jsonb)) FROM mobile_v9_tasks t WHERE t.id=$1").bind(id).fetch_optional(&mut **tx).await?.ok_or(Error::NotFound)?;
+    let mut value: Value = sqlx::query_scalar("SELECT to_jsonb(t)||jsonb_build_object('client_kind',(SELECT d.client_kind FROM mobile_v9_task_drafts d WHERE d.id=t.draft_id),'items',coalesce((SELECT jsonb_agg(to_jsonb(i)||jsonb_build_object('attempts',(SELECT jsonb_agg(to_jsonb(a)||jsonb_build_object('plan',p.plan,'plan_digest',p.digest,'evidence',(SELECT to_jsonb(e) FROM channel_execution_observations e WHERE e.attempt_id=a.id ORDER BY CASE WHEN e.evidence_type='device_observed_sent' THEN 0 WHEN e.normalized_result='sent' THEN 1 WHEN e.evidence_type='operator_reconciled' AND e.detail->>'decision'='verified_not_sent' THEN 2 ELSE 3 END,e.id DESC LIMIT 1),'result_reason',(SELECT g.result_body->>'reason' FROM mobile_execution_grants g WHERE g.attempt_id=a.id)) ORDER BY a.attempt_no) FROM mobile_v9_attempts a JOIN mobile_v9_plans p ON p.id=a.plan_id WHERE a.item_id=i.id)) ORDER BY i.position) FROM mobile_v9_task_items i WHERE i.task_id=t.id),'[]'::jsonb)) FROM mobile_v9_tasks t WHERE t.id=$1").bind(id).fetch_optional(&mut **tx).await?.ok_or(Error::NotFound)?;
     let receipts:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('attempt_id',r.attempt_id,'received_at',r.received_at) FROM mobile_v9_task_receipts r JOIN mobile_v9_attempts a ON a.id=r.attempt_id JOIN mobile_v9_task_items i ON i.id=a.item_id WHERE i.task_id=$1").bind(id).fetch_all(&mut **tx).await?;
     // attempt_id is UNIQUE on mobile_execution_grants; never borrow a successor's facts.
     let executions: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('attempt_id',g.attempt_id,'observation',jsonb_build_object('execution_id',g.id,'execution_accepted_at',g.accepted_at,'result_received_at',g.result_received_at,'device_started_at',g.device_started_at,'device_finished_at',g.device_finished_at)) FROM mobile_execution_grants g JOIN mobile_v9_attempts a ON a.id=g.attempt_id JOIN mobile_v9_task_items i ON i.id=a.item_id WHERE i.task_id=$1").bind(id).fetch_all(&mut **tx).await?;
@@ -120,7 +114,11 @@ async fn task(tx: &mut Tx<'_>, id: Uuid) -> Result<Value> {
     let dispatches:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('item_id',ds.item_id,'state',ds.state,'reason',ds.reason,'revision',ds.revision,'max_rounds',ds.max_rounds,'completed_rounds',ds.completed_rounds,'finished_at',ds.finished_at,'next_retry_at',ds.next_retry_at,'updated_at',ds.updated_at,'last_failed_attempt_id',ds.last_failed_attempt_id,'candidates',sc.candidates,'assignments',coalesce((SELECT jsonb_agg(to_jsonb(r)||jsonb_build_object('from_device_name',op.plan->>'device_name','to_device_name',np.plan->>'device_name') ORDER BY r.created_at,r.id) FROM mobile_v9_reassignments r JOIN mobile_v9_attempts a ON a.id=r.new_attempt_id JOIN mobile_v9_plans np ON np.id=a.plan_id JOIN mobile_v9_attempts oa ON oa.id=r.old_attempt_id JOIN mobile_v9_plans op ON op.id=oa.plan_id WHERE a.item_id=ds.item_id),'[]'::jsonb)) FROM mobile_v9_dispatch_state ds JOIN mobile_v9_dispatch_scopes sc ON sc.item_id=ds.item_id JOIN mobile_v9_task_items i ON i.id=ds.item_id WHERE i.task_id=$1").bind(id).fetch_all(&mut **tx).await?;
     if let Some(items) = value["items"].as_array_mut() {
         for item in items {
-            if let Some(dispatch) = dispatches.iter().find(|d| d["item_id"] == item["id"]) {
+            {
+                let dispatch = dispatches
+                    .iter()
+                    .find(|d| d["item_id"] == item["id"])
+                    .ok_or(Error::Conflict)?;
                 item["dispatch"] = serde_json::to_value(
                     serde_json::from_value::<DispatchSnapshot>(dispatch.clone())
                         .map_err(|_| Error::Conflict)?,
@@ -178,6 +176,7 @@ impl Store for Repository {
         v: crate::distribution::domain::shared_mobile::execution::Completion,
     ) -> Result<Value> {
         let mut tx = self.0.begin().await?;
+        guard(&mut tx).await?;
         let value = execution::complete(&mut tx, v).await?;
         tx.commit().await?;
         Ok(value)
@@ -225,17 +224,6 @@ impl Store for Repository {
     ) -> Result<Value> {
         business_scheme::preview(self, a, key, input).await
     }
-    async fn artifact_content(&self, a: &Actor, id: Uuid) -> Result<Vec<u8>> {
-        let mut tx = self.0.begin().await?;
-        authorize(&mut tx, a.id, true).await?;
-        let data = sqlx::query_scalar("SELECT content FROM mobile_v9_artifacts WHERE id=$1")
-            .bind(id)
-            .fetch_optional(&mut *tx)
-            .await?
-            .ok_or(Error::NotFound)?;
-        tx.commit().await?;
-        Ok(data)
-    }
     async fn task_write(&self, a: &Actor, key: &str, command: TaskCommand) -> Result<Value> {
         let mut tx = self.0.begin().await?;
         guard(&mut tx).await?;
@@ -246,8 +234,6 @@ impl Store for Repository {
         )
         .await?;
         let (scope, body) = match &command {
-            TaskCommand::Support(v) => ("support".to_string(), json!(v)),
-
             TaskCommand::Draft(id, v) => (format!("draft:{id:?}"), json!(v)),
             TaskCommand::Inspection(v) => ("inspection".to_string(), json!(v)),
             TaskCommand::Preview(v) => ("preview".to_string(), json!(v)),
@@ -273,55 +259,8 @@ impl Store for Repository {
             let mut tasks:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(t)||jsonb_build_object('client_kind',(SELECT d.client_kind FROM mobile_v9_task_drafts d WHERE d.id=t.draft_id)) FROM mobile_v9_tasks t  ORDER BY created_at DESC,id DESC LIMIT 100").fetch_all(&mut *tx).await?;
             task_status::attach(&mut tx, &mut tasks).await?;
             let drafts:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(d)||jsonb_build_object('targets',coalesce((SELECT jsonb_agg(jsonb_build_object('id',t.id,'name',t.search_text,'client_kind',t.client_kind) ORDER BY ids.n) FROM unnest(d.target_ids) WITH ORDINALITY ids(id,n) JOIN mobile_targets t ON t.id=ids.id ),'[]'::jsonb)) FROM mobile_v9_task_drafts d WHERE NOT EXISTS(SELECT 1 FROM mobile_v9_tasks t WHERE t.draft_id=d.id) ORDER BY created_at DESC LIMIT 100").fetch_all(&mut *tx).await?;
-            let inspections:Vec<Value>=sqlx::query_scalar("SELECT to_jsonb(i)-'challenge' FROM mobile_v9_send_inspections i  ORDER BY id DESC LIMIT 100").fetch_all(&mut *tx).await?;
-            json!({"id":"tasks","tasks":tasks,"drafts":drafts,"inspections":inspections,"readiness":readiness::resources(&mut tx).await?,"pool":readiness::pool(&mut tx).await?})
+            json!({"id":"tasks","tasks":tasks,"drafts":drafts,"readiness":readiness::resources(&mut tx).await?,"pool":readiness::pool(&mut tx).await?})
         };
-        tx.commit().await?;
-        Ok(v)
-    }
-    async fn platform_write(
-        &self,
-        a: &Actor,
-        key: &str,
-        command: PlatformCommand,
-    ) -> Result<Value> {
-        let mut tx = self.0.begin().await?;
-        guard(&mut tx).await?;
-        authorize(&mut tx, a.id, true).await?;
-        let (scope, body) = match &command {
-            PlatformCommand::Manage(v) => ("management", json!(v)),
-            PlatformCommand::Artifact(v) => (
-                "artifact",
-                json!({"kind":v.kind,"name":v.name,"digest":hash_bytes(&v.content)}),
-            ),
-        };
-        if let Some(v) = replay(&mut tx, a.id, 0, scope, key, &body).await? {
-            return Ok(v);
-        }
-        let v = match command {
-            PlatformCommand::Manage(v) => platform::write(&mut tx, a, v).await?,
-            PlatformCommand::Artifact(v) => platform::artifact(&mut tx, a, v).await?,
-        };
-        remember(&mut tx, a.id, 0, scope, key, &body, &v).await?;
-        tx.commit().await?;
-        Ok(v)
-    }
-    async fn platform_read(&self, a: &Actor, page: u32) -> Result<Value> {
-        let mut tx = self.0.begin().await?;
-        authorize(&mut tx, a.id, true).await?;
-        let mut v = platform::read(&mut tx, page).await?;
-        v["id"] = json!("current");
-        v["policy"] = json!(policy(&mut tx).await?);
-        v["devices"] = json!(
-            sqlx::query_scalar::<_, Value>(
-                "SELECT jsonb_build_object('id',d.id,'device_id',d.id,'name',d.name,'enabled',d.enabled) FROM execution_devices d ORDER BY name,id"
-            )
-            .fetch_all(&mut *tx)
-            .await?
-        );
-
-        v["targets"] = json!(sqlx::query_scalar::<_, Value>("SELECT to_jsonb(t)||jsonb_build_object('name',search_text) FROM mobile_targets t WHERE archived_at IS NULL ORDER BY id").fetch_all(&mut *tx).await?);
-
         tx.commit().await?;
         Ok(v)
     }
@@ -337,11 +276,6 @@ impl Store for Repository {
     async fn device_read(&self, c: &Credential) -> Result<Value> {
         execution::context(self, c).await
     }
-}
-
-fn hash_bytes(bytes: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    format!("{:x}", Sha256::digest(bytes))
 }
 
 #[cfg(test)]

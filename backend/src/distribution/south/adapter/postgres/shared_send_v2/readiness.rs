@@ -15,9 +15,6 @@ pub(super) async fn resources(tx: &mut Tx<'_>) -> Result<Vec<Value>> {
         } else {
             false
         };
-        let inspection: Option<Value> = None;
-        let remaining = 0;
-        let retry_at = Value::Null;
         let busy = inspections::busy(tx, uid(&row, "device_id")?).await?;
         let mut blockers = Vec::new();
         let mut add = |code: &str, message: &str, owner: &str, action: &str, automatic: bool| {
@@ -38,8 +35,7 @@ pub(super) async fn resources(tx: &mut Tx<'_>) -> Result<Vec<Value>> {
             && confirmable
             && row["online"] == true
             && row["resource_allowed"] == true;
-        let inspection_state = "not_scheduled";
-        result.push(json!({"client_kind":row["client_kind"],"binding_id":row["id"],"device_id":row["device_id"],"target_id":row["target_id"],"device_name":row["device_name"],"target_name":row["target_name"],"search_text":row["search_text"],"target":candidate.as_ref().map(|c|c["target"].clone()),"plan_selectable":selectable,"confirmable":confirmable,"execution_ready":ready,"ready":ready,"state":if ready{json!("ready_for_task")}else{blockers.first().or_else(||execution_conditions.first()).map(|b|b["code"].clone()).unwrap_or(json!("waiting"))},"online":row["online"],"environment":row["environment"],"execution_conditions":execution_conditions,"blockers":blockers,"inspection":inspection,"inspection_state":inspection_state,"retry_remaining":remaining,"retry_at":retry_at,"automatic":true}));
+        result.push(json!({"client_kind":row["client_kind"],"binding_id":row["id"],"device_id":row["device_id"],"target_id":row["target_id"],"device_name":row["device_name"],"target_name":row["target_name"],"search_text":row["search_text"],"target":candidate.as_ref().map(|c|c["target"].clone()),"plan_selectable":selectable,"confirmable":confirmable,"execution_ready":ready,"ready":ready,"state":if ready{json!("ready_for_task")}else{blockers.first().or_else(||execution_conditions.first()).map(|b|b["code"].clone()).unwrap_or(json!("waiting"))},"online":row["online"],"environment":row["environment"],"execution_conditions":execution_conditions,"blockers":blockers,"automatic":true}));
     }
     Ok(result)
 }

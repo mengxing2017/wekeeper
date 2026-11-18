@@ -1,4 +1,4 @@
-//! Observation-only worker. Feedback failure never rolls back task or inspection work.
+//! Observation-only worker; no support or release workflow is created.
 use super::*;
 fn merge(old: &Value, current: &mut Value, now: chrono::DateTime<chrono::Utc>) {
     if let Some(rows) = current.as_array_mut() {
@@ -65,11 +65,7 @@ impl Repository {
                 if !since.is_some_and(|at| now - at >= chrono::Duration::seconds(threshold)) {
                     continue;
                 }
-                let feedback=sqlx::query("INSERT INTO mobile_v9_support_requests(id,device_id,reason,state,task_id,wait_code) VALUES($1,$2,$3,'submitted',$4,$5) ON CONFLICT(task_id,wait_code) WHERE task_id IS NOT NULL AND wait_code IS NOT NULL DO NOTHING")
-                    .bind(Uuid::now_v7()).bind(uid(&row["attempt"]["plan"],"device_id")?).bind(format!("任务长时间等待：{}",condition["message"].as_str().unwrap_or("等待执行条件"))).bind(uid(&row["task"],"id")?).bind(format!("{}:{}",condition["code"].as_str().unwrap_or("waiting"),condition["scope_id"].as_str().unwrap_or(""))).execute(&self.0).await;
-                if let Err(error) = feedback {
-                    tracing::warn!(%error,"wait feedback failed; execution remains independent");
-                }
+                tracing::warn!(task=%row["task"]["id"],code=%condition["code"],scope=%condition["scope_id"],"task has a persistent execution condition");
             }
         }
         Ok(())

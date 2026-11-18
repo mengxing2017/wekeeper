@@ -281,3 +281,44 @@ mod unavailable_contract_tests {
         assert!(invalid.validate().is_err());
     }
 }
+
+/// Device facts and human evidence are independent; a known success never regresses.
+pub fn settled_attempt_state(outcome: &str, review: Option<&str>) -> &'static str {
+    if outcome == "observed_sent" {
+        "observed_sent"
+    } else if review == Some("manually_confirmed_sent") {
+        "manually_confirmed_sent"
+    } else if review == Some("verified_not_sent") {
+        "verified_not_sent"
+    } else if outcome == "unknown" {
+        "unknown"
+    } else {
+        "failed_before_call"
+    }
+}
+
+#[cfg(test)]
+mod settlement_tests {
+    use super::settled_attempt_state;
+    #[test]
+    fn immutable_success_and_manual_evidence_survive_late_results() {
+        for outcome in ["not_called", "failed", "unknown"] {
+            assert_eq!(
+                settled_attempt_state(outcome, Some("manually_confirmed_sent")),
+                "manually_confirmed_sent"
+            );
+        }
+        assert_eq!(
+            settled_attempt_state("observed_sent", Some("verified_not_sent")),
+            "observed_sent"
+        );
+        assert_eq!(
+            settled_attempt_state("unknown", Some("verified_not_sent")),
+            "verified_not_sent"
+        );
+        assert_eq!(
+            settled_attempt_state("unknown", Some("still_unknown")),
+            "unknown"
+        );
+    }
+}

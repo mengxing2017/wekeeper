@@ -111,23 +111,6 @@ impl<R: Store> Service<R> {
     pub async fn task_read(&self, a: &Actor, id: Option<Uuid>) -> Result<Value> {
         self.0.task_read(a, id).await
     }
-    pub async fn platform_write(
-        &self,
-        a: &Actor,
-        key: &str,
-        command: PlatformCommand,
-    ) -> Result<Value> {
-        a.platform()?;
-        self.0.platform_write(a, &text(key, 1, 128)?, command).await
-    }
-    pub async fn platform_read(&self, a: &Actor, page: u32) -> Result<Value> {
-        a.platform()?;
-        self.0.platform_read(a, page).await
-    }
-    pub async fn artifact_content(&self, a: &Actor, id: Uuid) -> Result<Vec<u8>> {
-        a.platform()?;
-        self.0.artifact_content(a, id).await
-    }
     pub async fn device_write(
         &self,
         c: &Credential,
