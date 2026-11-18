@@ -8,7 +8,9 @@
     "device_ids": [
       "44444444-4444-4444-8444-444444444444"
     ],
-    "sender_ids": []
+    "sender_ids": [],
+    "target_selection_mode": "all",
+    "device_dispatch_mode": "round_robin"
   },
   "wecom_input": {
     "name": "企业微信接收",
@@ -19,7 +21,9 @@
     "device_ids": [],
     "sender_ids": [
       "55555555-5555-4555-8555-555555555555"
-    ]
+    ],
+    "target_selection_mode": "all",
+    "device_dispatch_mode": null
   },
   "wecom_configuration": {
     "id": "11111111-1111-4111-8111-111111111111",
@@ -32,7 +36,12 @@
     "sender_ids": [
       "55555555-5555-4555-8555-555555555555"
     ],
-    "business_unit_id": "22222222-2222-4222-8222-222222222222"
+    "business_unit_id": "22222222-2222-4222-8222-222222222222",
+    "target_selection_mode": "all",
+    "device_dispatch_mode": null,
+    "revision": 1,
+    "next_target_id": null,
+    "next_device_id": null
   },
   "configuration": {
     "id": "11111111-1111-4111-8111-111111111111",
@@ -45,7 +54,12 @@
       "44444444-4444-4444-8444-444444444444"
     ],
     "sender_ids": [],
-    "business_unit_id": "22222222-2222-4222-8222-222222222222"
+    "business_unit_id": "22222222-2222-4222-8222-222222222222",
+    "target_selection_mode": "all",
+    "device_dispatch_mode": "round_robin",
+    "revision": 1,
+    "next_target_id": null,
+    "next_device_id": null
   },
   "target_input": {
     "name": "接收群",

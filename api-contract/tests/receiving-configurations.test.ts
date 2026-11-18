@@ -14,7 +14,7 @@ it.each([
   const fetchMock = vi.fn().mockImplementation(async () => Response.json(response, {headers: {'content-type': 'application/vnd.api+json'}}))
   vi.stubGlobal('fetch', fetchMock)
   const input = channel === 'mobile-execution' ? fixture.input : fixture.wecom_input
-  expect(await client.save(configuration.business_unit_id, id, input)).toEqual(configuration)
+  expect(await client.save(configuration.business_unit_id, id, {...input,target_selection_mode:'all',device_dispatch_mode:channel==='mobile-execution'?'round_robin':null})).toEqual(configuration)
   const base = `/api/v1/${channel}/business-units/${configuration.business_unit_id}/receiving-configurations`
   expect(fetchMock.mock.calls[0][0]).toBe(`${base}/${id}`)
   expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({data: {type, attributes: input}})
