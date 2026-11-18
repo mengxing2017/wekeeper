@@ -221,6 +221,22 @@ impl Observation {
     }
 }
 /// Delegation is an immutable milestone, not the current message outcome.
+/// A terminal channel without targets must not be hidden by another channel's success.
+pub fn message_state_with_channel_failures(
+    dispatch: &str,
+    total: i64,
+    counts: &super::MessageCounts,
+    complete: bool,
+    channel_failure: bool,
+) -> &'static str {
+    let state = message_state(dispatch, total, counts, complete);
+    if channel_failure && state == "completed" {
+        "finished_with_failures"
+    } else {
+        state
+    }
+}
+
 pub fn message_state(
     dispatch: &str,
     total: i64,
@@ -291,5 +307,27 @@ mod tests {
         assert_eq!(message_state("delegated", 2, &counts, false), "unobserved");
         assert_eq!(message_state("delegated", 0, &counts, true), "unobserved");
         assert_eq!(message_state("failed", 0, &counts, true), "not_dispatched");
+    }
+}
+
+#[cfg(test)]
+mod channel_failure_tests {
+    use super::*;
+    #[test]
+    fn a_failed_channel_without_targets_is_not_all_success() {
+        let counts = crate::message_orchestration::domain::MessageCounts {
+            sent: 1,
+            pending: 0,
+            failed: 0,
+            unknown: 0,
+        };
+        assert_eq!(
+            message_state_with_channel_failures("delegated", 1, &counts, true, true),
+            "finished_with_failures"
+        );
+        assert_eq!(
+            message_state_with_channel_failures("delegated", 1, &counts, true, false),
+            "completed"
+        );
     }
 }

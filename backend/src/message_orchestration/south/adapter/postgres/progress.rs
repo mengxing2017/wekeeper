@@ -3,7 +3,9 @@ use crate::{
     business::{Actor, Error, Page, Result},
     message_orchestration::domain::{
         MessageCounts, MessageView,
-        progress::{DeliveryView, Diagnostic, Observation, Progress, message_state},
+        progress::{
+            DeliveryView, Diagnostic, Observation, Progress, message_state_with_channel_failures,
+        },
     },
 };
 use chrono::{DateTime, Utc};
@@ -202,8 +204,38 @@ impl Repository {
                 }
             }
             let dispatch: String = row.get("dispatch");
-            let mut state = message_state(&dispatch, total, &counts, complete).to_string();
+            let channel_failures: Vec<_> = value["delegates"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|d| d["state"] == "failed")
+                .collect();
+            let mut state = message_state_with_channel_failures(
+                &dispatch,
+                total,
+                &counts,
+                complete,
+                !channel_failures.is_empty(),
+            )
+            .to_string();
             let mut diagnostics: Vec<Diagnostic> = facts.iter().map(|o| o.diagnose()).collect();
+            for failed in channel_failures {
+                diagnostics.push(
+                    Observation {
+                        channel: failed["channel"].as_str().map(str::to_owned),
+                        stage: "not_dispatched".into(),
+                        severity: "terminal".into(),
+                        outcome: "failed".into(),
+                        count: 0,
+                        reason: failed["reason_code"].as_str().map(str::to_owned),
+                        since: None,
+                        retry_at: None,
+                        deadline_at: None,
+                        historical_risk: false,
+                    }
+                    .diagnose(),
+                );
+            }
             if total == 0 {
                 let stage = match dispatch.as_str() {
                     "handoff" => "handoff",
