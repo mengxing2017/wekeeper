@@ -13,7 +13,12 @@ import {
 } from '@ant-design/icons'
 
 export type NavigationDomain = 'source' | 'wecom' | 'mobile' | 'support'
-export const navigationDomains = [{ key: 'source', label: '消息接收管理' }, { key: 'wecom', label: '企业微信分发管理' }, { key: 'mobile', label: '移动端分发管理' }, { key: 'support', label: '系统管理' }] as const
+export const navigationDomains = [
+  { key: 'source', label: '消息接收管理', icon: <MessageOutlined /> },
+  { key: 'mobile', label: '移动端分发管理', icon: <MobileOutlined /> },
+  { key: 'wecom', label: '企业微信分发管理', icon: <TeamOutlined /> },
+  { key: 'support', label: '系统管理', icon: <SafetyCertificateOutlined /> },
+] as const
 export type NavigationPage =
   | {kind: 'mobile-dispatch-records' | 'groups' | 'broadcast-tasks' | 'execution-devices' | 'shared-mobile-resources' | 'mobile-execution-tasks' | 'mobile-targets' | 'wecom-senders' | 'audit' | 'wecom-assets' | 'wecom-directory' | 'administrators' | 'source-credentials' | 'advertisements' | 'keyword-rules' | 'source-automation-tasks'}
   | {kind: 'receiving-configurations'; channel: 'mobile' | 'wecom'}

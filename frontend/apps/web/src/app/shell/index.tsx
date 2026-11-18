@@ -129,16 +129,17 @@ export function AppShell({
             mode="inline"
             inlineCollapsed={collapsed && !open}
             selectedKeys={[active]}
-            items={navigationDomains.flatMap(({ key: domain, label: domainLabel }) => {
+            defaultOpenKeys={navigationDomains.map(({ key }) => key)}
+            items={navigationDomains.flatMap(({ key: domain, label: domainLabel, icon }) => {
               const items = navigation.filter(
                 (item) => !item.hidden && item.domain === domain && allowedKeys.includes(item.key),
               )
               return items.length
                 ? [
                     {
-                      type: 'group' as const,
                       key: domain,
-                      label: collapsed && !open ? null : domainLabel,
+                      label: domainLabel,
+                      icon: <span aria-hidden="true">{icon}</span>,
                       children: items.map((item) => ({
                         key: item.key,
                         label: item.label,
