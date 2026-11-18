@@ -3,7 +3,7 @@ import { TableText, TableIdentifier } from '../../../shared/table-text'
 import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Card, Input, InputNumber, Modal, Select, Space, Table } from 'antd'
-import { api, sharedSend, executionEvidenceLabels, type SharedDraft, type SharedPreview, type SharedTask, type SharedAttempt } from './api'
+import { api, sharedSend, executionEvidenceLabels, type SharedDraft, type SharedPreview, type SharedTask, type SharedAttempt, type MobileClient, mobileClientLabels } from './api'
 import { createIdempotencyKey } from '../../../shared/idempotency-key'
 import { PaginationControls } from '../../../shared/pagination-controls'
 import { taskError, attemptFailureReason, candidateGroupName } from './task-model'
@@ -26,6 +26,7 @@ function TaskList({  admin }: { admin: boolean }) {
   const [decision,setDecision]=useState<'still_unknown'|'verified_not_sent'|'manually_confirmed_sent'>('still_unknown')
   const [device,setDevice]=useState<string>()
 
+  const [clientKind,setClientKind]=useState<MobileClient>()
   const [targetPage,setTargetPage]=useState(1)
   const [targetSearch,setTargetSearch]=useState('')
   const [targetNames,setTargetNames]=useState<Record<string,string>>({})
@@ -44,10 +45,10 @@ function TaskList({  admin }: { admin: boolean }) {
   }
   const bindings=useQuery({queryKey:['mobile-execution','shared-reassign-bindings'],queryFn:()=>api.bindings(1),enabled:action?.kind==='reassign'})
   const overview = useQuery({ queryKey: ['mobile-execution', 'shared-tasks'], queryFn: () => sharedSend.overview(), refetchInterval: 20_000 })
-  const options = useQuery({ queryKey: ['mobile-execution', 'shared-targets',targetPage,targetSearch], queryFn: () => api.targets(targetPage,targetSearch) })
+  const options = useQuery({ queryKey: ['mobile-execution', 'shared-targets',targetPage,targetSearch,clientKind], queryFn: () => api.targets(targetPage,targetSearch,undefined,clientKind),enabled:!!clientKind })
   const refresh = () => cache.invalidateQueries({ queryKey: ['mobile-execution'] })
   async function generatePreview(selections:Array<{target_id:string;device_id:string}>) {
-    const input={business_unit_id:businessUnit||null,draft_id:draft?.id,expected_revision:draft?.revision,target_ids:targets,message,between_targets_seconds:gap,selections}
+    const input={client_kind:clientKind!,business_unit_id:businessUnit||null,draft_id:draft?.id,expected_revision:draft?.revision,target_ids:targets,message,between_targets_seconds:gap,selections}
     const result=await sharedSend.taskPreview(input,keyFor('preview',input))
     setDraft(result.draft)
     setTargetNames(n=>({...n,...Object.fromEntries(result.draft.targets.map(t=>[t.id,t.name]))}))
@@ -64,7 +65,7 @@ function TaskList({  admin }: { admin: boolean }) {
     return sharedSend.reassign(a.id,a.revision,device!,reason,keyFor('reassign',[a.id,a.revision,device,reason]))
   },onSuccess:t=>{setDetail(t);setAction(undefined);setReason('');setDevice(undefined);void refresh()}})
   const error = overview.error || options.error || inspect.error || confirm.error || detailQuery.error || reselect.error || mutate.error || bindings.error || units.error
-  const dirty = !!draft && (businessUnit!==(draft.business_unit_id??'') || message.replace(/\r\n?/g, '\n') !== draft.message || targets.join() !== draft.target_ids.join() || gap!==draft.between_targets_seconds)
+  const dirty = !!draft && (clientKind!==draft.client_kind || businessUnit!==(draft.business_unit_id??'') || message.replace(/\r\n?/g, '\n') !== draft.message || targets.join() !== draft.target_ids.join() || gap!==draft.between_targets_seconds)
   const synchronized=overview.isSuccess&&!overview.isError
   const liveOverview=synchronized ? overview.data : undefined
   const resourcesChanged=preview ? previewResourcesChanged(preview,liveOverview) : false
@@ -74,15 +75,16 @@ function TaskList({  admin }: { admin: boolean }) {
     <Space orientation="vertical" style={{ width: '100%' }}>
       <Button href={`/admin?view=mobile-dispatch-records${selected?`&task_id=${encodeURIComponent(selected.id)}`:''}`}>自动任务下发记录</Button>
       <Button href={'/admin?view=source-automation-tasks'}>即时消息与发送结果</Button>
-      <Alert type="info" showIcon title="按目标群创建，逐群选择共享手机" description="填写文字和目标群后直接预览，系统自动保存草稿。核对预览后确认发送。确认时同时授权预览中的有效候选，所选手机为首选；离线或调用前失败时自动选择下一候选。结果不确定时保留原尝试风险，接收后五分钟无最终结果按原授权候选换机；跨手机可能重复。企业微信官方群发独立使用。" />
+      <Alert type="info" showIcon title="按目标群创建，逐群选择共享手机" description="填写文字和目标群后直接预览，系统自动保存草稿。核对群类型和预览后确认发送。确认时同时授权预览中的有效候选，所选手机为首选；离线或调用前失败时自动选择下一候选。结果不确定时保留原尝试风险，接收后五分钟无最终结果按原授权候选换机；跨手机可能重复。根据群类型选择企业微信或个人微信，两者共用手机发送规则。" />
       {overview.data?.sending_status&&<Alert type={overview.data.sending_status.can_confirm?'info':'warning'} title={overview.data.sending_status.message}/>}
       {overview.isError&&<Alert type="warning" title="当前状态同步失败，预览快照不能作为实时状态" description={<Button onClick={()=>void overview.refetch()}>重试</Button>}/>}
       {error && <Alert type="error" title={taskError(error)} />}
+      <Select aria-label="任务群类型" placeholder="选择企业微信或个人微信" value={clientKind} onChange={v=>{setClientKind(v);setTargets([]);setDraft(undefined);setPreview(undefined);setTargetPage(1)}} options={Object.entries(mobileClientLabels).map(([value,label])=>({value,label}))}/>
       <Input.Search aria-label="搜索手机目标群" placeholder="搜索群名称" onSearch={value=>{setTargetSearch(value);setTargetPage(1)}} />
       <Select aria-label="任务业务单位" value={businessUnit} style={{minWidth:280}} onChange={v=>{setBusinessUnit(v);setPreview(undefined)}} options={[{value:'',label:'无业务单位（使用默认方案）'},...(units.data??[]).map(u=>({value:u.id,label:u.name}))]}/>
       <Select labelInValue mode="multiple" aria-label="手机目标群" placeholder="选择手机目标群" style={{ width: '100%' }} value={targets.map(value=>({value,label:targetNames[value] ?? draft?.targets.find(t=>t.id===value)?.name ?? '目标信息待核对'}))} onChange={values=>{setTargets(values.map(v=>v.value));setTargetNames(names=>({...names,...Object.fromEntries(values.map(v=>[v.value,String(v.label)]))}))}} options={(options.data?.items ?? []).filter(t => t.enabled && !t.archived_at).map(t => ({ value: t.id, label: t.search_text }))} />
       <PaginationControls page={targetPage} more={options.data?.page?.has_more} change={setTargetPage} subject="可选手机目标群" />
-      {!!overview.data?.drafts.length && <Select aria-label="恢复共享发送草稿" placeholder="恢复已保存草稿" style={{width:'100%'}} options={overview.data.drafts.map(d=>({value:d.id,label:`${d.message.slice(0,30)}（${d.target_ids.length} 个目标群）`}))} onChange={id=>{const d=overview.data!.drafts.find(x=>x.id===id)!;setDraft(d);setBusinessUnit(d.business_unit_id??'');setTargetNames(n=>({...n,...Object.fromEntries(d.targets.map(t=>[t.id,t.name]))}));setTargets(d.target_ids);setMessage(d.message);setGap(d.between_targets_seconds);setPreview(undefined)}} />}
+      {!!overview.data?.drafts.length && <Select aria-label="恢复共享发送草稿" placeholder="恢复已保存草稿" style={{width:'100%'}} options={overview.data.drafts.map(d=>({value:d.id,label:`${d.message.slice(0,30)}（${d.target_ids.length} 个目标群）`}))} onChange={id=>{const d=overview.data!.drafts.find(x=>x.id===id)!;setDraft(d);setClientKind(d.client_kind);setBusinessUnit(d.business_unit_id??'');setTargetNames(n=>({...n,...Object.fromEntries(d.targets.map(t=>[t.id,t.name]))}));setTargets(d.target_ids);setMessage(d.message);setGap(d.between_targets_seconds);setPreview(undefined)}} />}
       <label>逐群间隔（秒）<InputNumber aria-label="逐群间隔秒数" value={gap} min={1} max={86400} precision={0} onChange={v=>setGap(v??30)}/></label>
       <p>不同目标独立调度，遵守业务间隔；某手机离线或前群待核对不拖住无关目标。间隔由业务方案与此处设置共同约束。</p>
       <Space>{targets.map((id,index)=><span key={id}>{index+1}. {targetNames[id]??draft?.targets.find(t=>t.id===id)?.name??'目标群'} <Button disabled={index===0} onClick={()=>setTargets(ids=>{const next=[...ids];[next[index-1],next[index]]=[next[index],next[index-1]];return next})}>前移</Button></span>)}</Space>
@@ -97,7 +99,8 @@ function TaskList({  admin }: { admin: boolean }) {
         {preview.plan.sending_status&&!preview.plan.sending_status.can_confirm&&<Alert type="warning" title={preview.plan.sending_status.message}/>}
         <p>当前为固定计划；业务范围变化后请重新点击“预览”，并重新确认。计划有效期：{preview.expires_at}。以下为实际发送文字：</p><pre className="message-preview">{preview.plan.message}</pre>
         <Table tableLayout="fixed" scroll={{x:900}} rowKey="target_id" pagination={false} dataSource={preview.plan.items} columns={[
-          { title: '群名称', width:180, render:(_,i)=><TableText value={i.selected?.target?.search_query ?? i.selected?.search_text ?? i.target.search_text}/> }, { title: '首选手机', width:200, render: (_, i) => <Select aria-label={`目标群 ${i.target_id} 的共享手机`} style={{width:'100%',minWidth:150}} disabled={reselect.isPending} value={i.selected?.device_id} placeholder={i.readiness?.length ? '选择已绑定手机（可离线）' : '无绑定设备'} options={(i.readiness ?? []).map(r=>({value:r.device_id,label:r.device_name,disabled:!i.candidates.some(c=>c.device_id===r.device_id) || r.plan_selectable===false}))} onChange={device_id=>reselect.mutate(previewSelections(preview.plan.items,i.target_id,device_id))} /> },
+          {title:'群类型',width:120,render:(_,i)=>mobileClientLabels[i.target.client_kind]},
+          { title: '群名称', width:180, render:(_,i)=><TableText value={i.target.search_text}/> }, { title: '首选手机', width:200, render: (_, i) => <Select aria-label={`目标群 ${i.target_id} 的共享手机`} style={{width:'100%',minWidth:150}} disabled={reselect.isPending} value={i.selected?.device_id} placeholder={i.readiness?.length ? '选择已绑定手机（可离线）' : '无绑定设备'} options={(i.readiness ?? []).map(r=>({value:r.device_id,label:r.device_name,disabled:!i.candidates.some(c=>c.device_id===r.device_id) || r.plan_selectable===false}))} onChange={device_id=>reselect.mutate(previewSelections(preview.plan.items,i.target_id,device_id))} /> },
           { title: '受理检查与手机执行状态', className:'table-text', render: (_, i) => <Space orientation="vertical">
             <p>{i.blocker ? `受理检查：${i.blocker}` : '可以确认提交；手机执行条件不影响任务入队'}</p>
             {(i.readiness ?? []).filter(r=>!i.selected||r.device_id===i.selected.device_id).map(snapshot=>{
@@ -114,6 +117,7 @@ function TaskList({  admin }: { admin: boolean }) {
         <Button type="primary" loading={confirm.isPending} disabled={!admin || resourcesChanged || reselect.isPending || inspect.isPending} onClick={() => confirm.mutate()}>确认发送</Button>
       </>}
       <Table<SharedTask> tableLayout="fixed" scroll={{x:720}} rowKey="id" loading={overview.isFetching} dataSource={overview.data?.tasks ?? []} pagination={{ pageSize: 10 }} columns={[
+        {title:'客户端',width:120,render:(_,t)=>mobileClientLabels[t.client_kind]},
         { title: '任务', width:220, dataIndex:'id', render:value=><TableIdentifier value={value}/> }, { title: '创建时间', width:180, dataIndex: 'created_at', render:value=>formatDate(value) }, { title: '状态', render: (_, t) => <TableText value={taskProgressLabel(t) ?? '状态待同步'}/> },
         { title: '操作', width:88, render: (_, t) => <Button type="link" onClick={() => setSelected({id:t.id})}>详情</Button> },
       ]} />

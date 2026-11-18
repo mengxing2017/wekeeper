@@ -12,3 +12,6 @@ export { executionEvidenceLabels } from '@wekeeper/api-contract/mobile-execution
 
 export {dispatchRecords} from '@wekeeper/api-contract/mobile-execution/dispatch-records'
 export type {DispatchQuery, DispatchPage, DispatchIntake, DispatchOperation, DispatchCheck, DispatchEvent, DeliveryExchange} from '@wekeeper/api-contract/mobile-execution/dispatch-records'
+
+export {mobileClientLabels} from '@wekeeper/api-contract/mobile-execution'
+export type {MobileClient} from '@wekeeper/api-contract/mobile-execution'

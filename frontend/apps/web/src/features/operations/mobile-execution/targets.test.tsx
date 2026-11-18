@@ -3,17 +3,17 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MobileTargets } from './targets'
 import { api } from './api'
-vi.mock('./api', () => ({api: {targets: vi.fn(), bindings: vi.fn(), devices: vi.fn(),platformBindings:vi.fn(async()=>({items:[]}))}}))
+vi.mock('./api', () => ({mobileClientLabels:{wecom:'企业微信',wechat:'个人微信'},api: {targets: vi.fn(), bindings: vi.fn(), devices: vi.fn(),platformBindings:vi.fn(async()=>({items:[]}))}}))
 afterEach(() => { cleanup(); vi.resetAllMocks() })
 it('operators can inspect independent targets without account registration or official resource calls', async () => {
-  vi.mocked(api.targets).mockResolvedValue({ items: [{ id: 'target', search_text: '手机备注  家长群', remark: '', enabled: true, metadata_revision: 1, locator_revision: 1, archived_at: null }] })
+  vi.mocked(api.targets).mockResolvedValue({ items: [{ client_kind:'wecom', id: 'target', search_text: '手机备注  家长群', remark: '', enabled: true, metadata_revision: 1, locator_revision: 1, archived_at: null }] })
   vi.mocked(api.bindings).mockResolvedValue({ items: [] })
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MobileTargets admin={false} /></QueryClientProvider>)
   expect(await screen.findByText('手机备注 家长群')).toBeTruthy()
   expect(screen.queryByRole('button', { name: /^新\s*增$/ })).toBeNull()
   expect(screen.queryByRole('button', { name: '绑定设备' })).toBeNull()
   expect(api.devices).not.toHaveBeenCalled()
-  await waitFor(() => expect(api.targets).toHaveBeenCalledWith( 1, ''))
+  await waitFor(() => expect(api.targets).toHaveBeenCalledWith(1, '', undefined, undefined))
 })
 
 it('system administrators create targets without a device grant or binding form', async () => {

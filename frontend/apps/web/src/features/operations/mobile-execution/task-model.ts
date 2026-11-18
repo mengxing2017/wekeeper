@@ -1,7 +1,7 @@
 import type { SharedCandidate } from './api'
 
 export function candidateGroupName(candidate: SharedCandidate): string {
-  return candidate.target?.search_query ?? candidate.search_text ?? candidate.target_name ?? '目标群已移除'
+  return candidate.target.search_query
 }
 
 export function taskError(error: unknown): string {
@@ -65,6 +65,8 @@ export function attemptFailureReason(reason:string | null | undefined):string {
     shared_runtime_not_ready:'手机当前运行环境不满足本次执行',
     accessibility_required:'本次执行未能使用无障碍服务',
     wecom_business_page_required:'未能准备企业微信业务页面',
+    wechat_not_logged_in:'个人微信当前未登录',
+    wechat_verification_required:'个人微信当前需要本人验证',
     wecom_not_logged_in:'企业微信当前未登录',
     wecom_verification_required:'企业微信当前需要本人验证',
     adapter_incompatible:'手机本地适配与当前应用版本不匹配',
