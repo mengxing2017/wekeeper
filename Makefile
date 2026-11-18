@@ -84,3 +84,7 @@ docs-build:
 
 docs-preview:
 	pnpm --dir docs preview
+
+.PHONY: test-receiving-policy
+test-receiving-policy:
+	python3 tools/check_receiving_policy.py
