@@ -1,5 +1,5 @@
 import {afterEach,expect,it,vi} from 'vitest';
-import {assets} from '../src/modules/business';
+import {assets} from '../src/modules/wecom-resources';
 import fixture from '../fixtures/wecom-asset-group.json';
 import memberFixture from '../fixtures/wecom-asset-member.json';
 afterEach(()=>vi.unstubAllGlobals());

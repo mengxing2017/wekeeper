@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import fixture from '../fixtures/system.json'
 import { ApiError, getJson } from '../src/http'
-import { workspace } from '../src/modules/business'
+import { workspace } from '../src/modules/wecom-resources'
 import { getSystemInfo, type SystemInfo } from '../src/modules/system'
 
 function json(value: unknown, init: ResponseInit = {}) { return Response.json(value, {...init, headers:{'Content-Type':'application/vnd.api+json',...init.headers}}) }
@@ -39,12 +39,12 @@ describe('shared HTTP contract', () => {
 })
 
 it('keeps OAuth selection in a fixed local entry URL', async () => {
-  const { wecomOAuthUrl } = await import('../src/modules/business')
+  const { wecomOAuthUrl } = await import('../src/modules/wecom-resources')
   expect(wecomOAuthUrl()).toBe('/api/v1/wecom/oauth/start')
 })
 
 it('reads the public WeCom status using the backend fixture', async () => {
-  const { workspace } = await import('../src/modules/business')
+  const { workspace } = await import('../src/modules/wecom-resources')
   const fixture = (await import('../fixtures/wecom-status.json')).default
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(fixture)))
   expect(await workspace.wecomStatus()).toEqual({id:'current',server_configured:false,oauth_available:false,share_available:false})

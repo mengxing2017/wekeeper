@@ -10,7 +10,6 @@
     "./http": "./src/http/index.ts",
     "./system": "./src/modules/system/index.ts",
     "./health": "./src/modules/health/index.ts",
-    "./business": "./src/modules/business/index.ts",
     "./business-directory": "./src/modules/business-directory/index.ts",
     "./business-directory/client": "./src/modules/business-directory/client.ts",
     "./client": "./src/http/client.ts",
@@ -30,7 +29,11 @@
     "./advertising/client": "./src/modules/advertising/client.ts",
     "./advertising/material-client": "./src/modules/advertising/material-client.ts",
     "./mobile-execution/dispatch-records": "./src/modules/mobile-execution/shared-send/dispatch-records.ts",
-    "./message-statistics": "./src/modules/message-statistics/index.ts"
+    "./message-statistics": "./src/modules/message-statistics/index.ts",
+    "./identity/browser": "./src/modules/identity/browser.ts",
+    "./wecom-resources": "./src/modules/wecom-resources/index.ts",
+    "./audit": "./src/modules/audit/index.ts",
+    "./product-workflows": "./src/modules/product-workflows/index.ts"
   },
   "scripts": {
     "build": "tsc --noEmit && tsc -p tsconfig.platform.json",

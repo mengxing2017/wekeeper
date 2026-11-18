@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { directory } from '../src/modules/business';
+import { directory } from '../src/modules/wecom-resources';
 import fixture from '../fixtures/wecom-directory-member.json';
 afterEach(()=>vi.unstubAllGlobals());
 it('decodes the shared Rust directory fixture and preserves filters',async()=>{

@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { auditEvents } from '../src/modules/business'
+import { auditEvents } from '../src/modules/audit'
 afterEach(() => vi.unstubAllGlobals())
 it('reads system audit independently of distribution workspaces with pagination', async () => {
   const fetch = vi.fn().mockResolvedValue(Response.json({data:[{type:'audit-events',id:'event',attributes:{actor_id:'admin',action:'identity.password.reset',object_id:'account',request_id:'request',detail:{},created_at:'2026-11-08T00:00:00Z'}}],meta:{page:{number:2,size:30,has_more:false}}},{headers:{'Content-Type':'application/vnd.api+json'}}))

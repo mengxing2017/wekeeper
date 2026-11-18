@@ -1,5 +1,6 @@
 import {afterEach,expect,it,vi} from 'vitest'
-import {product,broadcast} from '../src/modules/business'
+import {product} from '../src/modules/product-workflows'
+import {broadcast} from '../src/modules/wecom-distribution'
 import fixture from '../fixtures/product-workflows.json'
 import type {UsageInput,MemberPolicyInput,RequestInput,RequestDecision,Confirmation} from '../src/modules/product-workflows/client'
 afterEach(()=>vi.unstubAllGlobals())

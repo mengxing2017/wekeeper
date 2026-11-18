@@ -1,25 +1,13 @@
-import { requestResource, requestCollection, setCsrf } from '../../http';
-export { ApiError } from '../../http';
+import {requestResource,requestCollection,type Cancellation} from '../../http'
+import type {Row,Resource} from './types'
 export * from './types'
-import type { Row, Session, Resource } from './types'
-const part = (s: string) => encodeURIComponent(s);
-export const scope = (path: string) => `/api/v1/wecom-distribution/${path}`;
-export interface Administrator { id: string; username: string; display_name: string; active: boolean; platform_admin: boolean }
-export const identity = {
-    async session() { const v = await requestResource<Session>('/api/v1/auth/session'); setCsrf(v.csrf); return v; },
-    async login(username: string, password: string) { const v = await requestResource<Session>('/api/v1/auth/sessions', 'POST', { username, password }); setCsrf(v.csrf); return v; },
-    async logout() { await requestResource('/api/v1/auth/session', 'DELETE'); setCsrf(''); },
-    profile: (display_name: string) => requestResource('/api/v1/profile', 'PUT', { display_name }),
-    administrators: (search = '') => requestResource<Administrator[]>(`/api/v1/platform/administrators${search ? `?${new URLSearchParams({search})}` : ''}`),
-    createAdministrator: (input: {username: string; display_name: string; password: string}) => requestResource<Administrator>('/api/v1/platform/administrators', 'POST', input),
-    updateAdministrator: (id: string, input: {display_name: string; active: boolean}) => requestResource<Administrator>(`/api/v1/platform/administrators/${part(id)}`, 'PUT', input),
-    deleteAdministrator: (id: string) => requestResource<null>(`/api/v1/platform/administrators/${part(id)}`, 'DELETE'),
-    resetAdministrator: (id: string, password: string) => requestResource(`/api/v1/platform/administrators/${part(id)}/password`, 'POST', { password }),
-};
+export {ApiError} from '../../http'
+const part=(s:string)=>encodeURIComponent(s)
+export const scope=(path:string)=>`/api/v1/wecom-distribution/${path}`
 export interface WecomStatus { server_configured: boolean; oauth_available: boolean; share_available: boolean }
 export const workspace = {
     wecomStatus: () => requestResource<WecomStatus>('/api/v1/wecom/status'),
-    list: <T extends Row = Row>(resource: Resource, query = '', signal?: AbortSignal) => requestCollection<T>(scope(resource) + query, signal),
+    list: <T extends Row = Row>(resource: Resource, query = '', signal?: Cancellation) => requestCollection<T>(scope(resource) + query, signal),
     mutate: <T = Row>(path: string, body?: unknown, method = 'POST') => requestResource<T>(scope(path), method, body),
     upload: (file: Blob) => requestResource<{
         url: string;
@@ -95,20 +83,3 @@ export const assets = {
     bind:(input:{directory_group_id:string;expected_generation:number;expected_checked_at:string;name?:string})=>requestResource<Row>(scope('groups/from-directory'),'POST',input),
 };
 
-// Transitional export only; the official contract has one canonical owner.
-export * from '../wecom-distribution'
-
-export * from '../product-workflows'
-
-export interface AuditEvent {
-    id: string;
-    actor_id: string | null;
-    action: string;
-    object_id: string | null;
-    request_id: string | null;
-    detail: unknown;
-    created_at: string;
-}
-export const auditEvents = {
-    list: (query = '', signal?: AbortSignal) => requestCollection<AuditEvent>('/api/v1/audit-events' + query, signal),
-};

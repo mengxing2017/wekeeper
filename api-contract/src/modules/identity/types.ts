@@ -1,10 +1,3 @@
-export type Json = string | number | boolean | null | Json[] | {
-    [key: string]: Json;
-};
-export interface Row {
-    id: string;
-    [key: string]: Json;
-}
 export interface User {
     id: string;
     username: string;
@@ -16,4 +9,5 @@ export interface Session {
     user: User;
     csrf: string;
 }
-export type Resource = 'groups';
+
+export interface Administrator { id: string; username: string; display_name: string; active: boolean; platform_admin: boolean }

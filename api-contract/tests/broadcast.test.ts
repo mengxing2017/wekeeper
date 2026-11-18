@@ -1,5 +1,5 @@
 import {afterEach,expect,it,vi} from 'vitest'
-import {broadcast} from '../src/modules/business'
+import {broadcast} from '../src/modules/wecom-distribution'
 import task from '../fixtures/broadcast-task.json'
 import target from '../fixtures/broadcast-target.json'
 afterEach(()=>vi.unstubAllGlobals())
