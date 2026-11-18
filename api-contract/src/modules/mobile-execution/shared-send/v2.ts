@@ -57,6 +57,7 @@ export interface TaskPreviewInput {draft_id?:string;expected_revision?:number;bu
 
 export interface SendingStatus {platform:'default'|'disabled'|'enabled';can_confirm:boolean;owner:string;message:string}
 export interface BusinessSchemeInput {expected_revision:number;enabled:boolean;confirmed:boolean;timezone:string;allowed_windows:ResolvedScheme['allowed_windows'];limits:ResolvedScheme['limits'];reason:string}
+// HTTP built-ins use builtin:<scope> resource IDs; frozen business snapshots keep id:null.
 export type BusinessScheme=ResolvedScheme & {id:string|null;revision:number;scope_revision:number;source:'builtin'|'default'|'unit';business_unit_id:string|null;builtin_version?:string}
 
 export interface SharedTaskInboxItem {client_kind:MobileClient; task_id:string;item_id:string;attempt_id:string;assignment_revision:1;target_id:string;target_name:string;search_text:string;device_id:string;device_name:string;position:number;total:number;assigned_total:number;assigned_at:string;confirmed_until:string;attempt_state:SharedAttemptState;current:boolean;task_stopped:boolean;confirmation_expired:boolean;next_eligible_at:string|null;execution_status:SharedExecutionStatus }

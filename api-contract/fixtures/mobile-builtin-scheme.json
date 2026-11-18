@@ -1,0 +1,14 @@
+{
+  "data": {
+    "type": "mobile-business-schemes",
+    "id": "builtin:default",
+    "attributes": {
+      "revision": 0,
+      "scope_revision": 0,
+      "mode": "enabled",
+      "source": "builtin",
+      "business_unit_id": null,
+      "builtin_version": "mobile_business_default/1"
+    }
+  }
+}

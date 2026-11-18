@@ -99,3 +99,13 @@ it('scheme writes and task previews use their Rust JSON API resource types',asyn
  expect(calls.map(c=>(c.body as {data:{type:string}}).data.type)).toEqual(['mobile-business-schemes','mobile-business-schemes','mobile-business-schemes','mobile-task-previews'])
  expect(calls[3].body).toEqual({data:{type:'mobile-task-previews',attributes:preview}})
 })
+
+it('reads built-in business schemes without requiring a saved version',async()=>{
+ const {default:fixture}=await import('../fixtures/mobile-builtin-scheme.json')
+ const client=createClient(async()=>({status:200,headers:{'content-type':'application/vnd.api+json'},body:fixture}))
+ const scheme=await createSharedSendV2Client(client).businessScheme()
+ expect(scheme.id).toBe('builtin:default')
+ expect(scheme.source).toBe('builtin')
+ expect(scheme.revision).toBe(0)
+ expect(scheme.business_unit_id).toBeNull()
+})
