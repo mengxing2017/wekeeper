@@ -90,6 +90,11 @@ impl Fixture {
                 self.unit,
                 id,
                 ConfigurationInput {
+                    target_selection_mode:
+                        wekeeper_api::distribution::domain::receiving::SelectionMode::All,
+                    device_dispatch_mode: Some(
+                        wekeeper_api::distribution::domain::receiving::SelectionMode::RoundRobin,
+                    ),
                     name: "接收配置".into(),
                     enabled: true,
                     target_ids: targets,

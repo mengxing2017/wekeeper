@@ -379,6 +379,9 @@ async fn both_channels_share_one_ad_and_aggregate_official_results_without_membe
             f.unit,
             Uuid::new_v4(),
             ConfigurationInput {
+                target_selection_mode:
+                    wekeeper_api::distribution::domain::receiving::SelectionMode::All,
+                device_dispatch_mode: None,
                 name: "企业微信配置".into(),
                 enabled: true,
                 target_ids: vec![target],
@@ -1357,12 +1360,26 @@ async fn phone_intake_failure_survives_rollback_and_deduplicates_creation() {
             .is_err()
     );
     let (new_message, new_receipt) = f.message().await;
-    let mut bad = plan;
-    bad.targets[0].identity["candidates"] = serde_json::json!([]);
-    let rejected = repo
-        .submit_mobile(new_message, new_receipt, bad.clone(), "原消息".into())
+    // An old responsibility cannot be reused for a different message.
+    assert!(
+        repo.submit_mobile(new_message, new_receipt, plan.clone(), "原消息".into())
+            .await
+            .is_err()
+    );
+    // Corrupt a newly allocated frozen input at the persistence boundary to exercise
+    // durable pre-task rejection, rather than inventing an unowned delivery identity.
+    sqlx::raw_sql("CREATE FUNCTION invalid_frozen_candidates() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.plan=jsonb_set(NEW.plan,'{targets,0,identity,candidates}','[]'); RETURN NEW; END $$; CREATE TRIGGER invalid_frozen_candidates BEFORE INSERT ON mobile_dispatch_intakes FOR EACH ROW EXECUTE FUNCTION invalid_frozen_candidates();").execute(&f.pool).await.unwrap();
+    f.run().await;
+    sqlx::query("DROP TRIGGER invalid_frozen_candidates ON mobile_dispatch_intakes")
+        .execute(&f.pool)
         .await
         .unwrap();
+    let rejected: Uuid =
+        sqlx::query_scalar("SELECT id FROM mobile_dispatch_intakes WHERE message_id=$1")
+            .bind(new_message)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
     let detail = repo
         .read_records(&f.actor, "detail", Some(rejected), RecordQuery::default())
         .await
@@ -1411,20 +1428,11 @@ async fn phone_intake_failure_survives_rollback_and_deduplicates_creation() {
     );
     // Retryable creation failures preserve started identity and are recovered from the original frozen input.
     let (retry_message, retry_receipt) = f.message().await;
-    let frozen: Value = sqlx::query_scalar("SELECT plan FROM mobile_dispatch_intakes WHERE id=$1")
-        .bind(id)
-        .fetch_one(&f.pool)
-        .await
-        .unwrap();
-    let good: DeliveryPlan = serde_json::from_value(frozen).unwrap();
     // Force an infrastructure failure after intake commit, inside task creation.
     sqlx::query("CREATE FUNCTION test_fail_task() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test infrastructure failure'; END $$").execute(&f.pool).await.unwrap();
     sqlx::query("CREATE TRIGGER test_fail_task BEFORE INSERT ON mobile_v9_tasks FOR EACH ROW EXECUTE FUNCTION test_fail_task()").execute(&f.pool).await.unwrap();
-    assert!(
-        repo.submit_mobile(retry_message, retry_receipt, good.clone(), "原消息".into())
-            .await
-            .is_err()
-    );
+    f.run().await;
+    let _ = retry_receipt;
     let retry_id: Uuid =
         sqlx::query_scalar("SELECT id FROM mobile_dispatch_intakes WHERE message_id=$1")
             .bind(retry_message)
@@ -1463,7 +1471,7 @@ async fn phone_intake_failure_survives_rollback_and_deduplicates_creation() {
         1
     );
     // Equal timestamps and more than 100 records must not truncate or repeat pages.
-    sqlx::query("INSERT INTO mobile_dispatch_intakes(id,source_kind,message_id,target_name,snapshot_id,plan,content,payload_hash,creation_state,reason_code,created_at) SELECT gen_random_uuid(),'source_route',gen_random_uuid(),'分页测试',gen_random_uuid(),'{}','分页正文','test','rejected','pagination_fixture',now() FROM generate_series(1,105)")
+    sqlx::query("INSERT INTO mobile_dispatch_intakes(id,source_kind,message_id,target_name,snapshot_id,plan,content,payload_hash,creation_state,reason_code,created_at) SELECT gen_random_uuid(),'manual',NULL,'分页测试',gen_random_uuid(),'{}','分页正文','test','rejected','pagination_fixture',now() FROM generate_series(1,105)")
         .execute(&f.pool).await.unwrap();
     let mut seen = std::collections::HashSet::new();
     let mut cursor = None;
@@ -1477,6 +1485,7 @@ async fn phone_intake_failure_survives_rollback_and_deduplicates_creation() {
                     cursor,
                     page_size: Some(30),
                     reason: Some("pagination_fixture".into()),
+                    source_kind: Some("all".into()),
                     ..Default::default()
                 },
             )
