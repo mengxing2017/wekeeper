@@ -730,3 +730,16 @@ code {
     transition: none !important;
   }
 }
+
+/* Charts shrink with their grid columns; only data tables scroll horizontally. */
+.statistics-page > .ant-space-item,
+.statistics-page .ant-col,
+.statistics-page .ant-card-body { min-width: 0; }
+.statistics-page .ant-card { height: 100%; }
+.statistics-page summary { cursor: pointer; padding-block: 10px; }
+.statistics-page .ant-tag { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+@media (max-width: 575px) {
+  .statistics-page .ant-card-body { padding: 12px; }
+  .statistics-page .ant-space { max-width: 100%; }
+}
+.statistics-page .ant-card-head-title { white-space: normal; padding-block: 12px; }
