@@ -51,6 +51,12 @@ async fn scoped_advertising_rotates_once_with_inactive_storage_partition() {
         .await
         .unwrap();
     assert_eq!(tasks, 2);
+    let units:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('unit',business_unit_id,'scheme_unit',scheme_snapshot->'business_unit_id','source',scheme_snapshot->'source') FROM mobile_v9_tasks").fetch_all(&f.pool).await.unwrap();
+    for context in units {
+        assert_eq!(context["unit"], serde_json::json!(f.unit));
+        assert_eq!(context["scheme_unit"], serde_json::json!(f.unit));
+        assert_eq!(context["source"], "builtin");
+    }
     let retired: bool = sqlx::query_scalar("SELECT to_regclass('source_execution_tasks') IS NULL")
         .fetch_one(&f.pool)
         .await

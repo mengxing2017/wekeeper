@@ -147,7 +147,7 @@ struct ObjectLimits;
 impl ObjectLimits {
     fn value() -> Value {
         let l = json!({"interval_seconds":60,"window_seconds":3600,"max_calls":10,"daily_max_calls":20});
-        json!({"global":l,"device":l,"target":l})
+        json!({"total":l,"device":l,"target":l})
     }
 }
 
@@ -173,312 +173,26 @@ async fn concurrent_activation_has_one_winner_and_immutable_audit() {
 
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn business_usage_is_atomic_scoped_idempotent_and_survives_delivery_changes() {
-    use wekeeper_api::distribution::domain::shared_mobile::usage::*;
-    let f = Fixture::new().await;
-    let r = f.repo();
-    let input = UsageInput {
-        device_ids: vec![f.device],
-        targets: vec![UsageTarget {
-            id: Some(f.targets[0]),
-            name: "测试群".into(),
-            search_text: "测试群".into(),
-        }],
-        max_calls: 5,
-        expires_at: chrono::Utc::now() + chrono::Duration::hours(2),
-        auto_targets: false,
-        renewal_of: None,
-        expected_revision: None,
-    };
-    let preview = r
-        .usage_write(
-            &f.actor,
-            "usage-preview",
-            UsageCommand::Preview(input.clone()),
-        )
-        .await
-        .unwrap();
-    let confirm = UsageCommand::Confirm(UsageConfirm {
-        preview_id: serde_json::from_value(preview["id"].clone()).unwrap(),
-        digest: preview["digest"].as_str().unwrap().into(),
-    });
-    let approved = r
-        .usage_write(&f.actor, "usage-confirm", confirm.clone())
-        .await
-        .unwrap();
-    assert_eq!(approved["items"][0]["approval"], "approved");
-    assert_eq!(approved["items"][0]["delivery"], "available");
-    assert_eq!(
-        r.usage_write(&f.actor, "usage-confirm", confirm.clone())
-            .await
-            .unwrap(),
-        approved
-    );
-    assert_eq!(
-        r.usage_write(&f.actor, "same-summary-new-key", confirm)
-            .await
-            .unwrap(),
-        approved
-    );
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_usages")
-            .fetch_one(&f.pool)
-            .await
-            .unwrap(),
-        1
-    );
-    let id: Uuid = serde_json::from_value(approved["items"][0]["id"].clone()).unwrap();
-    let non_admin_id = Uuid::new_v4();
-    sqlx::query(
-        "INSERT INTO accounts(id,username,display_name) VALUES($1,'non-admin','Ordinary account')",
-    )
-    .bind(non_admin_id)
-    .execute(&f.pool)
-    .await
-    .unwrap();
-    let non_admin:Actor=serde_json::from_value(json!({"id":non_admin_id,"username":"non-admin","display_name":"Ordinary account","platform_admin":false,"wecom_authenticated":false})).unwrap();
-    assert!(r.usage_read(&non_admin, None, false).await.is_err());
-    assert!(
-        r.usage_read(&non_admin, Some(Uuid::new_v4()), false)
-            .await
-            .is_err()
-    );
-    // Repeated global confirmation must reuse the same budget.
-    let p = r
-        .usage_write(
-            &f.actor,
-            "repeat-preview",
-            UsageCommand::Preview(input.clone()),
-        )
-        .await
-        .unwrap();
-    let reused = r
-        .usage_write(
-            &f.actor,
-            "repeat-confirm",
-            UsageCommand::Confirm(UsageConfirm {
-                preview_id: serde_json::from_value(p["id"].clone()).unwrap(),
-                digest: p["digest"].as_str().unwrap().into(),
-            }),
-        )
-        .await
-        .unwrap();
-    assert_eq!(reused["items"][0]["id"], json!(id));
-    // Renewal keeps the budget root and never mutates old execution scopes.
-    let mut renewal = input;
-    renewal.renewal_of = Some(id);
-    renewal.expected_revision = Some(1);
-    renewal.expires_at += chrono::Duration::hours(1);
-    let p = r
-        .usage_write(&f.actor, "renew-preview", UsageCommand::Preview(renewal))
-        .await
-        .unwrap();
-    let pending = r
-        .usage_write(
-            &f.actor,
-            "renew-confirm",
-            UsageCommand::Confirm(UsageConfirm {
-                preview_id: serde_json::from_value(p["id"].clone()).unwrap(),
-                digest: p["digest"].as_str().unwrap().into(),
-            }),
-        )
-        .await
-        .unwrap();
-    assert_eq!(pending["items"][0]["approval"], "approved");
-    let roots: Vec<Uuid> = sqlx::query_scalar("SELECT budget_root FROM mobile_usages")
-        .fetch_all(&f.pool)
-        .await
-        .unwrap();
-    assert_eq!(roots[0], roots[1]);
-    let paused = r
-        .usage_write(
-            &f.actor,
-            "pause-usage",
-            UsageCommand::Mutate {
-                id,
-                operation: "pause".into(),
-                mutation: UsageMutation {
-                    expected_revision: 1,
-                    reason: "暂停使用".into(),
-                },
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(paused["items"][0]["state"], "paused");
-    assert!(
-        r.usage_write(
-            &f.actor,
-            "stale-revoke",
-            UsageCommand::Mutate {
-                id,
-                operation: "revoke".into(),
-                mutation: UsageMutation {
-                    expected_revision: 1,
-                    reason: "过期修订".into()
-                }
-            }
-        )
-        .await
-        .is_err()
-    );
-    f.close().await;
-}
-
-#[tokio::test]
-#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn business_scope_materializes_without_delivery_acceptance_or_activation_and_pause_blocks_plans()
- {
-    use wekeeper_api::distribution::domain::shared_mobile::usage::*;
-    let f = Fixture::new().await;
-    let r = f.repo();
-    // The actual executable rule is a synthetic fixture; no acceptance/delivery/activation
-    // records are required to authorize resources or confirm a business task.
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_capability_deliveries")
-            .fetch_one(&f.pool)
-            .await
-            .unwrap(),
-        0
-    );
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_v9_activations")
-            .fetch_one(&f.pool)
-            .await
-            .unwrap(),
-        0
-    );
-    let p:PolicyInput=serde_json::from_value(json!({"expected_revision":0,"mode":"enabled","confirmation_seconds":600,"inspection_seconds":600,"retry_seconds":300,"retry_limit":3,"timezone":"Asia/Shanghai","allowed_windows":[{"weekdays":[1,2,3,4,5,6,7],"start_minute":0,"end_minute":1440}],"limits":ObjectLimits::value(),"reason":"Synthetic test"})).unwrap();
-    r.platform_write(&f.actor, "business-policy", PlatformCommand::Policy(p))
-        .await
-        .unwrap();
-    let input = UsageInput {
-        device_ids: vec![f.device],
-        targets: vec![UsageTarget {
-            id: None,
-            name: "同页新增群".into(),
-            search_text: "同页  新增群".into(),
-        }],
-        max_calls: 5,
-        expires_at: chrono::Utc::now() + chrono::Duration::hours(2),
-        auto_targets: false,
-        renewal_of: None,
-        expected_revision: None,
-    };
-    let p = r
-        .usage_write(&f.actor, "production-preview", UsageCommand::Preview(input))
-        .await
-        .unwrap();
-    let u = r
-        .usage_write(
-            &f.actor,
-            "production-confirm",
-            UsageCommand::Confirm(UsageConfirm {
-                preview_id: serde_json::from_value(p["id"].clone()).unwrap(),
-                digest: p["digest"].as_str().unwrap().into(),
-            }),
-        )
-        .await
-        .unwrap();
-    assert_eq!(u["items"][0]["delivery"], "available");
-    r.reconcile_usages().await.unwrap();
-    r.reconcile_usages().await.unwrap();
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_usage_scopes")
-            .fetch_one(&f.pool)
-            .await
-            .unwrap(),
-        1
-    );
-    let target: Uuid =
-        serde_json::from_value(u["items"][0]["body"]["targets"][0]["id"].clone()).unwrap();
-    let send = UsageTaskInput {
-        draft_id: None,
-        expected_revision: None,
-        target_ids: vec![target],
-        message: "  一步预览\n🙂  ".into(),
-        between_targets_seconds: 30,
-        selections: vec![],
-    };
-    let preview = r
-        .usage_write(
-            &f.actor,
-            "auto-save-preview",
-            UsageCommand::TaskPreview(send),
-        )
-        .await
-        .unwrap();
-    assert!(preview["draft"].get("stage").is_none());
-    assert_eq!(preview["preview"]["plan"]["message"], "  一步预览\n🙂  ");
-    assert!(preview["preview"]["plan"]["items"][0]["blocker"].is_null());
-    let task = r
-        .usage_write(
-            &f.actor,
-            "confirm-without-delivery",
-            UsageCommand::TaskConfirm(Confirmation {
-                preview_id: serde_json::from_value(preview["preview"]["id"].clone()).unwrap(),
-                preview_digest: preview["preview"]["digest"].as_str().unwrap().into(),
-                confirmed: true,
-            }),
-        )
-        .await
-        .unwrap();
-    // Acceptance is independent of phone readiness; the first round still waits five minutes.
-    assert_eq!(task["items"][0]["dispatch"]["state"], "waiting_resources");
-    assert_eq!(task["items"][0]["dispatch"]["completed_rounds"], 0);
-    assert_eq!(task["items"][0]["attempts"][0]["state"], "invalidated");
-    assert_eq!(
-        task["items"][0]["attempts"][0]["plan"]["device_id"],
-        json!(f.device)
-    );
-
-    let id: Uuid = serde_json::from_value(u["items"][0]["id"].clone()).unwrap();
-    r.usage_write(
-        &f.actor,
-        "pause-production",
-        UsageCommand::Mutate {
-            id,
-            operation: "pause".into(),
-            mutation: UsageMutation {
-                expected_revision: 1,
-                reason: "暂停".into(),
-            },
-        },
-    )
-    .await
-    .unwrap();
-    let overview = r.task_read(&f.actor, None).await.unwrap();
-    let row = overview["readiness"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|r| r["target_id"] == json!(target))
-        .unwrap();
-    assert_eq!(row["confirmable"], false);
-    f.close().await;
-}
-
-#[tokio::test]
-#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn business_configuration_does_not_require_technical_delivery() {
-    use wekeeper_api::distribution::domain::shared_mobile::usage::*;
+    use wekeeper_api::distribution::domain::shared_mobile::business_scheme::*;
     let f = Fixture::with_adapter(false).await;
     let r = f.repo();
-    let options = r.usage_read(&f.actor, None, true).await.unwrap();
-    assert!(options["sending_status"].get("delivery").is_none());
-    assert_eq!(options["sending_status"]["platform"], "default");
+    let options = r.scheme_read(&f.actor, None).await.unwrap();
+    assert!(options.get("delivery").is_none());
+    assert_eq!(options["source"], "builtin");
     let result = r
-        .usage_write(
+        .preview_task(
             &f.actor,
             "blocked-preview",
-            UsageCommand::TaskPreview(UsageTaskInput {
+            TaskPreviewInput {
+                business_unit_id: None,
                 draft_id: None,
                 expected_revision: None,
                 target_ids: vec![f.targets[0]],
                 message: "保存但不发送".into(),
                 between_targets_seconds: 30,
                 selections: vec![],
-            }),
+            },
         )
         .await
         .unwrap();
@@ -498,10 +212,10 @@ async fn business_configuration_does_not_require_technical_delivery() {
     );
     let p = &result["preview"];
     let task = r
-        .usage_write(
+        .task_write(
             &f.actor,
             "binding-only-confirm",
-            UsageCommand::TaskConfirm(Confirmation {
+            TaskCommand::Confirm(Confirmation {
                 preview_id: Uuid::parse_str(p["id"].as_str().unwrap()).unwrap(),
                 preview_digest: p["digest"].as_str().unwrap().into(),
                 confirmed: true,
@@ -514,7 +228,7 @@ async fn business_configuration_does_not_require_technical_delivery() {
     assert_eq!(task["items"][0]["dispatch"]["completed_rounds"], 0);
     assert_eq!(task["items"][0]["attempts"][0]["state"], "invalidated");
     assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_v9_scope_grants")
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='mobile_v9_scope_grants'")
             .fetch_one(&f.pool)
             .await
             .unwrap(),
@@ -524,18 +238,20 @@ async fn business_configuration_does_not_require_technical_delivery() {
         "../../api-contract/fixtures/mobile-business-scheme.json"
     ))
     .unwrap();
-    r.platform_write(
+    save_policy(
+        &r,
         &f.actor,
         "closed-scheme",
-        PlatformCommand::Policy(input.clone().policy().unwrap()),
+        input.clone().policy().unwrap(),
     )
     .await
     .unwrap();
     assert!(
-        r.platform_write(
+        save_policy(
+            &r,
             &f.actor,
             "stale-scheme",
-            PlatformCommand::Policy(input.clone().policy().unwrap())
+            input.clone().policy().unwrap()
         )
         .await
         .is_err()
@@ -546,13 +262,9 @@ async fn business_configuration_does_not_require_technical_delivery() {
         json!([{"weekdays":[1,2,3,4,5,6,7],"start_minute":0,"end_minute":1440}]),
     )
     .unwrap();
-    r.platform_write(
-        &f.actor,
-        "open-no-delivery",
-        PlatformCommand::Policy(input.policy().unwrap()),
-    )
-    .await
-    .unwrap();
+    save_policy(&r, &f.actor, "open-no-delivery", input.policy().unwrap())
+        .await
+        .unwrap();
     let token = "wk_device_device-owned-regression";
     sqlx::query("INSERT INTO device_credentials(token_hash,device_id,generation,expires_at) VALUES($1,$2,1,clock_timestamp()+interval '1 hour')").bind(wekeeper_api::business::hash(token)).bind(f.device).execute(&f.pool).await.unwrap();
     let c = r.credential(token).await.unwrap();
@@ -573,277 +285,6 @@ async fn business_configuration_does_not_require_technical_delivery() {
             .await
             .unwrap(),
         0
-    );
-    f.close().await;
-}
-
-#[tokio::test]
-#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn approved_business_resources_exist_without_any_adapter_or_delivery_records() {
-    use wekeeper_api::distribution::domain::shared_mobile::usage::*;
-    let f = Fixture::with_adapter(false).await;
-    let r = f.repo();
-    // No policy row, activation, acceptance or runtime is seeded. Default business
-    // settings must be sufficient for authorization, preview and confirmation.
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_v9_send_policy_versions")
-            .fetch_one(&f.pool)
-            .await
-            .unwrap(),
-        0
-    );
-    let input = UsageInput {
-        device_ids: vec![f.device],
-        targets: vec![UsageTarget {
-            id: None,
-            name: "新增目标".into(),
-            search_text: "新增目标".into(),
-        }],
-        max_calls: 5,
-        expires_at: chrono::Utc::now() + chrono::Duration::days(3),
-        auto_targets: false,
-        renewal_of: None,
-        expected_revision: None,
-    };
-    let p = r
-        .usage_write(
-            &f.actor,
-            "business-only-preview",
-            UsageCommand::Preview(input),
-        )
-        .await
-        .unwrap();
-    let u = r
-        .usage_write(
-            &f.actor,
-            "business-only-confirm",
-            UsageCommand::Confirm(UsageConfirm {
-                preview_id: serde_json::from_value(p["id"].clone()).unwrap(),
-                digest: p["digest"].as_str().unwrap().into(),
-            }),
-        )
-        .await
-        .unwrap();
-    assert_eq!(u["items"][0]["delivery"], "available");
-    let id: Uuid = serde_json::from_value(u["items"][0]["id"].clone()).unwrap();
-    sqlx::query(
-        "UPDATE mobile_usages SET confirmed_until=clock_timestamp()-interval '1 day' WHERE id=$1",
-    )
-    .bind(id)
-    .execute(&f.pool)
-    .await
-    .unwrap();
-    r.reconcile_usages().await.unwrap();
-    r.reconcile_usages().await.unwrap();
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>(
-            "SELECT count(*) FROM mobile_usage_scopes WHERE usage_id=$1 AND release_id IS NULL"
-        )
-        .bind(id)
-        .fetch_one(&f.pool)
-        .await
-        .unwrap(),
-        1
-    );
-    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM mobile_v9_scope_grants WHERE release_id IS NULL AND acceptance_id IS NULL").fetch_one(&f.pool).await.unwrap(),1);
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_v9_adapter_releases")
-            .fetch_one(&f.pool)
-            .await
-            .unwrap(),
-        0
-    );
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_v9_acceptance_runs")
-            .fetch_one(&f.pool)
-            .await
-            .unwrap(),
-        0
-    );
-
-    let mut stopped: BusinessSchemeInput = serde_json::from_str(include_str!(
-        "../../api-contract/fixtures/mobile-business-scheme.json"
-    ))
-    .unwrap();
-    stopped.enabled = false;
-    r.platform_write(
-        &f.actor,
-        "pause-execution-only",
-        PlatformCommand::Policy(stopped.policy().unwrap()),
-    )
-    .await
-    .unwrap();
-    r.reconcile_usages().await.unwrap();
-    let options = r.usage_read(&f.actor, None, true).await.unwrap();
-    assert_eq!(options["sending_status"]["can_confirm"], true);
-    let target: Uuid =
-        serde_json::from_value(u["items"][0]["body"]["targets"][0]["id"].clone()).unwrap();
-    let overview = r.task_read(&f.actor, None).await.unwrap();
-    let row = overview["readiness"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|v| v["target_id"] == json!(target))
-        .unwrap();
-    assert_eq!(row["plan_selectable"], true);
-    // Platform accepts business intent without any downstream UI configuration.
-    let p = r
-        .usage_write(
-            &f.actor,
-            "no-rules-task-preview",
-            UsageCommand::TaskPreview(UsageTaskInput {
-                draft_id: None,
-                expected_revision: None,
-                target_ids: vec![target],
-                message: "正常下发".into(),
-                between_targets_seconds: 30,
-                selections: vec![],
-            }),
-        )
-        .await
-        .unwrap();
-    assert!(p["preview"]["plan"]["items"][0]["blocker"].is_null());
-    let task = r
-        .usage_write(
-            &f.actor,
-            "no-rules-task-confirm",
-            UsageCommand::TaskConfirm(Confirmation {
-                preview_id: serde_json::from_value(p["preview"]["id"].clone()).unwrap(),
-                preview_digest: p["preview"]["digest"].as_str().unwrap().into(),
-                confirmed: true,
-            }),
-        )
-        .await
-        .unwrap();
-    let plan = &task["items"][0]["attempts"][0]["plan"];
-    assert_eq!(plan["execution"]["contract"], "device_owned/1");
-    assert!(plan.get("flow").is_none());
-    assert!(plan.get("flow_digest").is_none());
-    // Acceptance is independent of phone readiness; the first round still waits five minutes.
-    assert_eq!(task["items"][0]["dispatch"]["state"], "waiting_resources");
-    assert_eq!(task["items"][0]["dispatch"]["completed_rounds"], 0);
-    assert_eq!(task["items"][0]["attempts"][0]["state"], "invalidated");
-    f.close().await;
-}
-
-#[tokio::test]
-#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn usage_group_name_reuse_and_renewal_keep_one_business_family() {
-    use wekeeper_api::distribution::domain::shared_mobile::usage::*;
-    let f = Fixture::with_adapter(false).await;
-    let r = f.repo();
-    let second = Uuid::now_v7();
-    sqlx::query("INSERT INTO execution_devices(id,name,enabled,credential_generation) VALUES($1,'第二台手机',true,1)").bind(second).execute(&f.pool).await.unwrap();
-    sqlx::query("INSERT INTO mobile_device_target_bindings(id,device_id,target_id,created_by,updated_by) VALUES($1,$2,$3,$4,$4)").bind(Uuid::now_v7()).bind(second).bind(f.targets[0]).bind(f.actor.id).execute(&f.pool).await.unwrap();
-    let input = UsageInput {
-        device_ids: vec![f.device, second],
-        targets: vec![UsageTarget {
-            id: Some(f.targets[0]),
-            name: "测试群".into(),
-            search_text: "测试群".into(),
-        }],
-        max_calls: 10,
-        expires_at: chrono::Utc::now() + chrono::Duration::days(10),
-        auto_targets: false,
-        renewal_of: None,
-        expected_revision: None,
-    };
-    let p = r
-        .usage_write(
-            &f.actor,
-            "override-preview",
-            UsageCommand::Preview(input.clone()),
-        )
-        .await
-        .unwrap();
-    assert_eq!(p["body"]["locators"][0]["search_text"], "测试群");
-    assert_eq!(p["body"]["locators"][1]["search_text"], "测试群");
-    assert_eq!(p["body"]["locators"][0]["target_locator_revision"], 1);
-    let opened = r
-        .usage_write(
-            &f.actor,
-            "override-confirm",
-            UsageCommand::Confirm(UsageConfirm {
-                preview_id: serde_json::from_value(p["id"].clone()).unwrap(),
-                digest: p["digest"].as_str().unwrap().into(),
-            }),
-        )
-        .await
-        .unwrap();
-    assert_eq!(opened["items"][0]["delivery"], "available");
-    let id: Uuid = serde_json::from_value(opened["items"][0]["id"].clone()).unwrap();
-    let root = opened["items"][0]["budget_root"].clone();
-    let p = r
-        .usage_write(
-            &f.actor,
-            "repeat-preview",
-            UsageCommand::Preview(input.clone()),
-        )
-        .await
-        .unwrap();
-    let reused = r
-        .usage_write(
-            &f.actor,
-            "repeat-confirm",
-            UsageCommand::Confirm(UsageConfirm {
-                preview_id: serde_json::from_value(p["id"].clone()).unwrap(),
-                digest: p["digest"].as_str().unwrap().into(),
-            }),
-        )
-        .await
-        .unwrap();
-    assert_eq!(reused["items"][0]["id"], json!(id));
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_usages")
-            .fetch_one(&f.pool)
-            .await
-            .unwrap(),
-        1
-    );
-    r.usage_write(
-        &f.actor,
-        "pause-family",
-        UsageCommand::Mutate {
-            id,
-            operation: "pause".into(),
-            mutation: UsageMutation {
-                expected_revision: 1,
-                reason: "暂停使用".into(),
-            },
-        },
-    )
-    .await
-    .unwrap();
-    let mut renewal = input;
-    renewal.renewal_of = Some(id);
-    renewal.expected_revision = Some(2);
-    renewal.expires_at += chrono::Duration::days(30);
-    let p = r
-        .usage_write(
-            &f.actor,
-            "renew-override-preview",
-            UsageCommand::Preview(renewal.clone()),
-        )
-        .await
-        .unwrap();
-    let renewed = r
-        .usage_write(
-            &f.actor,
-            "renew-override-confirm",
-            UsageCommand::Confirm(UsageConfirm {
-                preview_id: serde_json::from_value(p["id"].clone()).unwrap(),
-                digest: p["digest"].as_str().unwrap().into(),
-            }),
-        )
-        .await
-        .unwrap();
-    assert_eq!(renewed["items"][0]["supersedes"], json!(id));
-    assert_eq!(renewed["items"][0]["budget_root"], root);
-    assert_eq!(renewed["items"][0]["state"], "paused");
-    assert!(
-        r.usage_write(&f.actor, "fork-preview", UsageCommand::Preview(renewal))
-            .await
-            .is_err()
     );
     f.close().await;
 }
@@ -906,16 +347,7 @@ async fn reconciliation_never_schedules_downstream_ui_checks() {
     assert!(r.credential(token).await.is_ok());
     sqlx::query(&format!("CREATE FUNCTION reject_one_check() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.target_id='{}'::uuid THEN RAISE EXCEPTION 'synthetic check insert failure'; END IF; RETURN NEW; END $$",f.targets[0])).execute(&f.pool).await.unwrap();
     sqlx::query("CREATE TRIGGER reject_one_check BEFORE INSERT ON mobile_v9_send_inspections FOR EACH ROW EXECUTE FUNCTION reject_one_check()").execute(&f.pool).await.unwrap();
-    let mut global = f.pool.begin().await.unwrap();
-    sqlx::query("SELECT pg_advisory_xact_lock(78234610243)")
-        .execute(&mut *global)
-        .await
-        .unwrap();
-    tokio::time::timeout(std::time::Duration::from_secs(5), r.reconcile_usages())
-        .await
-        .expect("check scheduling must not need the global execution lock")
-        .unwrap();
-    global.rollback().await.unwrap();
+    let _ = r.task_read(&f.actor, None).await.unwrap();
     let count: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM mobile_v9_send_inspections WHERE target_id=$1 AND state='pending'",
     )
@@ -931,7 +363,7 @@ async fn reconciliation_never_schedules_downstream_ui_checks() {
         .execute(&f.pool)
         .await
         .unwrap();
-    r.reconcile_usages().await.unwrap();
+    let _ = r.task_read(&f.actor, None).await.unwrap();
     let count: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM mobile_v9_send_inspections WHERE target_id=$1 AND state='pending'",
     )
@@ -946,419 +378,13 @@ async fn reconciliation_never_schedules_downstream_ui_checks() {
     f.close().await;
 }
 
-// ---- §9 regression acceptance: business control state is resolved by version ----
-// These cover the false-block review: history/pending/superseded records and generic
-// technical revision drift must never act as an implicit disable, while an explicit
-// pause, revocation or expiry on the operative version must still block accurately.
-
-/// Insert a synthetic business usage row covering exactly (device,target) so a test can
-/// drive the operative-version resolution without depending on reconcile internals.
-#[allow(clippy::too_many_arguments)] // One row versions a single business usage.
-async fn seed_usage(
-    f: &Fixture,
-    id: Uuid,
-    approval: &str,
-    state: &str,
-    device: Uuid,
-    target: Uuid,
-    budget_root: Uuid,
-    created_at: chrono::DateTime<chrono::Utc>,
-    expires_at: chrono::DateTime<chrono::Utc>,
-    supersedes: Option<Uuid>,
-) {
-    let body = json!({
-        "device_ids": [device],
-        "auto_targets": false,
-        "targets": [{"id": target}],
-        "max_calls": 5,
-    });
-    sqlx::query("INSERT INTO mobile_usages(id,actor_id,approval,state,revision,body,confirmed_until,expires_at,created_at,budget_root,approved_by,supersedes) VALUES($1,$2,$3,$4,1,$5,$6,$7,$8,$9,$10,$11)")
-        .bind(id).bind(f.actor.id).bind(approval).bind(state).bind(&body)
-        .bind(expires_at).bind(expires_at).bind(created_at).bind(budget_root).bind(f.actor.id).bind(supersedes)
-        .execute(&f.pool).await.unwrap();
-}
-
-/// The readiness row for one device/target pair.
-fn readiness_row(overview: &Value, device: Uuid, target: Uuid) -> Value {
-    overview["readiness"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|v| v["device_id"] == json!(device) && v["target_id"] == json!(target))
-        .expect("readiness row for the seeded binding")
-        .clone()
-}
-
-fn scope_blocker(row: &Value) -> Option<String> {
-    row["blockers"].as_array().unwrap().iter().find_map(|b| {
-        b["code"]
-            .as_str()
-            .filter(|c| c.starts_with("business_scope_"))
-            .map(|c| c.to_string())
-    })
-}
-
-#[tokio::test]
-#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn pending_declined_history_does_not_implicitly_disable_a_valid_binding() {
-    let f = Fixture::new().await;
-    let r = f.repo();
-    let (device, target) = (f.device, f.targets[0]);
-    // A pending application and a declined one both mention this device/target, but
-    // neither is an approved operative version, so they are history — not a disable.
-    seed_usage(
-        &f,
-        Uuid::now_v7(),
-        "pending",
-        "active",
-        device,
-        target,
-        Uuid::new_v4(),
-        chrono::Utc::now() - chrono::Duration::hours(3),
-        chrono::Utc::now() + chrono::Duration::days(1),
-        None,
-    )
-    .await;
-    seed_usage(
-        &f,
-        Uuid::now_v7(),
-        "declined",
-        "active",
-        device,
-        target,
-        Uuid::new_v4(),
-        chrono::Utc::now() - chrono::Duration::hours(2),
-        chrono::Utc::now() + chrono::Duration::days(1),
-        None,
-    )
-    .await;
-    let overview = r.task_read(&f.actor, None).await.unwrap();
-    let row = readiness_row(&overview, device, target);
-    assert_eq!(row["plan_selectable"], true);
-    assert_eq!(
-        row["confirmable"], true,
-        "history must never manufacture an implicit disable"
-    );
-    assert_eq!(scope_blocker(&row), None);
-    // Exercise the failing path as well as its readiness explanation: a pending
-    // application must not prevent preview and confirmation of the bound task.
-    let draft = r
-        .task_write(
-            &f.actor,
-            "history-draft",
-            TaskCommand::Draft(
-                None,
-                DraftInput {
-                    target_ids: vec![target],
-                    message: "历史申请不影响下发".into(),
-                    content_type: "text/plain".into(),
-                    expected_revision: None,
-                    between_targets_seconds: 30,
-                },
-            ),
-        )
-        .await
-        .unwrap();
-    let preview = r
-        .task_write(
-            &f.actor,
-            "history-preview",
-            TaskCommand::Preview(PreviewInput {
-                draft_id: serde_json::from_value(draft["id"].clone()).unwrap(),
-                expected_revision: 1,
-                selections: vec![],
-            }),
-        )
-        .await
-        .unwrap();
-    assert!(preview["plan"]["items"][0]["blocker"].is_null());
-    let task = r
-        .task_write(
-            &f.actor,
-            "history-confirm",
-            TaskCommand::Confirm(Confirmation {
-                preview_id: serde_json::from_value(preview["id"].clone()).unwrap(),
-                preview_digest: preview["digest"].as_str().unwrap().into(),
-                confirmed: true,
-            }),
-        )
-        .await
-        .unwrap();
-    assert_eq!(task["items"].as_array().unwrap().len(), 1);
-    f.close().await;
-}
-
-#[tokio::test]
-#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn paused_revoked_and_expired_operative_usage_block_with_accurate_reasons() {
-    let f = Fixture::new().await;
-    let r = f.repo();
-    let (device, target) = (f.device, f.targets[0]);
-    let id = Uuid::now_v7();
-    seed_usage(
-        &f,
-        id,
-        "approved",
-        "active",
-        device,
-        target,
-        Uuid::new_v4(),
-        chrono::Utc::now(),
-        chrono::Utc::now() + chrono::Duration::days(1),
-        None,
-    )
-    .await;
-    let overview = r.task_read(&f.actor, None).await.unwrap();
-    assert_eq!(
-        readiness_row(&overview, device, target)["confirmable"],
-        true
-    );
-
-    for (state, expires, expected) in [
-        ("paused", chrono::Duration::days(1), "business_scope_paused"),
-        (
-            "revoked",
-            chrono::Duration::days(1),
-            "business_scope_revoked",
-        ),
-        (
-            "active",
-            chrono::Duration::days(-1),
-            "business_scope_expired",
-        ),
-    ] {
-        sqlx::query("UPDATE mobile_usages SET state=$2,expires_at=clock_timestamp()+$3::interval WHERE id=$1")
-            .bind(id)
-            .bind(state)
-            .bind(format!("{} days", expires.num_days()))
-            .execute(&f.pool)
-            .await
-            .unwrap();
-        let overview = r.task_read(&f.actor, None).await.unwrap();
-        let row = readiness_row(&overview, device, target);
-        assert_eq!(
-            row["confirmable"], false,
-            "{state} operative usage must block confirmation"
-        );
-        assert_eq!(scope_blocker(&row).as_deref(), Some(expected));
-    }
-    f.close().await;
-}
-
-#[tokio::test]
-#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn superseded_lineage_resolves_to_the_operative_version() {
-    let f = Fixture::new().await;
-    let r = f.repo();
-    let (device, target) = (f.device, f.targets[0]);
-    let root = Uuid::new_v4();
-    let older = Uuid::now_v7();
-    // The older version already expired, but it is superseded within the same budget
-    // root, so its expiry is history and must not leak into the current decision.
-    seed_usage(
-        &f,
-        older,
-        "approved",
-        "active",
-        device,
-        target,
-        root,
-        chrono::Utc::now() - chrono::Duration::hours(2),
-        chrono::Utc::now() - chrono::Duration::hours(1),
-        None,
-    )
-    .await;
-    let newer = Uuid::now_v7();
-    seed_usage(
-        &f,
-        newer,
-        "approved",
-        "active",
-        device,
-        target,
-        root,
-        chrono::Utc::now(),
-        chrono::Utc::now() + chrono::Duration::days(1),
-        Some(older),
-    )
-    .await;
-    let overview = r.task_read(&f.actor, None).await.unwrap();
-    let row = readiness_row(&overview, device, target);
-    assert_eq!(row["confirmable"], true, "the live renewal is operative");
-    assert_eq!(scope_blocker(&row), None);
-
-    // Revoking only the operative version blocks; the expired ancestor stays history.
-    sqlx::query("UPDATE mobile_usages SET state='revoked' WHERE id=$1")
-        .bind(newer)
-        .execute(&f.pool)
-        .await
-        .unwrap();
-    let overview = r.task_read(&f.actor, None).await.unwrap();
-    let row = readiness_row(&overview, device, target);
-    assert_eq!(row["confirmable"], false);
-    assert_eq!(
-        scope_blocker(&row).as_deref(),
-        Some("business_scope_revoked")
-    );
-    // Revoked roots can be opened again as a new business family. Old revocation
-    // history must not make that explicit reopening unusable forever.
-    seed_usage(
-        &f,
-        Uuid::now_v7(),
-        "approved",
-        "active",
-        device,
-        target,
-        Uuid::new_v4(),
-        chrono::Utc::now(),
-        chrono::Utc::now() + chrono::Duration::days(1),
-        None,
-    )
-    .await;
-    let overview = r.task_read(&f.actor, None).await.unwrap();
-    assert_eq!(
-        readiness_row(&overview, device, target)["confirmable"],
-        true
-    );
-    // An explicit newer revoke must still win, including an action on an ancestor.
-    sqlx::query("INSERT INTO mobile_usage_events(id,usage_id,actor_id,action,body) VALUES($1,$2,$3,'revoke','{}')")
-        .bind(Uuid::now_v7()).bind(older).bind(f.actor.id).execute(&f.pool).await.unwrap();
-    let overview = r.task_read(&f.actor, None).await.unwrap();
-    assert_eq!(
-        scope_blocker(&readiness_row(&overview, device, target)).as_deref(),
-        Some("business_scope_revoked")
-    );
-    f.close().await;
-}
-
-#[tokio::test]
-#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn device_reenable_and_projection_drift_do_not_permanently_invalidate_scope() {
-    use wekeeper_api::distribution::domain::shared_mobile::usage::*;
-    let f = Fixture::new().await;
-    let r = f.repo();
-    // Establish a real approved business usage through the normal preview/confirm flow.
-    let input = UsageInput {
-        device_ids: vec![f.device],
-        targets: vec![UsageTarget {
-            id: None,
-            name: "漂移测试群".into(),
-            search_text: "漂移测试群".into(),
-        }],
-        max_calls: 5,
-        expires_at: chrono::Utc::now() + chrono::Duration::days(3),
-        auto_targets: false,
-        renewal_of: None,
-        expected_revision: None,
-    };
-    let p = r
-        .usage_write(&f.actor, "drift-preview", UsageCommand::Preview(input))
-        .await
-        .unwrap();
-    let u = r
-        .usage_write(
-            &f.actor,
-            "drift-confirm",
-            UsageCommand::Confirm(UsageConfirm {
-                preview_id: serde_json::from_value(p["id"].clone()).unwrap(),
-                digest: p["digest"].as_str().unwrap().into(),
-            }),
-        )
-        .await
-        .unwrap();
-    let usage_id: Uuid = serde_json::from_value(u["items"][0]["id"].clone()).unwrap();
-    let target: Uuid =
-        serde_json::from_value(u["items"][0]["body"]["targets"][0]["id"].clone()).unwrap();
-    r.reconcile_usages().await.unwrap();
-    r.reconcile_usages().await.unwrap();
-    let scope_before: Uuid = sqlx::query_scalar(
-        "SELECT scope_id FROM mobile_usage_scopes WHERE usage_id=$1 AND release_id IS NULL AND device_id=$2 AND target_id=$3",
-    )
-    .bind(usage_id).bind(f.device).bind(target).fetch_one(&f.pool).await.unwrap();
-
-    // Simulate generic technical churn: a device credential/enable revision bump and a
-    // locator revision drift with no effective search-text change. Neither is a disable.
-    sqlx::query("UPDATE execution_devices SET revision=revision+1 WHERE id=$1")
-        .bind(f.device)
-        .execute(&f.pool)
-        .await
-        .unwrap();
-    sqlx::query("UPDATE mobile_device_target_bindings SET locator_revision=locator_revision+1 WHERE device_id=$1 AND target_id=$2")
-        .bind(f.device)
-        .bind(target)
-        .execute(&f.pool)
-        .await
-        .unwrap();
-    r.reconcile_usages().await.unwrap();
-    r.reconcile_usages().await.unwrap();
-
-    // The projection healed in place: same scope_id (budget root preserved), snapshot
-    // refreshed, and still exactly one business scope.
-    let scope_after: Uuid = sqlx::query_scalar(
-        "SELECT scope_id FROM mobile_usage_scopes WHERE usage_id=$1 AND release_id IS NULL AND device_id=$2 AND target_id=$3",
-    )
-    .bind(usage_id).bind(f.device).bind(target).fetch_one(&f.pool).await.unwrap();
-    assert_eq!(
-        scope_before, scope_after,
-        "healing must keep the same scope_id"
-    );
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mobile_usage_scopes WHERE usage_id=$1")
-            .bind(usage_id)
-            .fetch_one(&f.pool)
-            .await
-            .unwrap(),
-        1
-    );
-    let snapshot: Value =
-        sqlx::query_scalar("SELECT resource_snapshot FROM mobile_usage_scopes WHERE scope_id=$1")
-            .bind(scope_after)
-            .fetch_one(&f.pool)
-            .await
-            .unwrap();
-    assert_eq!(snapshot["binding_locator_revision"].as_i64(), Some(2));
-
-    let overview = r.task_read(&f.actor, None).await.unwrap();
-    let row = readiness_row(&overview, f.device, target);
-    assert_eq!(
-        row["confirmable"], true,
-        "technical drift must not permanently invalidate a valid scope"
-    );
-    assert_eq!(scope_blocker(&row), None);
-
-    // A matching old grant must never override another current explicit disable.
-    seed_usage(
-        &f,
-        Uuid::now_v7(),
-        "approved",
-        "paused",
-        f.device,
-        target,
-        Uuid::new_v4(),
-        chrono::Utc::now(),
-        chrono::Utc::now() + chrono::Duration::days(1),
-        None,
-    )
-    .await;
-    let overview = r.task_read(&f.actor, None).await.unwrap();
-    let row = readiness_row(&overview, f.device, target);
-    assert_eq!(
-        row["confirmable"], false,
-        "an old valid grant must not bypass a pause"
-    );
-    assert_eq!(
-        scope_blocker(&row).as_deref(),
-        Some("business_scope_paused")
-    );
-    f.close().await;
-}
-
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
 async fn runtime_configuration_is_independent_and_invalid_update_does_not_replace_current() {
     use wekeeper_api::distribution::{
         domain::{
-            shared_mobile::runtime_configuration::RuntimeConfiguration, shared_mobile::usage::*,
+            shared_mobile::business_scheme::*,
+            shared_mobile::runtime_configuration::RuntimeConfiguration,
         },
         south::adapter::postgres::shared_send_v2::configuration,
     };
@@ -1412,17 +438,18 @@ async fn runtime_configuration_is_independent_and_invalid_update_does_not_replac
     );
     let preview = f
         .repo()
-        .usage_write(
+        .preview_task(
             &f.actor,
             "runtime-only-preview",
-            UsageCommand::TaskPreview(UsageTaskInput {
+            TaskPreviewInput {
+                business_unit_id: None,
                 draft_id: None,
                 expected_revision: None,
                 target_ids: vec![f.targets[0]],
                 message: "Synthetic no send".into(),
                 between_targets_seconds: 30,
                 selections: vec![],
-            }),
+            },
         )
         .await
         .unwrap();
@@ -1493,13 +520,14 @@ async fn pool_confirm(f: &Fixture, targets: Vec<Uuid>) -> Value {
     pool_confirm_keyed(f, targets, "pool").await
 }
 async fn pool_confirm_keyed(f: &Fixture, targets: Vec<Uuid>, key: &str) -> Value {
-    use wekeeper_api::distribution::domain::shared_mobile::usage::*;
+    use wekeeper_api::distribution::domain::shared_mobile::business_scheme::*;
     let r = f.repo();
     let p = r
-        .usage_write(
+        .preview_task(
             &f.actor,
             &format!("{key}-preview"),
-            UsageCommand::TaskPreview(UsageTaskInput {
+            TaskPreviewInput {
+                business_unit_id: None,
                 draft_id: None,
                 expected_revision: None,
                 selections: targets
@@ -1512,14 +540,14 @@ async fn pool_confirm_keyed(f: &Fixture, targets: Vec<Uuid>, key: &str) -> Value
                 target_ids: targets,
                 message: "自动调度通知".into(),
                 between_targets_seconds: 1,
-            }),
+            },
         )
         .await
         .unwrap();
-    r.usage_write(
+    r.task_write(
         &f.actor,
         &format!("{key}-confirm"),
-        UsageCommand::TaskConfirm(Confirmation {
+        TaskCommand::Confirm(Confirmation {
             preview_id: serde_json::from_value(p["preview"]["id"].clone()).unwrap(),
             preview_digest: p["preview"]["digest"].as_str().unwrap().into(),
             confirmed: true,
@@ -2187,25 +1215,8 @@ async fn offline_binding_is_selectable_and_confirmable_without_environment_or_co
     f.activate("activate").await.unwrap();
     let r = f.repo();
     let policy:PolicyInput=serde_json::from_value(json!({"expected_revision":0,"mode":"enabled","confirmation_seconds":600,"inspection_seconds":600,"retry_seconds":300,"retry_limit":3,"timezone":"Asia/Shanghai","allowed_windows":[{"weekdays":[1,2,3,4,5,6,7],"start_minute":0,"end_minute":1440}],"limits":ObjectLimits::value(),"reason":"Synthetic test"})).unwrap();
-    r.platform_write(&f.actor, "policy", PlatformCommand::Policy(policy))
-        .await
-        .unwrap();
-    r.platform_write(
-        &f.actor,
-        "scope",
-        PlatformCommand::Manage(ManagementCommand::Scopes(ScopeInput {
-            acceptance_id: f.acceptance,
+    save_policy(&r, &f.actor, "policy", policy).await.unwrap();
 
-            device_ids: vec![f.device],
-            target_ids: f.targets.clone(),
-            auto_targets: false,
-            max_calls: 2,
-            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
-            reason: "Synthetic test".into(),
-        })),
-    )
-    .await
-    .unwrap();
     let status = r.task_read(&f.actor, None).await.unwrap();
     assert_eq!(status["readiness"][0]["plan_selectable"], true);
     assert_eq!(status["readiness"][0]["confirmable"], true);
@@ -2725,5 +1736,362 @@ async fn real_websocket_directly_delivers_signed_execution_and_old_routes_are_ab
     socket.close(None).await.unwrap();
     server.abort();
     let _ = server.await;
+    f.close().await;
+}
+
+async fn save_policy(
+    r: &Repository,
+    actor: &Actor,
+    key: &str,
+    p: PolicyInput,
+) -> wekeeper_api::business::Result<Value> {
+    use wekeeper_api::distribution::domain::shared_mobile::business_scheme::{
+        BusinessSchemeInput, SchemeMutation,
+    };
+    let input = BusinessSchemeInput {
+        expected_revision: p.expected_revision,
+        enabled: p.mode == "enabled",
+        confirmed: true,
+        timezone: p.timezone,
+        allowed_windows: p.allowed_windows,
+        limits: p.limits,
+        reason: p.reason,
+    };
+    let mutation = SchemeMutation {
+        expected_revision: input.expected_revision,
+        reason: input.reason.clone(),
+        confirmed: true,
+    };
+    r.scheme_write(actor, key, None, Some(input), mutation)
+        .await
+}
+
+async fn scheme_unit(f: &Fixture) -> Uuid {
+    let unit = Uuid::new_v4();
+    let platform = Uuid::new_v4();
+    sqlx::query("INSERT INTO source_callers(source_id) VALUES($1)")
+        .bind(platform)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO business_units(id,platform_id,name,created_by,updated_by) VALUES($1,$2,'单位',$3,$3)").bind(unit).bind(platform).bind(f.actor.id).execute(&f.pool).await.unwrap();
+    unit
+}
+fn scheme_input(
+    enabled: bool,
+    revision: i64,
+) -> wekeeper_api::distribution::domain::shared_mobile::business_scheme::BusinessSchemeInput {
+    let mut v:wekeeper_api::distribution::domain::shared_mobile::business_scheme::BusinessSchemeInput=serde_json::from_str(include_str!("../../api-contract/fixtures/mobile-business-scheme.json")).unwrap();
+    v.enabled = enabled;
+    v.expected_revision = revision;
+    v.allowed_windows = serde_json::from_value(
+        json!([{"weekdays":[1,2,3,4,5,6,7],"start_minute":0,"end_minute":1440}]),
+    )
+    .unwrap();
+    for l in [
+        &mut v.limits.total,
+        &mut v.limits.device,
+        &mut v.limits.target,
+    ] {
+        l.interval_seconds = 1;
+        l.max_calls = 1000;
+        l.daily_max_calls = 1000;
+    }
+    v
+}
+async fn scheme_save(
+    f: &Fixture,
+    unit: Option<Uuid>,
+    input: wekeeper_api::distribution::domain::shared_mobile::business_scheme::BusinessSchemeInput,
+    key: &str,
+) -> wekeeper_api::business::Result<Value> {
+    use wekeeper_api::distribution::domain::shared_mobile::business_scheme::SchemeMutation;
+    let mutation = SchemeMutation {
+        expected_revision: input.expected_revision,
+        reason: input.reason.clone(),
+        confirmed: input.confirmed,
+    };
+    f.repo()
+        .scheme_write(&f.actor, key, unit, Some(input), mutation)
+        .await
+}
+async fn unit_preview(f: &Fixture, unit: Option<Uuid>, device: Uuid, key: &str) -> Value {
+    use wekeeper_api::distribution::domain::shared_mobile::business_scheme::TaskPreviewInput;
+    f.repo()
+        .preview_task(
+            &f.actor,
+            key,
+            TaskPreviewInput {
+                business_unit_id: unit,
+                draft_id: None,
+                expected_revision: None,
+                target_ids: vec![f.targets[0]],
+                message: "单位消息".into(),
+                between_targets_seconds: 1,
+                selections: vec![Selection {
+                    target_id: f.targets[0],
+                    device_id: device,
+                }],
+            },
+        )
+        .await
+        .unwrap()["preview"]
+        .clone()
+}
+async fn confirm_preview(
+    f: &Fixture,
+    p: &Value,
+    key: &str,
+) -> wekeeper_api::business::Result<Value> {
+    f.repo()
+        .task_write(
+            &f.actor,
+            key,
+            TaskCommand::Confirm(Confirmation {
+                preview_id: serde_json::from_value(p["id"].clone()).unwrap(),
+                preview_digest: p["digest"].as_str().unwrap().into(),
+                confirmed: true,
+            }),
+        )
+        .await
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn unit_schemes_resolve_defaults_independently_and_restore_with_audit() {
+    use wekeeper_api::distribution::domain::shared_mobile::business_scheme::SchemeMutation;
+    let f = Fixture::with_adapter(false).await;
+    let a = scheme_unit(&f).await;
+    let b = scheme_unit(&f).await;
+    assert_eq!(
+        f.repo().scheme_read(&f.actor, Some(a)).await.unwrap()["source"],
+        "builtin"
+    );
+    let default = scheme_save(&f, None, scheme_input(false, 0), "same-key")
+        .await
+        .unwrap();
+    let own = scheme_save(&f, Some(a), scheme_input(true, 0), "same-key")
+        .await
+        .unwrap();
+    assert_ne!(own["id"], default["id"]);
+    assert_eq!(
+        f.repo().scheme_read(&f.actor, Some(b)).await.unwrap()["mode"],
+        "disabled"
+    );
+    let (left, right) = tokio::join!(
+        scheme_save(&f, Some(a), scheme_input(true, 1), "left"),
+        scheme_save(&f, Some(a), scheme_input(false, 1), "right")
+    );
+    assert_ne!(left.is_ok(), right.is_ok());
+    let restored = f
+        .repo()
+        .scheme_write(
+            &f.actor,
+            "inherit",
+            Some(a),
+            None,
+            SchemeMutation {
+                expected_revision: 2,
+                reason: "恢复默认".into(),
+                confirmed: true,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(restored["source"], "default");
+    assert_eq!(restored["scope_revision"], 3);
+    assert_eq!(restored["id"], default["id"]);
+    assert_eq!(
+        f.repo().scheme_read(&f.actor, Some(b)).await.unwrap()["scope_revision"],
+        0
+    );
+    assert!(
+        f.repo()
+            .scheme_read(&f.actor, Some(Uuid::new_v4()))
+            .await
+            .is_err()
+    );
+    let audits: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_events WHERE action='mobile.business_scheme'",
+    )
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(audits, 4);
+    let obsolete:i64=sqlx::query_scalar("SELECT count(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name IN ('mobile_usages','mobile_usage_scopes','mobile_v9_scope_grants','mobile_execution_usage_budgets','mobile_v9_send_policy_versions')").fetch_one(&f.pool).await.unwrap();
+    assert_eq!(obsolete, 0);
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn unit_scheme_changes_invalidate_only_affected_previews_and_pause_without_spending_rounds() {
+    let f = Fixture::with_adapter(false).await;
+    let unit = scheme_unit(&f).await;
+    scheme_save(&f, Some(unit), scheme_input(false, 0), "unit")
+        .await
+        .unwrap();
+    let p = unit_preview(&f, Some(unit), f.device, "own-preview").await;
+    scheme_save(&f, None, scheme_input(true, 0), "default")
+        .await
+        .unwrap();
+    let t = confirm_preview(&f, &p, "confirm-paused").await.unwrap();
+    assert_eq!(t["business_unit_id"], json!(unit));
+    assert_eq!(t["scheme_snapshot"]["source"], "unit");
+    for _ in 0..4 {
+        pool_expire_round(&f).await;
+        pool_tick(&f).await;
+    }
+    let t = pool_detail(&f, &t).await;
+    assert_eq!(t["items"][0]["dispatch"]["completed_rounds"], 0);
+    assert_eq!(t["items"][0]["dispatch"]["reason"], "business_scheme_wait");
+    let (c, epoch) = pool_ready(&f, f.device).await;
+    scheme_save(&f, Some(unit), scheme_input(true, 1), "open")
+        .await
+        .unwrap();
+    pool_tick(&f).await;
+    let t = pool_detail(&f, &t).await;
+    let aid = serde_json::from_value(pool_current(&t["items"][0])["id"].clone()).unwrap();
+    let packet = pool_delivery(&f, &c, epoch, aid).await;
+    assert_eq!(
+        packet["plan"]["policy_id"],
+        p["plan"]["scheme_snapshot"]["id"]
+    );
+    assert!(packet["plan"].get("business_unit_id").is_none());
+    assert!(packet["plan"].get("scheme_snapshot").is_none());
+    assert_eq!(packet["schema"], "durable_execution/1");
+    assert_eq!(packet["protocol_version"], 10);
+    let inherited = unit_preview(&f, None, f.device, "inherited").await;
+    scheme_save(&f, None, scheme_input(false, 1), "new-default")
+        .await
+        .unwrap();
+    assert!(matches!(
+        confirm_preview(&f, &inherited, "stale").await,
+        Err(wekeeper_api::business::Error::Policy(
+            "business_scheme_changed"
+        ))
+    ));
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn inherited_unit_quotas_are_independent_and_version_changes_do_not_reset_usage() {
+    let f = Fixture::with_adapter(false).await;
+    let a = scheme_unit(&f).await;
+    let b = scheme_unit(&f).await;
+    let phone_b = pool_phone(&f, "Phone B").await;
+    pool_ready(&f, f.device).await;
+    pool_ready(&f, phone_b).await;
+    let mut input = scheme_input(true, 0);
+    input.limits.total.daily_max_calls = 1;
+    scheme_save(&f, None, input, "default-quota").await.unwrap();
+    let first = unit_preview(&f, Some(a), f.device, "a1").await;
+    let ta = confirm_preview(&f, &first, "ca1").await.unwrap();
+    assert_eq!(ta["items"][0]["dispatch"]["state"], "executing");
+    let second = unit_preview(&f, Some(a), phone_b, "a2").await;
+    let waiting = confirm_preview(&f, &second, "ca2").await.unwrap();
+    assert_eq!(
+        waiting["items"][0]["dispatch"]["reason"],
+        "business_scheme_wait"
+    );
+    let third = unit_preview(&f, Some(b), phone_b, "b1").await;
+    let tb = confirm_preview(&f, &third, "cb1").await.unwrap();
+    assert_eq!(tb["items"][0]["dispatch"]["state"], "executing");
+    let mut own = scheme_input(true, 0);
+    own.limits.total.daily_max_calls = 1;
+    scheme_save(&f, Some(a), own, "own").await.unwrap();
+    pool_tick(&f).await;
+    let waiting = pool_detail(&f, &waiting).await;
+    assert_eq!(waiting["items"][0]["dispatch"]["completed_rounds"], 0);
+    let keys:Vec<String>=sqlx::query_scalar("SELECT dimension_key FROM mobile_v9_quota_reservations WHERE dimension_key LIKE '%:total' ORDER BY dimension_key").fetch_all(&f.pool).await.unwrap();
+    assert_eq!(keys.len(), 2);
+    assert!(keys.contains(&format!("unit:{a}:total")));
+    assert!(keys.contains(&format!("unit:{b}:total")));
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn resource_budget_is_shared_across_units_and_uncalled_results_release_it() {
+    let f = Fixture::with_adapter(false).await;
+    let a = scheme_unit(&f).await;
+    let b = scheme_unit(&f).await;
+    scheme_save(&f, None, scheme_input(true, 0), "default")
+        .await
+        .unwrap();
+    let phone_b = pool_phone(&f, "Phone B").await;
+    let (c, epoch) = pool_ready(&f, f.device).await;
+    pool_ready(&f, phone_b).await;
+    let root:Uuid=sqlx::query_scalar("UPDATE mobile_device_target_bindings SET max_calls=1 WHERE device_id=$1 AND target_id=$2 RETURNING budget_root").bind(f.device).bind(f.targets[0]).fetch_one(&f.pool).await.unwrap();
+    let preview = unit_preview(&f, Some(a), f.device, "a").await;
+    let first = confirm_preview(&f, &preview, "ca").await.unwrap();
+    let aid = serde_json::from_value(pool_current(&first["items"][0])["id"].clone()).unwrap();
+    let packet = pool_delivery(&f, &c, epoch, aid).await;
+    // Re-enabling or editing a real binding never creates a fresh budget identity.
+    sqlx::query("UPDATE mobile_device_target_bindings SET enabled=false WHERE device_id=$1 AND target_id=$2").bind(f.device).bind(f.targets[0]).execute(&f.pool).await.unwrap();
+    sqlx::query("UPDATE mobile_device_target_bindings SET enabled=true,valid_until=clock_timestamp()+interval '1 day' WHERE device_id=$1 AND target_id=$2").bind(f.device).bind(f.targets[0]).execute(&f.pool).await.unwrap();
+    let preview = unit_preview(&f, Some(b), f.device, "b").await;
+    let second = confirm_preview(&f, &preview, "cb").await.unwrap();
+    assert_eq!(
+        pool_current(&second["items"][0])["plan"]["device_id"],
+        json!(phone_b)
+    );
+    let consumed: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM mobile_execution_resource_charges WHERE budget_root=$1",
+    )
+    .bind(root)
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(consumed, 1);
+    f.repo()
+        .complete_execution(completion(&packet, "not_called"))
+        .await
+        .unwrap();
+    // A definitive uncalled result frees the cumulative allowance, even for another unit.
+    let third_unit = scheme_unit(&f).await;
+    let preview = unit_preview(&f, Some(third_unit), f.device, "b-again").await;
+    let third = confirm_preview(&f, &preview, "cb-again").await.unwrap();
+    assert_eq!(third["items"][0]["dispatch"]["state"], "executing");
+    assert_eq!(
+        pool_current(&third["items"][0])["plan"]["device_id"],
+        json!(f.device)
+    );
+    let consumed:i64=sqlx::query_scalar("SELECT count(*) FROM mobile_execution_resource_charges c JOIN mobile_execution_grants g ON g.id=c.execution_id WHERE c.budget_root=$1 AND coalesce(g.result_body->>'outcome','pending') NOT IN ('not_called','failed')").bind(root).fetch_one(&f.pool).await.unwrap();
+    assert_eq!(consumed, 1);
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn singleton_phone_quota_wait_does_not_exhaust_dispatch_rounds() {
+    let f = Fixture::with_adapter(false).await;
+    let unit = scheme_unit(&f).await;
+    let mut input = scheme_input(true, 0);
+    input.limits.device.daily_max_calls = 1;
+    scheme_save(&f, Some(unit), input, "device-limit")
+        .await
+        .unwrap();
+    let (c, epoch) = pool_ready(&f, f.device).await;
+    let p = unit_preview(&f, Some(unit), f.device, "first").await;
+    let first = confirm_preview(&f, &p, "confirm-first").await.unwrap();
+    let aid = serde_json::from_value(pool_current(&first["items"][0])["id"].clone()).unwrap();
+    let packet = pool_delivery(&f, &c, epoch, aid).await;
+    f.repo()
+        .complete_execution(completion(&packet, "observed_sent"))
+        .await
+        .unwrap();
+    sqlx::query("UPDATE mobile_v9_quota_reservations SET recorded_at=clock_timestamp()-interval '2 seconds'").execute(&f.pool).await.unwrap();
+    // Only the device dimension is exhausted: total and target remain available.
+    let p = unit_preview(&f, Some(unit), f.device, "second").await;
+    let task = confirm_preview(&f, &p, "confirm-second").await.unwrap();
+    for _ in 0..4 {
+        pool_expire_round(&f).await;
+        pool_tick(&f).await;
+    }
+    let task = pool_detail(&f, &task).await;
+    assert_eq!(task["items"][0]["dispatch"]["completed_rounds"], 0);
+    assert_eq!(task["items"][0]["dispatch"]["reason"], "quota_wait");
     f.close().await;
 }

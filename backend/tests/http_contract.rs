@@ -691,36 +691,6 @@ fn inspected_phone_requires_current_readiness_before_confirmation() {
     );
 }
 
-#[test]
-fn mobile_usage_business_contract_rejects_technical_fields() {
-    use wekeeper_api::distribution::domain::shared_mobile::usage::*;
-    let fixture: Value = serde_json::from_str(include_str!(
-        "../../api-contract/fixtures/mobile-usage-input.json"
-    ))
-    .unwrap();
-    let input: UsageInput = serde_json::from_value(fixture.clone()).unwrap();
-    assert_eq!(serde_json::to_value(input).unwrap(), fixture);
-    for key in [
-        "stage",
-        "flow",
-        "release_id",
-        "acceptance_id",
-        "apk_id",
-        "cases",
-    ] {
-        let mut bad = fixture.clone();
-        bad[key] = json!("technical");
-        assert!(
-            serde_json::from_value::<UsageInput>(bad).is_err(),
-            "{key} must be rejected"
-        );
-    }
-    let send = json!({"target_ids":[],"message":"  原样\n","between_targets_seconds":30});
-    assert!(serde_json::from_value::<UsageTaskInput>(send.clone()).is_ok());
-    let mut bad = send;
-    bad["stage"] = json!("test_send");
-    assert!(serde_json::from_value::<UsageTaskInput>(bad).is_err());
-}
 #[tokio::test]
 async fn mobile_research_management_routes_are_gone() {
     for (method, path) in [
@@ -755,32 +725,6 @@ async fn mobile_research_management_routes_are_gone() {
     }
 }
 
-#[test]
-fn product_workflows_share_strict_typed_inputs_with_both_clients() {
-    use wekeeper_api::distribution::domain::workflows::*;
-    let fixture: Value = serde_json::from_str(include_str!(
-        "../../api-contract/fixtures/product-workflows.json"
-    ))
-    .unwrap();
-    macro_rules! roundtrip {
-        ($key:literal,$t:ty) => {{
-            let v: $t = serde_json::from_value(fixture[$key].clone()).unwrap();
-            assert_eq!(serde_json::to_value(v).unwrap(), fixture[$key]);
-            let mut bad = fixture[$key].clone();
-            bad["internal_resource_key"] = json!("forged");
-            assert!(serde_json::from_value::<$t>(bad).is_err());
-        }};
-    }
-    roundtrip!("usage", UsageInput);
-    roundtrip!("policy", MemberPolicyInput);
-    roundtrip!("request", RequestInput);
-    roundtrip!("decision", RequestDecision);
-    roundtrip!("confirmation", Confirmation);
-    Command::UsagePreview(serde_json::from_value(fixture["usage"].clone()).unwrap())
-        .validate()
-        .unwrap();
-}
-
 #[tokio::test]
 async fn product_workflow_routes_require_identity_before_any_database_access() {
     for (method, path) in [
@@ -812,7 +756,7 @@ async fn product_workflow_routes_require_identity_before_any_database_access() {
 
 #[test]
 fn platform_business_scheme_fixture_roundtrips_without_technical_inputs() {
-    use wekeeper_api::distribution::domain::shared_mobile::usage::BusinessSchemeInput;
+    use wekeeper_api::distribution::domain::shared_mobile::business_scheme::BusinessSchemeInput;
     let fixture: serde_json::Value = serde_json::from_str(include_str!(
         "../../api-contract/fixtures/mobile-business-scheme.json"
     ))
@@ -822,12 +766,12 @@ fn platform_business_scheme_fixture_roundtrips_without_technical_inputs() {
     input.policy().unwrap();
 }
 #[tokio::test]
-async fn platform_business_scheme_route_requires_identity() {
+async fn business_scheme_route_requires_identity() {
     let response = app()
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/v1/platform/mobile-execution/business-schemes")
+                .uri("/api/v1/mobile-execution/business-schemes/default/versions")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -838,7 +782,7 @@ async fn platform_business_scheme_route_requires_identity() {
 
 #[test]
 fn shared_submission_status_separates_defaults_and_execution_pause() {
-    use wekeeper_api::distribution::domain::shared_mobile::usage::SendingStatus;
+    use wekeeper_api::distribution::domain::shared_mobile::business_scheme::SendingStatus;
     let defaults = serde_json::to_value(SendingStatus::project(None)).unwrap();
     assert_eq!(defaults["platform"], "default");
     assert_eq!(defaults["can_confirm"], true);
@@ -846,20 +790,6 @@ fn shared_submission_status_separates_defaults_and_execution_pause() {
     assert_eq!(paused["platform"], "disabled");
     assert_eq!(paused["can_confirm"], true);
     assert!(paused["message"].as_str().unwrap().contains("任务仍可提交"));
-}
-
-#[test]
-fn usage_summary_serializes_the_business_group_name() {
-    use wekeeper_api::distribution::domain::shared_mobile::usage::UsageLocator;
-    let fixture: Value = serde_json::from_str(include_str!(
-        "../../api-contract/fixtures/mobile-usage-locator.json"
-    ))
-    .unwrap();
-    let output: UsageLocator = serde_json::from_value(fixture.clone()).unwrap();
-    assert_eq!(output.search_text, output.target_name);
-    assert_eq!(output.target["search_query"], output.target_name);
-    assert_eq!(output.target_locator_revision, Some(1));
-    assert_eq!(serde_json::to_value(output).unwrap(), fixture);
 }
 
 #[tokio::test]
@@ -1060,4 +990,23 @@ fn attempt_execution_observation_preserves_missing_receipt_and_device_times() {
     let empty = serde_json::to_value(AttemptExecutionObservation::default()).unwrap();
     assert!(empty.as_object().unwrap().values().all(Value::is_null));
     assert!(empty.get("device_received_at").is_none());
+}
+
+#[test]
+fn unit_task_preview_has_a_server_side_context_and_rejects_unknown_fields() {
+    use wekeeper_api::distribution::domain::shared_mobile::business_scheme::TaskPreviewInput;
+    let body = serde_json::json!({"draft_id":null,"expected_revision":null,"business_unit_id":"00000000-0000-0000-0000-000000000001","target_ids":["00000000-0000-0000-0000-000000000002"],"message":" 原样正文\n","between_targets_seconds":30,"selections":[]});
+    let preview: TaskPreviewInput = serde_json::from_value(body.clone()).unwrap();
+    assert_eq!(serde_json::to_value(preview).unwrap(), body);
+    let mut invalid = body.clone();
+    invalid["scheme_snapshot"] = serde_json::json!({});
+    assert!(serde_json::from_value::<TaskPreviewInput>(invalid).is_err());
+    let mut no_unit = body;
+    no_unit["business_unit_id"] = serde_json::Value::Null;
+    assert!(
+        serde_json::from_value::<TaskPreviewInput>(no_unit)
+            .unwrap()
+            .business_unit_id
+            .is_none()
+    );
 }
