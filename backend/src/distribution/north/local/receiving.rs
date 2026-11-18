@@ -13,6 +13,25 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct Service<S = Repository>(pub S);
 impl<S: Store> Service<S> {
+    pub async fn phone_progress(
+        &self,
+        actor: &Actor,
+        receipt: Uuid,
+        page: Page,
+    ) -> Result<serde_json::Value> {
+        actor.platform()?;
+        page.fetch_bounds()?;
+        self.0.phone_progress(actor, receipt, page).await
+    }
+    pub async fn stop_phone(
+        &self,
+        actor: &Actor,
+        receipt: Uuid,
+        target: Option<Uuid>,
+    ) -> Result<serde_json::Value> {
+        actor.platform()?;
+        self.0.stop_phone(actor, receipt, target).await
+    }
     pub async fn target(
         &self,
         actor: &Actor,

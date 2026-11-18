@@ -7,7 +7,7 @@ use crate::{
 use axum::{
     Router,
     extract::{Path, Query, State},
-    routing::{get, put},
+    routing::{get, post, put},
 };
 use uuid::Uuid;
 
@@ -97,8 +97,61 @@ async fn save(
     ))
 }
 
+async fn phone_progress(
+    State(app): State<Application>,
+    actor: Actor,
+    Path(receipt): Path<Uuid>,
+    Query(page): Query<Page>,
+) -> Result<ApiResponse> {
+    Ok(singleton(
+        "phone-deliveries",
+        receipt,
+        app.receiving_configurations()
+            .phone_progress(&actor, receipt, page)
+            .await?,
+    ))
+}
+async fn stop_phone(
+    State(app): State<Application>,
+    actor: Actor,
+    Path(receipt): Path<Uuid>,
+) -> Result<ApiResponse> {
+    Ok(singleton(
+        "phone-deliveries",
+        receipt,
+        app.receiving_configurations()
+            .stop_phone(&actor, receipt, None)
+            .await?,
+    ))
+}
+async fn stop_target(
+    State(app): State<Application>,
+    actor: Actor,
+    Path((receipt, target)): Path<(Uuid, Uuid)>,
+) -> Result<ApiResponse> {
+    Ok(singleton(
+        "phone-deliveries",
+        receipt,
+        app.receiving_configurations()
+            .stop_phone(&actor, receipt, Some(target))
+            .await?,
+    ))
+}
+
 pub fn router() -> Router<Application> {
-    let mut router = Router::new();
+    let mut router = Router::new()
+        .route(
+            "/api/v2/admin/messages/{receipt}/phone-deliveries",
+            get(phone_progress),
+        )
+        .route(
+            "/api/v2/admin/messages/{receipt}/phone-deliveries/stop",
+            post(stop_phone),
+        )
+        .route(
+            "/api/v2/admin/messages/{receipt}/phone-targets/{target}/stop",
+            post(stop_target),
+        );
     for (base, channel) in [
         ("mobile-execution", Channel::Mobile),
         ("wecom-distribution", Channel::Wecom),

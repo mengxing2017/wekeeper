@@ -7,6 +7,18 @@ use crate::{
 use uuid::Uuid;
 
 pub trait Store: Clone + Send + Sync + 'static {
+    fn phone_progress(
+        &self,
+        actor: &Actor,
+        receipt: Uuid,
+        page: Page,
+    ) -> impl Future<Output = Result<serde_json::Value>> + Send;
+    fn stop_phone(
+        &self,
+        actor: &Actor,
+        receipt: Uuid,
+        target: Option<Uuid>,
+    ) -> impl Future<Output = Result<serde_json::Value>> + Send;
     fn target(
         &self,
         actor: &Actor,
