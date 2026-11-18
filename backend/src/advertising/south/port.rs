@@ -1,14 +1,6 @@
 use super::super::domain::Result;
 use crate::business::Actor;
 
-/// Trusted immediate-message use case; no configuration-version or revocation flow.
-pub trait AdDecisionStore: Send + Sync {
-    fn decide(
-        &self,
-        input: crate::advertising::domain::decision::DecisionInput,
-    ) -> impl std::future::Future<Output = Result<crate::advertising::domain::decision::Decision>> + Send;
-}
-
 /// Read-only matching. Final authorization and selection require their own use case.
 pub trait AdPlacementReader: Send + Sync {
     fn matching_page(

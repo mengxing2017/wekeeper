@@ -72,23 +72,18 @@ pub fn measure(text: &str, channel: &str) -> Measurement {
                 .any(|c| c.is_control() && !matches!(c, '\n' | '\t')),
     }
 }
-pub fn compose(source: &str, ad: Option<&Content>, position: &str) -> String {
-    let out = if let Some(ad) = ad {
+pub fn compose(source: &str, ad: Option<&Content>) -> String {
+    if let Some(ad) = ad {
         let block = format!(
-            "【广告】\n{}{}",
+            "{}{}",
             ad.body,
             ad.link
                 .as_ref()
                 .map(|v| format!("\n{v}"))
                 .unwrap_or_default()
         );
-        if position == "before" {
-            format!("{block}\n\n{source}")
-        } else {
-            format!("{source}\n\n{block}")
-        }
+        format!("{source}\n{block}")
     } else {
         source.to_owned()
-    };
-    out.replace("\r\n", "\n").replace('\r', "\n")
+    }
 }

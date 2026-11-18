@@ -108,7 +108,7 @@ async fn aggregation_responsibilities_snapshot_export_and_authorization() {
     let decision = Uuid::now_v7();
     let target = Uuid::now_v7();
     sqlx::query("INSERT INTO orchestration_messages(id,platform_id,unit_id,source_event_id,evidence_ref,original) SELECT $1,source_id,business_unit_id,event_id,receipt_id,'{}'::jsonb FROM source_receipts WHERE receipt_id=$2").bind(message).bind(receipt).execute(&pool).await.unwrap();
-    sqlx::query("INSERT INTO orchestration_dispatches(message_id,content,decision,plans,state) VALUES($1,'hello','{}','[]','delegated')").bind(message).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO orchestration_dispatches(message_id,content,decision,plans,state,content_frozen_at) VALUES($1,'hello',jsonb_build_object('content','hello','reason','no_available_ad','selected_ad',null,'selection_count',null),'[]','delegated',clock_timestamp())").bind(message).execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO channel_receiving_configurations(id,business_unit_id,channel,configuration,authorized_by) VALUES($1,$2,'mobile','{}',$3)").bind(configuration).bind(unit).bind(a.id).execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO receiving_dispatch_decisions(id,message_id,configuration_id,channel,configuration,plan) VALUES($1,$2,$3,'mobile','{}','{}')").bind(decision).bind(message).bind(configuration).execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO receiving_dispatch_targets(id,decision_id,message_id,channel,target_id,target,plan,expected_count,not_before) VALUES($1,$2,$3,'mobile',$4,$5,'{}',3,now())").bind(target).bind(decision).bind(message).bind(Uuid::now_v7()).bind(json!({"name":"统计群","client_kind":"wechat"})).execute(&pool).await.unwrap();

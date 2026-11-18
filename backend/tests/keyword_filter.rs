@@ -162,10 +162,10 @@ async fn global_switch_preserves_words_versions_authorization_and_frozen_decisio
     let enabled = current(&Service(KeywordRepository(pool.clone())), &actor).await;
     assert_eq!(enabled["filter_enabled"], true);
     assert_eq!(enabled["entries"], disabled["entries"]);
-    // A legacy ready dispatch already froze its content before the switch changed.
-    // A missing historical decision must not trigger a new check of its matching body.
+    // A ready dispatch already froze its content before the switch changed.
+    // The frozen content must not trigger a new check of its matching body.
     let frozen_id = message(&pool, identities[0].0, identities[0].1).await;
-    sqlx::query("INSERT INTO orchestration_dispatches(message_id,content,decision,plans,state) VALUES($1,'frozen body','{}','[]','ready')")
+    sqlx::query("INSERT INTO orchestration_dispatches(message_id,content,decision,plans,state,content_frozen_at) VALUES($1,'frozen body',jsonb_build_object('content','frozen body','reason','no_available_ad','selected_ad',null,'selection_count',null),'[]','ready',clock_timestamp())")
         .bind(frozen_id).execute(&pool).await.unwrap();
     let mut blocked = vec![];
     for &(platform, unit) in &identities {

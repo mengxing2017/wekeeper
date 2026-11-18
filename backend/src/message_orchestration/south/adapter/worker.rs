@@ -1,10 +1,7 @@
 //! The only automatic sending worker. Decisions and delegates survive restart.
 use super::postgres::Repository;
 use crate::{
-    advertising::{
-        domain::{decision::DecisionInput, targeting::SourceIdentity},
-        north::local::AdDecisionService,
-    },
+    advertising::domain::{decision::DecisionInput, targeting::SourceIdentity},
     business::{Error, Result},
     distribution::{
         domain::receiving::{Channel, DeliveryPlan},
@@ -13,6 +10,7 @@ use crate::{
 };
 use serde_json::{Value, json};
 use sqlx::{Acquire, Postgres, Row, Transaction};
+use tracing::Instrument;
 use uuid::Uuid;
 
 impl Repository {
@@ -169,39 +167,7 @@ impl Repository {
         tx.commit().await?;
         // Persist the target/candidate input before advertising. A crash at any
         // boundary resumes these same facts, even if administrators edit configuration.
-        let frozen = sqlx::query(
-            "SELECT content,plans,state FROM orchestration_dispatches WHERE message_id=$1",
-        )
-        .bind(id)
-        .fetch_one(&self.0)
-        .await?;
-        if frozen.get::<String, _>("state") == "preparing" {
-            let plans: Vec<DeliveryPlan> =
-                serde_json::from_value(frozen.get("plans")).map_err(|_| Error::Unavailable)?;
-            let source: String = frozen.get("content");
-            let channel = if plans.iter().any(|p| p.channel == Channel::Wecom)
-                && crate::advertising::domain::measure(&source, "wecom").valid
-            {
-                "wecom"
-            } else {
-                "mobile"
-            };
-            let decision = AdDecisionService(
-                crate::advertising::south::adapter::postgres::Repository(self.0.clone()),
-            )
-            .decide(DecisionInput {
-                source: SourceIdentity {
-                    platform_id: row.get("platform_id"),
-                    unit_id: row.get("unit_id"),
-                },
-                message_id: receipt,
-                original: source,
-                channel: channel.into(),
-            })
-            .await
-            .map_err(|_| Error::Unavailable)?;
-            sqlx::query("UPDATE orchestration_dispatches SET content=$2,decision=$3,state='ready' WHERE message_id=$1 AND state='preparing'").bind(id).bind(&decision.content).bind(json!(decision)).execute(&self.0).await?;
-        }
+        self.freeze_content(id).await?;
         // Mobile intake commits independently, before creation checks. Never hold
         // an orchestration row lock while calling the phone-owned service.
         let frozen = sqlx::query(
@@ -312,6 +278,60 @@ impl Repository {
         )
         .await?;
         tx.commit().await?;
+        Ok(())
+    }
+    /// Owns the only final-content commit, including any selected-ad counter.
+    pub async fn freeze_content(&self, id: Uuid) -> Result<()> {
+        let mut tx = self.0.begin().await?;
+        let frozen = sqlx::query("SELECT d.content,d.plans,d.state,m.platform_id,m.unit_id,m.original FROM orchestration_dispatches d JOIN orchestration_messages m ON m.id=d.message_id WHERE d.message_id=$1 FOR UPDATE OF d SKIP LOCKED")
+            .bind(id).fetch_optional(&mut *tx).await?;
+        let Some(frozen) = frozen else {
+            return Ok(());
+        };
+        if frozen.get::<String, _>("state") != "preparing" {
+            tx.commit().await?;
+            return Ok(());
+        }
+        let plans: Vec<DeliveryPlan> =
+            serde_json::from_value(frozen.get("plans")).map_err(|_| Error::Unavailable)?;
+        let source: String = frozen.get("content");
+        let original: Value = frozen.get("original");
+        if original["content"].as_str() != Some(source.as_str()) {
+            tracing::error!(message_id=%id, "preparing content conflicts with accepted original");
+            return Err(Error::Unavailable);
+        }
+        let mut channels: Vec<String> = plans
+            .iter()
+            .filter(|p| crate::advertising::domain::measure(&source, p.channel.as_str()).valid)
+            .map(|p| p.channel.as_str().to_owned())
+            .collect();
+        channels.sort();
+        channels.dedup();
+        if channels.is_empty() {
+            return Err(Error::Unavailable);
+        }
+        let decision = crate::advertising::south::adapter::postgres::decisions::decide(
+            &mut tx,
+            &DecisionInput {
+                source: SourceIdentity {
+                    platform_id: frozen.get("platform_id"),
+                    unit_id: frozen.get("unit_id"),
+                },
+                original: source,
+                channels,
+            },
+        )
+        .instrument(tracing::info_span!("advertising_decision", message_id=%id))
+        .await?;
+        let updated = sqlx::query("UPDATE orchestration_dispatches SET content=$2,decision=$3,state='ready',content_frozen_at=clock_timestamp() WHERE message_id=$1 AND state='preparing'")
+            .bind(id).bind(&decision.content).bind(json!(decision)).execute(&mut *tx).await?;
+        if updated.rows_affected() != 1 {
+            return Err(Error::Unavailable);
+        }
+        // A lost COMMIT response must be reconciled by reading this row on retry.
+        tx.commit().await?;
+        tracing::info!(message_id=%id, reason=%decision.reason,
+            selected=decision.selected_ad.is_some(), "message content frozen");
         Ok(())
     }
     pub async fn aggregate(&self) -> Result<()> {

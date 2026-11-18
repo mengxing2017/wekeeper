@@ -35,8 +35,11 @@ async fn scoped_advertising_rotates_once_with_inactive_storage_partition() {
             )
         );
         assert_eq!(
-            d["content"].as_str().unwrap().matches("【广告】").count(),
-            1
+            d["content"],
+            format!(
+                "原消息\n{}",
+                d["selected_ad"]["content"]["body"].as_str().unwrap()
+            )
         );
     }
     let count: i64 =
@@ -229,8 +232,8 @@ async fn unavailable_ad_sends_original_without_count_and_results_are_visible() {
             .await
             .unwrap();
     assert!(d["selected_ad"].is_null());
-    assert!(!d["content"].as_str().unwrap().contains("【广告】"));
-    assert_eq!(d["selection_count"], 0);
+    assert_eq!(d["content"], "原消息");
+    assert!(d["selection_count"].is_null());
     let list =
         wekeeper_api::message_orchestration::south::adapter::postgres::Repository(f.pool.clone())
             .list(
@@ -265,11 +268,11 @@ async fn unavailable_ad_sends_original_without_count_and_results_are_visible() {
 
 #[tokio::test]
 #[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
-async fn interrupted_ad_commit_uses_original_frozen_targets_and_decision() {
+async fn interrupted_freeze_rolls_back_ad_count_and_reuses_frozen_targets() {
     let f = Fixture::new().await;
     let config = f.configure(vec![f.target]).await;
     f.ad("冻结广告", "unit").await;
-    sqlx::query("CREATE FUNCTION fail_ready() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF OLD.state='preparing' AND NEW.state='ready' THEN RAISE EXCEPTION 'injected interruption after ad commit'; END IF; RETURN NEW; END $$").execute(&f.pool).await.unwrap();
+    sqlx::query("CREATE FUNCTION fail_ready() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF OLD.state='preparing' AND NEW.state='ready' THEN RAISE EXCEPTION 'injected interruption before atomic content commit'; END IF; RETURN NEW; END $$").execute(&f.pool).await.unwrap();
     sqlx::query("CREATE TRIGGER fail_ready BEFORE UPDATE ON orchestration_dispatches FOR EACH ROW EXECUTE FUNCTION fail_ready()").execute(&f.pool).await.unwrap();
     let (id, _) = f.message().await;
     f.run().await;
@@ -281,10 +284,15 @@ async fn interrupted_ad_commit_uses_original_frozen_targets_and_decision() {
             .unwrap();
     assert_eq!(state, "preparing");
     sqlx::query("UPDATE channel_receiving_configurations SET configuration=jsonb_set(configuration,'{target_ids}','[]') WHERE id=$1").bind(config).execute(&f.pool).await.unwrap();
-    sqlx::query("UPDATE ad_placements SET enabled=false")
-        .execute(&f.pool)
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM ad_unit_counters WHERE unit_id=$1")
+        .bind(f.unit)
+        .fetch_one(&f.pool)
         .await
         .unwrap();
+    assert_eq!(
+        count, 0,
+        "failed outer commit must roll back the ad counter"
+    );
     sqlx::query("DROP TRIGGER fail_ready ON orchestration_dispatches")
         .execute(&f.pool)
         .await
@@ -299,6 +307,9 @@ async fn interrupted_ad_commit_uses_original_frozen_targets_and_decision() {
     let (a, b) = tokio::join!(repo.run_once(), repo.run_once());
     a.unwrap();
     b.unwrap();
+    // Both scanners may skip a row held by the other's planning/finalization
+    // transaction. The next periodic scan must finish the same frozen input.
+    f.run().await;
     let n: i64 =
         sqlx::query_scalar("SELECT count(*) FROM orchestration_delegates WHERE message_id=$1")
             .bind(id)
@@ -412,7 +423,7 @@ async fn both_channels_share_one_ad_and_aggregate_official_results_without_membe
     assert_eq!(n, 2);
     let contents:Vec<String>=sqlx::query_scalar("SELECT s.content FROM orchestration_delegates d JOIN distribution_message_snapshots s ON s.id=d.snapshot_id WHERE d.message_id=$1").bind(id).fetch_all(&f.pool).await.unwrap();
     assert_eq!(contents[0], contents[1]);
-    assert_eq!(contents[0].matches("【广告】").count(), 1);
+    assert_eq!(contents[0], "原消息\n共同广告");
     let n: i64 = sqlx::query_scalar("SELECT selected_count FROM ad_unit_counters WHERE unit_id=$1")
         .bind(f.unit)
         .fetch_one(&f.pool)
@@ -508,8 +519,7 @@ async fn both_channels_share_one_ad_and_aggregate_official_results_without_membe
         .bind(long).fetch_all(&f.pool).await.unwrap();
     assert_eq!(contents.len(), 2);
     assert_eq!(contents[0], contents[1]);
-    assert!(contents[0].contains(&"原".repeat(250)));
-    assert!(!contents[0].contains("【广告】"));
+    assert_eq!(contents[0], "原".repeat(250));
     let count: i64 =
         sqlx::query_scalar("SELECT selected_count FROM ad_unit_counters WHERE unit_id=$1")
             .bind(f.unit)
@@ -1507,5 +1517,286 @@ async fn phone_intake_failure_survives_rollback_and_deduplicates_creation() {
         cursor = Some(page["next_cursor"].as_str().unwrap().to_owned());
     }
     assert_eq!(seen.len(), 105);
+    f.close().await;
+}
+
+async fn ad_decision(f: &Fixture, id: Uuid) -> Value {
+    sqlx::query_scalar("SELECT decision FROM orchestration_dispatches WHERE message_id=$1")
+        .bind(id)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn ad_storage_error_rolls_back_then_freezes_original_and_never_backfills() {
+    let f = Fixture::new().await;
+    f.configure(vec![f.target]).await;
+    f.ad("广告", "unit").await;
+    sqlx::query("CREATE FUNCTION fail_ad_counter() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected ad counter failure'; END $$")
+        .execute(&f.pool).await.unwrap();
+    sqlx::query("CREATE TRIGGER fail_ad_counter BEFORE UPDATE ON ad_unit_counters FOR EACH ROW EXECUTE FUNCTION fail_ad_counter()")
+        .execute(&f.pool).await.unwrap();
+    let (id, _) = f.message().await;
+    f.run().await;
+    let decision = ad_decision(&f, id).await;
+    assert_eq!(decision["reason"], "ad_dependency_unavailable");
+    assert_eq!(decision["content"], "原消息");
+    assert_eq!(
+        decision["selection_count"], 0,
+        "the initial count was read before rollback"
+    );
+    let counters: i64 = sqlx::query_scalar("SELECT count(*) FROM ad_unit_counters")
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(counters, 0);
+    let tasks: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM orchestration_delegates WHERE message_id=$1")
+            .bind(id)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(tasks, 1);
+    sqlx::query("DROP TRIGGER fail_ad_counter ON ad_unit_counters")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    f.run().await;
+    assert_eq!(ad_decision(&f, id).await, decision);
+    let (new_id, _) = f.message().await;
+    f.run().await;
+    assert_eq!(ad_decision(&f, new_id).await["content"], "原消息\n广告");
+    let changed =
+        sqlx::query("UPDATE orchestration_dispatches SET content='changed' WHERE message_id=$1")
+            .bind(new_id)
+            .execute(&f.pool)
+            .await;
+    assert!(changed.is_err(), "database must reject frozen body changes");
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn locked_ad_tables_are_bounded_and_do_not_block_original_dispatch() {
+    use std::time::{Duration, Instant};
+    let f = Fixture::new().await;
+    f.configure(vec![f.target]).await;
+    f.ad("广告", "unit").await;
+    let mut lock = f.pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE ad_placements IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    let (id, _) = f.message().await;
+    let start = Instant::now();
+    tokio::time::timeout(Duration::from_secs(5), f.run())
+        .await
+        .unwrap();
+    assert!(start.elapsed() < Duration::from_secs(5));
+    let decision = ad_decision(&f, id).await;
+    assert_eq!(decision["reason"], "ad_lock_timeout");
+    assert_eq!(decision["content"], "原消息");
+    lock.rollback().await.unwrap();
+    f.run().await;
+    assert_eq!(ad_decision(&f, id).await, decision);
+    let state: String =
+        sqlx::query_scalar("SELECT state FROM orchestration_dispatches WHERE message_id=$1")
+            .bind(id)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(state, "delegated");
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn no_ad_does_not_wait_for_counter_lock_and_replay_does_not_query_ads() {
+    let f = Fixture::new().await;
+    f.configure(vec![f.target]).await;
+    let mut lock = f.pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE ad_unit_counters IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    let (id, _) = f.message().await;
+    tokio::time::timeout(std::time::Duration::from_secs(5), f.run())
+        .await
+        .unwrap();
+    assert_eq!(ad_decision(&f, id).await["reason"], "no_available_ad");
+    lock.rollback().await.unwrap();
+    let mut lock = f.pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE ad_placements IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    let repo =
+        wekeeper_api::message_orchestration::south::adapter::postgres::Repository(f.pool.clone());
+    // Reproduce restart after a successful COMMIT whose acknowledgement was lost.
+    tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        repo.freeze_content(id),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(ad_decision(&f, id).await["reason"], "no_available_ad");
+    lock.rollback().await.unwrap();
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn counter_lock_and_slow_statement_skip_ads_and_restore_connection_settings() {
+    use wekeeper_api::advertising::{
+        domain::{decision::DecisionInput, targeting::SourceIdentity},
+        south::adapter::postgres::decisions,
+    };
+    let f = Fixture::new().await;
+    f.ad("广告", "unit").await;
+    sqlx::query("INSERT INTO ad_unit_counters(platform_id,unit_id) VALUES($1,$2)")
+        .bind(f.platform)
+        .bind(f.unit)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let input = DecisionInput {
+        source: SourceIdentity {
+            platform_id: f.platform,
+            unit_id: f.unit,
+        },
+        original: "原文".into(),
+        channels: vec!["mobile".into(), "wecom".into()],
+    };
+    let mut lock = f.pool.begin().await.unwrap();
+    sqlx::query("SELECT selected_count FROM ad_unit_counters WHERE unit_id=$1 FOR UPDATE")
+        .bind(f.unit)
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    let mut tx = f.pool.begin().await.unwrap();
+    sqlx::query("SET LOCAL statement_timeout='3s'")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let skipped = decisions::decide(&mut tx, &input).await.unwrap();
+    assert_eq!(skipped.reason, "ad_lock_timeout");
+    let setting: String = sqlx::query_scalar("SHOW statement_timeout")
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    assert_eq!(setting, "3s");
+    tx.commit().await.unwrap();
+    lock.rollback().await.unwrap();
+    sqlx::query("CREATE FUNCTION slow_ad_counter() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(2); RETURN NEW; END $$")
+        .execute(&f.pool).await.unwrap();
+    sqlx::query("CREATE TRIGGER slow_ad_counter BEFORE UPDATE ON ad_unit_counters FOR EACH ROW EXECUTE FUNCTION slow_ad_counter()")
+        .execute(&f.pool).await.unwrap();
+    let mut tx = f.pool.begin().await.unwrap();
+    let skipped = decisions::decide(&mut tx, &input).await.unwrap();
+    assert_eq!(skipped.reason, "ad_decision_timeout");
+    tx.commit().await.unwrap();
+    sqlx::query("DROP TRIGGER slow_ad_counter ON ad_unit_counters")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let mut tx = f.pool.begin().await.unwrap();
+    sqlx::query("SET LOCAL statement_timeout='3s'")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("SET LOCAL lock_timeout='2s'")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    assert_eq!(
+        decisions::decide(&mut tx, &input)
+            .await
+            .unwrap()
+            .selection_count,
+        Some(1)
+    );
+    let settings: (String, String) = sqlx::query_as(
+        "SELECT current_setting('statement_timeout'),current_setting('lock_timeout')",
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    assert_eq!(settings, ("3s".into(), "2s".into()));
+    tx.commit().await.unwrap();
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn failed_ad_query_dependency_skips_without_waiting_for_repair() {
+    let f = Fixture::new().await;
+    f.configure(vec![f.target]).await;
+    f.ad("广告", "unit").await;
+    sqlx::query("ALTER TABLE ad_placements RENAME TO unavailable_ad_placements")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    // Keep an explicit failing object in this test schema so search_path
+    // cannot resolve an unrelated public-schema table from other test suites.
+    sqlx::query("CREATE VIEW ad_placements AS SELECT * FROM unavailable_ad_placements WHERE 1/0=0")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let (id, _) = f.message().await;
+    f.run().await;
+    let decision = ad_decision(&f, id).await;
+    assert_eq!(decision["reason"], "ad_dependency_unavailable");
+    assert_eq!(decision["content"], "原消息");
+    let state: String =
+        sqlx::query_scalar("SELECT state FROM orchestration_dispatches WHERE message_id=$1")
+            .bind(id)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(state, "delegated");
+    sqlx::query("DROP VIEW ad_placements")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("ALTER TABLE unavailable_ad_placements RENAME TO ad_placements")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    f.run().await;
+    assert_eq!(ad_decision(&f, id).await, decision);
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit isolated WEKEEPER_TEST_DATABASE_URL"]
+async fn lost_database_connection_never_dispatches_an_uncommitted_fallback() {
+    let f = Fixture::new().await;
+    f.configure(vec![f.target]).await;
+    f.ad("广告", "unit").await;
+    sqlx::query("CREATE FUNCTION disconnect_ad_counter() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_terminate_backend(pg_backend_pid()); RETURN NEW; END $$")
+        .execute(&f.pool).await.unwrap();
+    sqlx::query("CREATE TRIGGER disconnect_ad_counter BEFORE UPDATE ON ad_unit_counters FOR EACH ROW EXECUTE FUNCTION disconnect_ad_counter()")
+        .execute(&f.pool).await.unwrap();
+    let (id, _) = f.message().await;
+    f.run().await;
+    let facts: (String, bool, i64) = sqlx::query_as("SELECT state,content_frozen_at IS NULL,(SELECT count(*) FROM orchestration_delegates WHERE message_id=$1) FROM orchestration_dispatches WHERE message_id=$1")
+        .bind(id).fetch_one(&f.pool).await.unwrap();
+    assert_eq!(facts, ("preparing".into(), true, 0));
+    sqlx::query("DROP TRIGGER disconnect_ad_counter ON ad_unit_counters")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE orchestration_dispatches SET next_attempt_at=clock_timestamp() WHERE message_id=$1",
+    )
+    .bind(id)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    f.run().await;
+    assert_eq!(ad_decision(&f, id).await["selection_count"], 1);
     f.close().await;
 }

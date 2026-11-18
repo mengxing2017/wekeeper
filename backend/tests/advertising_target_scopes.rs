@@ -891,21 +891,27 @@ async fn matches_business_scopes_without_routes_or_selection() {
             assert_eq!(body["errors"][0]["code"], "invalid_ad_content");
         }
     }
-    // Immediate decisions use business-unit counters, never route/workspace counters.
-    use wekeeper_api::advertising::{
-        domain::decision::DecisionInput, north::local::AdDecisionService,
-    };
-    let service = AdDecisionService(Repository(pool.clone()));
+    // Advertising operations share the caller's commit. Message replay belongs
+    // to orchestration and is tested in source_routing.
+    use wekeeper_api::advertising::domain::decision::{Decision, DecisionInput};
+    async fn decide(pool: &sqlx::PgPool, input: DecisionInput) -> Decision {
+        let mut tx = pool.begin().await.unwrap();
+        let result =
+            wekeeper_api::advertising::south::adapter::postgres::decisions::decide(&mut tx, &input)
+                .await
+                .unwrap();
+        tx.commit().await.unwrap();
+        result
+    }
     let input = DecisionInput {
         source: identity,
-        message_id: Uuid::new_v4(),
         original: "即时消息".into(),
-        channel: "mobile".into(),
+        channels: vec!["mobile".into(), "wecom".into()],
     };
-    let none = service.decide(input.clone()).await.unwrap();
+    let none = decide(&pool, input.clone()).await;
     assert!(none.selected_ad.is_none());
     assert_eq!(none.content, input.original);
-    assert_eq!(none.selection_count, 0);
+    assert_eq!(none.selection_count, None);
     sqlx::query("UPDATE ad_placements SET enabled=true WHERE id=ANY($1)")
         .bind(vec![
             last_unit_placement,
@@ -915,110 +921,61 @@ async fn matches_business_scopes_without_routes_or_selection() {
         .execute(&pool)
         .await
         .unwrap();
-    // Replaying a no-ad message does not retroactively insert advertising.
-    assert_eq!(service.decide(input.clone()).await.unwrap(), none);
-    let mut input = DecisionInput {
-        message_id: Uuid::new_v4(),
-        ..input
-    };
-    let first_message_id = input.message_id;
-    let first = service.decide(input.clone()).await.unwrap();
-    assert_eq!(first.selection_count, 1);
+    let first = decide(&pool, input.clone()).await;
+    assert_eq!(first.selection_count, Some(1));
     let selected = first.selected_ad.as_ref().unwrap();
     assert!([last_unit_placement, tied_unit_placement].contains(&selected.placement_id));
-    let mut jobs = tokio::task::JoinSet::new();
-    for _ in 0..8 {
-        let input = input.clone();
-        let pool = pool.clone();
-        jobs.spawn(async move {
-            AdDecisionService(Repository(pool))
-                .decide(input)
-                .await
-                .unwrap()
-        });
-    }
-    while let Some(result) = jobs.join_next().await {
-        assert_eq!(result.unwrap(), first);
-    }
-    let mut conflicting = input.clone();
-    conflicting.original.push('变');
-    assert_eq!(
-        service.decide(conflicting).await.unwrap_err().0,
-        "message_conflict"
-    );
-    input.message_id = Uuid::new_v4();
-    let second = service.decide(input.clone()).await.unwrap();
-    assert_eq!(second.selection_count, 2);
+    let second = decide(&pool, input.clone()).await;
+    assert_eq!(second.selection_count, Some(2));
     assert_ne!(
         second.selected_ad.as_ref().unwrap().placement_id,
         selected.placement_id
     );
-    let sibling_input = DecisionInput {
-        source: SourceIdentity {
-            platform_id: platform,
-            unit_id: sibling,
+    let sibling_first = decide(
+        &pool,
+        DecisionInput {
+            source: SourceIdentity {
+                platform_id: platform,
+                unit_id: sibling,
+            },
+            ..input.clone()
         },
-        message_id: Uuid::new_v4(),
-        ..input.clone()
-    };
-    let sibling_first = service.decide(sibling_input).await.unwrap();
-    assert_eq!(sibling_first.selection_count, 1);
+    )
+    .await;
+    assert_eq!(sibling_first.selection_count, Some(1));
     assert_eq!(
         sibling_first.selected_ad.unwrap().placement_id,
         platform_placement
     );
-    // Channel overflow preserves the complete original and does not consume a selection.
-    let overflow = service
-        .decide(DecisionInput {
+    let overflow = decide(
+        &pool,
+        DecisionInput {
             original: "x".repeat(4000),
-            channel: "wecom".into(),
-            message_id: Uuid::new_v4(),
+            channels: vec!["wecom".into()],
             ..input.clone()
-        })
-        .await
-        .unwrap();
+        },
+    )
+    .await;
     assert_eq!(overflow.content, "x".repeat(4000));
-    assert_eq!(overflow.selection_count, 2);
+    assert_eq!(overflow.selection_count, Some(2));
     assert!(overflow.selected_ad.is_none());
-    for _ in 0..8 {
-        let input = DecisionInput {
-            message_id: Uuid::new_v4(),
-            ..input.clone()
-        };
-        let pool = pool.clone();
-        jobs.spawn(async move {
-            AdDecisionService(Repository(pool))
-                .decide(input)
-                .await
-                .unwrap()
-        });
-    }
-    let mut counts = Vec::new();
-    while let Some(result) = jobs.join_next().await {
-        counts.push(result.unwrap().selection_count);
-    }
-    counts.sort();
-    assert_eq!(counts, (3..=10).collect::<Vec<_>>());
+    // An aborted outer transaction does not consume a selection.
+    let mut tx = pool.begin().await.unwrap();
+    let aborted =
+        wekeeper_api::advertising::south::adapter::postgres::decisions::decide(&mut tx, &input)
+            .await
+            .unwrap();
+    assert_eq!(aborted.selection_count, Some(3));
+    tx.rollback().await.unwrap();
+    assert_eq!(decide(&pool, input.clone()).await.selection_count, Some(3));
     sqlx::query("UPDATE ad_placements SET enabled=false")
         .execute(&pool)
         .await
         .unwrap();
-    // Decisions are immutable message facts; changing availability never recalls them.
-    input.message_id = Uuid::new_v4();
-    let unavailable = service.decide(input.clone()).await.unwrap();
+    let unavailable = decide(&pool, input.clone()).await;
     assert_eq!(unavailable.content, input.original);
-    assert_eq!(unavailable.selection_count, 10);
+    assert_eq!(unavailable.selection_count, None);
     assert!(unavailable.selected_ad.is_none());
-    assert_eq!(
-        service
-            .decide(DecisionInput {
-                message_id: first_message_id,
-                ..input
-            })
-            .await
-            .unwrap(),
-        first
-    );
     pool.close().await;
     sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
         .execute(&base)

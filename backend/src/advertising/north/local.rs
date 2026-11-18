@@ -9,22 +9,6 @@ fn ensure(ok: bool, code: &'static str) -> Result<()> {
     }
 }
 
-pub struct AdDecisionService<S>(pub S);
-impl<S: super::super::south::port::AdDecisionStore> AdDecisionService<S> {
-    pub async fn decide(&self, input: decision::DecisionInput) -> Result<decision::Decision> {
-        ensure(
-            !input.source.platform_id.is_nil()
-                && !input.source.unit_id.is_nil()
-                && !input.message_id.is_nil()
-                && !input.original.trim().is_empty()
-                && matches!(input.channel.as_str(), "mobile" | "wecom")
-                && measure(&input.original, &input.channel).valid,
-            "invalid_request",
-        )?;
-        self.0.decide(input).await
-    }
-}
-
 pub struct MaterialService<S>(pub S);
 impl<S: super::super::south::port::MaterialStore> MaterialService<S> {
     pub async fn create(
