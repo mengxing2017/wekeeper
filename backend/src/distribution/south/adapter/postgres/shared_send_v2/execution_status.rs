@@ -137,8 +137,16 @@ pub(super) async fn assess(
         {
             add(
                 &mut conditions,
-                "waiting_resources",
-                "平台正在已授权候选范围内自动选择可用手机",
+                if d["reason"] == "awaiting_round_deadline" {
+                    "awaiting_round_deadline"
+                } else {
+                    "waiting_resources"
+                },
+                if d["reason"] == "awaiting_round_deadline" {
+                    "本轮候选已遍历，等待本轮截止后按剩余轮次重评"
+                } else {
+                    "平台正在已授权候选范围内自动选择可用手机"
+                },
                 "system",
                 true,
                 device,
