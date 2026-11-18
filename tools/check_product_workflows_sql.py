@@ -20,9 +20,7 @@ sources = [
  "backend/src/distribution/south/adapter/postgres/broadcast.rs",
  "backend/src/distribution/south/adapter/postgres/resource_policy.rs",
  "backend/src/distribution/south/adapter/postgres/shared_send_v2/tasks.rs",
- "backend/src/distribution/south/adapter/postgres/shared_send_v2/usage.rs",
  "backend/src/distribution/south/adapter/postgres/shared_send_v2/inspections.rs",
- "backend/src/distribution/south/adapter/postgres/shared_send_v2/usage_budgets.rs",
  "backend/src/distribution/south/adapter/postgres/shared_send_v2/wait_states.rs",
  "backend/src/distribution/south/adapter/postgres.rs",
  "backend/src/distribution/south/adapter/postgres/groups.rs",
@@ -33,12 +31,19 @@ sources += ['backend/src/distribution/south/adapter/postgres/shared_mobile_resou
 sources += ['backend/src/distribution/south/adapter/postgres/senders.rs', 'backend/src/identity/south/adapter/postgres.rs', 'backend/src/integrations/south/adapter/assets_postgres.rs']
 sources += [str(p.relative_to(r)) for p in (r/'backend/src').rglob('*.rs') if str(p.relative_to(r)) not in sources and not p.name.endswith('_tests.rs')]
 queries=[]
+session_setup=[]
 for source in sources:
  patterns=[r'sqlx::query(?:_scalar|_as)?(?:::[^\(]*?)?\(\s*("(?:[^"\\]|\\.)*"|r#"[\s\S]*?"#)', r'const\s+\w+\s*:\s*&str\s*=\s*("(?:[^"\\]|\\.)*"|r#"[\s\S]*?"#)']
  for pattern in patterns:
   for match in re.finditer(pattern, (r/source).read_text()):
    raw=match.group(1)
    sql=raw[3:-2] if raw.startswith('r#') else json.loads(raw, strict=False)
+   # Statistics queries use transaction-local relations created by their repository.
+   # Reuse those actual definitions rather than preparing against a nonexistent session.
+   if sql.lstrip().upper().startswith("CREATE TEMP TABLE STATS_"):
+    setup=sql.replace(" ON COMMIT DROP", "")
+    setup=re.sub(r'\$(\d+)\b',lambda m: {"1":"'{\"source_kind\":\"all\"}'::jsonb","2":"now()"}[m[1]],setup)
+    if setup not in session_setup:session_setup.append(setup)
    if sql.lstrip().upper().startswith(("SELECT", "INSERT", "UPDATE", "DELETE", "WITH")) and sql not in queries:queries.append(sql)
 s='00000000-0000-4000-8000-000000000001';a='00000000-0000-4000-8000-000000000002';banner='00000000-0000-4000-8000-000000000003';default='00000000-0000-4000-8000-000000000004';expired='00000000-0000-4000-8000-000000000005';preview='00000000-0000-4000-8000-000000000006'
 files=sorted((r/'backend/migrations').glob('*.sql'))
@@ -135,7 +140,7 @@ END $$;
 """
 with tempfile.TemporaryDirectory(prefix='keeper67-effects-') as tmp:
  db=Path(tmp)/'db';subprocess.run([str(pg/'initdb'),'-D',str(db),'-U','keeper67_test','--auth=trust','--no-locale','--encoding=UTF8'],check=True,capture_output=True)
- script='\n\n'.join([schema,seed,checks]+[f'PREPARE product_query_{i} AS {q};' for i,q in enumerate(queries)])+'\n\n'
+ script='\n\n'.join([schema,seed,checks]+[q+';' for q in session_setup]+[f'PREPARE product_query_{i} AS {q};' for i,q in enumerate(queries)])+'\n\n'
  result=subprocess.run([str(pg/'postgres'),'--single','-j','-D',str(db),'template1'],input=script,text=True,capture_output=True)
  
  if result.returncode or 'ERROR:' in result.stderr or 'FATAL:' in result.stderr:raise SystemExit(result.stdout+'\n'+result.stderr)

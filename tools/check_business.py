@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run business integration tests against an isolated, disposable PostgreSQL cluster."""
 import os
+import secrets
 import sys
 sys.dont_write_bytecode = True
 import socket
@@ -24,8 +25,8 @@ with tempfile.TemporaryDirectory(prefix='wekeeper-business-') as directory:
         subprocess.run([str(pg/'pg_ctl'), '-D', str(db), '-l', str(root/'postgres.log'), '-o', f'-h 127.0.0.1 -p {port} -k {root}', '-w', 'start'], check=True)
         started = True
         subprocess.run([str(pg/'createdb'), '-h', '127.0.0.1', '-p', str(port), '-U', 'wekeeper_test', 'wekeeper_test'], check=True)
-        env = {**os.environ, 'WEKEEPER_TEST_DATABASE_URL': f'postgres://wekeeper_test@127.0.0.1:{port}/wekeeper_test'}
-        subprocess.run(['cargo', 'test', '--manifest-path', 'backend/Cargo.toml', '--lib', '--test', 'business', '--test', 'database', '--test', 'directory', '--test', 'assets', '--test', 'broadcast', '--test', 'source_routing', '--', '--ignored', '--nocapture'], cwd=repo, env=env, check=True)
+        env = {**os.environ, 'WEKEEPER_SHARED_SEND_KEY': os.urandom(32).hex(), 'WEKEEPER_SOURCE_MASTER_KEY_V1': secrets.token_urlsafe(32), 'WEKEEPER_TEST_DATABASE_URL': f'postgres://wekeeper_test@127.0.0.1:{port}/wekeeper_test'}
+        subprocess.run(['cargo', 'test', '--locked', '--manifest-path', 'backend/Cargo.toml', '--', '--ignored', '--nocapture'], cwd=repo, env=env, check=True)
 
     finally:
         if started:
