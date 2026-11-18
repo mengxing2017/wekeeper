@@ -40,3 +40,10 @@ it('marks detail version changes instead of mixing them with the summary',async(
  await screen.findByText('event-1');fireEvent.click(screen.getByRole('button',{name:/Expand row|展开行/}))
  expect(await screen.findByText('目标进度已更新，当前明细与列表属于不同版本')).toBeTruthy()
 })
+
+it('shows skipped advertising and an unread count without inventing zero',async()=>{
+ api.list.mockResolvedValue({items:[{...row,decision:{selected_ad:null,reason:'ad_lock_timeout',selection_count:null,content:row.content}}],has_more:false});mount()
+ await screen.findByText('event-1');fireEvent.click(screen.getByRole('button',{name:/Expand row|展开行/}))
+ expect(await screen.findByText(/广告锁等待超时，使用原文/)).toBeTruthy()
+ expect(screen.getByText(/本次决定对应选用次数：未读取/)).toBeTruthy()
+})

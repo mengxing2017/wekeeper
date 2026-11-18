@@ -7,6 +7,7 @@ import {useQuery} from '@tanstack/react-query'
 import {Alert,Button,Card,Select,Space,Table,Tag,Timeline,Typography} from 'antd'
 import {businessMessages,receiptReasonLabels,type BusinessMessage,type MessageDiagnostic,type MessageProgressFilter} from './api'
 
+const adReasons:Record<string,string>={selected:'已追加广告',no_available_ad:'无可用广告，使用原文',ad_content_too_long:'组合正文超限，使用原文',invalid_ad_content:'广告素材不可用，使用原文',ad_counter_unavailable:'广告计数不可用，使用原文',ad_dependency_unavailable:'广告处理不可用，使用原文',ad_lock_timeout:'广告锁等待超时，使用原文',ad_decision_timeout:'广告处理超时，使用原文'}
 const channels:Record<string,string>={mobile:'手机',wecom:'企业微信'}
 const states:Record<string,string>={handoff:'内部交接中',checking:'内部检查中',creating_tasks:'创建通道任务中',dispatching:'下发中',sending:'发送中',partial:'部分完成',completed:'全部成功',failed:'全部失败',finished_with_failures:'已结束（部分失败）',needs_review:'结果待核对',not_dispatched:'未下发成功',unobserved:'进度暂不可确认'}
 const stages:Record<string,string>={handoff:'内部交接',checking:'内部检查',creating_tasks:'创建通道任务',scheduling:'手机调度',device_receipt:'设备接收',device_execution:'设备执行',official_queue:'企业微信排队',official_call:'企业微信调用',official_result:'官方结果',sent:'已发送',failed:'失败',unknown:'结果不确定',missing_evidence:'缺少观测'}
@@ -31,6 +32,7 @@ function MessageDetail({row,refresh}:{row:BusinessMessage;refresh:()=>void}){
   {row.business_unit_id&&<PhoneDeliveries receipt={row.receipt_id}/>}
   <Button href={`/admin?view=mobile-dispatch-records&receipt_id=${encodeURIComponent(row.receipt_id)}`}>手机分发下发记录</Button>
   <Typography.Text type="secondary">观察时间：{formatDate(row.progress.observed_at)}；持久汇总时间：{row.progress.results_as_of?formatDate(row.progress.results_as_of):'尚未汇总'}</Typography.Text>
+  {row.decision&&<Typography.Paragraph>广告决定：{adReasons[row.decision.reason]??row.decision.reason}；本次决定对应选用次数：{row.decision.selection_count===null?'未读取':row.decision.selection_count}</Typography.Paragraph>}
   <Typography.Paragraph style={{whiteSpace:'pre-wrap'}}>{row.content}</Typography.Paragraph>
   <Timeline items={[{content:`已持久接收：${formatDate(row.milestones.received_at)}`},...(row.milestones.handoff_completed_at?[{content:`内部交接完成：${formatDate(row.milestones.handoff_completed_at)}`}]:[]),...(row.milestones.delegated_at?[{content:`通道已受理（任务创建完成）：${formatDate(row.milestones.delegated_at)}`}]:[]),{content:`当前进度：${states[row.state]??row.state}；各通道并行执行`}]} />
   {row.progress.diagnostics.map((d,i)=><Diagnostic key={i} value={d} now={row.progress.observed_at}/>)}
