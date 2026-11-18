@@ -63,11 +63,11 @@ it('provides platform management and logout for an administrator', async () => {
   expect(screen.queryByRole('menuitem', { name: '业务单位与分组' })).toBeNull()
   expect(screen.queryByRole('menuitem', { name: '广告序列轮询' })).toBeNull()
   const callers = screen.getByRole('menuitem', { name: '调用方凭据' })
-  expect(callers.closest('.ant-menu-item-group')?.textContent).toContain('消息接收管理')
-  expect(callers.closest('.ant-menu-item-group')?.textContent).not.toContain('系统管理')
+  expect(callers.closest('.ant-menu-submenu')?.textContent).toContain('消息接收管理')
+  expect(callers.closest('.ant-menu-submenu')?.textContent).not.toContain('系统管理')
   for (const [name, key] of [['路由执行配置', 'source-route-configurations'], ['广告素材与投放', 'advertisements'], ['收件与回执', 'source-receipts'], ['敏感词拦截', 'keyword-rules']]) {
     const entry = screen.getByRole('menuitem', { name })
-    expect(entry.closest('.ant-menu-item-group')?.textContent).toContain('消息接收管理')
+    expect(entry.closest('.ant-menu-submenu')?.textContent).toContain('消息接收管理')
     fireEvent.click(entry)
     expect(onNavigate).toHaveBeenLastCalledWith(key)
   }
@@ -88,12 +88,12 @@ it('collapses the desktop sidebar while keeping the active page and account acce
   show()
   fireEvent.click(screen.getByRole('button', { name: '收起侧栏' }))
   expect(document.querySelector('.workspace-shell')?.classList.contains('is-collapsed')).toBe(true)
-  expect(screen.getByRole('menuitem', { name: '客户群' }).getAttribute('aria-current')).toBe(
-    'page',
-  )
   expect(screen.getByRole('button', { name: '账号菜单' })).toBeTruthy()
   fireEvent.click(screen.getByRole('button', { name: '展开侧栏' }))
   expect(document.querySelector('.workspace-shell')?.classList.contains('is-collapsed')).toBe(false)
+  expect(screen.getByRole('menuitem', { name: '客户群' }).getAttribute('aria-current')).toBe(
+    'page',
+  )
 })
 
 it('opens static help without changing the active page', () => {
