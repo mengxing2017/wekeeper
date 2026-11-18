@@ -120,14 +120,22 @@ impl KeywordStore for KeywordRepository {
             k::Command::Publish { scope, input } => {
                 scope_access(&mut tx, &scope).await?;
                 k::validate(&input.entries)?;
+                // Lock the head before reading its version: a concurrent publisher can
+                // replace version_id while a joined FOR UPDATE waits, losing the row.
                 let previous = sqlx::query(
-                    "SELECT h.revision,v.filter_enabled FROM keyword_scope_heads h JOIN keyword_rule_versions v ON v.id=h.version_id WHERE h.id=$1 FOR UPDATE OF h",
+                    "SELECT revision,version_id FROM keyword_scope_heads WHERE id=$1 FOR UPDATE",
                 )
                 .bind(&scope)
                 .fetch_one(&mut *tx)
                 .await?;
                 let revision: i64 = previous.get("revision");
                 ensure(revision == input.expected_revision, "revision_conflict")?;
+                let previous_enabled: bool = sqlx::query_scalar(
+                    "SELECT filter_enabled FROM keyword_rule_versions WHERE id=$1",
+                )
+                .bind(previous.get::<Uuid, _>("version_id"))
+                .fetch_one(&mut *tx)
+                .await?;
                 let version = Uuid::now_v7();
                 sqlx::query("INSERT INTO keyword_rule_versions(id,scope_id,revision,entries,actor_id,reason,filter_enabled) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(version).bind(&scope).bind(revision+1).bind(json!(input.entries)).bind(actor.id).bind(input.reason.trim()).bind(input.filter_enabled).execute(&mut *tx).await?;
                 sqlx::query(
@@ -138,8 +146,7 @@ impl KeywordStore for KeywordRepository {
                 .execute(&mut *tx)
                 .await?;
 
-                audit_context["previous_filter_enabled"] =
-                    json!(previous.get::<bool, _>("filter_enabled"));
+                audit_context["previous_filter_enabled"] = json!(previous_enabled);
                 audit_context["filter_enabled"] = json!(input.filter_enabled);
                 audit_context["previous_revision"] = json!(revision);
                 audit_context["revision"] = json!(revision + 1);
