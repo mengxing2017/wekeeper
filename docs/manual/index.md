@@ -2,7 +2,7 @@
 
 已部署系统的日常操作请先看[使用手册](../guide/index.md)。本页面向安装、开发和部署人员。
 
-当前手机业务使用[手机共享发送使用手册](../guide/operator/mobile-execution-tasks.md)，办理步骤见[手机使用管理](../guide/platform-admin/shared-mobile-resources.md)和[手机任务](../guide/operator/mobile-execution-tasks.md)。
+当前手机业务使用[手机共享发送使用手册](../guide/operator/mobile-execution-tasks.md)，办理步骤见[手机业务方案与资源约束](../guide/platform-admin/shared-mobile-resources.md)和[手机任务](../guide/operator/mobile-execution-tasks.md)。
 
 按目标选择入口，避免将临时开发数据误作生产持久数据。
 

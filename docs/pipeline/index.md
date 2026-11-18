@@ -1,6 +1,6 @@
 # 业务与发送流程
 
-当前手机业务使用[手机共享发送使用手册](../guide/operator/mobile-execution-tasks.md)，办理步骤见[手机使用管理](../guide/platform-admin/shared-mobile-resources.md)和[手机任务](../guide/operator/mobile-execution-tasks.md)。
+当前手机业务使用[手机共享发送使用手册](../guide/operator/mobile-execution-tasks.md)，办理步骤见[手机业务方案与资源约束](../guide/platform-admin/shared-mobile-resources.md)和[手机任务](../guide/operator/mobile-execution-tasks.md)。
 
 ## 身份、资源与内容
 
