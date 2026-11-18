@@ -48,8 +48,8 @@ function MessageDetail({row,refresh}:{row:BusinessMessage;refresh:()=>void}){
  </Space>
 }
 export function SourceAutomationTasks(){
- const [page,setPage]=useState(1),[filter,setFilter]=useState<MessageProgressFilter>({}),route=new URLSearchParams(window.location.search).get('route')??''
- const q=useQuery({queryKey:['business-messages',route,page,filter],queryFn:()=>businessMessages.list(route,'',page,30,filter),refetchInterval:5000})
+ const [page,setPage]=useState(1),[filter,setFilter]=useState<MessageProgressFilter>({}),route=new URLSearchParams(window.location.search).get('route')??'',receipt=new URLSearchParams(window.location.search).get('receipt')??''
+ const q=useQuery({queryKey:['business-messages',route,receipt,page,filter],queryFn:()=>businessMessages.list(route,receipt,page,30,filter),refetchInterval:5000})
  const refresh=()=>{void q.refetch()}
  function choose(key:keyof MessageProgressFilter,value:string|undefined){setFilter({...filter,[key]:value});setPage(1)}
  return <Card title="即时消息与发送结果" extra={<Button loading={q.isFetching} onClick={refresh}>刷新</Button>}><Space orientation="vertical" style={{width:'100%'}}>
